@@ -1,0 +1,5 @@
+# Master requirements file for all examples
+# Install with: pip install -r examples/requirements.txt
+# Example-specific dependencies
+ase>=3.22.0  # For neighborlist examples
+requests>=2.31.0  # For interactions examples

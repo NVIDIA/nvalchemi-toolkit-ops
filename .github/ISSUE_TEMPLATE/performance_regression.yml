@@ -1,0 +1,180 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Performance Regression
+description: Report a performance regression in ALCHEMI Toolkit-Ops
+title: "📉[PERF]: "
+labels: ["performance", "? - Needs Triage"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to help ALCHEMI Toolkit-Ops by reporting a performance regression!
+        - By submitting this issue, you agree to follow our [Code of Conduct](./CONTRIBUTING.md)
+        - You also confirm that you have searched the existing issues and have found no duplicates for this report
+        - Performance regressions are critical for GPU-accelerated code; please provide as much detail as possible
+
+  - type: input
+    id: current-version
+    attributes:
+      label: Current Version (slower)
+      description: The version where you observed the performance regression
+      placeholder: "example: 0.2.0"
+    validations:
+      required: true
+
+  - type: input
+    id: previous-version
+    attributes:
+      label: Previous Version (faster)
+      description: The last known version where performance was acceptable
+      placeholder: "example: 0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation-method
+    attributes:
+      label: Installation method
+      options:
+        - Docker
+        - Pip
+        - Source
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the regression
+      description: Provide a clear description of the performance regression, including which operation or kernel is affected.
+      placeholder: |
+        The `neighbor_list` function is now 2x slower when processing batched systems with >10k atoms.
+    validations:
+      required: true
+
+  - type: textarea
+    id: performance-numbers
+    attributes:
+      label: Performance comparison
+      description: |
+        Provide quantitative performance measurements comparing the two versions.
+        Include timing data, throughput, or other relevant metrics. For throughput,
+        using microseconds per atom is preferred.
+      placeholder: |
+        | Version | Time (ms) | Throughput (us/atom) |
+        |---------|-----------|----------------------|
+        | 0.1.0   | 15.2      | 6.5M                 |
+        | 0.2.0   | 32.8      | 3.0M                 |
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: mvr
+    attributes:
+      label: Minimum reproducible example
+      description: |
+        Please supply a [minimum reproducible code example](https://matthewrocklin.com/blog/work/2018/02/28/minimal-bug-reports) that demonstrates the regression.
+        Include timing code if possible.
+      placeholder: |
+        import torch
+        import time
+        from nvalchemiops import ...
+
+        # Setup
+        ...
+
+        # Benchmark
+        start = time.perf_counter()
+        for _ in range(100):
+            result = ...
+        torch.cuda.synchronize()
+        elapsed = time.perf_counter() - start
+        print(f"Time: {elapsed*1000:.2f} ms")
+      render: python
+    validations:
+      required: true
+
+  - type: dropdown
+    id: gpu-model
+    attributes:
+      label: GPU Model
+      description: Select your GPU model
+      options:
+        - NVIDIA BXXX
+        - NVIDIA HXXX
+        - NVIDIA AXXX
+        - NVIDIA LXX
+        - NVIDIA RTX 5XXX
+        - NVIDIA RTX 4XXX
+        - NVIDIA RTX 3XXX
+        - Other (specify in environment details)
+    validations:
+      required: true
+
+  - type: input
+    id: cuda-version
+    attributes:
+      label: CUDA Version
+      description: Output of `nvcc --version` or `nvidia-smi`
+      placeholder: "example: 12.4"
+    validations:
+      required: true
+
+  - type: input
+    id: driver-version
+    attributes:
+      label: NVIDIA Driver Version
+      description: Output of `nvidia-smi` (top right corner)
+      placeholder: "example: 550.54.15"
+    validations:
+      required: true
+
+  - type: textarea
+    id: env-details
+    attributes:
+      label: Environment details
+      description: |
+        Please provide complete environment details. The ideal output
+        includes `pip freeze` or `uv pip list` output, in addition to
+        information like the OS, etc.
+      placeholder: |
+        + OS: [e.g., Ubuntu 22.04, RHEL 8]
+        + Python version: [e.g., 3.11.5]
+        + Environment: [Bare-metal, Docker, Cloud (specify provider)]
+        + `pip freeze`/`uv pip list` output:
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: profiling
+    attributes:
+      label: Profiling data (optional)
+      description: |
+        If available, please attach or paste profiling data from tools like:
+        - `nsys profile` / Nsight Systems
+        - `ncu` / Nsight Compute
+        - PyTorch profiler
+        - `torch.cuda.Event` timing
+      render: shell
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Any other context about the regression (e.g., specific input sizes, batch configurations, or conditions under which it occurs)

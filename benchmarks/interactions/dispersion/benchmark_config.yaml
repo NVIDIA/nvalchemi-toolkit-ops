@@ -1,0 +1,36 @@
+# DFT-D3 Dispersion Benchmark Configuration
+# =========================================
+# This file defines benchmark parameters for DFT-D3 dispersion corrections.
+
+parameters:
+  cutoff: 21.2  # Angstrom (40 Bohr)
+  warmup_iterations: 3
+  timing_iterations: 10
+  dtype: float32  # float32, or float64. FP16 is not supported by nvalchemiops.
+
+# DFT-D3 specific parameters (PBE functional)
+dftd3_parameters:
+  a1: 0.4289
+  a2: 4.4407
+  s6: 1.0
+  s8: 0.7875
+  k1: 16.0
+  k3: -4.0
+  s5_smoothing_on: 35.0
+  s5_smoothing_off: 40.0
+
+# System configurations to test
+systems:
+  # CsCl supercells provide good test systems with periodic boundaries
+  - name: cscl_supercells
+    system_type: cscl
+    supercell_sizes: [3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 35]  # Linear dimensions (2*size**3 atoms total)
+    batch_sizes: [1]  # Batch sizes to test (1 = single system)
+    max_neighbors: 1200
+
+  # Batched CsCl supercells (smaller systems, multiple batch sizes)
+  - name: cscl_supercells_batched
+    system_type: cscl
+    supercell_sizes: [3, 4, 5, 6, 8, 10]  # Smaller systems for batching
+    batch_sizes: [2, 4, 8, 16, 32, 64, 128]  # Multiple batch sizes
+    max_neighbors: 1200

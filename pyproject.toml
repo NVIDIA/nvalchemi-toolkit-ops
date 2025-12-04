@@ -1,0 +1,156 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nvalchemi-toolkit-ops"
+authors = [
+  { name="nvalchemiops Team"},
+]
+description = "High-performance NVIDIA Warp primitives for GPU-enabled computational chemistry and atomistic simulation workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "warp-lang >= 1.9.0",
+    "torch>=2.7.0",
+    "numpy",
+]
+keywords = [
+    "gpu",
+    "cuda",
+    "computational chemistry",
+    "molecular dynamics",
+    "atomic simulation",
+    "batched operations",
+    "neighborlist",
+    "optimization",
+    "nvidia-warp"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Environment :: GPU",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dynamic = ["version"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["nvalchemiops"]
+
+[tool.hatch.version]
+path = "nvalchemiops/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["nvalchemiops/**/*.py"]
+
+[project.urls]
+
+[dependency-groups]
+dev = [
+    "pre-commit",
+    "pytest>=6.0.0",
+    "pytest-timeout>=2.0.1",
+    "pytest-skip-slow>=0.0.5",
+    "pytest-asyncio>=0.25.3",
+    "pytest-dependency>=0.6.0",
+    "coverage>=7.2.0",
+    {include-group="docs"},
+]
+docs = [
+    "sphinx>=6.0.0",
+    "sphinx-design",
+    "jupytext>=1.15.0",
+    "sphinx-autodoc-typehints>=1.24.0",
+    "myst-parser>=0.18.0",
+    "pydata-sphinx-theme==0.15.2",
+    "dotenv>=0.9.9",
+    "python-dotenv>=1.1.1",
+    "sphinx-gallery>=0.19.0",
+    "sphinx-favicon==1.0.1",
+    "sphinx-togglebutton==0.3.2",
+    "matplotlib",
+    "pandas"
+]
+
+# == UV configuration =====
+[tool.uv]
+managed = true
+
+[[tool.uv.index]]
+name = "internal-alchemi"
+url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
+publish-url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
+explicit = true
+
+
+# === Ruff configuration ===
+[tool.ruff]
+exclude = [".ci/", "build/", "dist/", ".git/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "S", "I", "PERF"]
+fixable = ["I"]
+ignore = ["E501", "S311"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"docs/*.py" = ["F401"]
+"examples/*.py" = ["E402"]
+"test/*.py" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+norecursedirs = [".git", "third_party"]
+addopts = ["-vv", "-r", "xfXs"]
+markers = [
+    "slow: marks tests as slow (deselect with: -m 'not slow')",
+    "gpu: marks tests that require GPU",
+]
+asyncio_mode = "auto"
+
+# ==== Coverage.py configuration ====
+[tool.coverage.run]
+branch = true
+concurrency = ["multiprocessing", "thread"]
+source = ["nvalchemiops"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+]
+exclude_also = [
+    "@(abc\\.)?abstractmethod",
+    "@runtime_checkable",
+    "@wp.kernel",
+    "@wp.func",
+    "@torch.jit.script",
+]
+omit = [
+    "test/*",
+]
+show_missing = true
+fail_under = 75
+
+[tool.coverage.xml]
+output = "nvalchemiops.coverage.xml"
+
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = true
+ignore-magic = true
+ignore-semiprivate = true
+ignore-private = true
+ignore-property-decorators = true
+ignore-module = true
+ignore-nested-functions = true
+ignore-nested-classes = true
+fail-under = 95
+color = true
+omit-covered-files = false
+verbose = 2
+exclude = ["setup.py", "test/*", "docs", "build"]
+ignore-regex = ["^get$", "^mock_.*", ".*BaseClass.*"]

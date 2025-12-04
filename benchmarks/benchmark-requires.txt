@@ -1,0 +1,9 @@
+rdkit==2025.3.6
+pymatgen>=2024.1.0
+periodictable>=1.6.0
+loguru>=0.7.0
+requests>=2.31.0
+click>=8.0.0
+nvtx>=0.2.13
+torch-dftd @ git+https://github.com/pfnet-research/torch-dftd@067808d
+pyyaml>=6.0.3
