@@ -80,8 +80,6 @@ venv.bak/
 *.npy
 *.npz
 *.tar.gz
-*.png
-*.csv
 *.log
 *.cif
 
@@ -97,6 +95,7 @@ checkpoints/
 
 # Sphinx documentation
 _build
+docs/
 docs/_build
 docs/modules/generated
 docs/modules/backreferences

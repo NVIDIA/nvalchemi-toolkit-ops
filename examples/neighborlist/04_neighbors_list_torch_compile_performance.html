@@ -1,0 +1,1112 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Torch.compile Performance Benefits Example &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'examples/neighborlist/04_neighbors_list_torch_compile_performance';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Benchmarks" href="../../benchmarks/index.html" />
+    <link rel="prev" title="Neighbor List Rebuild Detection Example" href="03_rebuild_neighborlist_detection.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../interactions/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../interactions/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+
+<li class="toctree-l2"><a class="reference internal" href="../interactions/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+
+
+
+
+
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Examples Gallery</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Neighbor Lists</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Torch.compil...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-examples-neighborlist-04-neighbors-list-torch-compile-performance-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="torch-compile-performance-benefits-example">
+<span id="sphx-glr-examples-neighborlist-04-neighbors-list-torch-compile-performance-py"></span><h1>Torch.compile Performance Benefits Example<a class="headerlink" href="#torch-compile-performance-benefits-example" title="Link to this heading">#</a></h1>
+<p>This example demonstrates the significant performance benefits of using torch.compile
+with nvalchemiops neighbor list routines in a realistic molecular dynamics simulation.
+We’ll cover:</p>
+<ul class="simple">
+<li><p>torch.compile integration with build_cell_list and query_cell_list</p></li>
+<li><p>Lennard-Jones molecular dynamics simulation using neighbor lists</p></li>
+<li><p>Performance comparison between compiled and uncompiled versions</p></li>
+<li><p>Speedup analysis and compilation overhead considerations</p></li>
+</ul>
+<p>The build_cell_list and query_cell_list functions are torch.compile compatible,
+which means they can be used within compiled functions. This example shows how
+to integrate them into an MD workflow for maximum performance.</p>
+<p>Note that torch.compile does not necessarily speedup the neighbor list routines itself,
+since they are written with CUDA/Warp kernels, but they show that these routines can
+be used within compiled functions without incurring graph breaks.</p>
+<p>Note that this example is not a comprehensive performance analysis of the neighbor list routines,
+but rather a demonstration of how to use them within compiled functions.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">system_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_bulk_structure</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">allocate_cell_list</span><span class="p">,</span>
+    <span class="n">build_cell_list</span><span class="p">,</span>
+    <span class="n">cell_list</span><span class="p">,</span>
+    <span class="n">estimate_cell_list_sizes</span><span class="p">,</span>
+    <span class="n">estimate_max_neighbors</span><span class="p">,</span>
+    <span class="n">query_cell_list</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="set-up-the-computation-device-and-check-torch-compile-availability">
+<h1>Set up the computation device and check torch.compile availability<a class="headerlink" href="#set-up-the-computation-device-and-check-torch-compile-availability" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+<span class="n">dtype</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using device: </span><span class="si">{</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using dtype: </span><span class="si">{</span><span class="n">dtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;PyTorch version: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">__version__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Using device: cuda
+Using dtype: torch.float32
+PyTorch version: 2.8.0+cu128
+</pre></div>
+</div>
+</section>
+<section id="system-parameters-and-lennard-jones-potential-setup">
+<h1>System parameters and Lennard-Jones potential setup<a class="headerlink" href="#system-parameters-and-lennard-jones-potential-setup" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;SYSTEM SETUP&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># System parameters</span>
+<span class="n">num_atoms</span> <span class="o">=</span> <span class="mi">512</span>  <span class="c1"># Medium size system for meaningful timing</span>
+<span class="n">box_size</span> <span class="o">=</span> <span class="mf">15.0</span>
+<span class="n">temperature</span> <span class="o">=</span> <span class="mf">1.0</span>  <span class="c1"># Reduced units</span>
+<span class="n">dt</span> <span class="o">=</span> <span class="mf">0.001</span>  <span class="c1"># Time step</span>
+<span class="n">cutoff</span> <span class="o">=</span> <span class="mf">2.5</span>  <span class="c1"># LJ cutoff</span>
+<span class="n">skin_distance</span> <span class="o">=</span> <span class="mf">0.5</span>
+<span class="n">total_cutoff</span> <span class="o">=</span> <span class="n">cutoff</span> <span class="o">+</span> <span class="n">skin_distance</span>
+
+<span class="c1"># Lennard-Jones parameters (argon-like, reduced units)</span>
+<span class="n">lj_epsilon</span> <span class="o">=</span> <span class="mf">1.0</span>  <span class="c1"># Energy scale</span>
+<span class="n">lj_sigma</span> <span class="o">=</span> <span class="mf">1.0</span>  <span class="c1"># Length scale</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">System: </span><span class="si">{</span><span class="n">num_atoms</span><span class="si">}</span><span class="s2"> atoms in </span><span class="si">{</span><span class="n">box_size</span><span class="si">}</span><span class="s2">³ box&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;LJ parameters: ε=</span><span class="si">{</span><span class="n">lj_epsilon</span><span class="si">}</span><span class="s2">, σ=</span><span class="si">{</span><span class="n">lj_sigma</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cutoff: </span><span class="si">{</span><span class="n">cutoff</span><span class="si">}</span><span class="s2"> Å, Skin: </span><span class="si">{</span><span class="n">skin_distance</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Time step: </span><span class="si">{</span><span class="n">dt</span><span class="si">}</span><span class="s2">, Temperature: </span><span class="si">{</span><span class="n">temperature</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+SYSTEM SETUP
+======================================================================
+
+System: 512 atoms in 15.0³ box
+LJ parameters: ε=1.0, σ=1.0
+Cutoff: 2.5 Å, Skin: 0.5 Å
+Time step: 0.001, Temperature: 1.0
+</pre></div>
+</div>
+</section>
+<section id="create-initial-system-configuration">
+<h1>Create initial system configuration<a class="headerlink" href="#create-initial-system-configuration" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;INITIAL CONFIGURATION&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+
+<span class="c1"># Create FCC lattice at appropriate density</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">create_fcc_lattice</span><span class="p">(</span>
+    <span class="n">num_atoms</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">box_size</span><span class="p">:</span> <span class="nb">float</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create FCC lattice at appropriate density.&quot;&quot;&quot;</span>
+    <span class="n">structure</span> <span class="o">=</span> <span class="n">create_bulk_structure</span><span class="p">(</span><span class="s2">&quot;Al&quot;</span><span class="p">,</span> <span class="s2">&quot;fcc&quot;</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="mf">4.05</span><span class="p">,</span> <span class="n">cubic</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="c1"># Create supercell to get enough atoms</span>
+    <span class="n">n_repeat</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">ceil</span><span class="p">((</span><span class="n">num_atoms</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">structure</span><span class="p">))</span> <span class="o">**</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="mi">3</span><span class="p">)))</span>
+    <span class="n">structure</span><span class="o">.</span><span class="n">make_supercell</span><span class="p">([</span><span class="n">n_repeat</span><span class="p">,</span> <span class="n">n_repeat</span><span class="p">,</span> <span class="n">n_repeat</span><span class="p">])</span>
+
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+        <span class="n">structure</span><span class="o">.</span><span class="n">cart_coords</span><span class="p">[:</span><span class="n">num_atoms</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+    <span class="p">)</span>
+    <span class="c1"># Scale to desired box size</span>
+    <span class="n">scale</span> <span class="o">=</span> <span class="n">box_size</span> <span class="o">/</span> <span class="n">structure</span><span class="o">.</span><span class="n">lattice</span><span class="o">.</span><span class="n">abc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">*</span> <span class="n">scale</span>
+
+    <span class="n">cell</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">box_size</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+
+
+<span class="c1"># Initialize positions and velocities</span>
+<span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span> <span class="o">=</span> <span class="n">create_fcc_lattice</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">box_size</span><span class="p">)</span>
+<span class="n">velocities</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn_like</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span>
+
+<span class="c1"># Remove center-of-mass velocity and scale to target temperature</span>
+<span class="n">velocities</span> <span class="o">=</span> <span class="n">velocities</span> <span class="o">-</span> <span class="n">velocities</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">current_temp</span> <span class="o">=</span> <span class="p">(</span><span class="n">velocities</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">/</span> <span class="p">(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">num_atoms</span><span class="p">)</span>
+<span class="n">velocities</span> <span class="o">=</span> <span class="n">velocities</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">temperature</span> <span class="o">/</span> <span class="n">current_temp</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Initial density: </span><span class="si">{</span><span class="n">num_atoms</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">box_size</span><span class="o">**</span><span class="mi">3</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Initial temperature: </span><span class="si">{</span><span class="p">(</span><span class="n">velocities</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">3</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">num_atoms</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+INITIAL CONFIGURATION
+======================================================================
+Initial density: 0.1517
+Initial temperature: 1.000
+</pre></div>
+</div>
+</section>
+<section id="define-lennard-jones-force-computation">
+<h1>Define Lennard-Jones force computation<a class="headerlink" href="#define-lennard-jones-force-computation" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">compute_lj_forces_matrix</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">neighbor_matrix</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">neighbor_matrix_shifts</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">num_neighbors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">epsilon</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute Lennard-Jones forces using neighbor matrix format.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : torch.Tensor, shape (N, 3)</span>
+<span class="sd">        Atomic positions</span>
+<span class="sd">    neighbor_matrix : torch.Tensor, shape (N, max_neighbors)</span>
+<span class="sd">        Neighbor atom indices (-1 for invalid)</span>
+<span class="sd">    neighbor_matrix_shifts : torch.Tensor, shape (N, max_neighbors, 3)</span>
+<span class="sd">        Unit cell shifts for each neighbor</span>
+<span class="sd">    num_neighbors : torch.Tensor, shape (N,)</span>
+<span class="sd">        Number of valid neighbors per atom</span>
+<span class="sd">    cell : torch.Tensor, shape (1, 3, 3)</span>
+<span class="sd">        Unit cell matrix</span>
+<span class="sd">    epsilon : float</span>
+<span class="sd">        LJ energy parameter</span>
+<span class="sd">    sigma : float</span>
+<span class="sd">        LJ length parameter</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    forces : torch.Tensor, shape (N, 3)</span>
+<span class="sd">        Atomic forces</span>
+<span class="sd">    potential : torch.Tensor, scalar</span>
+<span class="sd">        Total potential energy</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Create mask for valid neighbors</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">neighbor_matrix</span> <span class="o">&gt;=</span> <span class="mi">0</span>
+
+    <span class="c1"># Compute Cartesian shifts</span>
+    <span class="n">cartesian_shifts</span> <span class="o">=</span> <span class="n">neighbor_matrix_shifts</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">@</span> <span class="n">cell</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="c1"># Vectorized force computation</span>
+    <span class="n">pos_i</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">pos_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">neighbor_matrix</span><span class="p">]</span>
+
+    <span class="c1"># Distance vectors with PBC</span>
+    <span class="n">dr</span> <span class="o">=</span> <span class="n">pos_j</span> <span class="o">-</span> <span class="n">pos_i</span> <span class="o">+</span> <span class="n">cartesian_shifts</span>
+
+    <span class="c1"># Compute distances</span>
+    <span class="n">r2</span> <span class="o">=</span> <span class="p">(</span><span class="n">dr</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># (N, max_neighbors)</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">r2</span><span class="o">.</span><span class="n">clamp</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mf">1e-10</span><span class="p">))</span>  <span class="c1"># Avoid division by zero</span>
+
+    <span class="c1"># LJ force calculation</span>
+    <span class="n">sigma_over_r</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">/</span> <span class="n">r</span>
+    <span class="n">sigma_over_r6</span> <span class="o">=</span> <span class="n">sigma_over_r</span><span class="o">**</span><span class="mi">6</span>
+    <span class="n">sigma_over_r12</span> <span class="o">=</span> <span class="n">sigma_over_r6</span><span class="o">**</span><span class="mi">2</span>
+
+    <span class="c1"># Apply mask to only compute for valid neighbors</span>
+    <span class="n">u_pair</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+        <span class="n">mask</span><span class="p">,</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">epsilon</span> <span class="o">*</span> <span class="p">(</span><span class="n">sigma_over_r12</span> <span class="o">-</span> <span class="n">sigma_over_r6</span><span class="p">),</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="n">force_mag</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+        <span class="n">mask</span><span class="p">,</span>
+        <span class="mi">24</span> <span class="o">*</span> <span class="n">epsilon</span> <span class="o">/</span> <span class="n">r2</span> <span class="o">*</span> <span class="p">(</span><span class="n">sigma_over_r6</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">sigma_over_r12</span><span class="p">),</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">r</span><span class="p">),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Force vectors</span>
+    <span class="n">force_vectors</span> <span class="o">=</span> <span class="n">force_mag</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="n">dr</span>  <span class="c1"># (N, max_neighbors, 3)</span>
+
+    <span class="c1"># Sum forces on each atom</span>
+    <span class="n">forces</span> <span class="o">=</span> <span class="n">force_vectors</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="c1"># Total potential energy</span>
+    <span class="n">potential</span> <span class="o">=</span> <span class="n">u_pair</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">*</span> <span class="mf">0.5</span>  <span class="c1"># Factor of 0.5 to avoid double counting</span>
+
+    <span class="k">return</span> <span class="n">forces</span><span class="p">,</span> <span class="n">potential</span>
+</pre></div>
+</div>
+</section>
+<section id="setup-uncompiled-md-step">
+<h1>Setup Uncompiled MD Step<a class="headerlink" href="#setup-uncompiled-md-step" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">md_step_uncompiled</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Perform one MD time step without compilation.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Get neighbor matrix</span>
+    <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">fill_value</span><span class="o">=-</span><span class="mi">1</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Compute forces</span>
+    <span class="n">forces</span><span class="p">,</span> <span class="n">potential</span> <span class="o">=</span> <span class="n">compute_lj_forces_matrix</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span>
+        <span class="n">neighbor_shifts</span><span class="p">,</span>
+        <span class="n">num_neighbors</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">lj_epsilon</span><span class="p">,</span>
+        <span class="n">lj_sigma</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Velocity Verlet integration</span>
+    <span class="c1"># Half-step velocity update</span>
+    <span class="n">velocities</span> <span class="o">=</span> <span class="n">velocities</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dt</span> <span class="o">*</span> <span class="n">forces</span>
+
+    <span class="c1"># Position update</span>
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">+</span> <span class="n">dt</span> <span class="o">*</span> <span class="n">velocities</span>
+
+    <span class="c1"># Apply PBC</span>
+    <span class="n">box_size</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">%</span> <span class="n">box_size</span>
+
+    <span class="c1"># Recompute forces at new positions</span>
+    <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="p">,</span>
+        <span class="n">neighbor_matrix</span><span class="o">=</span><span class="n">neighbor_matrix</span><span class="p">,</span>
+        <span class="n">neighbor_matrix_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+        <span class="n">num_neighbors</span><span class="o">=</span><span class="n">num_neighbors</span><span class="p">,</span>
+        <span class="n">fill_value</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">forces</span><span class="p">,</span> <span class="n">potential</span> <span class="o">=</span> <span class="n">compute_lj_forces_matrix</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span>
+        <span class="n">neighbor_shifts</span><span class="p">,</span>
+        <span class="n">num_neighbors</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">lj_epsilon</span><span class="p">,</span>
+        <span class="n">lj_sigma</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Half-step velocity update</span>
+    <span class="n">velocities</span> <span class="o">=</span> <span class="n">velocities</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dt</span> <span class="o">*</span> <span class="n">forces</span>
+
+    <span class="c1"># Calculate kinetic energy</span>
+    <span class="n">kinetic</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">velocities</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">positions</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">potential</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="n">kinetic</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+</pre></div>
+</div>
+</section>
+<section id="setup-compiled-md-step-with-low-level-api">
+<h1>Setup Compiled MD Step with Low-Level API<a class="headerlink" href="#setup-compiled-md-step-with-low-level-api" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">create_compiled_md_step</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a compiled MD step function using build_cell_list + query_cell_list.&quot;&quot;&quot;</span>
+
+    <span class="c1"># Pre-allocate all tensors (required for compilation)</span>
+    <span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">estimate_cell_list_sizes</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">cutoff</span>
+    <span class="p">)</span>
+
+    <span class="n">cell_list_cache</span> <span class="o">=</span> <span class="n">allocate_cell_list</span><span class="p">(</span>
+        <span class="n">total_atoms</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+        <span class="n">max_total_cells</span><span class="o">=</span><span class="n">max_total_cells</span><span class="p">,</span>
+        <span class="n">neighbor_search_radius</span><span class="o">=</span><span class="n">neighbor_search_radius</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">max_neighbors</span> <span class="o">=</span> <span class="n">estimate_max_neighbors</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span>
+
+    <span class="n">neighbor_matrix</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
+        <span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+    <span class="p">)</span>
+    <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+        <span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+    <span class="p">)</span>
+    <span class="n">num_neighbors_arr</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="nd">@torch</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;default&quot;</span><span class="p">,</span> <span class="n">fullgraph</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">compiled_md_step</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Compiled MD step using low-level API.&quot;&quot;&quot;</span>
+
+        <span class="c1"># Build cell list</span>
+        <span class="n">build_cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">)</span>
+
+        <span class="c1"># Query neighbors</span>
+        <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">neighbor_shifts</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">num_neighbors_arr</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">query_cell_list</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cutoff</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="p">,</span>
+            <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">,</span>
+            <span class="n">neighbor_matrix</span><span class="p">,</span>
+            <span class="n">neighbor_shifts</span><span class="p">,</span>
+            <span class="n">num_neighbors_arr</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Compute forces</span>
+        <span class="n">forces</span><span class="p">,</span> <span class="n">potential</span> <span class="o">=</span> <span class="n">compute_lj_forces_matrix</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">neighbor_matrix</span><span class="p">,</span>
+            <span class="n">neighbor_shifts</span><span class="p">,</span>
+            <span class="n">num_neighbors_arr</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">lj_epsilon</span><span class="p">,</span>
+            <span class="n">lj_sigma</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="c1"># Velocity Verlet integration</span>
+        <span class="n">velocities</span> <span class="o">=</span> <span class="n">velocities</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dt</span> <span class="o">*</span> <span class="n">forces</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">+</span> <span class="n">dt</span> <span class="o">*</span> <span class="n">velocities</span>
+
+        <span class="c1"># Apply PBC</span>
+        <span class="n">box_size</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">%</span> <span class="n">box_size</span>
+
+        <span class="c1"># Rebuild and recompute forces</span>
+        <span class="n">build_cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">)</span>
+        <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">neighbor_shifts</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">num_neighbors_arr</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+        <span class="n">query_cell_list</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cutoff</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="p">,</span>
+            <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">,</span>
+            <span class="n">neighbor_matrix</span><span class="p">,</span>
+            <span class="n">neighbor_shifts</span><span class="p">,</span>
+            <span class="n">num_neighbors_arr</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">forces</span><span class="p">,</span> <span class="n">potential</span> <span class="o">=</span> <span class="n">compute_lj_forces_matrix</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">neighbor_matrix</span><span class="p">,</span>
+            <span class="n">neighbor_shifts</span><span class="p">,</span>
+            <span class="n">num_neighbors_arr</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">lj_epsilon</span><span class="p">,</span>
+            <span class="n">lj_sigma</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">velocities</span> <span class="o">=</span> <span class="n">velocities</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="n">dt</span> <span class="o">*</span> <span class="n">forces</span>
+
+        <span class="n">kinetic</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">velocities</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">positions</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">potential</span><span class="p">,</span> <span class="n">kinetic</span>
+
+    <span class="k">return</span> <span class="n">compiled_md_step</span>
+
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;CREATING COMPILED MD STEP&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Compiling MD step function...&quot;</span><span class="p">)</span>
+<span class="n">compiled_md_step</span> <span class="o">=</span> <span class="n">create_compiled_md_step</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Compilation complete!&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+CREATING COMPILED MD STEP
+======================================================================
+
+Compiling MD step function...
+Compilation complete!
+</pre></div>
+</div>
+</section>
+<section id="run-short-simulations-and-compare-performance">
+<h1>Run short simulations and compare performance<a class="headerlink" href="#run-short-simulations-and-compare-performance" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;PERFORMANCE COMPARISON&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="n">n_steps</span> <span class="o">=</span> <span class="mi">50</span>
+<span class="n">n_warmup</span> <span class="o">=</span> <span class="mi">5</span>
+
+<span class="c1"># Warmup compiled version</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Warming up compiled version (</span><span class="si">{</span><span class="n">n_warmup</span><span class="si">}</span><span class="s2"> steps)...&quot;</span><span class="p">)</span>
+<span class="n">pos_comp</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+<span class="n">vel_comp</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_warmup</span><span class="p">):</span>
+    <span class="n">pos_comp</span><span class="p">,</span> <span class="n">vel_comp</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">compiled_md_step</span><span class="p">(</span><span class="n">pos_comp</span><span class="p">,</span> <span class="n">vel_comp</span><span class="p">)</span>
+
+<span class="c1"># Benchmark uncompiled version</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Benchmarking uncompiled version (</span><span class="si">{</span><span class="n">n_steps</span><span class="si">}</span><span class="s2"> steps)...&quot;</span><span class="p">)</span>
+<span class="n">pos_uncomp</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+<span class="n">vel_uncomp</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span> <span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">else</span> <span class="kc">None</span>
+<span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
+    <span class="n">pos_uncomp</span><span class="p">,</span> <span class="n">vel_uncomp</span><span class="p">,</span> <span class="n">pot_uncomp</span><span class="p">,</span> <span class="n">kin_uncomp</span> <span class="o">=</span> <span class="n">md_step_uncompiled</span><span class="p">(</span>
+        <span class="n">pos_uncomp</span><span class="p">,</span> <span class="n">vel_uncomp</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">dt</span>
+    <span class="p">)</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span> <span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">else</span> <span class="kc">None</span>
+<span class="n">uncompiled_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+
+<span class="c1"># Benchmark compiled version</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Benchmarking compiled version (</span><span class="si">{</span><span class="n">n_steps</span><span class="si">}</span><span class="s2"> steps)...&quot;</span><span class="p">)</span>
+<span class="n">pos_comp</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+<span class="n">vel_comp</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span> <span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">else</span> <span class="kc">None</span>
+<span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
+    <span class="n">pos_comp</span><span class="p">,</span> <span class="n">vel_comp</span><span class="p">,</span> <span class="n">pot_comp</span><span class="p">,</span> <span class="n">kin_comp</span> <span class="o">=</span> <span class="n">compiled_md_step</span><span class="p">(</span><span class="n">pos_comp</span><span class="p">,</span> <span class="n">vel_comp</span><span class="p">)</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span> <span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span> <span class="k">else</span> <span class="kc">None</span>
+<span class="n">compiled_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+
+<span class="c1"># Results</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;RESULTS&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Performance:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Uncompiled: </span><span class="si">{</span><span class="n">uncompiled_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> s (</span><span class="si">{</span><span class="n">uncompiled_time</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">n_steps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms/step)&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Compiled:   </span><span class="si">{</span><span class="n">compiled_time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> s (</span><span class="si">{</span><span class="n">compiled_time</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">n_steps</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms/step)&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Speedup:    </span><span class="si">{</span><span class="n">uncompiled_time</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">compiled_time</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Energies after </span><span class="si">{</span><span class="n">n_steps</span><span class="si">}</span><span class="s2"> steps:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Potential: </span><span class="si">{</span><span class="n">pot_comp</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Kinetic:   </span><span class="si">{</span><span class="n">kin_comp</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total:     </span><span class="si">{</span><span class="n">pot_comp</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">kin_comp</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+PERFORMANCE COMPARISON
+======================================================================
+
+Warming up compiled version (5 steps)...
+/lustre/fs1/portfolios/coreai/projects/coreai_modulus_alchemi/users/kinlongkelvi/code/nvalchemi-toolkit-ops-docs/.venv/lib/python3.12/site-packages/torch/_inductor/compile_fx.py:282: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision(&#39;high&#39;)` for better performance.
+  warnings.warn(
+
+Benchmarking uncompiled version (50 steps)...
+Benchmarking compiled version (50 steps)...
+
+======================================================================
+RESULTS
+======================================================================
+
+Performance:
+  Uncompiled: 0.1171 s (2.34 ms/step)
+  Compiled:   0.0427 s (0.85 ms/step)
+  Speedup:    2.74x
+
+Energies after 50 steps:
+  Potential: -208.7127
+  Kinetic:   773.9655
+  Total:     565.2528
+</pre></div>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example completed successfully!&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Example completed successfully!
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.654 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighborlist-04-neighbors-list-torch-compile-performance-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/5070bff201192aff489252de287c6c7c/04_neighbors_list_torch_compile_performance.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">04_neighbors_list_torch_compile_performance.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/ddad9fddd0b4eca6ed55631c58aacb1e/04_neighbors_list_torch_compile_performance.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">04_neighbors_list_torch_compile_performance.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/86c0e585ae62316c8db0aa4ed822d3b8/04_neighbors_list_torch_compile_performance.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">04_neighbors_list_torch_compile_performance.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="03_rebuild_neighborlist_detection.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Neighbor List Rebuild Detection Example</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../../benchmarks/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Benchmarks</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#">Torch.compile Performance Benefits Example</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#set-up-the-computation-device-and-check-torch-compile-availability">Set up the computation device and check torch.compile availability</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#system-parameters-and-lennard-jones-potential-setup">System parameters and Lennard-Jones potential setup</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#create-initial-system-configuration">Create initial system configuration</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#define-lennard-jones-force-computation">Define Lennard-Jones force computation</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-uncompiled-md-step">Setup Uncompiled MD Step</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-compiled-md-step-with-low-level-api">Setup Compiled MD Step with Low-Level API</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#run-short-simulations-and-compare-performance">Run short simulations and compare performance</a></li>
+</ul>
+
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/examples/neighborlist/04_neighbors_list_torch_compile_performance.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
