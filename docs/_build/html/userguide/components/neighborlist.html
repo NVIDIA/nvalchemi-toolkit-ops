@@ -1,0 +1,1078 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Neighbor Lists &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/components/neighborlist';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="DFT-D3(BJ) Dispersion Correction" href="dispersion.html" />
+    <link rel="prev" title="Frequently Asked Questions" href="../about/faq.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">About</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../about/install.html">Installation Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/faq.html">Frequently Asked Questions</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">User Guide</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Neighbor Lists</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <!-- markdownlint-disable MD013 -->
+<!-- markdownlint-disable MD013 -->
+<section class="tex2jax_ignore mathjax_ignore" id="neighbor-lists">
+<span id="neighborlist-userguide"></span><h1>Neighbor Lists<a class="headerlink" href="#neighbor-lists" title="Link to this heading">#</a></h1>
+<p>Neighbor lists identify atom pairs within a cutoff distance—the foundation for
+all forms of interatomic interactions including but not limited to: machine-learned
+interatomic potentials, dispersion corrections, and so on. ALCHEMI Toolkit-Ops provides
+GPU-accelerated neighbor list algorithms via <a class="reference external" href="https://nvidia.github.io/warp/">NVIDIA Warp</a>
+with full <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code> support.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Start with the unified <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.neighbor_list" title="nvalchemiops.neighborlist.neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">neighbor_list()</span></code></a> function.
+It automatically selects the best algorithm for your system size and handles
+both single and batched inputs.</p>
+</div>
+<section id="why-neighbor-lists-matter-for-performance">
+<h2>Why Neighbor Lists Matter for Performance<a class="headerlink" href="#why-neighbor-lists-matter-for-performance" title="Link to this heading">#</a></h2>
+<p>Neighbor list construction can dominate runtime in atomistic foundation models:</p>
+<ul class="simple">
+<li><p><strong>Naive algorithms scale as (O(N^2))</strong>: Checking all atom pairs becomes
+prohibitive for systems with a large number of atoms (approx. 5000 atoms,
+but depends on structure and hardware)</p></li>
+<li><p><strong>Repeated construction</strong>: Training loops and MD simulations rebuild neighbor
+lists frequently—every step or every few steps</p></li>
+<li><p><strong>Memory bandwidth</strong>: Large neighbor matrices can bottleneck GPU throughput</p></li>
+</ul>
+<p>ALCHEMI Toolkit-Ops addresses these challenges with O(N) cell list algorithms,
+efficient batch processing for heterogeneous datasets, and memory layouts
+optimized for GPU access patterns. See <a class="reference internal" href="#nl-performance"><span class="std std-ref">performance considerations</span></a>
+for guidance.</p>
+</section>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
+<p>The <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.neighbor_list" title="nvalchemiops.neighborlist.neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">neighbor_list()</span></code></a> function provides a unified
+interface that automatically dispatches to the optimal algorithm based on system
+size and whether batch indices are provided.</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="single-large" for="sd-tab-item-0">
+Single + Large</label><div class="sd-tab-content docutils">
+<p>Single system with &gt;5000 atoms</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;cell_list&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Dispatches to <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.cell_list" title="nvalchemiops.neighborlist.cell_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">cell_list()</span></code></a> — (O(N)) algorithm
+using spatial decomposition.</p>
+</div>
+<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="single-small" for="sd-tab-item-1">
+Single + Small</label><div class="sd-tab-content docutils">
+<p>Single system with &lt;5000 atoms</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;naive&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Dispatches to <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.naive_neighbor_list" title="nvalchemiops.neighborlist.naive_neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">naive_neighbor_list()</span></code></a> — (O(N^2))
+algorithm with lower overhead.</p>
+</div>
+<input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="batch-large" for="sd-tab-item-2">
+Batch + Large</label><div class="sd-tab-content docutils">
+<p>Multiple systems with &gt;5000 atoms each</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;batch_cell_list&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Dispatches to <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.batch_cell_list" title="nvalchemiops.neighborlist.batch_cell_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">batch_cell_list()</span></code></a> — (O(N))
+algorithm for heterogeneous batches.</p>
+</div>
+<input id="sd-tab-item-3" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="batch-small" for="sd-tab-item-3">
+Batch + Small</label><div class="sd-tab-content docutils">
+<p>Multiple systems with &lt;5000 atoms each</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;batch_naive&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Dispatches to <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.batch_naive_neighbor_list" title="nvalchemiops.neighborlist.batch_naive_neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">batch_naive_neighbor_list()</span></code></a> —
+(O(N^2)) algorithm for batched small systems.</p>
+</div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">method</span></code> is not specified, <code class="docutils literal notranslate"><span class="pre">neighbor_list</span></code> automatically selects based on
+system size (greater than 5000 atoms) and whether <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> is provided.
+The crossover point depends on system density and cutoff radius—benchmark
+your workload to find the optimal threshold.</p>
+</div>
+</section>
+<section id="data-formats">
+<h2>Data Formats<a class="headerlink" href="#data-formats" title="Link to this heading">#</a></h2>
+<p>ALCHEMI Toolkit-Ops supports two output formats for neighbor data:</p>
+<p>Neighbor Matrix (default)
+: Fixed-size tensor of shape <code class="docutils literal notranslate"><span class="pre">(num_atoms,</span> <span class="pre">max_neighbors)</span></code> where each row
+contains the neighbor indices for that atom, padded with a fill value.
+Returns <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_matrix_shifts)</span></code>.</p>
+<p>Neighbor List (COO format)
+: Sparse tensor of shape <code class="docutils literal notranslate"><span class="pre">(2,</span> <span class="pre">num_pairs)</span></code> containing <code class="docutils literal notranslate"><span class="pre">[source_atoms,</span> <span class="pre">target_atoms]</span></code>.
+Returns <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code> where
+<code class="docutils literal notranslate"><span class="pre">neighbor_ptr</span></code> is a CSR-style pointer array. The first set of atoms (nominally
+<code class="docutils literal notranslate"><span class="pre">source_atoms</span></code>) is guaranteed to be sorted.</p>
+<section id="when-to-use-each-format">
+<h3>When to Use Each Format<a class="headerlink" href="#when-to-use-each-format" title="Link to this heading">#</a></h3>
+<p><strong>Neighbor Matrix</strong> is preferred when:</p>
+<ul class="simple">
+<li><p>Using <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code> (fixed memory layout avoids graph breaks)</p></li>
+<li><p>Systems have dense, uniform neighbor distributions</p></li>
+<li><p>Cache-friendly access patterns are important</p></li>
+</ul>
+<p><strong>Neighbor List (COO)</strong> is preferred when:</p>
+<ul class="simple">
+<li><p>Integrating with graph neural network libraries (PyG, DGL)</p></li>
+<li><p>Systems are sparse with highly variable neighbors per atom</p></li>
+<li><p>Memory efficiency is critical</p></li>
+</ul>
+</section>
+<section id="switching-formats">
+<h3>Switching Formats<a class="headerlink" href="#switching-formats" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Get COO format directly</span>
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Or convert from matrix format</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_neighbor_list_from_neighbor_matrix</span>
+
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">shifts_coo</span> <span class="o">=</span> <span class="n">get_neighbor_list_from_neighbor_matrix</span><span class="p">(</span>
+    <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span><span class="p">,</span> <span class="n">fill_value</span><span class="o">=</span><span class="n">num_atoms</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Setting <code class="docutils literal notranslate"><span class="pre">return_neighbor_list=True</span></code> incurs a conversion overhead. If you need
+both formats, compute the matrix format first and convert as needed.</p>
+</div>
+</section>
+</section>
+<section id="method-dispatch">
+<h2>Method Dispatch<a class="headerlink" href="#method-dispatch" title="Link to this heading">#</a></h2>
+<p>When <code class="docutils literal notranslate"><span class="pre">method=None</span></code>, <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.neighbor_list" title="nvalchemiops.neighborlist.neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">neighbor_list()</span></code></a> selects
+an algorithm using the following logic:</p>
+<ol class="arabic simple">
+<li><p>If <code class="docutils literal notranslate"><span class="pre">cutoff2</span></code> is provided, then dual cutoff method</p></li>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">total_atoms</span> <span class="pre">&gt;=</span> <span class="pre">5000</span></code>, then <code class="docutils literal notranslate"><span class="pre">&quot;cell_list&quot;</span></code></p></li>
+<li><p>Otherwise, <code class="docutils literal notranslate"><span class="pre">&quot;naive&quot;</span></code> (<span class="math notranslate nohighlight">\(N^2\)</span> scaling algorithm)</p></li>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> or <code class="docutils literal notranslate"><span class="pre">batch_ptr</span></code> is provided, then prepend <code class="docutils literal notranslate"><span class="pre">&quot;batch_&quot;</span></code> to the method</p></li>
+</ol>
+<section id="available-methods">
+<h3>Available Methods<a class="headerlink" href="#available-methods" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Algorithm</p></th>
+<th class="head"><p>Use Case</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;naive&quot;</span></code></p></td>
+<td><p>(O(N^2)) pairwise</p></td>
+<td><p>Small single systems (&lt;5000 atoms)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;cell_list&quot;</span></code></p></td>
+<td><p>(O(N)) spatial decomposition</p></td>
+<td><p>Large single systems</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;batch_naive&quot;</span></code></p></td>
+<td><p>(O(N^2)) per system</p></td>
+<td><p>Batched small systems</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;batch_cell_list&quot;</span></code></p></td>
+<td><p>(O(N)) per system</p></td>
+<td><p>Batched large systems</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;naive_dual_cutoff&quot;</span></code></p></td>
+<td><p>(O(N^2)) with two cutoffs</p></td>
+<td><p>Multi-range potentials</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;batch_naive_dual_cutoff&quot;</span></code></p></td>
+<td><p>Batched dual cutoff</p></td>
+<td><p>Batched multi-range</p></td>
+</tr>
+</tbody>
+</table>
+<p>Override automatic selection by passing the <code class="docutils literal notranslate"><span class="pre">method</span></code> parameter:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Force cell_list on a small system for testing</span>
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;cell_list&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="performance-tuning">
+<h2>Performance Tuning<a class="headerlink" href="#performance-tuning" title="Link to this heading">#</a></h2>
+<section id="key-parameters">
+<span id="nl-performance"></span><h3>Key Parameters<a class="headerlink" href="#key-parameters" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">max_neighbors</span></code>
+: Maximum neighbors per atom; determines the width of <code class="docutils literal notranslate"><span class="pre">neighbor_matrix</span></code>.
+Auto-estimated if not provided. Pass this value explicitly to <code class="docutils literal notranslate"><span class="pre">neighbor_list</span></code>
+calls if you have an accurate value to reduce memory requirements as well
+as improve kernel performance. The <code class="docutils literal notranslate"><span class="pre">estimate_max_neighbors()</span></code> method will
+otherwise provide a <strong>very</strong> conservative estimate based on atomic
+density.</p>
+<p><code class="docutils literal notranslate"><span class="pre">atomic_density</span></code>
+: Atomic density in atoms per unit volume, used by <code class="docutils literal notranslate"><span class="pre">estimate_max_neighbors()</span></code>.
+Default is 0.5. Increase for dense systems to avoid truncated neighbor lists.</p>
+<p><code class="docutils literal notranslate"><span class="pre">safety_factor</span></code>
+: Multiplier applied to the neighbor estimate. Default is 5.0. Provides
+headroom for density fluctuations.</p>
+<p><code class="docutils literal notranslate"><span class="pre">max_nbins</span></code>
+: Maximum number of spatial cells for cell list decomposition. Default is 1000.
+Limits memory usage for very large simulation boxes.</p>
+</section>
+<section id="estimation-utilities">
+<h3>Estimation Utilities<a class="headerlink" href="#estimation-utilities" title="Link to this heading">#</a></h3>
+<p>The <a class="reference internal" href="../../modules/neighborlist.html#nvalchemiops.neighborlist.estimate_max_neighbors" title="nvalchemiops.neighborlist.estimate_max_neighbors"><code class="xref py py-func docutils literal notranslate"><span class="pre">estimate_max_neighbors()</span></code></a> function estimates
+the maximum number of neighbors <span class="math notranslate nohighlight">\(n\)</span> any atom could have based on the cutoff sphere
+volume (<span class="math notranslate nohighlight">\(r\)</span>) and atomic density <span class="math notranslate nohighlight">\(\rho\)</span>, with an additional safety factor (<span class="math notranslate nohighlight">\(S\)</span>):</p>
+<div class="math notranslate nohighlight">
+\[
+n = 2^{\lceil \log_2(S \times \rho \times \frac{4}{3} \pi r^3) \rceil}
+\]</div>
+<p>The result is rounded up to the next power of 2 for memory alignment.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">estimate_max_neighbors</span><span class="p">,</span> <span class="n">estimate_cell_list_sizes</span>
+
+<span class="n">max_neighbors</span> <span class="o">=</span> <span class="n">estimate_max_neighbors</span><span class="p">(</span>
+    <span class="n">cutoff</span><span class="p">,</span>
+    <span class="n">atomic_density</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+    <span class="n">safety_factor</span><span class="o">=</span><span class="mf">1.0</span>
+<span class="p">)</span>
+
+<span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">estimate_cell_list_sizes</span><span class="p">(</span>
+    <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">max_nbins</span><span class="o">=</span><span class="mi">1000</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>Setting <code class="docutils literal notranslate"><span class="pre">atomic_density</span></code></strong>: This should reflect the expected atomic density of
+your system in atoms per unit volume (using the same length units as <code class="docutils literal notranslate"><span class="pre">cutoff</span></code>).
+If set too low, the neighbor matrix may be too narrow and neighbors will be
+silently truncated. If set too high, memory is wasted on unused columns.</p>
+<p><strong>Setting <code class="docutils literal notranslate"><span class="pre">safety_factor</span></code></strong>: This multiplier provides headroom for local density
+fluctuations (e.g., atoms clustering in one region). A value of 5.0 is
+conservative for most systems, but 1.0 is typically sufficient for “reasonable”
+structures/systems (e.g. in standard public datasets). Reduce it for
+memory-constrained scenarios where you are confident in uniform density;
+increase it for systems with significant density variation.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Users should check the “convergence” of the neighbor list computation by checking
+the respective tensor containing the number of neighbors per atom, against
+the maximum estimated number of neighbors. For optimal performance these
+two factors should be close: if the actual number of neighbors per atom is
+low relative to the estimated number, the allocated neighbor matrix will
+be very sparse and memory inefficient (i.e. most elements will be padding).
+If the actual number exceeds the estimate, neighborhoods will be truncated
+and there is no guarantee that the nearest neighbors are included.</p>
+</div>
+</section>
+<section id="pre-allocation-for-repeated-calculations">
+<h3>Pre-allocation for Repeated Calculations<a class="headerlink" href="#pre-allocation-for-repeated-calculations" title="Link to this heading">#</a></h3>
+<p>Pre-allocating output tensors avoids repeated memory allocation overhead when
+computing neighbor lists in a loop (e.g., during MD simulation or training).
+This also enables <code class="docutils literal notranslate"><span class="pre">torch.compile</span></code> compatibility by ensuring fixed tensor shapes.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span><span class="p">,</span> <span class="n">estimate_max_neighbors</span>
+
+<span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">max_neighbors</span> <span class="o">=</span> <span class="n">estimate_max_neighbors</span><span class="p">(</span><span class="n">cutoff</span><span class="p">,</span> <span class="n">atomic_density</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+
+<span class="c1"># Pre-allocate tensors</span>
+<span class="n">neighbor_matrix</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
+    <span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">),</span> <span class="n">num_atoms</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span>
+<span class="p">)</span>
+<span class="n">neighbor_matrix_shifts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+    <span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span>
+<span class="p">)</span>
+<span class="n">num_neighbors</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+
+<span class="c1"># Pass pre-allocated tensors</span>
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">neighbor_matrix</span><span class="o">=</span><span class="n">neighbor_matrix</span><span class="p">,</span>
+    <span class="n">neighbor_matrix_shifts</span><span class="o">=</span><span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+    <span class="n">num_neighbors</span><span class="o">=</span><span class="n">num_neighbors</span><span class="p">,</span>
+    <span class="n">fill_value</span><span class="o">=</span><span class="n">num_atoms</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>For cell list methods, you can also pre-allocate the spatial data structures:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">estimate_cell_list_sizes</span><span class="p">,</span> <span class="n">allocate_cell_list</span><span class="p">,</span> <span class="n">neighbor_list</span>
+<span class="p">)</span>
+
+<span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">estimate_cell_list_sizes</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">)</span>
+
+<span class="p">(</span>
+    <span class="n">cells_per_dimension</span><span class="p">,</span> <span class="n">neighbor_search_radius</span><span class="p">,</span>
+    <span class="n">atom_periodic_shifts</span><span class="p">,</span> <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+    <span class="n">atoms_per_cell_count</span><span class="p">,</span> <span class="n">cell_atom_start_indices</span><span class="p">,</span> <span class="n">cell_atom_list</span>
+<span class="p">)</span> <span class="o">=</span> <span class="n">allocate_cell_list</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">cells_per_dimension</span><span class="o">=</span><span class="n">cells_per_dimension</span><span class="p">,</span>
+    <span class="n">neighbor_search_radius</span><span class="o">=</span><span class="n">neighbor_search_radius</span><span class="p">,</span>
+    <span class="n">atom_periodic_shifts</span><span class="o">=</span><span class="n">atom_periodic_shifts</span><span class="p">,</span>
+    <span class="n">atom_to_cell_mapping</span><span class="o">=</span><span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+    <span class="n">atoms_per_cell_count</span><span class="o">=</span><span class="n">atoms_per_cell_count</span><span class="p">,</span>
+    <span class="n">cell_atom_start_indices</span><span class="o">=</span><span class="n">cell_atom_start_indices</span><span class="p">,</span>
+    <span class="n">cell_atom_list</span><span class="o">=</span><span class="n">cell_atom_list</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>If <code class="docutils literal notranslate"><span class="pre">max_neighbors</span></code> is too small, neighbors beyond that limit are silently
+dropped. Monitor <code class="docutils literal notranslate"><span class="pre">num_neighbors.max()</span></code> against your <code class="docutils literal notranslate"><span class="pre">max_neighbors</span></code> setting
+to detect truncation.</p>
+</div>
+</section>
+</section>
+<section id="usage-patterns">
+<h2>Usage Patterns<a class="headerlink" href="#usage-patterns" title="Link to this heading">#</a></h2>
+<section id="basic-single-system">
+<h3>Basic Single System<a class="headerlink" href="#basic-single-system" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Create atomic system</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">1000</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="mf">10.0</span>
+<span class="n">cell</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">*</span> <span class="mf">10.0</span>
+<span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="n">cutoff</span> <span class="o">=</span> <span class="mf">5.0</span>
+
+<span class="c1"># Compute neighbors (automatic method selection)</span>
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Average neighbors: </span><span class="si">{</span><span class="n">num_neighbors</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="batch-processing">
+<h3>Batch Processing<a class="headerlink" href="#batch-processing" title="Link to this heading">#</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Three systems of different sizes</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>   <span class="c1"># System 0</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">150</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>   <span class="c1"># System 1</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">80</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>    <span class="c1"># System 2</span>
+<span class="p">])</span>
+
+<span class="n">batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">150</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="mi">80</span><span class="p">,),</span> <span class="mi">2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">),</span>
+<span class="p">])</span>
+
+<span class="n">cells</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="mf">10.0</span><span class="p">,</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="mf">12.0</span><span class="p">,</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span> <span class="o">*</span> <span class="mf">8.0</span><span class="p">,</span>
+<span class="p">])</span>
+
+<span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span>
+    <span class="p">[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">],</span>
+    <span class="p">[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">False</span><span class="p">],</span>
+    <span class="p">[</span><span class="kc">False</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="kc">False</span><span class="p">],</span>
+<span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="half-fill-mode">
+<h3>Half-Fill Mode<a class="headerlink" href="#half-fill-mode" title="Link to this heading">#</a></h3>
+<p>Store only half of neighbor pairs to avoid double-counting in symmetric
+calculations:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Full: stores both (i,j) and (j,i)</span>
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">half_fill</span><span class="o">=</span><span class="kc">False</span>
+<span class="p">)</span>
+
+<span class="c1"># Half: stores only (i,j) where i &lt; j (or with non-zero periodic shift)</span>
+<span class="n">neighbor_matrix_half</span><span class="p">,</span> <span class="n">num_neighbors_half</span><span class="p">,</span> <span class="n">shifts_half</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">half_fill</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># half_fill=True produces ~50% of the pairs</span>
+</pre></div>
+</div>
+</section>
+<section id="build-query-separation-for-md-workflows">
+<h3>Build/Query Separation for MD Workflows<a class="headerlink" href="#build-query-separation-for-md-workflows" title="Link to this heading">#</a></h3>
+<p>For molecular dynamics, separate building and querying allows caching the
+spatial data structure:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">build_cell_list</span><span class="p">,</span> <span class="n">query_cell_list</span><span class="p">,</span>
+    <span class="n">allocate_cell_list</span><span class="p">,</span> <span class="n">estimate_cell_list_sizes</span><span class="p">,</span> <span class="n">estimate_max_neighbors</span>
+<span class="p">)</span>
+
+<span class="c1"># Setup (once)</span>
+<span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">estimate_cell_list_sizes</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">)</span>
+<span class="n">cell_list_cache</span> <span class="o">=</span> <span class="n">allocate_cell_list</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+<span class="n">max_neighbors</span> <span class="o">=</span> <span class="n">estimate_max_neighbors</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span>
+<span class="n">neighbor_matrix</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">num_neighbors</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+<span class="c1"># MD loop</span>
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_steps</span><span class="p">):</span>
+    <span class="c1"># Build cell list (expensive, done when atoms change cells)</span>
+    <span class="n">build_cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">)</span>
+
+    <span class="c1"># Query neighbors (cheaper)</span>
+    <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">fill_</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">neighbor_shifts</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">num_neighbors</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">query_cell_list</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">,</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="p">,</span> <span class="n">num_neighbors</span>
+    <span class="p">)</span>
+
+    <span class="n">forces</span> <span class="o">=</span> <span class="n">compute_forces</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">integrate</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="rebuild-detection-with-skin-distance">
+<h3>Rebuild Detection with Skin Distance<a class="headerlink" href="#rebuild-detection-with-skin-distance" title="Link to this heading">#</a></h3>
+<p>Avoid rebuilding neighbor lists every step by using a skin distance:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">build_cell_list</span><span class="p">,</span> <span class="n">query_cell_list</span><span class="p">,</span> <span class="n">cell_list_needs_rebuild</span><span class="p">,</span>
+    <span class="n">allocate_cell_list</span><span class="p">,</span> <span class="n">estimate_cell_list_sizes</span>
+<span class="p">)</span>
+
+<span class="n">cutoff</span> <span class="o">=</span> <span class="mf">5.0</span>
+<span class="n">skin_distance</span> <span class="o">=</span> <span class="mf">1.0</span>
+<span class="n">effective_cutoff</span> <span class="o">=</span> <span class="n">cutoff</span> <span class="o">+</span> <span class="n">skin_distance</span>
+
+<span class="c1"># Build with effective cutoff (includes skin)</span>
+<span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">estimate_cell_list_sizes</span><span class="p">(</span>
+    <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">effective_cutoff</span>
+<span class="p">)</span>
+<span class="n">cell_list_cache</span> <span class="o">=</span> <span class="n">allocate_cell_list</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+<span class="p">(</span>
+    <span class="n">cells_per_dimension</span><span class="p">,</span> <span class="n">neighbor_search_radius</span><span class="p">,</span>
+    <span class="n">atom_periodic_shifts</span><span class="p">,</span> <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+    <span class="n">atoms_per_cell_count</span><span class="p">,</span> <span class="n">cell_atom_start_indices</span><span class="p">,</span> <span class="n">cell_atom_list</span>
+<span class="p">)</span> <span class="o">=</span> <span class="n">cell_list_cache</span>
+
+<span class="n">build_cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">effective_cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">step</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_steps</span><span class="p">):</span>
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">integrate</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
+
+    <span class="c1"># Check if any atom moved to a different cell</span>
+    <span class="n">needs_rebuild</span> <span class="o">=</span> <span class="n">cell_list_needs_rebuild</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span> <span class="n">atom_to_cell_mapping</span><span class="p">,</span> <span class="n">cells_per_dimension</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">needs_rebuild</span><span class="o">.</span><span class="n">item</span><span class="p">():</span>
+        <span class="n">build_cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">effective_cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">)</span>
+
+    <span class="c1"># Query with actual cutoff (not effective)</span>
+    <span class="n">query_cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="dual-cutoff">
+<h3>Dual Cutoff<a class="headerlink" href="#dual-cutoff" title="Link to this heading">#</a></h3>
+<p>Compute two neighbor lists with different cutoffs simultaneously:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="n">cutoff1</span><span class="p">,</span> <span class="n">cutoff2</span> <span class="o">=</span> <span class="mf">3.0</span><span class="p">,</span> <span class="mf">6.0</span>
+
+<span class="p">(</span>
+    <span class="n">neighbor_matrix1</span><span class="p">,</span> <span class="n">num_neighbors1</span><span class="p">,</span> <span class="n">shifts1</span><span class="p">,</span>
+    <span class="n">neighbor_matrix2</span><span class="p">,</span> <span class="n">num_neighbors2</span><span class="p">,</span> <span class="n">shifts2</span>
+<span class="p">)</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff1</span><span class="p">,</span> <span class="n">cutoff2</span><span class="o">=</span><span class="n">cutoff2</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+<span class="p">)</span>
+
+<span class="c1"># neighbor_matrix1: neighbors within cutoff1</span>
+<span class="c1"># neighbor_matrix2: neighbors within cutoff2 (superset of cutoff1)</span>
+</pre></div>
+</div>
+<hr class="docutils" />
+<p>This concludes the high-level documentation for neighbor lists: you should now
+be able to integrate <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> routines for your neighbor list requirements,
+and consult the <a class="reference internal" href="../../modules/neighborlist.html"><span class="doc std std-doc">API reference</span></a> for further details.</p>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../about/faq.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Frequently Asked Questions</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="dispersion.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">DFT-D3(BJ) Dispersion Correction</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-neighbor-lists-matter-for-performance">Why Neighbor Lists Matter for Performance</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#quick-start">Quick Start</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-formats">Data Formats</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-to-use-each-format">When to Use Each Format</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#switching-formats">Switching Formats</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#method-dispatch">Method Dispatch</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#available-methods">Available Methods</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#performance-tuning">Performance Tuning</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#key-parameters">Key Parameters</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#estimation-utilities">Estimation Utilities</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pre-allocation-for-repeated-calculations">Pre-allocation for Repeated Calculations</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#usage-patterns">Usage Patterns</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#basic-single-system">Basic Single System</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-processing">Batch Processing</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#half-fill-mode">Half-Fill Mode</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#build-query-separation-for-md-workflows">Build/Query Separation for MD Workflows</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#rebuild-detection-with-skin-distance">Rebuild Detection with Skin Distance</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dual-cutoff">Dual Cutoff</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/userguide/components/neighborlist.md.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

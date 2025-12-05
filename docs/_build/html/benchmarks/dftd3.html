@@ -1,0 +1,778 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>DFT-D3 Dispersion Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'benchmarks/dftd3';</script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="API Reference" href="../modules/index.html" />
+    <link rel="prev" title="Neighbor List Benchmarks" href="neighborlist.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="neighborlist.html">Neighbor List Benchmarks</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">DFT-D3 Dispersion Benchmarks</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Benchmarks</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">DFT-D3...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="dft-d3-dispersion-benchmarks">
+<h1>DFT-D3 Dispersion Benchmarks<a class="headerlink" href="#dft-d3-dispersion-benchmarks" title="Link to this heading">#</a></h1>
+<p>This page presents benchmark results for DFT-D3 dispersion corrections across different
+GPU hardware. Results show the scaling behavior with increasing system size for
+periodic systems, including both single-system and batched computations.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>These results are intended to be indicative <em>only</em>: your actual performance may
+vary depending on the atomic system topology, software and hardware configuration
+and we encourage users to benchmark on their own systems of interest.</p>
+</div>
+<section id="how-to-read-these-charts">
+<h2>How to Read These Charts<a class="headerlink" href="#how-to-read-these-charts" title="Link to this heading">#</a></h2>
+<p>Time Scaling
+: Median execution time (ms) vs. system size. Lower is better. Timings exclude
+neighbor list construction, and only comprises the DFT-D3 computation.</p>
+<p>Throughput
+: Atoms processed per millisecond. Higher is better. This indicates where
+the scaling point where the GPU saturates.</p>
+<p>Memory
+: Peak GPU memory usage (MB) vs. system size. This is particularly useful
+for estimating/gauging memory requirements for your system.</p>
+</section>
+<section id="performance-results">
+<h2>Performance Results<a class="headerlink" href="#performance-results" title="Link to this heading">#</a></h2>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-0">
+Backend Comparison</label><div class="sd-tab-content docutils">
+<p>Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the supercell.</p>
+<p class="rubric" id="time-scaling">Time Scaling</p>
+<figure class="align-center" id="id7">
+<a class="reference internal image-reference" href="../_images/dftd3_scaling_comparison_h100-80gb-hbm3.png"><img alt="DFT-D3 backend time comparison" src="../_images/dftd3_scaling_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Median execution time comparison between backends for single systems.</span><a class="headerlink" href="#id7" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="throughput">Throughput</p>
+<figure class="align-center" id="id8">
+<a class="reference internal image-reference" href="../_images/dftd3_throughput_comparison_h100-80gb-hbm3.png"><img alt="DFT-D3 backend throughput comparison" src="../_images/dftd3_throughput_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.</span><a class="headerlink" href="#id8" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="memory-usage">Memory Usage</p>
+<figure class="align-center" id="id9">
+<a class="reference internal image-reference" href="../_images/dftd3_memory_comparison_h100-80gb-hbm3.png"><img alt="DFT-D3 backend memory comparison" src="../_images/dftd3_memory_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption comparison between backends. Lower is better,
+indicating that the backend has lower memory requirements.</span><a class="headerlink" href="#id9" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-1">
+nvalchemiops</label><div class="sd-tab-content docutils">
+<p>Scaling of single and batched computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id1">Time Scaling</p>
+<figure class="align-center" id="id10">
+<a class="reference internal image-reference" href="../_images/dftd3_scaling_nvalchemiops_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops time scaling" src="../_images/dftd3_scaling_nvalchemiops_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id10" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id2">Throughput</p>
+<figure class="align-center" id="id11">
+<a class="reference internal image-reference" href="../_images/dftd3_throughput_nvalchemiops_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops throughput" src="../_images/dftd3_throughput_nvalchemiops_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id11" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id3">Memory Usage</p>
+<figure class="align-center" id="id12">
+<a class="reference internal image-reference" href="../_images/dftd3_memory_nvalchemiops_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops memory usage" src="../_images/dftd3_memory_nvalchemiops_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id12" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-2">
+torch-dftd</label><div class="sd-tab-content docutils">
+<p>Scaling of single and batched computation with the <code class="docutils literal notranslate"><span class="pre">torch-dftd</span></code> backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id4">Time Scaling</p>
+<figure class="align-center" id="id13">
+<a class="reference internal image-reference" href="../_images/dftd3_scaling_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd time scaling" src="../_images/dftd3_scaling_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id13" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id5">Throughput</p>
+<figure class="align-center" id="id14">
+<a class="reference internal image-reference" href="../_images/dftd3_throughput_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd throughput" src="../_images/dftd3_throughput_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id14" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id6">Memory Usage</p>
+<figure class="align-center" id="id15">
+<a class="reference internal image-reference" href="../_images/dftd3_memory_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd memory usage" src="../_images/dftd3_memory_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id15" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
+</section>
+<section id="hardware-information">
+<h2>Hardware Information<a class="headerlink" href="#hardware-information" title="Link to this heading">#</a></h2>
+<p><strong>GPU</strong>: NVIDIA H100 80GB HBM3</p>
+</section>
+<section id="benchmark-configuration">
+<h2>Benchmark Configuration<a class="headerlink" href="#benchmark-configuration" title="Link to this heading">#</a></h2>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Cutoff</p></td>
+<td><p>21.2 Å (40 Bohr)</p></td>
+</tr>
+<tr class="row-odd"><td><p>System Type</p></td>
+<td><p>CsCl supercells with periodic boundaries</p></td>
+</tr>
+<tr class="row-even"><td><p>Neighbor List</p></td>
+<td><p>Cell list algorithm (<span class="math notranslate nohighlight">\(O(N)\)</span> scaling)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Warmup Iterations</p></td>
+<td><p>3</p></td>
+</tr>
+<tr class="row-even"><td><p>Timing Iterations</p></td>
+<td><p>10</p></td>
+</tr>
+<tr class="row-odd"><td><p>Precision</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float32</span></code></p></td>
+</tr>
+</tbody>
+</table>
+<section id="dft-d3-parameters">
+<h3>DFT-D3 Parameters<a class="headerlink" href="#dft-d3-parameters" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Functional</p></td>
+<td><p>BJ-damping</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">a1</span></code></p></td>
+<td><p>0.4289</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">a2</span></code></p></td>
+<td><p>4.4407</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">s6</span></code></p></td>
+<td><p>1.0</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">s8</span></code></p></td>
+<td><p>0.7875</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="interpreting-results">
+<h2>Interpreting Results<a class="headerlink" href="#interpreting-results" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">total_atoms</span></code>
+: Total number of atoms in the supercell.</p>
+<p><code class="docutils literal notranslate"><span class="pre">batch_size</span></code>
+: Number of systems processed simultaneously.</p>
+<p><code class="docutils literal notranslate"><span class="pre">supercell_size</span></code>
+: Linear dimension of supercell (<span class="math notranslate nohighlight">\(n^3\)</span>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">total_neighbors</span></code>
+: Total number of neighbor pairs within cutoff.</p>
+<p><code class="docutils literal notranslate"><span class="pre">median_time_ms</span></code>
+: Median execution time in milliseconds (lower is better).</p>
+<p><code class="docutils literal notranslate"><span class="pre">peak_memory_mb</span></code>
+: Peak GPU memory usage in megabytes.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Timings exclude neighbor list construction and only measure the DFT-D3
+energy/force calculation.</p>
+</div>
+</section>
+<section id="running-your-own-benchmarks">
+<h2>Running Your Own Benchmarks<a class="headerlink" href="#running-your-own-benchmarks" title="Link to this heading">#</a></h2>
+<p>To generate benchmark results for your hardware:</p>
+<section id="nvalchemiops-backend-default">
+<h3><code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Backend (default)<a class="headerlink" href="#nvalchemiops-backend-default" title="Link to this heading">#</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/dispersion
+python<span class="w"> </span>benchmark_dftd3.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>warp<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output-dir<span class="w"> </span>../../../docs/benchmarks/benchmark_results
+</pre></div>
+</div>
+</section>
+<section id="torch-dftd-backend">
+<h3><code class="docutils literal notranslate"><span class="pre">torch-dftd</span></code> Backend<a class="headerlink" href="#torch-dftd-backend" title="Link to this heading">#</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/dispersion
+python<span class="w"> </span>benchmark_dftd3.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>torch_dftd<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output-dir<span class="w"> </span>../../../docs/benchmarks/benchmark_results
+</pre></div>
+</div>
+</section>
+<section id="options">
+<h3>Options<a class="headerlink" href="#options" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">{warp,torch_dftd}</span></code>
+: Select backend (default: <code class="docutils literal notranslate"><span class="pre">warp</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">--gpu-sku</span> <span class="pre">&lt;name&gt;</span></code>
+: Override GPU SKU name for output files (default: auto-detect).</p>
+<p><code class="docutils literal notranslate"><span class="pre">--config</span> <span class="pre">&lt;path&gt;</span></code>
+: Path to YAML configuration file.</p>
+<p>Results will be saved as CSV files and plots will be automatically generated
+during the next documentation build.</p>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="neighborlist.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Neighbor List Benchmarks</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../modules/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">API Reference</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-read-these-charts">How to Read These Charts</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#performance-results">Performance Results</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hardware-information">Hardware Information</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-configuration">Benchmark Configuration</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dft-d3-parameters">DFT-D3 Parameters</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#interpreting-results">Interpreting Results</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-your-own-benchmarks">Running Your Own Benchmarks</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops-backend-default"><code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Backend (default)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#torch-dftd-backend"><code class="docutils literal notranslate"><span class="pre">torch-dftd</span></code> Backend</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#options">Options</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../_sources/benchmarks/dftd3.md.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

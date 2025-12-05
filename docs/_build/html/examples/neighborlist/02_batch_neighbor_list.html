@@ -1,0 +1,1052 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Batch Neighbor List Example &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'examples/neighborlist/02_batch_neighbor_list';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Neighbor List Rebuild Detection Example" href="03_rebuild_neighborlist_detection.html" />
+    <link rel="prev" title="Simple Neighbor List Example" href="01_simple_neighbor_list.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../interactions/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../interactions/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+
+<li class="toctree-l2"><a class="reference internal" href="../interactions/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Batch Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Examples Gallery</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Neighbor Lists</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Batch...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-examples-neighborlist-02-batch-neighbor-list-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="batch-neighbor-list-example">
+<span id="sphx-glr-examples-neighborlist-02-batch-neighbor-list-py"></span><h1>Batch Neighbor List Example<a class="headerlink" href="#batch-neighbor-list-example" title="Link to this heading">#</a></h1>
+<p>This example demonstrates how to use the batch neighbor list functions in nvalchemiops
+with multiple molecular and crystalline systems.
+We’ll cover:</p>
+<ul class="simple">
+<li><p>batch_cell_list: Batch O(N) processing with spatial cell lists</p></li>
+<li><p>batch_naive_neighbor_list: Batch O(N²) processing for small systems</p></li>
+<li><p>Using batch_idx to identify which system each atom belongs to</p></li>
+<li><p>Processing heterogeneous batches with different sizes and parameters</p></li>
+<li><p>Comparing batch vs single-system processing</p></li>
+</ul>
+<p>Batch processing allows efficient computation of neighbor lists for multiple systems
+simultaneously, which is essential for high-throughput molecular screening and
+ensemble simulations.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">system_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_bulk_structure</span><span class="p">,</span> <span class="n">create_molecule_structure</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">batch_cell_list</span><span class="p">,</span>
+    <span class="n">batch_naive_neighbor_list</span><span class="p">,</span>
+    <span class="n">cell_list</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="set-up-the-computation-device">
+<h1>Set up the computation device<a class="headerlink" href="#set-up-the-computation-device" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+<span class="n">dtype</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using device: </span><span class="si">{</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using dtype: </span><span class="si">{</span><span class="n">dtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Using device: cuda
+Using dtype: torch.float32
+</pre></div>
+</div>
+</section>
+<section id="create-multiple-systems">
+<h1>Create multiple systems<a class="headerlink" href="#create-multiple-systems" title="Link to this heading">#</a></h1>
+<p>We’ll create a diverse set of molecular and crystalline systems</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;CREATING SYSTEMS&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Create molecular systems</span>
+<span class="n">water</span> <span class="o">=</span> <span class="n">create_molecule_structure</span><span class="p">(</span><span class="s2">&quot;H2O&quot;</span><span class="p">,</span> <span class="n">box_size</span><span class="o">=</span><span class="mf">15.0</span><span class="p">)</span>
+<span class="n">co2</span> <span class="o">=</span> <span class="n">create_molecule_structure</span><span class="p">(</span><span class="s2">&quot;CO2&quot;</span><span class="p">,</span> <span class="n">box_size</span><span class="o">=</span><span class="mf">12.0</span><span class="p">)</span>
+<span class="n">methane</span> <span class="o">=</span> <span class="n">create_molecule_structure</span><span class="p">(</span><span class="s2">&quot;CH4&quot;</span><span class="p">,</span> <span class="n">box_size</span><span class="o">=</span><span class="mf">10.0</span><span class="p">)</span>
+
+<span class="c1"># Create a small crystalline system</span>
+<span class="n">fcc_al</span> <span class="o">=</span> <span class="n">create_bulk_structure</span><span class="p">(</span><span class="s2">&quot;Al&quot;</span><span class="p">,</span> <span class="s2">&quot;fcc&quot;</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="mf">4.05</span><span class="p">,</span> <span class="n">cubic</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="c1"># Create 2x2x2 supercell</span>
+<span class="n">fcc_al</span><span class="o">.</span><span class="n">make_supercell</span><span class="p">([</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>
+
+<span class="c1"># Collect all systems</span>
+<span class="n">systems</span> <span class="o">=</span> <span class="p">[</span><span class="n">water</span><span class="p">,</span> <span class="n">co2</span><span class="p">,</span> <span class="n">methane</span><span class="p">,</span> <span class="n">fcc_al</span><span class="p">]</span>
+<span class="n">system_names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;H2O&quot;</span><span class="p">,</span> <span class="s2">&quot;CO2&quot;</span><span class="p">,</span> <span class="s2">&quot;CH4&quot;</span><span class="p">,</span> <span class="s2">&quot;Al-fcc(2x2x2)&quot;</span><span class="p">]</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Created </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">systems</span><span class="p">)</span><span class="si">}</span><span class="s2"> systems:&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">system</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">system_names</span><span class="p">,</span> <span class="n">systems</span><span class="p">):</span>
+    <span class="n">lattice_abc</span> <span class="o">=</span> <span class="n">system</span><span class="o">.</span><span class="n">lattice</span><span class="o">.</span><span class="n">abc</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">system</span><span class="p">)</span><span class="si">}</span><span class="s2"> atoms, cell: [</span><span class="si">{</span><span class="n">lattice_abc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">lattice_abc</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">lattice_abc</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">]&quot;</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+CREATING SYSTEMS
+======================================================================
+
+Created 4 systems:
+  H2O: 3 atoms, cell: [15.00, 15.00, 15.00]
+  CO2: 3 atoms, cell: [12.00, 12.00, 12.00]
+  CH4: 5 atoms, cell: [10.00, 10.00, 10.00]
+  Al-fcc(2x2x2): 32 atoms, cell: [8.10, 8.10, 8.10]
+</pre></div>
+</div>
+</section>
+<section id="convert-systems-to-batch-format">
+<h1>Convert systems to batch format<a class="headerlink" href="#convert-systems-to-batch-format" title="Link to this heading">#</a></h1>
+<p>Combine all systems into the batch format required by nvalchemiops</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;CONVERTING TO BATCH FORMAT&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Extract positions, cells, and PBC from all systems</span>
+<span class="n">all_positions</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">all_cells</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">all_pbc</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">batch_indices</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="k">for</span> <span class="n">sys_idx</span><span class="p">,</span> <span class="n">system</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">systems</span><span class="p">):</span>
+    <span class="n">all_positions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">system</span><span class="o">.</span><span class="n">cart_coords</span><span class="p">)</span>
+    <span class="n">all_cells</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">system</span><span class="o">.</span><span class="n">lattice</span><span class="o">.</span><span class="n">matrix</span><span class="p">)</span>
+    <span class="n">all_pbc</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">])</span>
+    <span class="p">)</span>  <span class="c1"># pymatgen structures are always periodic</span>
+    <span class="c1"># Create batch_idx: which system does each atom belong to</span>
+    <span class="n">batch_indices</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">sys_idx</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">system</span><span class="p">))</span>
+
+<span class="c1"># Convert to torch tensors</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">vstack</span><span class="p">(</span><span class="n">all_positions</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">cells</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">all_cells</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+<span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">all_pbc</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+<span class="n">batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">batch_indices</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+<span class="c1"># Define single cutoff for all systems</span>
+<span class="n">cutoff</span> <span class="o">=</span> <span class="mf">5.0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Batch configuration:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total atoms: </span><span class="si">{</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Number of systems: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">systems</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  batch_idx shape: </span><span class="si">{</span><span class="n">batch_idx</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Cutoff: </span><span class="si">{</span><span class="n">cutoff</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+
+<span class="c1"># Show batch_idx distribution</span>
+<span class="n">atom_counts</span> <span class="o">=</span> <span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">system</span><span class="p">)</span> <span class="k">for</span> <span class="n">system</span> <span class="ow">in</span> <span class="n">systems</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">  Atoms per system: </span><span class="si">{</span><span class="n">atom_counts</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">sys_idx</span><span class="p">,</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">count</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">system_names</span><span class="p">,</span> <span class="n">atom_counts</span><span class="p">)):</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="o">==</span> <span class="n">sys_idx</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    System </span><span class="si">{</span><span class="n">sys_idx</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> atoms (batch_idx=</span><span class="si">{</span><span class="n">sys_idx</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+CONVERTING TO BATCH FORMAT
+======================================================================
+
+Batch configuration:
+  Total atoms: 43
+  Number of systems: 4
+  batch_idx shape: torch.Size([43])
+  Cutoff: 5.0 Å
+
+  Atoms per system: [3, 3, 5, 32]
+    System 0 (H2O): 3 atoms (batch_idx=0)
+    System 1 (CO2): 3 atoms (batch_idx=1)
+    System 2 (CH4): 5 atoms (batch_idx=2)
+    System 3 (Al-fcc(2x2x2)): 32 atoms (batch_idx=3)
+</pre></div>
+</div>
+</section>
+<section id="method-1-batch-cell-list-algorithm-o-n">
+<h1>Method 1: Batch Cell List Algorithm (O(N))<a class="headerlink" href="#method-1-batch-cell-list-algorithm-o-n" title="Link to this heading">#</a></h1>
+<p>Process all systems simultaneously with cell list algorithm</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;METHOD 1: BATCH CELL LIST (O(N))&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Return neighbor matrix format (default)</span>
+<span class="n">neighbor_matrix_batch</span><span class="p">,</span> <span class="n">num_neighbors_batch</span><span class="p">,</span> <span class="n">shifts_batch</span> <span class="o">=</span> <span class="n">batch_cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">batch_idx</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Returned neighbor matrix: </span><span class="si">{</span><span class="n">neighbor_matrix_batch</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total neighbor pairs: </span><span class="si">{</span><span class="n">num_neighbors_batch</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Average neighbors per atom: </span><span class="si">{</span><span class="n">num_neighbors_batch</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Or return neighbor list (COO) format</span>
+<span class="n">neighbor_list_batch</span><span class="p">,</span> <span class="n">neighbor_ptr_batch</span><span class="p">,</span> <span class="n">shifts_coo</span> <span class="o">=</span> <span class="n">batch_cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Returned neighbor list (COO): </span><span class="si">{</span><span class="n">neighbor_list_batch</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total pairs: </span><span class="si">{</span><span class="n">neighbor_list_batch</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Neighbor ptr shape: </span><span class="si">{</span><span class="n">neighbor_ptr_batch</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Analyze results per system</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Pairs per system:&quot;</span><span class="p">)</span>
+<span class="n">start_idx</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="k">for</span> <span class="n">sys_idx</span><span class="p">,</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">count</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">system_names</span><span class="p">,</span> <span class="n">atom_counts</span><span class="p">)):</span>
+    <span class="n">end_idx</span> <span class="o">=</span> <span class="n">start_idx</span> <span class="o">+</span> <span class="n">count</span>
+    <span class="n">system_num_neighbors</span> <span class="o">=</span> <span class="n">num_neighbors_batch</span><span class="p">[</span><span class="n">start_idx</span><span class="p">:</span><span class="n">end_idx</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">avg_neighbors</span> <span class="o">=</span> <span class="n">system_num_neighbors</span> <span class="o">/</span> <span class="n">count</span> <span class="k">if</span> <span class="n">count</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">system_num_neighbors</span><span class="si">}</span><span class="s2"> pairs, </span><span class="si">{</span><span class="n">avg_neighbors</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> neighbors/atom&quot;</span><span class="p">)</span>
+    <span class="n">start_idx</span> <span class="o">=</span> <span class="n">end_idx</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+METHOD 1: BATCH CELL LIST (O(N))
+======================================================================
+
+Returned neighbor matrix: torch.Size([43, 2048])
+  Total neighbor pairs: 1376
+  Average neighbors per atom: 32.00
+
+Returned neighbor list (COO): torch.Size([2, 1376])
+  Total pairs: 1376
+  Neighbor ptr shape: torch.Size([44])
+
+Pairs per system:
+  H2O: 6 pairs, 2.0 neighbors/atom
+  CO2: 6 pairs, 2.0 neighbors/atom
+  CH4: 20 pairs, 4.0 neighbors/atom
+  Al-fcc(2x2x2): 1344 pairs, 42.0 neighbors/atom
+</pre></div>
+</div>
+</section>
+<section id="method-2-batch-naive-algorithm-o-n2">
+<h1>Method 2: Batch Naive Algorithm (O(N²))<a class="headerlink" href="#method-2-batch-naive-algorithm-o-n2" title="Link to this heading">#</a></h1>
+<p>For comparison, use naive algorithm on batch of small systems</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;METHOD 2: BATCH NAIVE ALGORITHM (O(N²))&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Create batch of small systems for naive algorithm demo</span>
+<span class="n">small_systems</span> <span class="o">=</span> <span class="p">[</span><span class="n">water</span><span class="p">,</span> <span class="n">co2</span><span class="p">,</span> <span class="n">methane</span><span class="p">]</span>  <span class="c1"># Exclude larger Al crystal</span>
+<span class="n">small_system_names</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;H2O&quot;</span><span class="p">,</span> <span class="s2">&quot;CO2&quot;</span><span class="p">,</span> <span class="s2">&quot;CH4&quot;</span><span class="p">]</span>
+
+<span class="c1"># Convert to batch format</span>
+<span class="n">small_positions_list</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">cart_coords</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">small_systems</span>
+<span class="p">]</span>
+<span class="n">small_positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">small_positions_list</span><span class="p">)</span>
+
+<span class="n">small_cells</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">lattice</span><span class="o">.</span><span class="n">matrix</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">small_systems</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="n">small_pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">small_systems</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="c1"># Create batch_idx</span>
+<span class="n">small_batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span>
+    <span class="p">[</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">),),</span> <span class="n">i</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">small_systems</span><span class="p">)</span>
+    <span class="p">]</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Small systems batch: </span><span class="si">{</span><span class="n">small_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> total atoms&quot;</span><span class="p">)</span>
+
+<span class="c1"># Batch naive neighbor list</span>
+<span class="n">neighbor_matrix_naive</span><span class="p">,</span> <span class="n">num_neighbors_naive</span><span class="p">,</span> <span class="n">shifts_naive</span> <span class="o">=</span> <span class="n">batch_naive_neighbor_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">small_batch_idx</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">small_cells</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">small_pbc</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Returned neighbor matrix: </span><span class="si">{</span><span class="n">neighbor_matrix_naive</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total neighbor pairs: </span><span class="si">{</span><span class="n">num_neighbors_naive</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Compare with batch cell list on same systems</span>
+<span class="n">neighbor_matrix_cell</span><span class="p">,</span> <span class="n">num_neighbors_cell</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">batch_cell_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cells</span><span class="p">,</span> <span class="n">small_pbc</span><span class="p">,</span> <span class="n">small_batch_idx</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Verification (naive vs cell list):&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Naive total pairs: </span><span class="si">{</span><span class="n">num_neighbors_naive</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Cell list total pairs: </span><span class="si">{</span><span class="n">num_neighbors_cell</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_naive</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_cell</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+METHOD 2: BATCH NAIVE ALGORITHM (O(N²))
+======================================================================
+Small systems batch: 11 total atoms
+Returned neighbor matrix: torch.Size([11, 2048])
+Total neighbor pairs: 32
+
+Verification (naive vs cell list):
+  Naive total pairs: 32
+  Cell list total pairs: 32
+  Results match: True
+</pre></div>
+</div>
+</section>
+<section id="extract-individual-system-results-from-batch">
+<h1>Extract individual system results from batch<a class="headerlink" href="#extract-individual-system-results-from-batch" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;EXTRACTING INDIVIDUAL SYSTEM RESULTS&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_system_neighbors</span><span class="p">(</span><span class="n">system_idx</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract neighbor list for a specific system from batch results (COO format).&quot;&quot;&quot;</span>
+    <span class="n">source_atoms</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">target_atoms</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Get atom range for this system</span>
+    <span class="n">system_mask</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="o">==</span> <span class="n">system_idx</span>
+    <span class="n">system_atom_indices</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">system_mask</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">first_atom</span> <span class="o">=</span> <span class="n">system_atom_indices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">last_atom</span> <span class="o">=</span> <span class="n">system_atom_indices</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="c1"># Find pairs where source atom belongs to this system</span>
+    <span class="n">pair_mask</span> <span class="o">=</span> <span class="p">(</span><span class="n">source_atoms</span> <span class="o">&gt;=</span> <span class="n">first_atom</span><span class="p">)</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">source_atoms</span> <span class="o">&lt;=</span> <span class="n">last_atom</span><span class="p">)</span>
+
+    <span class="c1"># Extract and adjust indices to be local to the system</span>
+    <span class="n">system_source</span> <span class="o">=</span> <span class="n">source_atoms</span><span class="p">[</span><span class="n">pair_mask</span><span class="p">]</span> <span class="o">-</span> <span class="n">first_atom</span>
+    <span class="n">system_target</span> <span class="o">=</span> <span class="n">target_atoms</span><span class="p">[</span><span class="n">pair_mask</span><span class="p">]</span> <span class="o">-</span> <span class="n">first_atom</span>
+
+    <span class="k">return</span> <span class="n">system_source</span><span class="p">,</span> <span class="n">system_target</span><span class="p">,</span> <span class="n">pair_mask</span>
+
+
+<span class="c1"># Analyze each system individually</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Per-system analysis:&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">sys_idx</span><span class="p">,</span> <span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">systems</span><span class="p">,</span> <span class="n">system_names</span><span class="p">)):</span>
+    <span class="n">sys_source</span><span class="p">,</span> <span class="n">sys_target</span><span class="p">,</span> <span class="n">pair_mask</span> <span class="o">=</span> <span class="n">extract_system_neighbors</span><span class="p">(</span>
+        <span class="n">sys_idx</span><span class="p">,</span> <span class="n">neighbor_list_batch</span><span class="p">,</span> <span class="n">batch_idx</span>
+    <span class="p">)</span>
+
+    <span class="n">n_atoms</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">system</span><span class="p">)</span>
+    <span class="n">n_pairs</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">sys_source</span><span class="p">)</span>
+    <span class="n">avg_neighbors</span> <span class="o">=</span> <span class="n">n_pairs</span> <span class="o">/</span> <span class="n">n_atoms</span> <span class="k">if</span> <span class="n">n_atoms</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Atoms: </span><span class="si">{</span><span class="n">n_atoms</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Neighbor pairs: </span><span class="si">{</span><span class="n">n_pairs</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Avg neighbors per atom: </span><span class="si">{</span><span class="n">avg_neighbors</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">n_pairs</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="c1"># Show first few pairs</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  Sample pairs: &quot;</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">n_pairs</span><span class="p">)):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">sys_source</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="si">}</span><span class="s2">-&gt;</span><span class="si">{</span><span class="n">sys_target</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+EXTRACTING INDIVIDUAL SYSTEM RESULTS
+======================================================================
+
+Per-system analysis:
+
+H2O:
+  Atoms: 3
+  Neighbor pairs: 6
+  Avg neighbors per atom: 2.00
+  Sample pairs: (0-&gt;1) (0-&gt;2) (1-&gt;0)
+
+CO2:
+  Atoms: 3
+  Neighbor pairs: 6
+  Avg neighbors per atom: 2.00
+  Sample pairs: (0-&gt;1) (0-&gt;2) (1-&gt;0)
+
+CH4:
+  Atoms: 5
+  Neighbor pairs: 20
+  Avg neighbors per atom: 4.00
+  Sample pairs: (0-&gt;1) (0-&gt;2) (0-&gt;3)
+
+Al-fcc(2x2x2):
+  Atoms: 32
+  Neighbor pairs: 1344
+  Avg neighbors per atom: 42.00
+  Sample pairs: (0-&gt;24) (0-&gt;22) (0-&gt;28)
+</pre></div>
+</div>
+</section>
+<section id="compare-batch-vs-single-system-processing">
+<h1>Compare batch vs single-system processing<a class="headerlink" href="#compare-batch-vs-single-system-processing" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;BATCH VS SINGLE-SYSTEM COMPARISON&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Process each system individually and compare with batch results</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Verifying batch results against single-system calculations:</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">sys_idx</span><span class="p">,</span> <span class="p">(</span><span class="n">system</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">systems</span><span class="p">,</span> <span class="n">system_names</span><span class="p">)):</span>
+    <span class="c1"># Convert system to tensors</span>
+    <span class="n">sys_positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">system</span><span class="o">.</span><span class="n">cart_coords</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">sys_cell</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+        <span class="n">system</span><span class="o">.</span><span class="n">lattice</span><span class="o">.</span><span class="n">matrix</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">sys_pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="c1"># Calculate single system neighbor list</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_single</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">sys_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">sys_cell</span><span class="p">,</span> <span class="n">sys_pbc</span><span class="p">)</span>
+    <span class="n">single_total</span> <span class="o">=</span> <span class="n">num_neighbors_single</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="c1"># Extract from batch results</span>
+    <span class="n">system_mask</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="o">==</span> <span class="n">sys_idx</span>
+    <span class="n">batch_total</span> <span class="o">=</span> <span class="n">num_neighbors_batch</span><span class="p">[</span><span class="n">system_mask</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+    <span class="c1"># Compare</span>
+    <span class="n">match_status</span> <span class="o">=</span> <span class="s2">&quot;✓&quot;</span> <span class="k">if</span> <span class="n">single_total</span> <span class="o">==</span> <span class="n">batch_total</span> <span class="k">else</span> <span class="s2">&quot;✗&quot;</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">match_status</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">name</span><span class="si">:</span><span class="s2">15s</span><span class="si">}</span><span class="s2">: single=</span><span class="si">{</span><span class="n">single_total</span><span class="si">:</span><span class="s2">4d</span><span class="si">}</span><span class="s2">, batch=</span><span class="si">{</span><span class="n">batch_total</span><span class="si">:</span><span class="s2">4d</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+BATCH VS SINGLE-SYSTEM COMPARISON
+======================================================================
+
+Verifying batch results against single-system calculations:
+
+✓ H2O            : single=   6, batch=   6
+✓ CO2            : single=   6, batch=   6
+✓ CH4            : single=  20, batch=  20
+✓ Al-fcc(2x2x2)  : single=1344, batch=1344
+</pre></div>
+</div>
+</section>
+<section id="demonstrate-heterogeneous-batch-parameters">
+<h1>Demonstrate heterogeneous batch parameters<a class="headerlink" href="#demonstrate-heterogeneous-batch-parameters" title="Link to this heading">#</a></h1>
+<p>Show that each system can have different properties</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;HETEROGENEOUS BATCH PARAMETERS&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Batch supports different parameters per system:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  System sizes: </span><span class="si">{</span><span class="n">atom_counts</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  Unit cells (box sizes):&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">system</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">system_names</span><span class="p">,</span> <span class="n">systems</span><span class="p">)):</span>
+    <span class="n">cell_size</span> <span class="o">=</span> <span class="n">system</span><span class="o">.</span><span class="n">lattice</span><span class="o">.</span><span class="n">abc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">cell_size</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  PBC settings:&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">system</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">system_names</span><span class="p">,</span> <span class="n">systems</span><span class="p">)):</span>
+    <span class="n">pbc_str</span> <span class="o">=</span> <span class="s2">&quot;TTT&quot;</span>  <span class="c1"># pymatgen structures are always periodic</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: [</span><span class="si">{</span><span class="n">pbc_str</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">  Single cutoff used for all: </span><span class="si">{</span><span class="n">cutoff</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  (Note: Currently all systems share the same cutoff)&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+HETEROGENEOUS BATCH PARAMETERS
+======================================================================
+
+Batch supports different parameters per system:
+  System sizes: [3, 3, 5, 32]
+  Unit cells (box sizes):
+    H2O: 15.00 Å
+    CO2: 12.00 Å
+    CH4: 10.00 Å
+    Al-fcc(2x2x2): 8.10 Å
+  PBC settings:
+    H2O: [TTT]
+    CO2: [TTT]
+    CH4: [TTT]
+    Al-fcc(2x2x2): [TTT]
+
+  Single cutoff used for all: 5.0 Å
+  (Note: Currently all systems share the same cutoff)
+</pre></div>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example completed successfully!&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Example completed successfully!
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 3.346 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighborlist-02-batch-neighbor-list-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/187af7d527c1a2a174618704ff415ab7/02_batch_neighbor_list.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">02_batch_neighbor_list.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/24d00d19b63472107b50f7ba846ba6c5/02_batch_neighbor_list.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">02_batch_neighbor_list.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/d6639ce9b9322867bce4cc58498bb053/02_batch_neighbor_list.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">02_batch_neighbor_list.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="01_simple_neighbor_list.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Simple Neighbor List Example</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="03_rebuild_neighborlist_detection.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Neighbor List Rebuild Detection Example</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#">Batch Neighbor List Example</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#set-up-the-computation-device">Set up the computation device</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#create-multiple-systems">Create multiple systems</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#convert-systems-to-batch-format">Convert systems to batch format</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#method-1-batch-cell-list-algorithm-o-n">Method 1: Batch Cell List Algorithm (O(N))</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#method-2-batch-naive-algorithm-o-n2">Method 2: Batch Naive Algorithm (O(N²))</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#extract-individual-system-results-from-batch">Extract individual system results from batch</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#compare-batch-vs-single-system-processing">Compare batch vs single-system processing</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#demonstrate-heterogeneous-batch-parameters">Demonstrate heterogeneous batch parameters</a></li>
+</ul>
+
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/examples/neighborlist/02_batch_neighbor_list.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

@@ -1,0 +1,983 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Kernel Style Guide &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/kernel-style-guide';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Kernel Style Guide</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="kernel-style-guide">
+<span id="style-guide"></span><h1>Kernel Style Guide<a class="headerlink" href="#kernel-style-guide" title="Link to this heading">#</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">#</a></h2>
+<p>This style guide establishes conventions for developing NVIDIA Warp GPU/CPU kernels in <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code>.
+The intention is to ensure consistency in naming, design patterns, unit testing, and performance
+evaluation for both human and agentic developers.</p>
+</section>
+<section id="naming-conventions">
+<h2>Naming Conventions<a class="headerlink" href="#naming-conventions" title="Link to this heading">#</a></h2>
+<p>Consult this section before naming variables to ensure consistency across modules. Try
+and reuse one of the names below if they are semantically identical to what you are developing
+for; in the event that they are different enough, consider using these as inspiration and
+make a best effort to align to these conventions.</p>
+<section id="batching">
+<h3>Batching<a class="headerlink" href="#batching" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Shape</p></th>
+<th class="head"><p>Dtype</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">batch_idx</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[total_atoms]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>System index for each atom</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">batch_ptr</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[num_systems+1]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>Cumulative atom counts</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="neighbor-lists">
+<h3>Neighbor Lists<a class="headerlink" href="#neighbor-lists" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Shape</p></th>
+<th class="head"><p>Dtype</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">neighbor_matrix</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[total_atoms,</span> <span class="pre">max_neighbors]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>Neighbor indices</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">neighbor_shift_matrix</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[total_atoms,</span> <span class="pre">max_neighbors,</span> <span class="pre">3]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>Integer shifts</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cartesian_shifts</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[total_atoms,</span> <span class="pre">max_neighbors,</span> <span class="pre">3]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vec3*</span></code></p></td>
+<td><p>Cartesian shifts</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">num_neighbors</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[total_atoms]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>Neighbor count</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">neighbor_list</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[2,</span> <span class="pre">num_pairs]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>COO format</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">max_neighbors</span></code></p></td>
+<td><p>scalar</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
+<td><p>Max neighbors</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fill_value</span></code></p></td>
+<td><p>scalar</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
+<td><p>Padding value</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cutoff</span></code>, <code class="docutils literal notranslate"><span class="pre">cutoff_sq</span></code></p></td>
+<td><p>scalar</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float*</span></code></p></td>
+<td><p>Distance cutoff</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="geometry">
+<h3>Geometry<a class="headerlink" href="#geometry" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Shape</p></th>
+<th class="head"><p>Dtype</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">positions</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[total_atoms,</span> <span class="pre">3]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">vec3*</span></code></p></td>
+<td><p>Atomic Cartesian coordinates</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cell</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[num_systems,</span> <span class="pre">3,</span> <span class="pre">3]</span></code> or <code class="docutils literal notranslate"><span class="pre">[3,</span> <span class="pre">3]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mat33*</span></code></p></td>
+<td><p>Lattice vectors (row format)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pbc</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[num_systems,</span> <span class="pre">3]</span></code> or <code class="docutils literal notranslate"><span class="pre">[3]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">bool</span></code></p></td>
+<td><p>Periodic boundary flags</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">numbers</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[total_atoms]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>Atomic numbers (Z)</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Units</strong>: Document in docstrings; if relevant to correctness then Bohr or
+Angstrom must be specified. In instances where units just have to be
+consistent (e.g. neighbor lists) then that should be stated.</p>
+</section>
+<section id="thread-indices">
+<h3>Thread Indices<a class="headerlink" href="#thread-indices" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tid</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
+<td><p>Single thread ID from <code class="docutils literal notranslate"><span class="pre">wp.tid()</span></code> (1D launch)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tid_i</span></code>, <code class="docutils literal notranslate"><span class="pre">tid_j</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
+<td><p>Thread IDs from <code class="docutils literal notranslate"><span class="pre">wp.tid()</span></code> (N-D launch)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">atom_i</span></code>, <code class="docutils literal notranslate"><span class="pre">atom_j</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
+<td><p>Semantic atom indices (use for clarity)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">i</span></code>, <code class="docutils literal notranslate"><span class="pre">j</span></code>, <code class="docutils literal notranslate"><span class="pre">k</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
+<td><p>Generic loop indices</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Convention</strong>: Use <code class="docutils literal notranslate"><span class="pre">tid</span></code> for thread IDs; use <code class="docutils literal notranslate"><span class="pre">atom_i</span></code>/<code class="docutils literal notranslate"><span class="pre">atom_j</span></code> for
+semantic clarity; i.e. if the threads map onto atom indices, then use
+<code class="docutils literal notranslate"><span class="pre">atom_i</span></code>/<code class="docutils literal notranslate"><span class="pre">atom_j</span></code> over <code class="docutils literal notranslate"><span class="pre">tid_i</span></code>. See
+<code class="docutils literal notranslate"><span class="pre">nvalchemiops/interactions/dispersion/dftd3.py</span></code> for examples.</p>
+</section>
+<section id="warp-array-objects">
+<h3>Warp Array Objects<a class="headerlink" href="#warp-array-objects" title="Link to this heading">#</a></h3>
+<p>The preferred way of instantiating <code class="docutils literal notranslate"><span class="pre">warp</span></code> arrays is to convert from PyTorch
+tensors, rather than using Warp constructor methods like <code class="docutils literal notranslate"><span class="pre">wp.zeros</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">output</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">device</span><span class="o">=...</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="c1"># optionally, `return_ctype=True` when it makes sense for performance</span>
+<span class="n">output_wp</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Updates to <code class="docutils literal notranslate"><span class="pre">output_wp</span></code> will reflect in the PyTorch tensor, <code class="docutils literal notranslate"><span class="pre">output</span></code> and
+eliminates the need for re-converting with overhead, e.g.:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># anti-pattern</span>
+<span class="n">output_wp</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">device</span><span class="o">=...</span><span class="p">)</span>
+<span class="c1"># run kernel...</span>
+<span class="n">output</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">to_torch</span><span class="p">(</span><span class="n">output_wp</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Some additional tips for performance:</p>
+<ul class="simple">
+<li><p>Use appropriate layouts for PyTorch tensors before constructing Warp
+references, including <code class="docutils literal notranslate"><span class="pre">torch.Tensor.contiguous()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">torch.Tensor.to(memory_format=torch.channels_last)</span></code>. See
+<a class="reference external" href="https://pytorch.org/blog/tensor-memory-format-matters/">this blog post</a>
+for details.</p></li>
+<li><p>Use Warp vector and matrix datatypes when possible, e.g.
+<code class="docutils literal notranslate"><span class="pre">wp.array(...,</span> <span class="pre">dtype=wp.vec3f)</span></code> for atomic coordinates, <strong>instead of</strong>
+<code class="docutils literal notranslate"><span class="pre">wp.array(...,</span> <span class="pre">dtype=wp.float32)</span></code>. This encourages optimal memory access
+patterns.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">dtype</span></code> s are known ahead of time, or preferably if wrappers can be
+written in such a way that they are known ahead of time, reduce Python
+overhead with <code class="docutils literal notranslate"><span class="pre">wp.from_torch(...,</span> <span class="pre">return_ctype=True)</span></code>, which avoids the
+need for a <code class="docutils literal notranslate"><span class="pre">wp.array</span></code> Python object altogether.</p></li>
+<li><p>Consider handling gradients manually, i.e. kernels for backward passes,
+when possible to do so. Ensure tensors are detached from the PyTorch
+computational graph to avoid duplication.</p></li>
+</ul>
+</section>
+<section id="warp-array-suffix">
+<h3>Warp Array Suffix<a class="headerlink" href="#warp-array-suffix" title="Link to this heading">#</a></h3>
+<p><strong>Suggested</strong> (not mandatory): Use <code class="docutils literal notranslate"><span class="pre">_wp</span></code> suffix when converting PyTorch tensors
+to Warp arrays in wrapper functions.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">positions_wp</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">)</span>
+<span class="n">numbers_wp</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">numbers</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>When to use</strong>: In PyTorch wrappers with both tensor types in scope.
+<strong>Skip</strong>: Inside pure Warp code or when no ambiguity exists.</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="kernel-design-patterns">
+<h2>3. Kernel Design Patterns<a class="headerlink" href="#kernel-design-patterns" title="Link to this heading">#</a></h2>
+<section id="id1">
+<h3>Naming Conventions<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
+<p>Kernel wrappers are two-tiered:</p>
+<ul class="simple">
+<li><p>Low-level functions are decorated with <code class="docutils literal notranslate"><span class="pre">&#64;torch.library.custom_op</span></code> with
+<code class="docutils literal notranslate"><span class="pre">mutates_args</span></code>, that take pre-allocated tensors and return <code class="docutils literal notranslate"><span class="pre">None</span></code>. These
+private functions dispatch the kernels and are registered so that
+<code class="docutils literal notranslate"><span class="pre">torch.compile</span></code>/backwards passes will recognize them.</p></li>
+<li><p>Higher-level wrapper functions handle tensor allocations and call the
+low-level wrapper.</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@torch</span><span class="o">.</span><span class="n">library</span><span class="o">.</span><span class="n">custom_op</span><span class="p">(</span>
+    <span class="s2">&quot;nvalchemiops::kernel_name&quot;</span><span class="p">,</span>
+    <span class="n">mutates_args</span><span class="o">=</span><span class="p">(</span><span class="o">...</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_low_level_wrapper</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Infer devices, dtypes, dispatch correct warp kernel&quot;&quot;&quot;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">high_level_wrapper</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Handles tensor allocations; main entry point for users&quot;&quot;&quot;</span>
+</pre></div>
+</div>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Type</p></th>
+<th class="head"><p>Convention</p></th>
+<th class="head"><p>Example</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Private kernel</p></td>
+<td><p>Leading underscore</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">_geom_cn_kernel</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>Helper (<code class="docutils literal notranslate"><span class="pre">wp.func</span></code>)</p></td>
+<td><p>Leading underscore</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">_valid_neighbor</span></code>, <code class="docutils literal notranslate"><span class="pre">_s5_switch</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Public API</p></td>
+<td><p>No underscore</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">neighbor_list</span></code>, <code class="docutils literal notranslate"><span class="pre">dftd3</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="linters">
+<h3>Linters<a class="headerlink" href="#linters" title="Link to this heading">#</a></h3>
+<p>In many cases, naming scientific variables compactly can go against
+PEP-style formatting/style guides. You can decorate lines where variables
+are declared to disable false positives (particularly from Sonar):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">dE_dCN</span> <span class="o">=</span> <span class="o">...</span>  <span class="c1"># NOSONAR (S125) &quot;math formula&quot;</span>
+</pre></div>
+</div>
+<p>Similarly, there can be branching based off numerics that are picked up
+by Sonar, which is not necessarily bad advice, albeit somewhat irrelevant:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">value</span> <span class="o">==</span> <span class="mf">0.0</span><span class="p">:</span> <span class="o">...</span>  <span class="c1"># NOSONAR (S1244) &quot;warp kernel&quot;</span>
+</pre></div>
+</div>
+</section>
+<section id="precision-support">
+<h3>Precision Support<a class="headerlink" href="#precision-support" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>When appropriate to do so, overload kernels programmatically and store
+the results in a dictionary with <code class="docutils literal notranslate"><span class="pre">dtype</span></code>s as keys:</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_my_kernel</span><span class="p">(</span><span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span> <span class="n">values</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">)):</span>
+    <span class="c1"># ... generic kernel code ...</span>
+
+<span class="c1"># Register overloads</span>
+<span class="n">kernel_overloads</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">for</span> <span class="n">scalar_type</span><span class="p">,</span> <span class="n">vec_type</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">([</span><span class="n">wp</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+                                  <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3h</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">]):</span>
+    <span class="n">kernel_overloads</span><span class="p">[(</span><span class="n">scalar_type</span><span class="p">,</span> <span class="n">vec_type</span><span class="p">)]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span><span class="n">_my_kernel</span><span class="p">,</span> <span class="p">{</span>
+        <span class="s2">&quot;positions&quot;</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">vec_type</span><span class="p">),</span>
+        <span class="s2">&quot;values&quot;</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">scalar_type</span><span class="p">),</span>
+    <span class="p">})</span>
+
+<span class="c1"># runtime retrieval; determines and launches appropriate overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">kernel_wrapper</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>
+    <span class="n">scalar_type</span> <span class="o">=</span> <span class="n">scalar_data</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">vec_type</span> <span class="o">=</span> <span class="n">vector_data</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">kernel_func</span> <span class="o">=</span> <span class="n">kernel_overloads</span><span class="p">[(</span><span class="n">scalar_type</span><span class="p">,</span> <span class="n">vec_type</span><span class="p">)]</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span><span class="n">kernel_func</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p>Not all precisions should be supported: if results are known to
+underflow particularly at lower precisions, do not add them to the
+overloads.</p></li>
+</ul>
+</section>
+<section id="documentation">
+<h3>Documentation<a class="headerlink" href="#documentation" title="Link to this heading">#</a></h3>
+<p>Use <strong>NumPy-style docstrings</strong> with the following specific items within
+each category:</p>
+<ul class="simple">
+<li><p>Summary line</p></li>
+<li><p>Parameters (with shape, dtype, description)</p>
+<ul>
+<li><p>Array outputs should be denoted with <code class="docutils literal notranslate"><span class="pre">OUTPUT</span></code> to indicate arrays
+that are expected to be pre-allocated, and are mutated in place by
+a kernel.</p></li>
+</ul>
+</li>
+<li><p>Returns</p>
+<ul>
+<li><p>Not generally applicable to Warp kernels, and more for PyTorch
+wrappers</p></li>
+</ul>
+</li>
+<li><p>Notes (launch patterns, caveats)</p>
+<ul>
+<li><p>Document the thread abstraction (e.g. per-atom, per-system)</p></li>
+<li><p>Known performance characteristics</p></li>
+</ul>
+</li>
+<li><p>See Also</p>
+<ul>
+<li><p>Reference related kernels, particularly those that are run
+immediately before or after the current kernel.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+</section>
+<section id="unit-testing">
+<h2>Unit Testing<a class="headerlink" href="#unit-testing" title="Link to this heading">#</a></h2>
+<section id="test-organization">
+<h3>Test Organization<a class="headerlink" href="#test-organization" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Try and mirror test modules with the Python package tree: for example,
+a <code class="docutils literal notranslate"><span class="pre">test_dftd3.py</span></code> mirrors <code class="docutils literal notranslate"><span class="pre">dftd3.py</span></code>.</p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">conftest.py</span></code> for shared fixtures, such as systems to test against,
+devices, etc.</p></li>
+<li><p>Group categories of tests in classes:</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">TestCategory</span><span class="p">:</span>
+    <span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">category_specific_fixture</span><span class="p">():</span> <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_kernel_basic</span><span class="p">():</span> <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">test_kernel_with_fixture</span><span class="p">(</span><span class="n">category_specific_fixture</span><span class="p">):</span> <span class="o">...</span>
+</pre></div>
+</div>
+</section>
+<section id="test-patterns">
+<h3>Test Patterns<a class="headerlink" href="#test-patterns" title="Link to this heading">#</a></h3>
+<ol class="arabic">
+<li><p>Parametrized tests for variations, particularly with device and
+datatypes (precision):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">parametrize</span><span class="p">(</span><span class="s2">&quot;dtype&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="s2">&quot;float64&quot;</span><span class="p">])</span>
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">parametrize</span><span class="p">(</span><span class="s2">&quot;device&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;cuda:0&quot;</span><span class="p">,</span> <span class="s2">&quot;cpu&quot;</span><span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_kernel</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="p">):</span>
+    <span class="c1"># ... test implementation ...</span>
+</pre></div>
+</div>
+</li>
+<li><p>Full pipeline tests (primary coverage): test the end-to-end workflow,
+making sure that the values are not just finite, but once correctness
+has been established, check numerical tests to make sure kernels are
+numerically stable between changes:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">test_dftd3_full_pipeline</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Test complete pipeline exercising all kernels.&quot;&quot;&quot;</span>
+    <span class="n">energy</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">cn</span> <span class="o">=</span> <span class="n">dftd3</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">isfinite</span><span class="p">(</span><span class="n">energy</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_kernel_values</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check numerical results against hardcoded reference values&quot;&quot;&quot;</span>
+    <span class="n">values</span> <span class="o">=</span> <span class="n">kernel</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+    <span class="n">hardcoded_values</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">values</span><span class="p">,</span> <span class="n">hardcoded_values</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=...</span><span class="p">,</span> <span class="n">atol</span><span class="o">=...</span><span class="p">)</span>
+</pre></div>
+</div>
+</li>
+<li><p>Known fail states: If a kernel or function is known to fail
+predictably with certain inputs or conditions, there must be tests
+that capture this using patterns such as <code class="docutils literal notranslate"><span class="pre">pytest.raises(Exception)</span></code>.
+Good things to capture here are incorrect shapes and <code class="docutils literal notranslate"><span class="pre">dtype</span></code>s for
+<code class="docutils literal notranslate"><span class="pre">warp</span></code> kernels.</p></li>
+<li><p>Edge cases: Empty systems, potentially odd input/outputs such as
+negative/positive values.</p></li>
+<li><p>Helper function tests: Wrap <code class="docutils literal notranslate"><span class="pre">wp.func</span></code> in test kernel for isolated
+testing</p></li>
+</ol>
+</section>
+</section>
+<section id="performance-benchmarking">
+<h2>Performance Benchmarking<a class="headerlink" href="#performance-benchmarking" title="Link to this heading">#</a></h2>
+<section id="gpu-profiling-requirements">
+<h3>GPU Profiling Requirements<a class="headerlink" href="#gpu-profiling-requirements" title="Link to this heading">#</a></h3>
+<p><strong>Critical for accurate timing</strong>:</p>
+<ol class="arabic simple">
+<li><p><strong>Warmup runs</strong>: GPU kernels compile on first launch (JIT)</p></li>
+<li><p><strong>Synchronization</strong>: GPU operations are asynchronous - always call
+<code class="docutils literal notranslate"><span class="pre">torch.cuda.synchronize()</span></code>/<code class="docutils literal notranslate"><span class="pre">wp.synchronize()</span></code></p></li>
+<li><p><strong>CUDA Events</strong>: More relevant, and therefore preferable over
+<code class="docutils literal notranslate"><span class="pre">time.perf_counter()</span></code> calls</p></li>
+<li><p><strong>Multiple runs</strong>: following warm up runs to average statistics</p></li>
+<li><p><strong>Units</strong>: Report units at relevant timescales: micro/milliseconds is
+typical but may depend on the kernel</p></li>
+</ol>
+<p><strong>General pattern for collecting performance data</strong>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Warmup</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">warmup_runs</span><span class="p">):</span>
+    <span class="n">func</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+
+<span class="c1"># Timing with CUDA events</span>
+<span class="n">times</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">reset_peak_memory_stats</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">timing_runs</span><span class="p">):</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">start_event</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">end_event</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">start_event</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+    <span class="n">func</span><span class="p">()</span>
+    <span class="n">end_event</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">times</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">start_event</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">end_event</span><span class="p">))</span>  <span class="c1"># milliseconds</span>
+<span class="n">peak_memory</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">memory</span><span class="o">.</span><span class="n">max_memory_allocated</span><span class="p">()</span>
+</pre></div>
+</div>
+<p><strong>NVTX annotations</strong> for Nsight Systems profiling:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">nvtx</span>
+
+<span class="nd">@nvtx</span><span class="o">.</span><span class="n">annotate</span><span class="p">(</span><span class="s2">&quot;compute_dftd3&quot;</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="s2">&quot;red&quot;</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">my_function</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">dftd3</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="what-to-exclude-from-timing">
+<h3>What to Exclude from Timing<a class="headerlink" href="#what-to-exclude-from-timing" title="Link to this heading">#</a></h3>
+<p><strong>Pre-compute separately</strong> (not part of kernel timing):</p>
+<ul class="simple">
+<li><p>Neighbor list construction (unless benchmarking neighbor lists)</p></li>
+<li><p>Parameter loading</p></li>
+<li><p>Data transfers (unless benchmarking transfers)</p></li>
+<li><p>One-time allocations</p></li>
+</ul>
+<p>See <code class="docutils literal notranslate"><span class="pre">benchmarks/interactions/dispersion/benchmark_d3_synthetic.py</span></code> and
+<code class="docutils literal notranslate"><span class="pre">benchmarks/benchmark_neighborlist.py</span></code> for complete examples.</p>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#introduction">Introduction</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#naming-conventions">Naming Conventions</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batching">Batching</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-lists">Neighbor Lists</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geometry">Geometry</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#thread-indices">Thread Indices</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-array-objects">Warp Array Objects</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-array-suffix">Warp Array Suffix</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#kernel-design-patterns">3. Kernel Design Patterns</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Naming Conventions</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#linters">Linters</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#precision-support">Precision Support</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#documentation">Documentation</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#unit-testing">Unit Testing</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#test-organization">Test Organization</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#test-patterns">Test Patterns</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#performance-benchmarking">Performance Benchmarking</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#gpu-profiling-requirements">GPU Profiling Requirements</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-to-exclude-from-timing">What to Exclude from Timing</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/userguide/about/kernel-style-guide.md.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

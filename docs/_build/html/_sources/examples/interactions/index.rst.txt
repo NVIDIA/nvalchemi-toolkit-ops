@@ -1,0 +1,71 @@
+
+
+.. _sphx_glr_examples_interactions:
+
+Interactions
+============
+
+Examples demonstrating GPU-accelerated computation of atomic interactions,
+including DFT-D3 dispersion corrections with environment-dependent C6 coefficients.
+
+These examples show how to:
+
+* Compute dispersion energies and forces for molecules
+* Process batches of crystal structures
+* Integrate with PyTorch for differentiable workflows
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using GPU-accelerated kernels.">
+
+.. only:: html
+
+  .. image:: /examples/interactions/images/thumb/sphx_glr_01_dftd3_molecule_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_interactions_01_dftd3_molecule.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for a Molecule</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates GPU-accelerated DFT-D3 calculations for batches of periodic crystal structures. Batch processing is essential for high-throughput computational materials screening and allows efficient parallelization across multiple structures simultaneously.">
+
+.. only:: html
+
+  .. image:: /examples/interactions/images/thumb/sphx_glr_02_dftd3_batch_crystals_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_interactions_02_dftd3_batch_crystals.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for Batched Crystals</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /examples/interactions/01_dftd3_molecule
+   /examples/interactions/02_dftd3_batch_crystals
+

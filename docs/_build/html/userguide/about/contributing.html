@@ -1,0 +1,678 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Contribution Guide &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/contributing';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Contribution Guide</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <!-- markdownlint-disable MD025 -->
+<section class="tex2jax_ignore mathjax_ignore" id="contribution-guide">
+<span id="contributing"></span><h1>Contribution Guide<a class="headerlink" href="#contribution-guide" title="Link to this heading">#</a></h1>
+<p>There are many (welcome) ways to contribute to ALCHEMI Toolkit-Ops:</p>
+<ul class="simple">
+<li><p>All bug reports are welcome; to help maintainers, please fill out the prescribed
+the Github issues template with as much information as you can provide, and when
+possible, a minimum working example that reproduces the issue.</p></li>
+<li><p>Feature requests; if you think of something that you would like as part of the
+public API, it might benefit others as well. Submit a feature request via Github
+issues.</p></li>
+<li><p>Provide general feedback and post discussions in Github Issues; the Github
+Discussions may not be effectively monitored, so please post issues instead.</p></li>
+<li><p>Contributing bug fixes and new features: our preferred way is to start a
+conversation on Github issues to hash out implementation details and to
+gauge interest.</p></li>
+</ul>
+<section id="code-contributions">
+<h2>Code Contributions<a class="headerlink" href="#code-contributions" title="Link to this heading">#</a></h2>
+<p>Code contributions from the community are welcome; rather than requiring a formal
+Contributor License Agreement (CLA), we use the Developer Certificate of Origin (DCO) to
+ensure contributors have the right to submit their contributions to this project.
+Please ensure that all commits have a sign-off added with an email address that
+matches the commit author to agree to the DCO terms for each particular contribution.</p>
+<ul>
+<li><p>Full text of the DCO:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>  Developer Certificate of Origin
+  Version 1.1
+
+  Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
+  1 Letterman Drive
+  Suite D4700
+  San Francisco, CA, 94129
+
+  Everyone is permitted to copy and distribute verbatim copies of this license
+  document, but changing it is not allowed.
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>  Developer&#39;s Certificate of Origin 1.1
+
+  By making a contribution to this project, I certify that:
+
+  (a) The contribution was created in whole or in part by me and I have the right to
+  submit it under the open source license indicated in the file; or
+
+  (b) The contribution is based upon previous work that, to the best of my knowledge,
+  is covered under an appropriate open source license and I have the right under that
+  license to submit that work with modifications, whether created in whole or in part
+  by me, under the same open source license (unless I am permitted to submit under a
+  different license), as indicated in the file; or
+
+  (c) The contribution was provided directly to me by some other person who certified
+  (a), (b) or (c) and I have not modified it.
+
+  (d) I understand and agree that this project and the contribution are public and
+  that a record of the contribution (including all personal information I submit with
+  it, including my sign-off) is maintained indefinitely and may be redistributed
+  consistent with this project or the open source license(s) involved.
+</pre></div>
+</div>
+</li>
+</ul>
+</section>
+<section id="developer-set-up">
+<h2>Developer Set Up<a class="headerlink" href="#developer-set-up" title="Link to this heading">#</a></h2>
+<p>The guide below provides step-by-step instructions to start development locally, up
+to submitting a pull request with your bug fixes/features:</p>
+<ol class="arabic simple">
+<li><p>Create a fork of ALCHEMI Toolkit-Ops through the Github page, or
+<a class="reference external" href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops/fork">here</a>.</p></li>
+<li><p>Clone your fork somewhere in your local system, i.e. via
+<code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">clone</span> <span class="pre">git&#64;github.com:&lt;username&gt;/nvalchemi-toolkit-ops.git</span></code></p></li>
+<li><p>Track changes in a new branch: if there is an issue attached to
+the work, prepend the issue number to your branch name, which should
+be something descriptive (e.g. <code class="docutils literal notranslate"><span class="pre">15-what-is-fixed</span></code>). Complementary to
+this would be to create a Git worktree to you to work on multiple
+branches concurrently.</p></li>
+<li><p>Make your bug fixes/feature implementation; try and adhere to
+general best practices such as:</p>
+<ul class="simple">
+<li><p>Keep changes isolated, and tightly scoped for your fix. Try
+not to “omnibus” too many peripheral elements to your branch.</p></li>
+<li><p>Make small commits, frequently.</p></li>
+<li><p>We encourage the use of
+<a class="reference external" href="https://www.conventionalcommits.org/en/v1.0.0/#summary">semantic commit messages</a></p></li>
+<li><p>Refer to and adhere to the <a class="reference internal" href="kernel-style-guide.html#style-guide"><span class="std std-ref">style guide</span></a>. This
+provides a fairly extensive set of guidelines to help us ensure
+code quality and consistency across the codebase.</p></li>
+</ul>
+</li>
+<li><p>When you are finished with your changes, push to your fork
+(i.e. <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">push</span> <span class="pre">-u</span> <span class="pre">&lt;remote&gt;</span> <span class="pre">&lt;branch-name&gt;</span></code>). As a simple checklist,
+your changes should:</p>
+<ul class="simple">
+<li><p>[ ] Pass <code class="docutils literal notranslate"><span class="pre">pre-commit</span></code> hooks, which include style and static
+analysis checks.</p></li>
+<li><p>[ ] Unit tests have been added, and/or updated.</p></li>
+<li><p>[ ] API documentation has been added, and/or updated. Ensure
+sufficient changes maintain sufficient docstring coverage.</p></li>
+</ul>
+</li>
+<li><p>On your Github fork, submit a pull request. If you are unsure about
+any implementation details, mark your pull request as a draft and ask
+for maintainer feedback before going through a more ‘formal’ round of
+reviews.</p></li>
+<li><p>Work with maintainers, who will review and provide feedback on details
+regarding your changes. The quality and timeliness of the feedback depends
+heavily on the complexity of your changes, so please try and keep changes minimal.</p>
+<ul class="simple">
+<li><p>We will also use code review agents, such as Greptile and Code Rabbit,
+to provide initial feedback. These agents will generally be configured to
+provide very general guidance, such as typographical errors, inconsistencies,
+and so on. <strong>Human review and approval will always be required</strong>, and we
+treat reviews by agents as suggestions, not requirements.</p></li>
+</ul>
+</li>
+<li><p>If a maintainer provides feedback on your implementation, please address
+them accordingly. If and when the changes are satisfactory, reviewers will
+approve the pull request and perform a squash-merge.</p></li>
+</ol>
+<section id="workflow">
+<h3>Workflow<a class="headerlink" href="#workflow" title="Link to this heading">#</a></h3>
+<p>To make the above more concrete, here are commands you can run for most of the
+steps involved:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Step 1: Fork the repository on GitHub</span>
+<span class="c1"># Visit: https://github.com/NVIDIA/nvalchemi-toolkit-ops/fork</span>
+<span class="c1"># (This is done through the GitHub web interface)</span>
+
+<span class="c1"># Step 2: Clone your fork</span>
+git<span class="w"> </span>clone<span class="w"> </span>git@github.com:&lt;your-username&gt;/nvalchemi-toolkit-ops.git
+<span class="nb">cd</span><span class="w"> </span>nvalchemi-toolkit-ops
+
+<span class="c1"># Optional: add upstream to keep local branch synced</span>
+git<span class="w"> </span>remote<span class="w"> </span>add<span class="w"> </span>upstream<span class="w"> </span>git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
+
+<span class="c1"># Step 2.5: Set up development environment; install `uv` if not available already</span>
+uv<span class="w"> </span>sync<span class="w"> </span>--all-extras
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;./test/test-requirements.txt&#39;</span>
+pre-commit<span class="w"> </span>install
+
+<span class="c1"># Step 3: create a branch for changes</span>
+git<span class="w"> </span>checkout<span class="w"> </span>-b<span class="w"> </span><span class="m">15</span>-fix-description
+
+<span class="c1"># Step 4: Run `pytest`; `Makefile` in root folder contains definition</span>
+<span class="c1"># for some of these commands. Run `coverage` tool afterwards.</span>
+make<span class="w"> </span>pytest
+make<span class="w"> </span>coverage
+
+<span class="c1"># When things pass, add and commit files; make sure to address</span>
+<span class="c1"># any outstanding pre-commit issues</span>
+git<span class="w"> </span>add<span class="w"> </span>&lt;files&gt;
+git<span class="w"> </span>commit<span class="w"> </span>-s<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;fix: added missing file&quot;</span>
+
+<span class="c1"># When done with changes, push</span>
+git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span><span class="m">15</span>-fix-description
+<span class="c1"># Optionally, if main has been updated remotely</span>
+<span class="c1"># git fetch upstream</span>
+<span class="c1"># git rebase upstream/main</span>
+
+<span class="c1"># After PR is merged, clean up by updating your local</span>
+<span class="c1"># main branch and deleting your temporary branch</span>
+git<span class="w"> </span>checkout<span class="w"> </span>main<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>pull<span class="w"> </span>upstream<span class="w"> </span>main
+git<span class="w"> </span>branch<span class="w"> </span>-D<span class="w"> </span><span class="m">15</span>-fix-description
+</pre></div>
+</div>
+</section>
+</section>
+<section id="building-documentation">
+<h2>Building Documentation<a class="headerlink" href="#building-documentation" title="Link to this heading">#</a></h2>
+<p>ALCHEMI Toolkit-Ops uses <code class="docutils literal notranslate"><span class="pre">sphinx</span></code> to build and serve documentation. The recommended
+workflow is to make your changes that touch documentation (e.g. docstrings, markdown
+files, examples) and preview them locally in your browser. Assuming you have carried
+out the instructions in the prior section, you can run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>docs
+make<span class="w"> </span>html
+<span class="c1"># preview the docs by opening `docs/_build/html/index.html`</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#code-contributions">Code Contributions</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#developer-set-up">Developer Set Up</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#workflow">Workflow</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#building-documentation">Building Documentation</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/userguide/about/contributing.md.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

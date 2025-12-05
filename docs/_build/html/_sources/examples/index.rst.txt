@@ -1,0 +1,210 @@
+:orphan:
+
+Examples Gallery
+================
+
+This gallery contains examples demonstrating the capabilities of ALCHEMI Toolkit-Ops.
+Each example is a fully executable Python script that showcases different features
+of the library, from basic neighbor list construction to advanced dispersion corrections.
+
+All examples are designed to run on both CPU and GPU, automatically detecting available
+hardware. The code can be downloaded as Python scripts or Jupyter notebooks.
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+Interactions
+============
+
+Examples demonstrating GPU-accelerated computation of atomic interactions,
+including DFT-D3 dispersion corrections with environment-dependent C6 coefficients.
+
+These examples show how to:
+
+* Compute dispersion energies and forces for molecules
+* Process batches of crystal structures
+* Integrate with PyTorch for differentiable workflows
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using GPU-accelerated kernels.">
+
+.. only:: html
+
+  .. image:: /examples/interactions/images/thumb/sphx_glr_01_dftd3_molecule_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_interactions_01_dftd3_molecule.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for a Molecule</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates GPU-accelerated DFT-D3 calculations for batches of periodic crystal structures. Batch processing is essential for high-throughput computational materials screening and allows efficient parallelization across multiple structures simultaneously.">
+
+.. only:: html
+
+  .. image:: /examples/interactions/images/thumb/sphx_glr_02_dftd3_batch_crystals_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_interactions_02_dftd3_batch_crystals.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for Batched Crystals</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+Neighbor Lists
+==============
+
+Examples demonstrating efficient O(N) neighbor list construction using GPU-accelerated
+cell list algorithms.
+
+These examples show how to:
+
+* Build neighbor lists for single and batched systems
+* Use dense or sparse COO output formats
+* Detect when neighbor lists need rebuilding
+* Optimize performance with ``torch.compile``
+* Integrate with molecular dynamics workflows
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to use the basic neighbor list functions in nvalchemiops on random systems. We&#x27;ll cover:">
+
+.. only:: html
+
+  .. image:: /examples/neighborlist/images/thumb/sphx_glr_01_simple_neighbor_list_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_neighborlist_01_simple_neighbor_list.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Simple Neighbor List Example</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to use the batch neighbor list functions in nvalchemiops with multiple molecular and crystalline systems. We&#x27;ll cover:">
+
+.. only:: html
+
+  .. image:: /examples/neighborlist/images/thumb/sphx_glr_02_batch_neighbor_list_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_neighborlist_02_batch_neighbor_list.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Batch Neighbor List Example</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to use rebuild detection functions in nvalchemiops to efficiently determine when neighbor lists need to be reconstructed during molecular dynamics simulations. We&#x27;ll cover:">
+
+.. only:: html
+
+  .. image:: /examples/neighborlist/images/thumb/sphx_glr_03_rebuild_neighborlist_detection_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_neighborlist_03_rebuild_neighborlist_detection.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Neighbor List Rebuild Detection Example</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates the significant performance benefits of using torch.compile with nvalchemiops neighbor list routines in a realistic molecular dynamics simulation. We&#x27;ll cover:">
+
+.. only:: html
+
+  .. image:: /examples/neighborlist/images/thumb/sphx_glr_04_neighbors_list_torch_compile_performance_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_neighborlist_04_neighbors_list_torch_compile_performance.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Torch.compile Performance Benefits Example</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+   :includehidden:
+
+
+   /examples/interactions/index.rst
+   /examples/neighborlist/index.rst
+
+
+.. only:: html
+
+  .. container:: sphx-glr-footer sphx-glr-footer-gallery
+
+    .. container:: sphx-glr-download sphx-glr-download-python
+
+      :download:`Download all examples in Python source code: examples_python.zip </examples/examples_python.zip>`
+
+    .. container:: sphx-glr-download sphx-glr-download-jupyter
+
+      :download:`Download all examples in Jupyter notebooks: examples_jupyter.zip </examples/examples_jupyter.zip>`
+
+
+.. only:: html
+
+ .. rst-class:: sphx-glr-signature
+
+    `Gallery generated by Sphinx-Gallery <https://sphinx-gallery.github.io>`_

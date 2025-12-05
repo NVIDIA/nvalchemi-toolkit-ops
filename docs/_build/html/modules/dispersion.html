@@ -1,0 +1,862 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>nvalchemiops.interactions.dispersion: Dispersion Corrections &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'modules/dispersion';</script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="nvalchemiops.math and nvalchemiops.types: Utilities" href="utilities.html" />
+    <link rel="prev" title="nvalchemiops.neighborlist: Neighbor Lists" href="neighborlist.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="neighborlist.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.types</span></code>: Utilities</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><code...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="module-nvalchemiops.interactions.dispersion">
+<span id="nvalchemiops-interactions-dispersion-dispersion-corrections"></span><h1><a class="reference internal" href="#module-nvalchemiops.interactions.dispersion" title="nvalchemiops.interactions.dispersion"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code></a>: Dispersion Corrections<a class="headerlink" href="#module-nvalchemiops.interactions.dispersion" title="Link to this heading">#</a></h1>
+<section id="high-level-interface">
+<h2>High-Level Interface<a class="headerlink" href="#high-level-interface" title="Link to this heading">#</a></h2>
+<section id="dft-d3-bj-dispersion-corrections">
+<h3>DFT-D3(BJ) Dispersion Corrections<a class="headerlink" href="#dft-d3-bj-dispersion-corrections" title="Link to this heading">#</a></h3>
+<p>The DFT-D3 implementation supports two neighbor representation formats:</p>
+<ul class="simple">
+<li><p><strong>Neighbor matrix</strong> (dense): <code class="docutils literal notranslate"><span class="pre">[num_atoms,</span> <span class="pre">max_neighbors]</span></code> with padding</p></li>
+<li><p><strong>Neighbor list</strong> (sparse COO): <code class="docutils literal notranslate"><span class="pre">[2,</span> <span class="pre">num_pairs]</span></code> without padding</p></li>
+</ul>
+<p>Both formats produce identical results and support all features including periodic
+boundary conditions, batching, and smooth cutoff functions. The high-level wrapper
+automatically dispatches to the appropriate kernels based on which format is provided.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.interactions.dispersion.</span></span><span class="sig-name descname"><span class="pre">dftd3</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">numbers</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">a1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">a2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">s8</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k1</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">16.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k3</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-4.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">s6</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">s5_smoothing_on</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">s5_smoothing_off</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e10</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fill_value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">d3_params</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">covalent_radii</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r4r2</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c6_reference</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">coord_num_ref</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_list</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">unit_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_virial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_systems</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/interactions/dispersion/dftd3.html#dftd3"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3" title="Link to this definition">#</a></dt>
+<dd><p>Compute DFT-D3(BJ) dispersion energy and forces using Warp
+with optional periodic boundary condition support and smoothing function.</p>
+<p><strong>DFT-D3 parameters must be explicitly provided</strong> using one of three methods:</p>
+<ol class="arabic simple">
+<li><p><strong>D3Parameters dataclass</strong>: Supply a <code class="xref py py-class docutils literal notranslate"><span class="pre">D3Parameters</span></code> instance (recommended).
+Individual parameters can override dataclass values if both are provided.</p></li>
+<li><p><strong>Explicit parameters</strong>: Supply all four parameters individually:
+<code class="docutils literal notranslate"><span class="pre">covalent_radii</span></code>, <code class="docutils literal notranslate"><span class="pre">r4r2</span></code>, <code class="docutils literal notranslate"><span class="pre">c6_reference</span></code>, and <code class="docutils literal notranslate"><span class="pre">coord_num_ref</span></code>.</p></li>
+<li><p><strong>Dictionary</strong>: Provide a <code class="docutils literal notranslate"><span class="pre">d3_params</span></code> dictionary with keys:
+<code class="docutils literal notranslate"><span class="pre">&quot;rcov&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;r4r2&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;c6ab&quot;</span></code>, and <code class="docutils literal notranslate"><span class="pre">&quot;cn_ref&quot;</span></code>.
+Individual parameters can override dictionary values if both are provided.</p></li>
+</ol>
+<p>See <code class="docutils literal notranslate"><span class="pre">examples/interactions/utils.py</span></code> for parameter generation utilities.</p>
+<p>This wrapper can be launched by either supplying a neighbor matrix or a
+neighbor list, both of which can be generated by the <a class="reference internal" href="neighborlist.html#nvalchemiops.neighborlist.neighbor_list" title="nvalchemiops.neighborlist.neighbor_list"><code class="xref py py-func docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist.neighbor_list()</span></code></a> function where the latter can be returned by setting the <cite>return_neighbor_list</cite> parameter to True.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>torch.Tensor</em>) – Atomic coordinates [num_atoms, 3] as float32 or float64, in consistent distance
+units (conventionally Bohr when using standard D3 parameters)</p></li>
+<li><p><strong>numbers</strong> (<em>torch.Tensor</em>) – Atomic numbers [num_atoms] as int32</p></li>
+<li><p><strong>a1</strong> (<em>float</em>) – Becke-Johnson damping parameter 1 (functional-dependent, dimensionless)</p></li>
+<li><p><strong>a2</strong> (<em>float</em>) – Becke-Johnson damping parameter 2 (functional-dependent), in same units as positions</p></li>
+<li><p><strong>s8</strong> (<em>float</em>) – C8 term scaling factor (functional-dependent, dimensionless)</p></li>
+<li><p><strong>k1</strong> (<em>float</em><em>, </em><em>optional</em>) – CN counting function steepness parameter, in inverse distance units
+(typically 16.0 1/Bohr for atomic units)</p></li>
+<li><p><strong>k3</strong> (<em>float</em><em>, </em><em>optional</em>) – CN interpolation Gaussian width parameter (typically -4.0, dimensionless)</p></li>
+<li><p><strong>s6</strong> (<em>float</em><em>, </em><em>optional</em>) – C6 term scaling factor (typically 1.0, dimensionless)</p></li>
+<li><p><strong>s5_smoothing_on</strong> (<em>float</em><em>, </em><em>optional</em>) – Distance where S5 switching begins, in same units as positions. Set greater or
+equal to s5_smoothing_off to disable smoothing. Default: 1e10</p></li>
+<li><p><strong>s5_smoothing_off</strong> (<em>float</em><em>, </em><em>optional</em>) – Distance where S5 switching completes, in same units as positions.
+Default: 1e10 (effectively no cutoff)</p></li>
+<li><p><strong>fill_value</strong> (<em>int</em><em> | </em><em>None</em><em>, </em><em>optional</em>) – Value indicating padding in neighbor_matrix. If None, defaults to num_atoms.
+Entries with neighbor_matrix[i, k] &gt;= fill_value are treated as padding. Default: None</p></li>
+<li><p><strong>d3_params</strong> (<a class="reference internal" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters" title="nvalchemiops.interactions.dispersion.dftd3.D3Parameters"><em>D3Parameters</em></a><em> | </em><em>dict</em><em>[</em><em>str</em><em>, </em><em>torch.Tensor</em><em>] </em><em>| </em><em>None</em><em>, </em><em>optional</em>) – DFT-D3 parameters provided as either:
+- <code class="xref py py-class docutils literal notranslate"><span class="pre">D3Parameters</span></code> dataclass instance (recommended)
+- Dictionary with keys: “rcov”, “r4r2”, “c6ab”, “cn_ref”
+Individual parameters below can override values from d3_params.</p></li>
+<li><p><strong>covalent_radii</strong> (<em>torch.Tensor</em><em> | </em><em>None</em><em>, </em><em>optional</em>) – Covalent radii [max_Z+1] as float32, indexed by atomic number, in same units
+as positions. If provided, overrides the value in d3_params.</p></li>
+<li><p><strong>r4r2</strong> (<em>torch.Tensor</em><em> | </em><em>None</em><em>, </em><em>optional</em>) – &lt;r4&gt;/&lt;r2&gt; expectation values [max_Z+1] as float32 for C8 computation (dimensionless).
+If provided, overrides the value in d3_params.</p></li>
+<li><p><strong>c6_reference</strong> (<em>torch.Tensor</em><em> | </em><em>None</em><em>, </em><em>optional</em>) – C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy × distance^6 units.
+If provided, overrides the value in d3_params.</p></li>
+<li><p><strong>coord_num_ref</strong> (<em>torch.Tensor</em><em> | </em><em>None</em><em>, </em><em>optional</em>) – CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).
+If provided, overrides the value in d3_params.</p></li>
+<li><p><strong>batch_idx</strong> (<em>torch.Tensor</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Batch indices [num_atoms] as int32. If None, all atoms are assumed
+to be in a single system (batch 0). For batched calculations, atoms with
+the same batch index belong to the same system. Default: None</p></li>
+<li><p><strong>cell</strong> (<em>torch.Tensor</em><em> or </em><em>None</em><em>, </em><em>optional</em><em>, </em><em>as float32</em><em> or </em><em>float64</em>) – Unit cell lattice vectors [num_systems, 3, 3] for PBC, in same dtype and units as positions.
+Convention: cell[s, i, :] is i-th lattice vector for system s.
+If None, non-periodic calculation. Default: None</p></li>
+<li><p><strong>neighbor_matrix</strong> (<em>torch.Tensor</em><em> | </em><em>None</em><em>, </em><em>optional</em>) – Neighbor indices [num_atoms, max_neighbors] as int32. See module docstring for
+details on the format. Padding entries have values &gt;= fill_value.
+Mutually exclusive with neighbor_list. Default: None</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<em>torch.Tensor</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Integer unit cell shifts [num_atoms, max_neighbors, 3] as int32 for PBC with
+neighbor_matrix format. If None, non-periodic calculation. If provided along
+with cell, Cartesian shifts are computed. Mutually exclusive with unit_shifts.
+Default: None</p></li>
+<li><p><strong>neighbor_list</strong> (<em>torch.Tensor</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Neighbor pairs [2, num_pairs] as int32 in COO format, where row 0 contains
+source atom indices and row 1 contains target atom indices. Alternative to
+neighbor_matrix for sparse neighbor representations. Mutually exclusive with
+neighbor_matrix. Must be used together with <cite>neighbor_ptr</cite> (both are returned
+by the neighbor list API when <cite>return_neighbor_list=True</cite>).
+Default: None</p></li>
+<li><p><strong>neighbor_ptr</strong> (<em>torch.Tensor</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – CSR row pointers [num_atoms+1] as int32. Required when using <cite>neighbor_list</cite>.
+Indicates that <cite>neighbor_list[1, :]</cite> contains destination atoms in CSR
+format where
+<cite>neighbor_ptr[i]:neighbor_ptr[i+1]</cite> gives the range of neighbors for atom i.
+Returned by the neighbor list API when <cite>return_neighbor_list=True</cite>.
+Default: None</p></li>
+<li><p><strong>unit_shifts</strong> (<em>torch.Tensor</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Integer unit cell shifts [num_pairs, 3] as int32 for PBC with neighbor_list
+format. If None, non-periodic calculation. If provided along with cell,
+Cartesian shifts are computed. Mutually exclusive with neighbor_matrix_shifts.
+Default: None</p></li>
+<li><p><strong>compute_virial</strong> (<em>bool</em><em>, </em><em>optional</em>) – If True, allocate and compute virial tensor. Ignored if virial
+parameter is provided. Default: False</p></li>
+<li><p><strong>num_systems</strong> (<em>int</em><em>, </em><em>optional</em>) – Number of systems in batch. In none provided, inferred from cell
+or from batch_idx (introcudes CUDA synchronization overhead). Default: None</p></li>
+<li><p><strong>device</strong> (<em>str</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’). If None, inferred from
+positions tensor. Default: None</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>energy</strong> (<em>torch.Tensor</em>) – Total dispersion energy [num_systems] as float32. Units are energy
+(Hartree when using standard D3 parameters).</p></li>
+<li><p><strong>forces</strong> (<em>torch.Tensor</em>) – Atomic forces [num_atoms, 3] as float32. Units are energy/distance
+(Hartree/Bohr when using standard D3 parameters).</p></li>
+<li><p><strong>coord_num</strong> (<em>torch.Tensor</em>) – Coordination numbers [num_atoms] as float32 (dimensionless)</p></li>
+<li><p><strong>virial</strong> (<em>torch.Tensor, optional</em>) – Virial tensor [num_systems, 3, 3] as float32.
+Units are energy (Hartree when using standard D3 parameters). Only returned
+if compute_virial=True.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple[<em>Tensor</em>, <em>Tensor</em>, <em>Tensor</em>] | tuple[<em>Tensor</em>, <em>Tensor</em>, <em>Tensor</em>, <em>Tensor</em>]</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p><strong>Unit consistency</strong>: All inputs must use consistent units. Standard D3 parameters
+from the Grimme group use atomic units (Bohr for distances, Hartree for energy),
+so using atomic units throughout is recommended and conventional.</p></li>
+<li><p>Float32 or float64 precision for positions and cell; outputs always float32</p></li>
+<li><p><strong>Neighbor formats</strong>: Supports both neighbor_matrix (dense) and neighbor_list (sparse COO)
+formats. Choose neighbor_list for sparse systems or when memory efficiency is important.</p></li>
+<li><p>Padding atoms indicated by numbers[i] == 0</p></li>
+<li><p>Requires symmetric neighbor representation (each pair appears twice)</p></li>
+<li><p><strong>Two-body only</strong>: Computes pairwise C6 and C8 dispersion terms; three-body
+Axilrod-Teller-Muto (ATM/C9) terms are not included</p></li>
+<li><p>Virial computation requires periodic boundary conditions.</p></li>
+<li><p>Bulk stress tensor can be obtained by dividing virial by system volume.</p></li>
+</ul>
+<p><strong>Neighbor Format Selection</strong>:</p>
+<ul class="simple">
+<li><p>Use neighbor_matrix for dense systems or when max_neighbors is small</p></li>
+<li><p>Use neighbor_list for sparse systems, large cutoffs, or memory-constrained scenarios</p></li>
+<li><p>Both formats produce identical results and support PBC</p></li>
+</ul>
+<p><strong>PBC Handling</strong>:</p>
+<ul class="simple">
+<li><p>Matrix format: Provide cell and neighbor_matrix_shifts</p></li>
+<li><p>List format: Provide cell and unit_shifts</p></li>
+<li><p>Non-periodic: Omit both cell and shift parameters</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><code class="xref py py-class docutils literal notranslate"><span class="pre">D3Parameters</span></code></dt><dd><p>Dataclass for organizing DFT-D3 reference parameters</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_dftd3_nm_op()</span></code></dt><dd><p>Internal custom operator for neighbor matrix format</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_dftd3_nl_op()</span></code></dt><dd><p>Internal custom operator for neighbor list format</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_compute_cartesian_shifts()</span></code></dt><dd><p>Pass 0 - Converts unit cell shifts to Cartesian</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_cn_kernel_nm()</span></code></dt><dd><p>Pass 1 - Computes coordination numbers (neighbor matrix)</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_cn_kernel_nl()</span></code></dt><dd><p>Pass 1 - Computes coordination numbers (neighbor list)</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_direct_forces_and_dE_dCN_kernel_nm()</span></code></dt><dd><p>Pass 2 - neighbor matrix format</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_direct_forces_and_dE_dCN_kernel_nl()</span></code></dt><dd><p>Pass 2 - neighbor list format</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_cn_forces_contrib_kernel_nm()</span></code></dt><dd><p>Pass 3 - neighbor matrix format</p>
+</dd>
+<dt><code class="xref py py-func docutils literal notranslate"><span class="pre">_cn_forces_contrib_kernel_nl()</span></code></dt><dd><p>Pass 3 - neighbor list format</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+</section>
+<section id="data-structures">
+<h2>Data Structures<a class="headerlink" href="#data-structures" title="Link to this heading">#</a></h2>
+<p>This data structure is not necessarily required to use the kernels, however is provided
+for convenience—the <code class="docutils literal notranslate"><span class="pre">dataclass</span></code> will validate shapes and keys for parameters
+required by the kernels.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">nvalchemiops.interactions.dispersion.dftd3.</span></span><span class="sig-name descname"><span class="pre">D3Parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">rcov</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">r4r2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">c6ab</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cn_ref</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">interp_mesh</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/interactions/dispersion/dftd3.html#D3Parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters" title="Link to this definition">#</a></dt>
+<dd><p>DFT-D3 reference parameters for dispersion correction calculations.</p>
+<p>This dataclass encapsulates all element-specific parameters required for
+DFT-D3 dispersion corrections. The main purpose for this structure is to
+provide validation, ensuring the correct shapes, dtypes, and keys are
+present and complete. These parameters are used by <code class="xref py py-func docutils literal notranslate"><span class="pre">dftd3()</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rcov</strong> (<em>torch.Tensor</em>) – Covalent radii [max_Z+1] as float32 or float64. Units should be consistent
+with position coordinates. Index 0 is reserved for
+padding; valid atomic numbers are 1 to max_Z.</p></li>
+<li><p><strong>r4r2</strong> (<em>torch.Tensor</em>) – &lt;r⁴&gt;/&lt;r²&gt; expectation values [max_Z+1] as float32 or float64.
+Dimensionless ratio used for computing C8 coefficients from C6 values.</p></li>
+<li><p><strong>c6ab</strong> (<em>torch.Tensor</em>) – C6 reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
+as float32 or float64. Units are energy x distance^6. Indexed by atomic numbers and coordination number reference indices.</p></li>
+<li><p><strong>cn_ref</strong> (<em>torch.Tensor</em>) – Coordination number reference grid [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
+as float32 or float64. Dimensionless CN values for Gaussian interpolation.</p></li>
+<li><p><strong>interp_mesh</strong> (<em>int</em><em>, </em><em>optional</em>) – Size of the coordination number interpolation mesh. Default: 5
+(standard DFT-D3 uses a 5x5 grid)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><strong>ValueError</strong> – If parameter shapes are inconsistent or invalid</p></li>
+<li><p><strong>TypeError</strong> – If parameters are not torch.Tensor or have invalid dtypes</p></li>
+</ul>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>Parameters should use consistent units matching your coordinate system.
+Standard D3 parameters from the Grimme group use atomic units (Bohr for
+distances, Hartree x Bohr^6 for C6 coefficients).</p></li>
+<li><p>Index 0 in all arrays is reserved for padding atoms (atomic number 0)</p></li>
+<li><p>Valid atomic numbers range from 1 to max_z</p></li>
+<li><p>The standard DFT-D3 implementation supports elements 1-94 (H to Pu)</p></li>
+<li><p>Parameters can be float32 or float64; they will be converted to float32
+during computation for efficiency</p></li>
+</ul>
+<p class="rubric">Examples</p>
+<p>Create parameters from individual tensors:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">params</span> <span class="o">=</span> <span class="n">D3Parameters</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">rcov</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">95</span><span class="p">),</span>  <span class="c1"># 94 elements + padding</span>
+<span class="gp">... </span>    <span class="n">r4r2</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">95</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">c6ab</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">95</span><span class="p">,</span> <span class="mi">95</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">cn_ref</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">95</span><span class="p">,</span> <span class="mi">95</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">),</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Create from a dictionary (e.g., loaded from file):</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">state_dict</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;dftd3_parameters.pt&quot;</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">params</span> <span class="o">=</span> <span class="n">D3Parameters</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">rcov</span><span class="o">=</span><span class="n">state_dict</span><span class="p">[</span><span class="s2">&quot;rcov&quot;</span><span class="p">],</span>
+<span class="gp">... </span>    <span class="n">r4r2</span><span class="o">=</span><span class="n">state_dict</span><span class="p">[</span><span class="s2">&quot;r4r2&quot;</span><span class="p">],</span>
+<span class="gp">... </span>    <span class="n">c6ab</span><span class="o">=</span><span class="n">state_dict</span><span class="p">[</span><span class="s2">&quot;c6ab&quot;</span><span class="p">],</span>
+<span class="gp">... </span>    <span class="n">cn_ref</span><span class="o">=</span><span class="n">state_dict</span><span class="p">[</span><span class="s2">&quot;cn_ref&quot;</span><span class="p">],</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.c6ab">
+<span class="sig-name descname"><span class="pre">c6ab</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Tensor</span></em><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.c6ab" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.cn_ref">
+<span class="sig-name descname"><span class="pre">cn_ref</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Tensor</span></em><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.cn_ref" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.device">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">device</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">device</span></em><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.device" title="Link to this definition">#</a></dt>
+<dd><p>Device where parameters are stored.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.interp_mesh">
+<span class="sig-name descname"><span class="pre">interp_mesh</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">5</span></em><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.interp_mesh" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.max_z">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">max_z</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.max_z" title="Link to this definition">#</a></dt>
+<dd><p>Maximum atomic number supported by these parameters.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.r4r2">
+<span class="sig-name descname"><span class="pre">r4r2</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Tensor</span></em><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.r4r2" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.rcov">
+<span class="sig-name descname"><span class="pre">rcov</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Tensor</span></em><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.rcov" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="nvalchemiops.interactions.dispersion.dftd3.D3Parameters.to">
+<span class="sig-name descname"><span class="pre">to</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dtype</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/interactions/dispersion/dftd3.html#D3Parameters.to"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.to" title="Link to this definition">#</a></dt>
+<dd><p>Move all parameters to the specified device and/or convert to specified dtype.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>device</strong> (<em>str</em><em> or </em><em>torch.device</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Target device (e.g., ‘cpu’, ‘cuda’, ‘cuda:0’). If None, keeps current device.</p></li>
+<li><p><strong>dtype</strong> (<em>torch.dtype</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Target dtype (e.g., torch.float32, torch.float64). If None, keeps current dtype.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>New instance with parameters on the target device and/or dtype</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters" title="nvalchemiops.interactions.dispersion.dftd3.D3Parameters">D3Parameters</a></p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<p>Move to GPU:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">params_gpu</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Convert to float32:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">params_f32</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Move to GPU and convert to float32:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">params_gpu_f32</span> <span class="o">=</span> <span class="n">params</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="s1">&#39;cuda&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="neighborlist.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist</span></code>: Neighbor Lists</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="utilities.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.types</span></code>: Utilities</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#high-level-interface">High-Level Interface</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dft-d3-bj-dispersion-corrections">DFT-D3(BJ) Dispersion Corrections</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3"><code class="docutils literal notranslate"><span class="pre">dftd3()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-structures">Data Structures</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters"><code class="docutils literal notranslate"><span class="pre">D3Parameters</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.c6ab"><code class="docutils literal notranslate"><span class="pre">D3Parameters.c6ab</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.cn_ref"><code class="docutils literal notranslate"><span class="pre">D3Parameters.cn_ref</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.device"><code class="docutils literal notranslate"><span class="pre">D3Parameters.device</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.interp_mesh"><code class="docutils literal notranslate"><span class="pre">D3Parameters.interp_mesh</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.max_z"><code class="docutils literal notranslate"><span class="pre">D3Parameters.max_z</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.r4r2"><code class="docutils literal notranslate"><span class="pre">D3Parameters.r4r2</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.rcov"><code class="docutils literal notranslate"><span class="pre">D3Parameters.rcov</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.to"><code class="docutils literal notranslate"><span class="pre">D3Parameters.to()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../_sources/modules/dispersion.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

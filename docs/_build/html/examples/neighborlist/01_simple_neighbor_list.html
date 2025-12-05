@@ -1,0 +1,1221 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Simple Neighbor List Example &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'examples/neighborlist/01_simple_neighbor_list';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Batch Neighbor List Example" href="02_batch_neighbor_list.html" />
+    <link rel="prev" title="Neighbor Lists" href="index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../interactions/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../interactions/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+
+<li class="toctree-l2"><a class="reference internal" href="../interactions/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Simple Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Examples Gallery</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Neighbor Lists</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Simple...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-examples-neighborlist-01-simple-neighbor-list-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="simple-neighbor-list-example">
+<span id="sphx-glr-examples-neighborlist-01-simple-neighbor-list-py"></span><h1>Simple Neighbor List Example<a class="headerlink" href="#simple-neighbor-list-example" title="Link to this heading">#</a></h1>
+<p>This example demonstrates how to use the basic neighbor list functions in nvalchemiops
+on random systems. We’ll cover:</p>
+<ol class="arabic simple">
+<li><p>cell_list: O(N) algorithm using spatial cell lists (best for large systems)</p></li>
+<li><p>naive_neighbor_list: O(N²) algorithm (best for small systems)</p></li>
+<li><p>neighbor_list: Unified wrapper with automatic method selection (RECOMMENDED)</p></li>
+<li><p>Comparison between algorithms</p></li>
+<li><p>Neighbor matrix vs neighbor list (COO) formats</p></li>
+<li><p>build_cell_list + query_cell_list: Lower-level API with caching</p></li>
+</ol>
+<p>The neighbor list construction efficiently finds all atom pairs within a cutoff distance,
+which is essential for molecular simulations and materials science calculations.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">allocate_cell_list</span><span class="p">,</span>
+    <span class="n">build_cell_list</span><span class="p">,</span>
+    <span class="n">cell_list</span><span class="p">,</span>
+    <span class="n">estimate_cell_list_sizes</span><span class="p">,</span>
+    <span class="n">estimate_max_neighbors</span><span class="p">,</span>
+    <span class="n">naive_neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">query_cell_list</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">get_neighbor_list_from_neighbor_matrix</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="set-up-the-computation-device">
+<h1>Set up the computation device<a class="headerlink" href="#set-up-the-computation-device" title="Link to this heading">#</a></h1>
+<p>Choose device (CPU or GPU if available)</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+<span class="n">dtype</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using device: </span><span class="si">{</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using dtype: </span><span class="si">{</span><span class="n">dtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Using device: cuda
+Using dtype: torch.float32
+</pre></div>
+</div>
+</section>
+<section id="create-random-systems-of-different-sizes">
+<h1>Create random systems of different sizes<a class="headerlink" href="#create-random-systems-of-different-sizes" title="Link to this heading">#</a></h1>
+<p>We’ll compare performance on small vs large systems</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;CREATING TEST SYSTEMS&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Small system: good for naive algorithm</span>
+<span class="n">small_num_atoms</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="n">small_box_size</span> <span class="o">=</span> <span class="mf">10.0</span>
+
+<span class="c1"># Large system: requires cell list algorithm</span>
+<span class="n">large_num_atoms</span> <span class="o">=</span> <span class="mi">30_000</span>
+<span class="n">large_box_size</span> <span class="o">=</span> <span class="mf">100.0</span>
+
+<span class="n">cutoff</span> <span class="o">=</span> <span class="mf">5.0</span>
+
+<span class="n">torch</span><span class="o">.</span><span class="n">manual_seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+
+<span class="c1"># Small system</span>
+<span class="n">small_positions</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">small_num_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">small_box_size</span>
+<span class="p">)</span>
+<span class="n">small_cell</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">small_box_size</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># Large system</span>
+<span class="n">large_positions</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">large_num_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">large_box_size</span>
+<span class="p">)</span>
+<span class="n">large_cell</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">large_box_size</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="c1"># Periodic boundary conditions (all directions periodic)</span>
+<span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Small system: </span><span class="si">{</span><span class="n">small_num_atoms</span><span class="si">}</span><span class="s2"> atoms in </span><span class="si">{</span><span class="n">small_box_size</span><span class="si">}</span><span class="s2">³ box&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Large system: </span><span class="si">{</span><span class="n">large_num_atoms</span><span class="si">}</span><span class="s2"> atoms in </span><span class="si">{</span><span class="n">large_box_size</span><span class="si">}</span><span class="s2">³ box&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cutoff distance: </span><span class="si">{</span><span class="n">cutoff</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+CREATING TEST SYSTEMS
+======================================================================
+
+Small system: 100 atoms in 10.0³ box
+Large system: 30000 atoms in 100.0³ box
+Cutoff distance: 5.0 Å
+</pre></div>
+</div>
+</section>
+<section id="method-1-cell-list-algorithm-o-n-best-for-large-systems">
+<h1>Method 1: Cell List Algorithm (O(N) - best for large systems)<a class="headerlink" href="#method-1-cell-list-algorithm-o-n-best-for-large-systems" title="Link to this heading">#</a></h1>
+<p>The cell list algorithm uses spatial decomposition for efficient neighbor finding</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;METHOD 1: CELL LIST ALGORITHM (O(N))&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># On large system (where cell list excels)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Large System (30,000 atoms) ---&quot;</span><span class="p">)</span>
+
+<span class="c1"># Return neighbor matrix format (default)</span>
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+    <span class="n">large_positions</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">,</span>
+    <span class="n">large_cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Returned neighbor matrix: shape </span><span class="si">{</span><span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  neighbor_matrix: (num_atoms, max_neighbors) = </span><span class="si">{</span><span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  num_neighbors: (num_atoms,) = </span><span class="si">{</span><span class="n">num_neighbors</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  shifts: (num_atoms, max_neighbors, 3) = </span><span class="si">{</span><span class="n">shifts</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total neighbor pairs: </span><span class="si">{</span><span class="n">num_neighbors</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Average neighbors per atom: </span><span class="si">{</span><span class="n">num_neighbors</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Convert neighbor matrix to neighbor list (COO) format for GNNs</span>
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">neighbor_list_ptr</span><span class="p">,</span> <span class="n">shifts_coo</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">get_neighbor_list_from_neighbor_matrix</span><span class="p">(</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span><span class="p">,</span> <span class="n">fill_value</span><span class="o">=</span><span class="n">large_num_atoms</span>
+    <span class="p">)</span>
+<span class="p">)</span>  <span class="c1"># fill_value is the number of atoms in the system</span>
+
+<span class="n">source_atoms</span> <span class="o">=</span> <span class="n">neighbor_list_coo</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">target_atoms</span> <span class="o">=</span> <span class="n">neighbor_list_coo</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Returned neighbor list (COO format): shape </span><span class="si">{</span><span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  neighbor_list: (2, num_pairs) = </span><span class="si">{</span><span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  source_atoms: </span><span class="si">{</span><span class="n">source_atoms</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  target_atoms: </span><span class="si">{</span><span class="n">target_atoms</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  shifts: (num_pairs, 3) = </span><span class="si">{</span><span class="n">shifts_coo</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total pairs (COO): </span><span class="si">{</span><span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Show some example neighbors</span>
+<span class="k">if</span> <span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">First 5 neighbor pairs:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])):</span>
+        <span class="n">src</span><span class="p">,</span> <span class="n">tgt</span> <span class="o">=</span> <span class="n">source_atoms</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="n">target_atoms</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">shift</span> <span class="o">=</span> <span class="n">shifts_coo</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Atom </span><span class="si">{</span><span class="n">src</span><span class="si">}</span><span class="s2"> -&gt; Atom </span><span class="si">{</span><span class="n">tgt</span><span class="si">}</span><span class="s2">, shift: </span><span class="si">{</span><span class="n">shift</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+METHOD 1: CELL LIST ALGORITHM (O(N))
+======================================================================
+
+--- Large System (30,000 atoms) ---
+Returned neighbor matrix: shape torch.Size([30000, 2048])
+  neighbor_matrix: (num_atoms, max_neighbors) = torch.Size([30000, 2048])
+  num_neighbors: (num_atoms,) = torch.Size([30000])
+  shifts: (num_atoms, max_neighbors, 3) = torch.Size([30000, 2048, 3])
+Total neighbor pairs: 471714
+Average neighbors per atom: 15.72
+
+Returned neighbor list (COO format): shape torch.Size([2, 471714])
+  neighbor_list: (2, num_pairs) = torch.Size([2, 471714])
+  source_atoms: torch.Size([471714])
+  target_atoms: torch.Size([471714])
+  shifts: (num_pairs, 3) = torch.Size([471714, 3])
+Total pairs (COO): 471714
+
+First 5 neighbor pairs:
+  Atom 0 -&gt; Atom 18106, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 12342, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 25222, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 9305, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 19192, shift: [0, 0, 0]
+</pre></div>
+</div>
+</section>
+<section id="method-2-naive-algorithm-o-n2-best-for-small-systems">
+<h1>Method 2: Naive Algorithm (O(N²) - best for small systems)<a class="headerlink" href="#method-2-naive-algorithm-o-n2-best-for-small-systems" title="Link to this heading">#</a></h1>
+<p>The naive algorithm computes all pairwise distances</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;METHOD 2: NAIVE ALGORITHM (O(N²))&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># On small system (where naive algorithm is competitive)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Small System (100 atoms) ---&quot;</span><span class="p">)</span>
+
+<span class="c1"># Return neighbor matrix format</span>
+<span class="n">neighbor_matrix_naive</span><span class="p">,</span> <span class="n">num_neighbors_naive</span><span class="p">,</span> <span class="n">shifts_naive</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Returned neighbor matrix: shape </span><span class="si">{</span><span class="n">neighbor_matrix_naive</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total neighbor pairs: </span><span class="si">{</span><span class="n">num_neighbors_naive</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Average neighbors per atom: </span><span class="si">{</span><span class="n">num_neighbors_naive</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Or return neighbor list (COO) format</span>
+<span class="n">neighbor_list_naive</span><span class="p">,</span> <span class="n">neighbor_ptr_naive</span><span class="p">,</span> <span class="n">shifts_naive_coo</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Returned neighbor list (COO format): shape </span><span class="si">{</span><span class="n">neighbor_list_naive</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total pairs (COO): </span><span class="si">{</span><span class="n">neighbor_list_naive</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Neighbor ptr shape: </span><span class="si">{</span><span class="n">neighbor_ptr_naive</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+METHOD 2: NAIVE ALGORITHM (O(N²))
+======================================================================
+
+--- Small System (100 atoms) ---
+Returned neighbor matrix: shape torch.Size([100, 2048])
+Total neighbor pairs: 5152
+Average neighbors per atom: 51.52
+
+Returned neighbor list (COO format): shape torch.Size([2, 5152])
+Total pairs (COO): 5152
+Neighbor ptr shape: torch.Size([101])
+</pre></div>
+</div>
+</section>
+<section id="comparing-cell-list-vs-naive-algorithm">
+<h1>Comparing Cell List vs Naive Algorithm<a class="headerlink" href="#comparing-cell-list-vs-naive-algorithm" title="Link to this heading">#</a></h1>
+<p>Compare performance and verify results match</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;ALGORITHM COMPARISON&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Small System (100 atoms) ---&quot;</span><span class="p">)</span>
+
+<span class="c1"># Cell list on small system</span>
+<span class="n">cell_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">cell_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="c1"># Warmup</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+<span class="n">cell_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_time_small</span> <span class="o">=</span> <span class="n">cell_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">cell_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="c1"># Naive on small system</span>
+<span class="n">naive_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">naive_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+        <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+    <span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+        <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+    <span class="p">)</span>
+<span class="n">naive_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_time_small</span> <span class="o">=</span> <span class="n">naive_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">naive_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">cell_time_small</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_cell_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">naive_time_small</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_naive_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_small</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_small</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Large System (30,000 atoms) ---&quot;</span><span class="p">)</span>
+
+<span class="c1"># Cell list on large system</span>
+<span class="n">cell_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">cell_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_large</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">large_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">large_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+<span class="n">cell_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_time_large</span> <span class="o">=</span> <span class="n">cell_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">cell_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="c1"># Naive on large system (will be slower)</span>
+<span class="n">naive_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">naive_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_large</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+        <span class="n">large_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">large_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+    <span class="p">)</span>
+<span class="n">naive_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_time_large</span> <span class="o">=</span> <span class="n">naive_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">naive_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">cell_time_large</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_cell_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">naive_time_large</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_naive_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_large</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_large</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Speedup (cell list vs naive): </span><span class="si">{</span><span class="n">naive_time_large</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">cell_time_large</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+ALGORITHM COMPARISON
+======================================================================
+
+--- Small System (100 atoms) ---
+Cell list:  0.3601376056671143 ms, 5152 pairs
+Naive:      0.2289344072341919 ms, 5152 pairs
+Results match: True
+
+--- Large System (30,000 atoms) ---
+Cell list:  1.0718208312988282 ms, 471714 pairs
+Naive:      12.57281265258789 ms, 471714 pairs
+Results match: True
+
+Speedup (cell list vs naive): 11.7x
+</pre></div>
+</div>
+</section>
+<section id="method-3-unified-neighbor-list-wrapper-recommended">
+<h1>Method 3: Unified neighbor_list Wrapper (Recommended)<a class="headerlink" href="#method-3-unified-neighbor-list-wrapper-recommended" title="Link to this heading">#</a></h1>
+<p>The neighbor_list() wrapper provides a unified API that automatically
+selects the best algorithm based on system size and parameters</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;METHOD 3: UNIFIED neighbor_list() WRAPPER (RECOMMENDED)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Automatic Method Selection ---&quot;</span><span class="p">)</span>
+<span class="c1"># The wrapper automatically chooses the best algorithm:</span>
+<span class="c1"># - Small systems (&lt; 5000 atoms): naive algorithm</span>
+<span class="c1"># - Large systems (&gt;= 5000 atoms): cell_list algorithm</span>
+<span class="c1"># - If cutoff2 is provided: dual cutoff algorithms</span>
+<span class="c1"># - If batch_idx/batch_ptr is provided: batch algorithms</span>
+
+<span class="c1"># Small system - automatically uses naive algorithm</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Small system (auto-selects naive):&quot;</span><span class="p">)</span>
+<span class="n">nm_auto_small</span><span class="p">,</span> <span class="n">num_auto_small</span><span class="p">,</span> <span class="n">shifts_auto_small</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total pairs: </span><span class="si">{</span><span class="n">num_auto_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  Method selected: naive (auto)&quot;</span><span class="p">)</span>
+
+<span class="c1"># Large system - automatically uses cell_list algorithm</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Large system (auto-selects cell_list):&quot;</span><span class="p">)</span>
+<span class="n">nm_auto_large</span><span class="p">,</span> <span class="n">num_auto_large</span><span class="p">,</span> <span class="n">shifts_auto_large</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">large_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">large_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total pairs: </span><span class="si">{</span><span class="n">num_auto_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  Method selected: cell_list (auto)&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Explicit Method Selection ---&quot;</span><span class="p">)</span>
+<span class="c1"># You can also explicitly specify the method</span>
+<span class="n">nm_explicit</span><span class="p">,</span> <span class="n">num_explicit</span><span class="p">,</span> <span class="n">shifts_explicit</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;cell_list&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Explicitly using cell_list on small system: </span><span class="si">{</span><span class="n">num_explicit</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Passing Arguments to Underlying Methods ---&quot;</span><span class="p">)</span>
+<span class="c1"># Pass kwargs to the underlying algorithm (e.g., max_neighbors)</span>
+<span class="n">nm_kwargs</span><span class="p">,</span> <span class="n">num_kwargs</span><span class="p">,</span> <span class="n">shifts_kwargs</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">method</span><span class="o">=</span><span class="s2">&quot;naive&quot;</span><span class="p">,</span>
+    <span class="n">max_neighbors</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span>  <span class="c1"># Passed to naive_neighbor_list</span>
+    <span class="n">half_fill</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>  <span class="c1"># Also passed through</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using kwargs (max_neighbors=50, half_fill=True): </span><span class="si">{</span><span class="n">num_kwargs</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Neighbor matrix shape: </span><span class="si">{</span><span class="n">nm_kwargs</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Return Format Options ---&quot;</span><span class="p">)</span>
+<span class="c1"># Get neighbor list (COO) format directly</span>
+<span class="n">nlist_coo</span><span class="p">,</span> <span class="n">neighbor_ptr_coo</span><span class="p">,</span> <span class="n">shifts_coo</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Neighbor list (COO) format: </span><span class="si">{</span><span class="n">nlist_coo</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Source atoms: </span><span class="si">{</span><span class="n">nlist_coo</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Target atoms: </span><span class="si">{</span><span class="n">nlist_coo</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Neighbor ptr: </span><span class="si">{</span><span class="n">neighbor_ptr_coo</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Benefits of the Wrapper ---&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✓ Unified API for all neighbor list methods&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✓ Automatic algorithm selection based on system size&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✓ Easy to switch between methods for testing&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✓ Consistent return values across all methods&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✓ Pass-through of method-specific kwargs&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+METHOD 3: UNIFIED neighbor_list() WRAPPER (RECOMMENDED)
+======================================================================
+
+--- Automatic Method Selection ---
+
+Small system (auto-selects naive):
+  Total pairs: 5152
+  Method selected: naive (auto)
+
+Large system (auto-selects cell_list):
+  Total pairs: 471714
+  Method selected: cell_list (auto)
+
+--- Explicit Method Selection ---
+Explicitly using cell_list on small system: 5152 pairs
+
+--- Passing Arguments to Underlying Methods ---
+Using kwargs (max_neighbors=50, half_fill=True): 2576 pairs
+Neighbor matrix shape: torch.Size([100, 50])
+
+--- Return Format Options ---
+Neighbor list (COO) format: torch.Size([2, 5152])
+  Source atoms: torch.Size([5152])
+  Target atoms: torch.Size([5152])
+  Neighbor ptr: torch.Size([101])
+
+--- Benefits of the Wrapper ---
+✓ Unified API for all neighbor list methods
+✓ Automatic algorithm selection based on system size
+✓ Easy to switch between methods for testing
+✓ Consistent return values across all methods
+✓ Pass-through of method-specific kwargs
+</pre></div>
+</div>
+</section>
+<section id="method-4-low-level-cell-list-api-with-caching">
+<h1>Method 4: Low-level Cell List API with Caching<a class="headerlink" href="#method-4-low-level-cell-list-api-with-caching" title="Link to this heading">#</a></h1>
+<p>For advanced users: separate build and query phases for efficient caching</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;METHOD 4: LOW-LEVEL CELL LIST API (BUILD + QUERY)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># This approach is useful when you want to:</span>
+<span class="c1"># 1. Build cell list once, query multiple times with different cutoffs</span>
+<span class="c1"># 2. Cache cell list for MD simulations with rebuild detection</span>
+<span class="c1"># 3. Have fine control over memory allocation</span>
+
+<span class="n">positions</span> <span class="o">=</span> <span class="n">large_positions</span>
+<span class="n">cell_tensor</span> <span class="o">=</span> <span class="n">large_cell</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Step 1: Estimate Memory Requirements ---&quot;</span><span class="p">)</span>
+<span class="n">max_total_cells</span><span class="p">,</span> <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">estimate_cell_list_sizes</span><span class="p">(</span>
+    <span class="n">cell_tensor</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">cutoff</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Estimated max cells: </span><span class="si">{</span><span class="n">max_total_cells</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Neighbor search radius: </span><span class="si">{</span><span class="n">neighbor_search_radius</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Step 2: Allocate Memory ---&quot;</span><span class="p">)</span>
+<span class="n">cell_list_cache</span> <span class="o">=</span> <span class="n">allocate_cell_list</span><span class="p">(</span>
+    <span class="n">total_atoms</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+    <span class="n">max_total_cells</span><span class="o">=</span><span class="n">max_total_cells</span><span class="p">,</span>
+    <span class="n">neighbor_search_radius</span><span class="o">=</span><span class="n">neighbor_search_radius</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="p">(</span>
+    <span class="n">cells_per_dimension</span><span class="p">,</span>
+    <span class="n">neighbor_search_radius</span><span class="p">,</span>
+    <span class="n">atom_periodic_shifts</span><span class="p">,</span>
+    <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+    <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+    <span class="n">cell_atom_start_indices</span><span class="p">,</span>
+    <span class="n">cell_atom_list</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">=</span> <span class="n">cell_list_cache</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Allocated cell list cache with </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">cell_list_cache</span><span class="p">)</span><span class="si">}</span><span class="s2"> components&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Step 3: Build Cell List ---&quot;</span><span class="p">)</span>
+<span class="n">build_cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell_tensor</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Built cell list with </span><span class="si">{</span><span class="n">cells_per_dimension</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span><span class="si">}</span><span class="s2"> cells per dimension&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Step 4: Query Neighbors ---&quot;</span><span class="p">)</span>
+<span class="c1"># Allocate output tensors</span>
+<span class="n">max_neighbors</span> <span class="o">=</span> <span class="n">estimate_max_neighbors</span><span class="p">(</span><span class="n">cutoff</span><span class="p">,</span> <span class="n">safety_factor</span><span class="o">=</span><span class="mf">20.0</span><span class="p">)</span>
+<span class="n">neighbor_matrix_query</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
+    <span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">max_neighbors</span><span class="p">),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+<span class="p">)</span>
+<span class="n">neighbor_shifts_query</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+    <span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">max_neighbors</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span>
+<span class="p">)</span>
+<span class="n">num_neighbors_query</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+<span class="n">query_cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">,</span>
+    <span class="n">cell_tensor</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">,</span>
+    <span class="o">*</span><span class="n">cell_list_cache</span><span class="p">,</span>
+    <span class="n">neighbor_matrix_query</span><span class="p">,</span>
+    <span class="n">neighbor_shifts_query</span><span class="p">,</span>
+    <span class="n">num_neighbors_query</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Query found </span><span class="si">{</span><span class="n">num_neighbors_query</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> neighbor pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Average neighbors per atom: </span><span class="si">{</span><span class="n">num_neighbors_query</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+METHOD 4: LOW-LEVEL CELL LIST API (BUILD + QUERY)
+======================================================================
+
+--- Step 1: Estimate Memory Requirements ---
+Estimated max cells: 1000
+Neighbor search radius: tensor([1, 1, 1], device=&#39;cuda:0&#39;, dtype=torch.int32)
+
+--- Step 2: Allocate Memory ---
+Allocated cell list cache with 7 components
+
+--- Step 3: Build Cell List ---
+Built cell list with [10, 10, 10] cells per dimension
+
+--- Step 4: Query Neighbors ---
+Query found 471714 neighbor pairs
+Average neighbors per atom: 15.72
+</pre></div>
+</div>
+</section>
+<section id="understanding-half-fill-mode">
+<h1>Understanding Half-Fill Mode<a class="headerlink" href="#understanding-half-fill-mode" title="Link to this heading">#</a></h1>
+<p>Control whether to store both (i,j) and (j,i) pairs</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;HALF-FILL MODE&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="n">positions</span> <span class="o">=</span> <span class="n">small_positions</span>
+<span class="n">cell_tensor</span> <span class="o">=</span> <span class="n">small_cell</span>
+
+<span class="c1"># Full neighbor list: both (i,j) and (j,i) stored</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Full Neighbor List (half_fill=False) ---&quot;</span><span class="p">)</span>
+<span class="n">neighbor_matrix_full</span><span class="p">,</span> <span class="n">num_neighbors_full</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell_tensor</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">half_fill</span><span class="o">=</span><span class="kc">False</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total pairs: </span><span class="si">{</span><span class="n">num_neighbors_full</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Half-fill: only (i,j) where i &lt; j (or with non-zero periodic shift)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Half-Fill Neighbor List (half_fill=True) ---&quot;</span><span class="p">)</span>
+<span class="n">neighbor_matrix_half</span><span class="p">,</span> <span class="n">num_neighbors_half</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell_tensor</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">half_fill</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total pairs: </span><span class="si">{</span><span class="n">num_neighbors_half</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Reduction: </span><span class="si">{</span><span class="n">num_neighbors_half</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">num_neighbors_full</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2"> of full&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+HALF-FILL MODE
+======================================================================
+
+--- Full Neighbor List (half_fill=False) ---
+Total pairs: 5152
+
+--- Half-Fill Neighbor List (half_fill=True) ---
+Total pairs: 2576
+Reduction: 50.0% of full
+</pre></div>
+</div>
+</section>
+<section id="validate-neighbor-distances">
+<h1>Validate neighbor distances<a class="headerlink" href="#validate-neighbor-distances" title="Link to this heading">#</a></h1>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;DISTANCE VALIDATION&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Use neighbor list format for easy iteration</span>
+<span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+    <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="k">if</span> <span class="n">neighbor_list</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="c1"># Calculate distances for first 10 pairs</span>
+    <span class="n">n_check</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">source_atoms</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="p">:</span><span class="n">n_check</span><span class="p">]</span>
+    <span class="n">target_atoms</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="p">:</span><span class="n">n_check</span><span class="p">]</span>
+    <span class="n">pair_shifts</span> <span class="o">=</span> <span class="n">shifts</span><span class="p">[:</span><span class="n">n_check</span><span class="p">]</span>
+
+    <span class="c1"># Compute Cartesian shifts</span>
+    <span class="n">cartesian_shifts</span> <span class="o">=</span> <span class="n">pair_shifts</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">@</span> <span class="n">small_cell</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="c1"># Calculate distances</span>
+    <span class="n">pos_i</span> <span class="o">=</span> <span class="n">small_positions</span><span class="p">[</span><span class="n">source_atoms</span><span class="p">]</span>
+    <span class="n">pos_j</span> <span class="o">=</span> <span class="n">small_positions</span><span class="p">[</span><span class="n">target_atoms</span><span class="p">]</span>
+    <span class="n">distances</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">pos_j</span> <span class="o">-</span> <span class="n">pos_i</span> <span class="o">+</span> <span class="n">cartesian_shifts</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">First </span><span class="si">{</span><span class="n">n_check</span><span class="si">}</span><span class="s2"> neighbor distances:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_check</span><span class="p">):</span>
+        <span class="n">src</span> <span class="o">=</span> <span class="n">source_atoms</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">tgt</span> <span class="o">=</span> <span class="n">target_atoms</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">dist</span> <span class="o">=</span> <span class="n">distances</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Pair </span><span class="si">{</span><span class="n">idx</span><span class="si">}</span><span class="s2">: atom </span><span class="si">{</span><span class="n">src</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">tgt</span><span class="si">}</span><span class="s2">, distance = </span><span class="si">{</span><span class="n">dist</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+
+    <span class="n">max_distance</span> <span class="o">=</span> <span class="n">distances</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Max distance in pairs: </span><span class="si">{</span><span class="n">max_distance</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cutoff distance: </span><span class="si">{</span><span class="n">cutoff</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">max_distance</span> <span class="o">&lt;=</span> <span class="n">cutoff</span> <span class="o">+</span> <span class="mf">1e-5</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✓ All neighbor distances are within the cutoff&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;✗ Some distances are outside the cutoff&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+DISTANCE VALIDATION
+======================================================================
+
+First 10 neighbor distances:
+  Pair 0: atom 0 -&gt; 74, distance = 3.5964 Å
+  Pair 1: atom 0 -&gt; 78, distance = 4.2534 Å
+  Pair 2: atom 0 -&gt; 87, distance = 4.2602 Å
+  Pair 3: atom 0 -&gt; 4, distance = 2.1855 Å
+  Pair 4: atom 0 -&gt; 6, distance = 4.4884 Å
+  Pair 5: atom 0 -&gt; 28, distance = 4.8273 Å
+  Pair 6: atom 0 -&gt; 41, distance = 3.3273 Å
+  Pair 7: atom 0 -&gt; 61, distance = 2.6520 Å
+  Pair 8: atom 0 -&gt; 66, distance = 4.9892 Å
+  Pair 9: atom 0 -&gt; 76, distance = 2.6184 Å
+
+Max distance in pairs: 4.9892 Å
+Cutoff distance: 5.0000 Å
+✓ All neighbor distances are within the cutoff
+</pre></div>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example completed successfully!&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Example completed successfully!
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.048 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighborlist-01-simple-neighbor-list-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/e6bb2681aab85454093239863c7c5972/01_simple_neighbor_list.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">01_simple_neighbor_list.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/cf5df9d32fe0ddb8ecfa69b4843a1415/01_simple_neighbor_list.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">01_simple_neighbor_list.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/8c2b31533f426c8f9105263a53dd6788/01_simple_neighbor_list.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">01_simple_neighbor_list.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Neighbor Lists</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="02_batch_neighbor_list.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Batch Neighbor List Example</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#">Simple Neighbor List Example</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#set-up-the-computation-device">Set up the computation device</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#create-random-systems-of-different-sizes">Create random systems of different sizes</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#method-1-cell-list-algorithm-o-n-best-for-large-systems">Method 1: Cell List Algorithm (O(N) - best for large systems)</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#method-2-naive-algorithm-o-n2-best-for-small-systems">Method 2: Naive Algorithm (O(N²) - best for small systems)</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#comparing-cell-list-vs-naive-algorithm">Comparing Cell List vs Naive Algorithm</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#method-3-unified-neighbor-list-wrapper-recommended">Method 3: Unified neighbor_list Wrapper (Recommended)</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#method-4-low-level-cell-list-api-with-caching">Method 4: Low-level Cell List API with Caching</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#understanding-half-fill-mode">Understanding Half-Fill Mode</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#validate-neighbor-distances">Validate neighbor distances</a></li>
+</ul>
+
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/examples/neighborlist/01_simple_neighbor_list.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
