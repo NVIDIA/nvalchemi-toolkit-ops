@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Index &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>Index &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -41,7 +41,7 @@
 <link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="_static/documentation_options.js?v=38b66d78"></script>
+    <script src="_static/documentation_options.js?v=95e61db4"></script>
     <script src="_static/doctools.js?v=9bcbadda"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -374,8 +374,10 @@ document.write(`
  | <a href="#I"><strong>I</strong></a>
  | <a href="#M"><strong>M</strong></a>
  | <a href="#N"><strong>N</strong></a>
+ | <a href="#P"><strong>P</strong></a>
  | <a href="#Q"><strong>Q</strong></a>
  | <a href="#R"><strong>R</strong></a>
+ | <a href="#S"><strong>S</strong></a>
  | <a href="#T"><strong>T</strong></a>
  | <a href="#W"><strong>W</strong></a>
  
@@ -385,6 +387,14 @@ document.write(`
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/neighborlist.html#nvalchemiops.neighborlist.allocate_cell_list">allocate_cell_list() (in module nvalchemiops.neighborlist)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/electrostatics.html#id0">alpha (nvalchemiops.interactions.electrostatics.parameters.EwaldParameters attribute)</a>, <a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.EwaldParameters.alpha">[1]</a>
+
+      <ul>
+        <li><a href="modules/electrostatics.html#id8">(nvalchemiops.interactions.electrostatics.parameters.PMEParameters attribute)</a>, <a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.PMEParameters.alpha">[1]</a>
+</li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -417,13 +427,19 @@ document.write(`
 </li>
       <li><a href="modules/neighborlist.html#nvalchemiops.neighborlist.cell_list_needs_rebuild">cell_list_needs_rebuild() (in module nvalchemiops.neighborlist)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/neighborlist.html#nvalchemiops.neighborlist.check_cell_list_rebuild_needed">check_cell_list_rebuild_needed() (in module nvalchemiops.neighborlist)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/neighborlist.html#nvalchemiops.neighborlist.check_neighbor_list_rebuild_needed">check_neighbor_list_rebuild_needed() (in module nvalchemiops.neighborlist)</a>
 </li>
       <li><a href="modules/dispersion.html#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.cn_ref">cn_ref (nvalchemiops.interactions.dispersion.dftd3.D3Parameters attribute)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.coulomb.coulomb_energy">coulomb_energy() (in module nvalchemiops.interactions.electrostatics.coulomb)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.coulomb.coulomb_energy_forces">coulomb_energy_forces() (in module nvalchemiops.interactions.electrostatics.coulomb)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.coulomb.coulomb_forces">coulomb_forces() (in module nvalchemiops.interactions.electrostatics.coulomb)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -447,11 +463,29 @@ document.write(`
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/neighborlist.html#nvalchemiops.neighborlist.estimate_batch_cell_list_sizes">estimate_batch_cell_list_sizes() (in module nvalchemiops.neighborlist)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/neighborlist.html#nvalchemiops.neighborlist.estimate_cell_list_sizes">estimate_cell_list_sizes() (in module nvalchemiops.neighborlist)</a>
 </li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.estimate_ewald_parameters">estimate_ewald_parameters() (in module nvalchemiops.interactions.electrostatics.parameters)</a>
+</li>
       <li><a href="modules/neighborlist.html#nvalchemiops.neighborlist.estimate_max_neighbors">estimate_max_neighbors() (in module nvalchemiops.neighborlist)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.estimate_pme_mesh_dimensions">estimate_pme_mesh_dimensions() (in module nvalchemiops.interactions.electrostatics.parameters)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.estimate_pme_parameters">estimate_pme_parameters() (in module nvalchemiops.interactions.electrostatics.parameters)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/utilities.html#nvalchemiops.math.eval_gto_density_pytorch">eval_gto_density_pytorch() (in module nvalchemiops.math)</a>
+</li>
+      <li><a href="modules/utilities.html#nvalchemiops.math.eval_gto_fourier_pytorch">eval_gto_fourier_pytorch() (in module nvalchemiops.math)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald.ewald_real_space">ewald_real_space() (in module nvalchemiops.interactions.electrostatics.ewald)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald.ewald_reciprocal_space">ewald_reciprocal_space() (in module nvalchemiops.interactions.electrostatics.ewald)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald.ewald_summation">ewald_summation() (in module nvalchemiops.interactions.electrostatics.ewald)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.EwaldParameters">EwaldParameters (class in nvalchemiops.interactions.electrostatics.parameters)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -459,10 +493,14 @@ document.write(`
 <h2 id="G">G</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="modules/utilities.html#nvalchemiops.types.get_wp_dtype">get_wp_dtype() (in module nvalchemiops.types)</a>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.k_vectors.generate_k_vectors_ewald_summation">generate_k_vectors_ewald_summation() (in module nvalchemiops.interactions.electrostatics.k_vectors)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.k_vectors.generate_k_vectors_pme">generate_k_vectors_pme() (in module nvalchemiops.interactions.electrostatics.k_vectors)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/utilities.html#nvalchemiops.types.get_wp_dtype">get_wp_dtype() (in module nvalchemiops.types)</a>
+</li>
       <li><a href="modules/utilities.html#nvalchemiops.types.get_wp_mat_dtype">get_wp_mat_dtype() (in module nvalchemiops.types)</a>
 </li>
       <li><a href="modules/utilities.html#nvalchemiops.types.get_wp_vec_dtype">get_wp_vec_dtype() (in module nvalchemiops.types)</a>
@@ -483,11 +521,19 @@ document.write(`
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/dispersion.html#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.max_z">max_z (nvalchemiops.interactions.dispersion.dftd3.D3Parameters property)</a>
 </li>
+      <li><a href="modules/electrostatics.html#id9">mesh_dimensions (nvalchemiops.interactions.electrostatics.parameters.PMEParameters attribute)</a>, <a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.PMEParameters.mesh_dimensions">[1]</a>
+</li>
+      <li><a href="modules/electrostatics.html#id10">mesh_spacing (nvalchemiops.interactions.electrostatics.parameters.PMEParameters attribute)</a>, <a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.PMEParameters.mesh_spacing">[1]</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.mesh_spacing_to_dimensions">mesh_spacing_to_dimensions() (in module nvalchemiops.interactions.electrostatics.parameters)</a>
+</li>
       <li>
     module
 
       <ul>
         <li><a href="modules/dispersion.html#module-nvalchemiops.interactions.dispersion">nvalchemiops.interactions.dispersion</a>
+</li>
+        <li><a href="modules/electrostatics.html#module-nvalchemiops.interactions.electrostatics">nvalchemiops.interactions.electrostatics</a>
 </li>
         <li><a href="modules/utilities.html#module-nvalchemiops.math">nvalchemiops.math</a>
 </li>
@@ -517,6 +563,13 @@ document.write(`
         <li><a href="modules/dispersion.html#module-nvalchemiops.interactions.dispersion">module</a>
 </li>
       </ul></li>
+      <li>
+    nvalchemiops.interactions.electrostatics
+
+      <ul>
+        <li><a href="modules/electrostatics.html#module-nvalchemiops.interactions.electrostatics">module</a>
+</li>
+      </ul></li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li>
@@ -543,6 +596,20 @@ document.write(`
   </ul></td>
 </tr></table>
 
+<h2 id="P">P</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald">particle_mesh_ewald() (in module nvalchemiops.interactions.electrostatics.pme)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.pme.pme_reciprocal_space">pme_reciprocal_space() (in module nvalchemiops.interactions.electrostatics.pme)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.PMEParameters">PMEParameters (class in nvalchemiops.interactions.electrostatics.parameters)</a>
+</li>
+  </ul></td>
+</tr></table>
+
 <h2 id="Q">Q</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
@@ -556,9 +623,33 @@ document.write(`
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="modules/dispersion.html#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.r4r2">r4r2 (nvalchemiops.interactions.dispersion.dftd3.D3Parameters attribute)</a>
 </li>
+      <li><a href="modules/dispersion.html#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.rcov">rcov (nvalchemiops.interactions.dispersion.dftd3.D3Parameters attribute)</a>
+</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="modules/dispersion.html#nvalchemiops.interactions.dispersion.dftd3.D3Parameters.rcov">rcov (nvalchemiops.interactions.dispersion.dftd3.D3Parameters attribute)</a>
+      <li><a href="modules/electrostatics.html#id6">real_space_cutoff (nvalchemiops.interactions.electrostatics.parameters.EwaldParameters attribute)</a>, <a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.EwaldParameters.real_space_cutoff">[1]</a>
+
+      <ul>
+        <li><a href="modules/electrostatics.html#id11">(nvalchemiops.interactions.electrostatics.parameters.PMEParameters attribute)</a>, <a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.PMEParameters.real_space_cutoff">[1]</a>
+</li>
+      </ul></li>
+      <li><a href="modules/electrostatics.html#id7">reciprocal_space_cutoff (nvalchemiops.interactions.electrostatics.parameters.EwaldParameters attribute)</a>, <a href="modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.EwaldParameters.reciprocal_space_cutoff">[1]</a>
+</li>
+  </ul></td>
+</tr></table>
+
+<h2 id="S">S</h2>
+<table style="width: 100%" class="indextable genindextable"><tr>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/electrostatics.html#nvalchemiops.spline.spline_gather">spline_gather() (in module nvalchemiops.spline)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.spline.spline_gather_gradient">spline_gather_gradient() (in module nvalchemiops.spline)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="modules/electrostatics.html#nvalchemiops.spline.spline_gather_vec3">spline_gather_vec3() (in module nvalchemiops.spline)</a>
+</li>
+      <li><a href="modules/electrostatics.html#nvalchemiops.spline.spline_spread">spline_spread() (in module nvalchemiops.spline)</a>
 </li>
   </ul></td>
 </tr></table>

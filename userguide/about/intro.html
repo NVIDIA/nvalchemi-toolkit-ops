@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Introduction to ALCHEMI Toolkit-Ops &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>Introduction to ALCHEMI Toolkit-Ops &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -51,6 +51,8 @@
     <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/intro';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
@@ -357,6 +359,7 @@ document.write(`
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../components/neighborlist.html">Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../components/electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
 </ul>
 </div>
@@ -641,8 +644,91 @@ Batch</label><div class="sd-tab-content docutils">
 dict). See the <a class="reference internal" href="../components/dispersion.html"><span class="doc std std-doc">dispersion documentation</span></a> for parameter
 setup and loading from standard reference files.</p>
 </div>
-<p>ALCHEMI Toolkit-Ops integrates with the scientific Python ecosystem:</p>
 </section>
+<section id="electrostatic-interactions">
+<h3>Electrostatic Interactions<a class="headerlink" href="#electrostatic-interactions" title="Link to this heading">#</a></h3>
+<p>The <a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald.ewald_summation" title="nvalchemiops.interactions.electrostatics.ewald.ewald_summation"><code class="xref py py-func docutils literal notranslate"><span class="pre">ewald_summation()</span></code></a> and
+<a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald" title="nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald"><code class="xref py py-func docutils literal notranslate"><span class="pre">particle_mesh_ewald()</span></code></a> functions
+compute long-range Coulomb interactions in periodic systems. Both methods split the
+slowly-converging <span class="math notranslate nohighlight">\(1/r\)</span> potential into real-space (short-range) and reciprocal-space
+(long-range) components, with automatic parameter estimation based on target accuracy.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>For systems with &lt;5000 atoms, use Ewald summation. For larger systems, PME provides
+<span class="math notranslate nohighlight">\(O(N \log N)\)</span> scaling via FFT-accelerated reciprocal-space calculations.</p>
+</div>
+<p>Choose the right method based on your system size:</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-7" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="ewald" for="sd-tab-item-7">
+Ewald</label><div class="sd-tab-content docutils">
+<p>Small to medium systems (&lt;5000 atoms)</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Build neighbor list</span>
+<span class="n">neighbors</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Compute electrostatics (parameters estimated automatically)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbors</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Uses explicit k-vector summation in reciprocal space — <span class="math notranslate nohighlight">\(O(N^2)\)</span> scaling.</p>
+</div>
+<input id="sd-tab-item-8" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pme" for="sd-tab-item-8">
+PME</label><div class="sd-tab-content docutils">
+<p>Large systems (&gt;5000 atoms)</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">particle_mesh_ewald</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Build neighbor list</span>
+<span class="n">neighbors</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Compute electrostatics with FFT acceleration</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbors</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Uses FFT-based reciprocal-space calculation — <span class="math notranslate nohighlight">\(O(N \log N)\)</span> scaling.</p>
+</div>
+<input id="sd-tab-item-9" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="batch" for="sd-tab-item-9">
+Batch</label><div class="sd-tab-content docutils">
+<p>Multiple systems processed simultaneously</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Build batched neighbor list</span>
+<span class="n">neighbors</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Batched electrostatics</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbors</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span> <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Returns per-atom energies; sum by system using <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code>.</p>
+</div>
+</div>
+</section>
+</section>
+<section id="ecosystem-integration">
+<h2>Ecosystem Integration<a class="headerlink" href="#ecosystem-integration" title="Link to this heading">#</a></h2>
+<p>ALCHEMI Toolkit-Ops integrates with the scientific Python ecosystem:</p>
 <section id="pytorch">
 <h3>PyTorch<a class="headerlink" href="#pytorch" title="Link to this heading">#</a></h3>
 <p>All inputs and outputs are PyTorch tensors with automatic CPU/GPU handling.
@@ -671,6 +757,8 @@ ensuring compatibility with established workflows.</p>
 spatial algorithm details</p></li>
 <li><p>Explore <a class="reference internal" href="../components/dispersion.html"><span class="doc std std-doc">DFT-D3 dispersion corrections</span></a> for
 energy and force calculations</p></li>
+<li><p>Learn about <a class="reference internal" href="../components/electrostatics.html"><span class="doc std std-doc">electrostatic interactions</span></a> for
+Ewald summation and PME calculations</p></li>
 <li><p>Check the <code class="docutils literal notranslate"><span class="pre">examples/</span></code> directory for complete working scripts</p></li>
 </ol>
 </section>
@@ -728,6 +816,10 @@ energy and force calculations</p></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-finding">Neighbor Finding</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#rebuild-detection">Rebuild Detection</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dispersion-corrections">Dispersion Corrections</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#electrostatic-interactions">Electrostatic Interactions</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ecosystem-integration">Ecosystem Integration</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pytorch">PyTorch</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvidia-tools">NVIDIA Tools</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#computational-chemistry">Computational Chemistry</a></li>

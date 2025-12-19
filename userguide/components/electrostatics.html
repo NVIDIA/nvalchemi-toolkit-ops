@@ -1,0 +1,1563 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Electrostatic Interactions &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/components/electrostatics';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="DFT-D3(BJ) Dispersion Correction" href="dispersion.html" />
+    <link rel="prev" title="Neighbor Lists" href="neighborlist.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">About</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../about/install.html">Installation Guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/faq.html">Frequently Asked Questions</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="neighborlist.html">Neighbor Lists</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Electrostatic Interactions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">User Guide</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Electrostati...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <!-- markdownlint-disable MD013 MD049 -->
+<section class="tex2jax_ignore mathjax_ignore" id="electrostatic-interactions">
+<span id="electrostatics-userguide"></span><h1>Electrostatic Interactions<a class="headerlink" href="#electrostatic-interactions" title="Link to this heading">#</a></h1>
+<p>Electrostatic interactions arise from Coulombic forces between charged particles.
+In periodic systems, the <span class="math notranslate nohighlight">\(1/r\)</span> potential decays slowly, requiring special techniques
+to handle the conditionally convergent lattice sum. ALCHEMI Toolkit-Ops provides
+GPU-accelerated implementations of Ewald summation and Particle Mesh Ewald (PME)
+via <a class="reference external" href="https://nvidia.github.io/warp/">NVIDIA Warp</a>, with full PyTorch autograd support
+for machine learning applications.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>For most applications, start with <a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald.ewald_summation" title="nvalchemiops.interactions.electrostatics.ewald.ewald_summation"><code class="xref py py-func docutils literal notranslate"><span class="pre">ewald_summation()</span></code></a>
+or <a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald" title="nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald"><code class="xref py py-func docutils literal notranslate"><span class="pre">particle_mesh_ewald()</span></code></a>. These unified APIs
+automatically handle parameter estimation and dispatch to optimized kernels based on your input.</p>
+</div>
+<section id="overview-of-available-methods">
+<h2>Overview of Available Methods<a class="headerlink" href="#overview-of-available-methods" title="Link to this heading">#</a></h2>
+<p>ALCHEMI Toolkit-Ops provides electrostatics modules for point charges:</p>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Scaling</p></th>
+<th class="head"><p>Best For</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>Ewald Summation</strong></p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N^2)\)</span></p></td>
+<td><p>Small/medium systems (&lt;5000 atoms)</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Particle Mesh Ewald</strong></p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N \log N)\)</span></p></td>
+<td><p>Large systems</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>Direct Coulomb</strong></p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N \times \text{pairs})\)</span></p></td>
+<td><p>Non-periodic or as real-space component</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>Ewald Multipole</strong></p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N^2)\)</span></p></td>
+<td><p>Multipolar systems, small/medium</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>PME Multipole</strong></p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N \log N)\)</span></p></td>
+<td><p>Multipolar systems, large</p></td>
+</tr>
+</tbody>
+</table>
+<p>All methods support:</p>
+<ul class="simple">
+<li><p>Single-system and batched calculations</p></li>
+<li><p>Periodic boundary conditions</p></li>
+<li><p>Automatic differentiation (positions, charges, cell)</p></li>
+<li><p>Both neighbor list (COO) and neighbor matrix formats</p></li>
+</ul>
+</section>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading">#</a></h2>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="ewald" for="sd-tab-item-0">
+Ewald Summation</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Build neighbor list</span>
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Compute electrostatics (parameters estimated automatically)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list_coo</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">5e-4</span><span class="p">,</span>  <span class="c1"># Target accuracy for parameter estimation</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pme" for="sd-tab-item-1">
+Particle Mesh Ewald</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">particle_mesh_ewald</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Build neighbor list</span>
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Compute electrostatics (parameters estimated automatically)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list_coo</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">5e-4</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="coulomb" for="sd-tab-item-2">
+Direct Coulomb</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics.coulomb</span><span class="w"> </span><span class="kn">import</span> <span class="n">coulomb_energy_forces</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Build neighbor list</span>
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Undamped Coulomb (alpha=0) or damped for Ewald real-space (alpha&gt;0)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">coulomb_energy_forces</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>  <span class="c1"># Set to &gt;0 for damped (Ewald real-space)</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list_coo</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+</div>
+</section>
+<section id="data-formats">
+<h2>Data Formats<a class="headerlink" href="#data-formats" title="Link to this heading">#</a></h2>
+<section id="tensor-specifications">
+<h3>Tensor Specifications<a class="headerlink" href="#tensor-specifications" title="Link to this heading">#</a></h3>
+<p>The table below lists out the general syntax and expected shapes for tensors used
+in the electrostatics code. When possible to do so, we encourage developers and
+users to align their variable naming to what is shown here for ease of debugging
+and consistency.</p>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Tensor</p></th>
+<th class="head"><p>Shape</p></th>
+<th class="head"><p>Dtype</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">positions</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">3)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+<td><p>Atomic coordinates</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">charges</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(N,)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+<td><p>Atomic partial charges</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cell</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">3,</span> <span class="pre">3)</span></code> or <code class="docutils literal notranslate"><span class="pre">(B,</span> <span class="pre">3,</span> <span class="pre">3)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+<td><p>Unit cell lattice vectors (rows)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pbc</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">3)</span></code> or <code class="docutils literal notranslate"><span class="pre">(B,</span> <span class="pre">3)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">bool</span></code></p></td>
+<td><p>Periodic boundary conditions per axis</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">batch_idx</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(N,)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code></p></td>
+<td><p>System index for each atom (batched only)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float</span></code> or <code class="docutils literal notranslate"><span class="pre">(B,)</span></code> tensor</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+<td><p>Ewald splitting parameter</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="neighbor-representations">
+<h3>Neighbor Representations<a class="headerlink" href="#neighbor-representations" title="Link to this heading">#</a></h3>
+<p>The electrostatics functions accept neighbors in two formats:</p>
+<p><strong>Neighbor List (COO)</strong>: Shape <code class="docutils literal notranslate"><span class="pre">(2,</span> <span class="pre">num_pairs)</span></code> where row 0 contains source indices
+and row 1 contains target indices. Each pair is listed once. Provide with
+<code class="docutils literal notranslate"><span class="pre">neighbor_list</span></code> and <code class="docutils literal notranslate"><span class="pre">neighbor_shifts</span></code> arguments.</p>
+<p><strong>Neighbor Matrix</strong>: Shape <code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">max_neighbors)</span></code> where each row contains neighbor
+indices for that atom, padded with <code class="docutils literal notranslate"><span class="pre">fill_value</span></code>. Provide with <code class="docutils literal notranslate"><span class="pre">neighbor_matrix</span></code>
+and <code class="docutils literal notranslate"><span class="pre">neighbor_matrix_shifts</span></code> arguments.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>See the <a class="reference internal" href="neighborlist.html#neighborlist-userguide"><span class="std std-ref">neighbor list documentation</span></a> for API usage and performance considerations
+when deciding between COO and matrix representations.</p>
+</div>
+</section>
+</section>
+<section id="ewald-summation">
+<h2>Ewald Summation<a class="headerlink" href="#ewald-summation" title="Link to this heading">#</a></h2>
+<section id="mathematical-background">
+<h3>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading">#</a></h3>
+<p>The Ewald method splits the slowly-converging Coulomb sum into four components:</p>
+<div class="math notranslate nohighlight">
+\[E_{\text{total}} = E_{\text{real}} + E_{\text{reciprocal}} - E_{\text{self}} - E_{\text{background}}\]</div>
+<p><strong>Real-Space (Short-Range)</strong>:</p>
+<div class="math notranslate nohighlight">
+\[E_{\text{real}} = \frac{1}{2} \sum_{i \neq j} q_i q_j \frac{\text{erfc}(\alpha r_{ij})}{ r_{ij}}\]</div>
+<p>The complementary error function <span class="math notranslate nohighlight">\(\text{erfc}(\alpha r)\)</span> rapidly damps interactions beyond
+approximately <span class="math notranslate nohighlight">\(r \approx 3/\alpha\)</span>, confining contributions to a local neighborhood.</p>
+<p><strong>Reciprocal-Space (Long-Range)</strong>:</p>
+<div class="math notranslate nohighlight">
+\[E_{\text{reciprocal}} = \frac{1}{2V} \sum_{\mathbf{k} \neq 0}
+\frac{4\pi}{k^2} \exp\left(-\frac{k^2}{4\alpha^2}\right) |S(\mathbf{k})|^2\]</div>
+<p>where the structure factor is:</p>
+<div class="math notranslate nohighlight">
+\[S(\mathbf{k}) = \sum_j q_j \exp(i\mathbf{k} \cdot \mathbf{r}_j)\]</div>
+<p><strong>Self-Energy Correction</strong>:</p>
+<div class="math notranslate nohighlight">
+\[E_{\text{self}} = \frac{\alpha}{\sqrt{\pi}} \sum_i q_i^2\]</div>
+<p>Removes the spurious self-interaction introduced by the Gaussian charge distribution.</p>
+<p><strong>Background Correction</strong> (for non-neutral systems):</p>
+<div class="math notranslate nohighlight">
+\[E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2\]</div>
+</section>
+<section id="usage-examples">
+<h3>Usage Examples<a class="headerlink" href="#usage-examples" title="Link to this heading">#</a></h3>
+<section id="explicit-parameters">
+<h4>Explicit Parameters<a class="headerlink" href="#explicit-parameters" title="Link to this heading">#</a></h4>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
+
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>        <span class="c1"># Ewald splitting parameter</span>
+    <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span>     <span class="c1"># Reciprocal-space cutoff in inverse length</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="automatic-parameter-estimation">
+<h4>Automatic Parameter Estimation<a class="headerlink" href="#automatic-parameter-estimation" title="Link to this heading">#</a></h4>
+<p>When <code class="docutils literal notranslate"><span class="pre">alpha</span></code> or <code class="docutils literal notranslate"><span class="pre">k_cutoff</span></code> are not provided, they are estimated based on <code class="docutils literal notranslate"><span class="pre">accuracy</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>  <span class="c1"># Target relative error</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The estimation uses the Kolafa-Perram formula:</p>
+<div class="math notranslate nohighlight">
+\[\eta = \left(\frac{V^2}{N}\right)^{1/6} / \sqrt{2\pi}\]</div>
+<div class="math notranslate nohighlight">
+\[\alpha = \frac{1}{2 \cdot \eta}, \quad
+r_{\text{cutoff}} = \sqrt{-2 \ln \varepsilon} \cdot \eta, \quad
+k_{\text{cutoff}} = \sqrt{-2 \ln \varepsilon} / \eta\]</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Refer to the <a class="reference internal" href="#parameter-estimation"><span class="xref myst">Parameter Estimation</span></a> section for API usage.</p>
+</div>
+</section>
+<section id="separating-real-and-reciprocal-space">
+<h4>Separating real- and reciprocal-space<a class="headerlink" href="#separating-real-and-reciprocal-space" title="Link to this heading">#</a></h4>
+<p>When either components are required individually, the following code can
+be used instead of the high level wrapper to compute the contributions
+directly:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_real_space</span><span class="p">,</span> <span class="n">ewald_reciprocal_space</span>
+
+<span class="c1"># Real-space only (short-range, damped Coulomb)</span>
+<span class="n">real_energies</span><span class="p">,</span> <span class="n">real_forces</span> <span class="o">=</span> <span class="n">ewald_real_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Reciprocal-space only (long-range, smooth)</span>
+<span class="n">recip_energies</span><span class="p">,</span> <span class="n">recip_forces</span> <span class="o">=</span> <span class="n">ewald_reciprocal_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The sum of real and reciprocal components gives the Ewald energy.
+The self-energy and background corrections are embedded within
+the reciprocal energy.</p>
+</div>
+</section>
+</section>
+</section>
+<section id="particle-mesh-ewald-pme">
+<h2>Particle Mesh Ewald (PME)<a class="headerlink" href="#particle-mesh-ewald-pme" title="Link to this heading">#</a></h2>
+<section id="id1">
+<h3>Mathematical Background<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
+<p>For very large atomic systems, the particle mesh Ewald (PME) algorithm
+provides substantial improvements in computational performance over
+conventional Ewald summation. PME accelerates the reciprocal-space sum
+using fast Fourier transforms by:</p>
+<ol class="arabic simple">
+<li><p><strong>Charge Assignment</strong>: Spread charges onto a mesh using B-spline interpolation</p></li>
+<li><p><strong>Forward FFT</strong>: Transform charge mesh to reciprocal space</p></li>
+<li><p><strong>Convolution</strong>: Multiply by Green’s function in k-space</p></li>
+<li><p><strong>Inverse FFT</strong>: Transform back to get potentials/electric field</p></li>
+<li><p><strong>Force Interpolation</strong>: Gather forces at atomic positions</p></li>
+</ol>
+<p>The B-spline interpolation introduces errors corrected by the influence function:</p>
+<div class="math notranslate nohighlight">
+\[G(\mathbf{k}) = \frac{2\pi}{V} \cdot \frac{\exp(-k^2 / 4\alpha^2)}{k^2} \cdot \frac{1}{C^{2p}(\mathbf{k})}\]</div>
+<p>where <span class="math notranslate nohighlight">\(C(\mathbf{k})\)</span> is the B-spline correction factor and <span class="math notranslate nohighlight">\(p\)</span> is the spline order.</p>
+</section>
+<section id="id2">
+<h3>Usage Examples<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<section id="basic-usage">
+<h4>Basic Usage<a class="headerlink" href="#basic-usage" title="Link to this heading">#</a></h4>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">particle_mesh_ewald</span>
+
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+    <span class="n">mesh_dimensions</span><span class="o">=</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span>  <span class="c1"># FFT mesh size</span>
+    <span class="n">spline_order</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>                 <span class="c1"># B-spline order (4 = cubic)</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="mesh-spacing">
+<h4>Mesh Spacing<a class="headerlink" href="#mesh-spacing" title="Link to this heading">#</a></h4>
+<p>Instead of explicit mesh dimensions, specify mesh spacing:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+    <span class="n">mesh_spacing</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span>  <span class="c1"># Angstrom (or your length unit)</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="id3">
+<h4>Automatic Parameter Estimation<a class="headerlink" href="#id3" title="Link to this heading">#</a></h4>
+<p>Similar to the Ewald summation interface, PME accepts an <code class="docutils literal notranslate"><span class="pre">accuracy</span></code> parameter
+that can be used to automatically determine sensible <span class="math notranslate nohighlight">\(\alpha\)</span> and mesh:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">4e-5</span><span class="p">,</span>  <span class="c1"># Estimates alpha and mesh dimensions</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>We encourage users to properly benchmark performance gains
+afforded by <code class="docutils literal notranslate"><span class="pre">accuracy</span></code> on their systems of interest. The lower
+the value of <code class="docutils literal notranslate"><span class="pre">accuracy</span></code> the more precise, at the cost of higher
+computational requirements.</p>
+</div>
+</section>
+</section>
+<section id="pme-vs-ewald-when-to-use-each">
+<h3>PME vs Ewald: When to Use Each<a class="headerlink" href="#pme-vs-ewald-when-to-use-each" title="Link to this heading">#</a></h3>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Criterion</p></th>
+<th class="head"><p>Ewald</p></th>
+<th class="head"><p>PME</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>System size</p></td>
+<td><p><span class="math notranslate nohighlight">\(&lt;5000\)</span> atoms</p></td>
+<td><p>Any size</p></td>
+</tr>
+<tr class="row-odd"><td><p>Scaling</p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N^2)\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N \log N)\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p>Setup overhead</p></td>
+<td><p>Lower</p></td>
+<td><p>Higher (FFT setup)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Accuracy control</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">k_cutoff</span></code></p></td>
+<td><p>Mesh resolution</p></td>
+</tr>
+<tr class="row-even"><td><p>Memory</p></td>
+<td><p>Low</p></td>
+<td><p>Mesh memory <span class="math notranslate nohighlight">\((n_x \times n_y \times n_z)\)</span></p></td>
+</tr>
+</tbody>
+</table>
+<p>For small systems, direct Ewald may be faster due to lower overhead. For large
+systems, PME’s <span class="math notranslate nohighlight">\(O(N \log N)\)</span> scaling provides substantial speedup.</p>
+</section>
+</section>
+<section id="multipole-electrostatics">
+<h2>Multipole Electrostatics<a class="headerlink" href="#multipole-electrostatics" title="Link to this heading">#</a></h2>
+<p>ALCHEMI Toolkit-Ops supports multipolar charge distributions beyond point charges.
+Multipole electrostatics extends standard Ewald and PME to include:</p>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Order L</p></th>
+<th class="head"><p>Name</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Physical Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>Monopole</p></td>
+<td><p>1</p></td>
+<td><p>Net charge</p></td>
+</tr>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p>Dipole</p></td>
+<td><p>3</p></td>
+<td><p>Charge separation</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>Quadrupole</p></td>
+<td><p>5</p></td>
+<td><p>Charge distribution shape</p></td>
+</tr>
+</tbody>
+</table>
+<p>For maximum angular momentum <span class="math notranslate nohighlight">\(L_\text{max}=2\)</span>, each
+atom has <strong>9 multipole coefficients</strong>.</p>
+<section id="multipole-coefficient-layout">
+<h3>Multipole Coefficient Layout<a class="headerlink" href="#multipole-coefficient-layout" title="Link to this heading">#</a></h3>
+<p>The multipole coefficients follow spherical harmonic ordering:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Shape: (N, 9) where N is number of atoms</span>
+<span class="c1"># Channel layout:</span>
+<span class="c1">#   [0]: q^{0,0}   - monopole (charge)</span>
+<span class="c1">#   [1]: q^{1,-1}  - dipole y-component</span>
+<span class="c1">#   [2]: q^{1,0}   - dipole z-component</span>
+<span class="c1">#   [3]: q^{1,+1}  - dipole x-component</span>
+<span class="c1">#   [4]: q^{2,-2}  - quadrupole xy</span>
+<span class="c1">#   [5]: q^{2,-1}  - quadrupole yz</span>
+<span class="c1">#   [6]: q^{2,0}   - quadrupole 3z²-r²</span>
+<span class="c1">#   [7]: q^{2,+1}  - quadrupole xz</span>
+<span class="c1">#   [8]: q^{2,+2}  - quadrupole x²-y²</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="n">multipoles</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">num_atoms</span><span class="p">,</span> <span class="mi">9</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+<span class="n">multipoles</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">charges</span>          <span class="c1"># Set monopoles (same as point charges)</span>
+<span class="n">multipoles</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">:</span><span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="n">dipoles</span>        <span class="c1"># Set dipole moments</span>
+<span class="n">multipoles</span><span class="p">[:,</span> <span class="mi">4</span><span class="p">:</span><span class="mi">9</span><span class="p">]</span> <span class="o">=</span> <span class="n">quadrupoles</span>    <span class="c1"># Set quadrupole moments</span>
+</pre></div>
+</div>
+</section>
+<section id="ewald-multipole">
+<h3>Ewald Multipole<a class="headerlink" href="#ewald-multipole" title="Link to this heading">#</a></h3>
+<p>Explicit k-vector Ewald summation for multipoles:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_multipole_summation</span>
+
+<span class="n">energies</span> <span class="o">=</span> <span class="n">ewald_multipole_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>        <span class="c1"># (N, 3)</span>
+    <span class="n">multipoles</span><span class="o">=</span><span class="n">multipoles</span><span class="p">,</span>      <span class="c1"># (N, 9)</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>For the reciprocal-space only (no real-space, useful for ML applications):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_multipole_reciprocal_space</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics.k_vectors</span><span class="w"> </span><span class="kn">import</span> <span class="n">generate_k_vectors_ewald_summation</span>
+
+<span class="n">k_vectors</span> <span class="o">=</span> <span class="n">generate_k_vectors_ewald_summation</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">)</span>
+<span class="n">alpha</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">0.5</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">cell</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+<span class="n">energies</span> <span class="o">=</span> <span class="n">ewald_multipole_reciprocal_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">multipoles</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">k_vectors</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># With response field (gradient w.r.t. multipoles)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">response</span> <span class="o">=</span> <span class="n">ewald_multipole_reciprocal_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">multipoles</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">k_vectors</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span>
+    <span class="n">compute_response</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="pme-multipole">
+<h3>PME Multipole<a class="headerlink" href="#pme-multipole" title="Link to this heading">#</a></h3>
+<p>FFT-based multipole electrostatics with <span class="math notranslate nohighlight">\(O(N \log N)\)</span> scaling:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">pme_multipole_summation</span>
+
+<span class="n">energies</span> <span class="o">=</span> <span class="n">pme_multipole_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">multipoles</span><span class="o">=</span><span class="n">multipoles</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>  <span class="c1"># Estimates alpha and mesh</span>
+<span class="p">)</span>
+
+<span class="c1"># Or with explicit parameters:</span>
+<span class="n">energies</span> <span class="o">=</span> <span class="n">pme_multipole_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">multipoles</span><span class="o">=</span><span class="n">multipoles</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+    <span class="n">mesh_dimensions</span><span class="o">=</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span>
+    <span class="n">spline_order</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="id4">
+<h3>Mathematical Background<a class="headerlink" href="#id4" title="Link to this heading">#</a></h3>
+<p>The multipole charge density is represented using Gaussian Type Orbitals (GTOs):</p>
+<div class="math notranslate nohighlight">
+\[\rho_i(\mathbf{r}) = \sum_{l,m} q_i^{lm} \cdot \phi_{lm}(\mathbf{r} - \mathbf{r}_i, \sigma_i)\]</div>
+<p>where the GTO width <span class="math notranslate nohighlight">\(\sigma\)</span> is related to the Ewald parameter <span class="math notranslate nohighlight">\(\alpha\)</span> by:</p>
+<div class="math notranslate nohighlight">
+\[\sigma = \frac{1}{2\alpha}\]</div>
+<p><strong>Real-space</strong> uses damped T-tensors (interaction tensors derived from <span class="math notranslate nohighlight">\(\text{erfc}(\alpha r)/r)\)</span>:</p>
+<ul class="simple">
+<li><p>Monopole-Monopole: <span class="math notranslate nohighlight">\(q_i T^0 q_j\)</span></p></li>
+<li><p>Monopole-Dipole: <span class="math notranslate nohighlight">\(q_i T^1 \cdot \mu_j\)</span></p></li>
+<li><p>Dipole-Dipole: <span class="math notranslate nohighlight">\(\mu_i \cdot T^2 \cdot \mu_j\)</span></p></li>
+<li><p>And higher-order terms…</p></li>
+</ul>
+<p><strong>Reciprocal-space</strong> uses Fourier-transformed GTOs:</p>
+<div class="math notranslate nohighlight">
+\[\tilde{\phi}_{lm}(\mathbf{k}, \sigma) = (-i)^l Y_{lm}(\hat{\mathbf{k}}) \cdot e^{-k^2 \sigma^2 / 2}\]</div>
+<p><strong>Self-energy correction</strong>:</p>
+<div class="math notranslate nohighlight">
+\[E_{\text{self}} = \sum_{lm} C_l (q_i^{lm})^2 \alpha^{2l+1}\]</div>
+<p>where <span class="math notranslate nohighlight">\(C_l\)</span> are l-dependent constants.</p>
+</section>
+<section id="use-cases">
+<h3>Use Cases<a class="headerlink" href="#use-cases" title="Link to this heading">#</a></h3>
+<p>Multipole electrostatics are useful for:</p>
+<ul class="simple">
+<li><p><strong>Polarizable force fields</strong>: Dipole moments from induced polarization</p></li>
+<li><p><strong>Machine learning potentials</strong>: Higher-order features beyond point charges</p></li>
+<li><p><strong>Coarse-grained models</strong>: Representing charge distributions of molecular groups</p></li>
+<li><p><strong>Quantum chemistry interfaces</strong>: Using multipole moments from quantum calculations</p></li>
+</ul>
+</section>
+</section>
+<section id="batched-calculations">
+<h2>Batched Calculations<a class="headerlink" href="#batched-calculations" title="Link to this heading">#</a></h2>
+<p>All electrostatics functions support batched calculations for evaluating multiple
+independent systems simultaneously. For most use cases (except for very large systems)
+batching is the optimal way to amortize GPU utilization.</p>
+<p>The API for electrostatics only needs minor modification to support batches of
+systems: users must provide a <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> tensor to both the initial neighbor
+list computation as well as to either the
+<a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.ewald.ewald_summation" title="nvalchemiops.interactions.electrostatics.ewald.ewald_summation"><code class="xref py py-func docutils literal notranslate"><span class="pre">ewald_summation()</span></code></a> and
+<a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald" title="nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald"><code class="xref py py-func docutils literal notranslate"><span class="pre">particle_mesh_ewald()</span></code></a> methods.
+While <span class="math notranslate nohighlight">\(\alpha\)</span> can be specified independently for each system within a batch, the
+mesh dimensions must be the same for all systems (although each system has its own mesh grid).</p>
+<p>Example code to perform a batched Ewald calculation:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_summation</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+
+<span class="c1"># Concatenate atoms from multiple systems</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">pos_system0</span><span class="p">,</span> <span class="n">pos_system1</span><span class="p">,</span> <span class="n">pos_system2</span><span class="p">])</span>
+<span class="n">charges</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span><span class="n">charges_system0</span><span class="p">,</span> <span class="n">charges_system1</span><span class="p">,</span> <span class="n">charges_system2</span><span class="p">])</span>
+
+<span class="c1"># Assign each atom to its system</span>
+<span class="n">batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">([</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">pos_system0</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">pos_system1</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">full</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">pos_system2</span><span class="p">),),</span> <span class="mi">2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+<span class="p">])</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+<span class="c1"># Stack cells (B, 3, 3)</span>
+<span class="n">cells</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">cell0</span><span class="p">,</span> <span class="n">cell1</span><span class="p">,</span> <span class="n">cell2</span><span class="p">])</span>
+<span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">]]</span> <span class="o">*</span> <span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+<span class="c1"># Build batched neighbor list</span>
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;batch_naive&quot;</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="c1"># Per-system alpha values (optional)</span>
+<span class="n">alphas</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.35</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+
+<span class="c1"># Batched calculation</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cells</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="n">alphas</span><span class="p">,</span>  <span class="c1"># Per-system or single value</span>
+    <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list_coo</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># energies: (total_atoms,) - per-atom energies</span>
+<span class="c1"># Sum per system:</span>
+<span class="n">energy_per_system</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+<span class="n">energy_per_system</span><span class="o">.</span><span class="n">scatter_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">long</span><span class="p">(),</span> <span class="n">energies</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="autograd-support">
+<h2>Autograd Support<a class="headerlink" href="#autograd-support" title="Link to this heading">#</a></h2>
+<p>All electrostatics functions support automatic differentiation for gradients
+with respect to positions, charges, and cell parameters. This enables:</p>
+<ul class="simple">
+<li><p>Geometry and lattice parameter optimization</p></li>
+<li><p>Integration (and training) with machine learning force fields</p></li>
+<li><p>Sensitivity analysis</p></li>
+</ul>
+<section id="position-gradients-forces">
+<h3>Position Gradients (Forces)<a class="headerlink" href="#position-gradients-forces" title="Link to this heading">#</a></h3>
+<p>The code snippet shows how the electrostatics interface in <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> can
+be used with the PyTorch <code class="docutils literal notranslate"><span class="pre">autograd</span></code> interface to arrive at the same derivatives
+of energy with respect to atomic positions (forces).</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">positions</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">explicit_forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Autograd forces should match explicit forces</span>
+<span class="n">total_energy</span> <span class="o">=</span> <span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">total_energy</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="n">autograd_forces</span> <span class="o">=</span> <span class="o">-</span><span class="n">positions</span><span class="o">.</span><span class="n">grad</span>
+
+<span class="k">assert</span> <span class="n">torch</span><span class="o">.</span><span class="n">allclose</span><span class="p">(</span><span class="n">autograd_forces</span><span class="p">,</span> <span class="n">explicit_forces</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Note, however, that this is only to show that gradient flow works through
+the <code class="docutils literal notranslate"><span class="pre">ewald_summation</span></code> call: if only the forces are required, users should just
+use the <code class="docutils literal notranslate"><span class="pre">explicit_forces</span></code> directly <em>without</em> <code class="docutils literal notranslate"><span class="pre">autograd</span></code> for computational
+efficiency.</p>
+</section>
+<section id="charge-gradients">
+<h3>Charge Gradients<a class="headerlink" href="#charge-gradients" title="Link to this heading">#</a></h3>
+<p>Similar to the positions gradients above, we can compute the gradient of the
+energy with respect to atomic charges in the following way:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">charges</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energies</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># disable energy for performance</span>
+<span class="p">)</span>
+
+<span class="n">total_energy</span> <span class="o">=</span> <span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">total_energy</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="n">charge_gradients</span> <span class="o">=</span> <span class="n">charges</span><span class="o">.</span><span class="n">grad</span>  <span class="c1"># dE/dq</span>
+</pre></div>
+</div>
+<p>For a batch of samples, you may need to use the <code class="docutils literal notranslate"><span class="pre">autograd</span></code> interface more
+explicitly:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">charges</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energy_per_atom</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="n">energy_per_system</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+<span class="c1"># scatter add based on the system index mapping</span>
+<span class="n">energy_per_system</span><span class="o">.</span><span class="n">scatter_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">long</span><span class="p">(),</span> <span class="n">energies</span><span class="p">)</span>
+<span class="c1"># now compute the derivatives</span>
+<span class="p">(</span><span class="n">charge_gradients</span><span class="p">,</span> <span class="n">_</span><span class="p">)</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span>
+  <span class="n">outputs</span><span class="o">=</span><span class="p">[</span><span class="n">energy_per_system</span><span class="p">,]</span>
+  <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">charges</span><span class="p">,]</span>
+  <span class="n">grad_outputs</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">ones_like</span><span class="p">(</span><span class="n">charges</span><span class="p">)</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="cell-gradients-stress">
+<h3>Cell Gradients (Stress)<a class="headerlink" href="#cell-gradients-stress" title="Link to this heading">#</a></h3>
+<p>Likewise, we can compute the stress tensor as the derivative of the energy with
+respect to the lattice vectors:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">positions</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">cell</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">total_energy</span> <span class="o">=</span> <span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+<span class="n">total_energy</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="c1"># now compute the stress tensor with some epsilon</span>
+<span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span> <span class="o">+</span> <span class="mf">1e-7</span>
+<span class="n">virials</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">grad</span>
+<span class="n">stresses</span> <span class="o">=</span> <span class="n">virials</span> <span class="o">/</span> <span class="n">volume</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="parameter-estimation">
+<h2>Parameter Estimation<a class="headerlink" href="#parameter-estimation" title="Link to this heading">#</a></h2>
+<p>ALCHEMI Toolkit-Ops provides functions to estimate sensible parameters based on
+desired accuracy threshold with two functions that share some functionality,
+but target the Ewald and PME algorithms respectively.</p>
+<section id="ewald-parameters">
+<h3>Ewald Parameters<a class="headerlink" href="#ewald-parameters" title="Link to this heading">#</a></h3>
+<p>The function <a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.estimate_ewald_parameters" title="nvalchemiops.interactions.electrostatics.parameters.estimate_ewald_parameters"><code class="xref py py-func docutils literal notranslate"><span class="pre">estimate_ewald_parameters()</span></code></a>
+is used to estimate <span class="math notranslate nohighlight">\(\alpha\)</span> and cutoffs for real- and reciprocal-space specifically
+for the <strong>Ewald</strong> algorithm:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">estimate_ewald_parameters</span>
+
+<span class="n">params</span> <span class="o">=</span> <span class="n">estimate_ewald_parameters</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># or provide for batched systems</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;α = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;r_cutoff = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;k_cutoff = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">reciprocal_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>This method returns <a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.EwaldParameters" title="nvalchemiops.interactions.electrostatics.parameters.EwaldParameters"><code class="xref py py-func docutils literal notranslate"><span class="pre">EwaldParameters()</span></code></a>, which
+is a light data structure that holds parameters used for the Ewald algorithm.</p>
+</section>
+<section id="pme-parameters">
+<h3>PME Parameters<a class="headerlink" href="#pme-parameters" title="Link to this heading">#</a></h3>
+<p>The function <a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.estimate_pme_parameters" title="nvalchemiops.interactions.electrostatics.parameters.estimate_pme_parameters"><code class="xref py py-func docutils literal notranslate"><span class="pre">estimate_pme_parameters()</span></code></a>
+is used to estimate <span class="math notranslate nohighlight">\(\alpha\)</span>, the real-space cutoff, and mesh specifications specifically
+for the PME algorithm; the value of <span class="math notranslate nohighlight">\(\alpha\)</span> is determined the same way as for Ewald.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">estimate_pme_parameters</span>
+
+<span class="n">params</span> <span class="o">=</span> <span class="n">estimate_pme_parameters</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;α = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Mesh: </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;r_cutoff = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>This method returns <a class="reference internal" href="../../modules/electrostatics.html#nvalchemiops.interactions.electrostatics.parameters.PMEParameters" title="nvalchemiops.interactions.electrostatics.parameters.PMEParameters"><code class="xref py py-func docutils literal notranslate"><span class="pre">PMEParameters()</span></code></a>, which
+is a light data structure that holds parameters used for the particle-mesh Ewald algorithm.</p>
+</section>
+</section>
+<section id="units">
+<h2>Units<a class="headerlink" href="#units" title="Link to this heading">#</a></h2>
+<p>The electrostatics functions are unit-agnostic; they work in whatever consistent
+unit system you provide. Common conventions:</p>
+<table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Unit System</p></th>
+<th class="head"><p>Positions</p></th>
+<th class="head"><p>Energy</p></th>
+<th class="head"><p>Charge</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Atomic units</p></td>
+<td><p>Bohr</p></td>
+<td><p>Hartree</p></td>
+<td><p>e</p></td>
+</tr>
+<tr class="row-odd"><td><p>eV-Angstrom</p></td>
+<td><p>Å</p></td>
+<td><p>eV</p></td>
+<td><p>e</p></td>
+</tr>
+<tr class="row-even"><td><p>LAMMPS “real”</p></td>
+<td><p>Å</p></td>
+<td><p>kcal/mol</p></td>
+<td><p>e</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>Ensure consistency between your position units, cell units, and cutoff values.
+The <code class="docutils literal notranslate"><span class="pre">alpha</span></code> parameter has units of inverse length.</p>
+</div>
+<p>For atomic units (Bohr/Hartree), no additional constants are needed. For other
+unit systems, you may need to multiply energies by a Coulomb constant:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># eV-Angstrom: k_e ~ 14.3996 eV·Å</span>
+<span class="c1"># The functions assume k_e = 1 (atomic units)</span>
+</pre></div>
+</div>
+</section>
+<section id="theory-background">
+<h2>Theory Background<a class="headerlink" href="#theory-background" title="Link to this heading">#</a></h2>
+<section id="the-ewald-splitting">
+<h3>The Ewald Splitting<a class="headerlink" href="#the-ewald-splitting" title="Link to this heading">#</a></h3>
+<p>The Coulomb potential <span class="math notranslate nohighlight">\(1/r\)</span> is split into short-range and long-range components
+using a Gaussian screening function:</p>
+<div class="math notranslate nohighlight">
+\[\frac{1}{r} = \frac{\text{erfc}(\alpha r)}{r} + \frac{\text{erf}(\alpha r)}{r}\]</div>
+<ul class="simple">
+<li><p>The <span class="math notranslate nohighlight">\(\text{erfc}\)</span> term decays exponentially and is computed in real space</p></li>
+<li><p>The <span class="math notranslate nohighlight">\(\text{erf}\)</span> term is smooth and computed efficiently in reciprocal space</p></li>
+</ul>
+<p>The splitting parameter <span class="math notranslate nohighlight">\(\alpha\)</span> controls the balance:</p>
+<ul class="simple">
+<li><p>Large <span class="math notranslate nohighlight">\(\alpha\)</span>: More work in reciprocal space, fewer k-vectors needed</p></li>
+<li><p>Small <span class="math notranslate nohighlight">\(\alpha\)</span>: More work in real space, larger neighbor cutoff needed</p></li>
+</ul>
+</section>
+<section id="charge-neutrality">
+<h3>Charge Neutrality<a class="headerlink" href="#charge-neutrality" title="Link to this heading">#</a></h3>
+<p>For periodic systems, overall charge neutrality is required for the electrostatic
+energy to be well-defined. Non-neutral systems include a background correction:</p>
+<div class="math notranslate nohighlight">
+\[E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2\]</div>
+<p>This term represents the interaction of the charged system with a uniform
+neutralizing background.</p>
+</section>
+<section id="b-spline-interpolation-pme">
+<h3>B-Spline Interpolation (PME)<a class="headerlink" href="#b-spline-interpolation-pme" title="Link to this heading">#</a></h3>
+<p>PME uses cardinal B-splines of order <span class="math notranslate nohighlight">\(p\)</span> for charge assignment:</p>
+<ul class="simple">
+<li><p>Order 1: Nearest-grid-point (NGP)</p></li>
+<li><p>Order 2: Cloud-in-cell (CIC)</p></li>
+<li><p>Order 3: Triangular-shaped cloud (TSC)</p></li>
+<li><p>Order 4: Cubic B-spline (recommended)</p></li>
+<li><p>Higher orders: Smoother but wider support</p></li>
+</ul>
+<p>Higher spline orders provide better accuracy but spread charges over more grid
+points. Order 4 (cubic) is the standard choice, balancing accuracy and efficiency.</p>
+</section>
+</section>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<section id="common-issues">
+<h3>Common Issues<a class="headerlink" href="#common-issues" title="Link to this heading">#</a></h3>
+<p><strong>Energy not converging with k_cutoff</strong>:
+The reciprocal-space energy should converge as <code class="docutils literal notranslate"><span class="pre">k_cutoff</span></code> increases. If it doesn’t,
+check that your cell is properly defined (lattice vectors as rows) and that the
+volume is computed correctly.</p>
+<p><strong>Force discontinuities</strong>:
+Ensure the real-space cutoff is compatible with your neighbor list cutoff. The
+neighbor list should include all pairs within the damping range of <span class="math notranslate nohighlight">\(\text{erfc}(\alpha r)\)</span>.</p>
+<p><strong>NaN or Inf values</strong>:</p>
+<ul class="simple">
+<li><p>Check for overlapping atoms (r → 0)</p></li>
+<li><p>Verify cell volume is positive</p></li>
+<li><p>Ensure charges are finite</p></li>
+</ul>
+<p><strong>Memory issues with large meshes</strong>:
+PME mesh memory scales as <span class="math notranslate nohighlight">\(n_x \times n_y \times n_z\)</span>. For very large cells, consider using
+coarser mesh spacing. It may also be worth comparing compute requirements between Ewald
+and PME algorithms.</p>
+</section>
+<section id="validation">
+<h3>Validation<a class="headerlink" href="#validation" title="Link to this heading">#</a></h3>
+<p>You can validate PME results against reference implementations like <code class="docutils literal notranslate"><span class="pre">torchpme</span></code>. Here’s a simple example
+comparing reciprocal-space energies:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics.pme</span><span class="w"> </span><span class="kn">import</span> <span class="n">pme_reciprocal_space</span>
+
+<span class="c1"># Create a simple dipole system</span>
+<span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="n">dtype</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span>
+<span class="n">cell_size</span> <span class="o">=</span> <span class="mf">10.0</span>
+<span class="n">separation</span> <span class="o">=</span> <span class="mf">2.0</span>
+
+<span class="c1"># Two charges separated along x-axis</span>
+<span class="n">center</span> <span class="o">=</span> <span class="n">cell_size</span> <span class="o">/</span> <span class="mi">2</span>
+<span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+    <span class="p">[</span>
+        <span class="p">[</span><span class="n">center</span> <span class="o">-</span> <span class="n">separation</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">center</span><span class="p">,</span> <span class="n">center</span><span class="p">],</span>
+        <span class="p">[</span><span class="n">center</span> <span class="o">+</span> <span class="n">separation</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">center</span><span class="p">,</span> <span class="n">center</span><span class="p">],</span>
+    <span class="p">],</span>
+    <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">charges</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">cell</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">cell_size</span>
+
+<span class="c1"># PME parameters</span>
+<span class="n">alpha</span> <span class="o">=</span> <span class="mf">0.3</span>
+<span class="n">mesh_spacing</span> <span class="o">=</span> <span class="mf">0.5</span>
+<span class="n">mesh_dims</span> <span class="o">=</span> <span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="mi">20</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
+
+<span class="c1"># Compute reciprocal-space energy</span>
+<span class="n">energy</span> <span class="o">=</span> <span class="n">pme_reciprocal_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="n">alpha</span><span class="p">,</span>
+    <span class="n">mesh_dimensions</span><span class="o">=</span><span class="n">mesh_dims</span><span class="p">,</span>
+    <span class="n">spline_order</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Reciprocal-space energy: </span><span class="si">{</span><span class="n">energy</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Optional: Compare with torchpme if available</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">torchpme</span><span class="w"> </span><span class="kn">import</span> <span class="n">PMECalculator</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">torchpme.potentials</span><span class="w"> </span><span class="kn">import</span> <span class="n">CoulombPotential</span>
+
+    <span class="c1"># torchpme uses sigma where Gaussian is exp(-r**2/(2 * sigma**2))</span>
+    <span class="c1"># Standard Ewald uses exp(-alpha**2 * r**2), so sigma = 1/(2**0.5 * alpha)</span>
+    <span class="n">smearing</span> <span class="o">=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">alpha</span><span class="p">)</span>
+    <span class="n">potential</span> <span class="o">=</span> <span class="n">CoulombPotential</span><span class="p">(</span><span class="n">smearing</span><span class="o">=</span><span class="n">smearing</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="n">calculator</span> <span class="o">=</span> <span class="n">PMECalculator</span><span class="p">(</span>
+        <span class="n">potential</span><span class="o">=</span><span class="n">potential</span><span class="p">,</span>
+        <span class="n">mesh_spacing</span><span class="o">=</span><span class="n">mesh_spacing</span><span class="p">,</span>
+        <span class="n">interpolation_nodes</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
+        <span class="n">full_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">prefactor</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="n">charges_pme</span> <span class="o">=</span> <span class="n">charges</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">reciprocal_potential</span> <span class="o">=</span> <span class="n">calculator</span><span class="o">.</span><span class="n">_compute_kspace</span><span class="p">(</span><span class="n">charges_pme</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">positions</span><span class="p">)</span>
+    <span class="n">torchpme_energy</span> <span class="o">=</span> <span class="p">(</span><span class="n">reciprocal_potential</span> <span class="o">*</span> <span class="n">charges_pme</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;TorchPME energy: </span><span class="si">{</span><span class="n">torchpme_energy</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Relative difference: </span><span class="si">{</span><span class="nb">abs</span><span class="p">(</span><span class="n">energy</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">torchpme_energy</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nb">abs</span><span class="p">(</span><span class="n">torchpme_energy</span><span class="p">)</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;torchpme not available for comparison&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>For more comprehensive validation examples, including:</p>
+<ul class="simple">
+<li><p>Crystal structure systems (CsCl, wurtzite, zincblende)</p></li>
+<li><p>Gradient validation against numerical finite differences</p></li>
+<li><p>Batch processing consistency checks</p></li>
+<li><p>Conservation law tests (momentum, translation invariance)</p></li>
+</ul>
+<p>See the unit tests at <code class="docutils literal notranslate"><span class="pre">test/interactions/electrostatics/</span></code> in the repository.</p>
+</section>
+</section>
+<section id="references">
+<h2>References<a class="headerlink" href="#references" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p>Ewald, P. P. (1921). “Die Berechnung optischer und elektrostatischer Gitterpotentiale.”
+<em>Ann. Phys.</em> 369, 253-287.
+<a class="reference external" href="https://doi.org/10.1002/andp.19213690304">DOI: 10.1002/andp.19213690304</a></p></li>
+<li><p>Darden, T.; York, D.; Pedersen, L. (1993). “Particle mesh Ewald: An N⋅log(N)
+method for Ewald sums in large systems.” <em>J. Chem. Phys.</em> 98, 10089.
+<a class="reference external" href="https://doi.org/10.1063/1.464397">DOI: 10.1063/1.464397</a></p></li>
+<li><p>Essmann, U.; Perera, L.; Berkowitz, M. L.; Darden, T.; Lee, H.; Pedersen, L. G.
+(1995). “A smooth particle mesh Ewald method.” <em>J. Chem. Phys.</em> 103, 8577.
+<a class="reference external" href="https://doi.org/10.1063/1.470117">DOI: 10.1063/1.470117</a></p></li>
+<li><p>Kolafa, J.; Perram, J. W. (1992). “Cutoff Errors in the Ewald Summation Formulae
+for Point Charge Systems.” <em>Mol. Sim.</em> 9, 351-368.
+<a class="reference external" href="https://doi.org/10.1080/08927029208049126">DOI: 10.1080/08927029208049126</a></p></li>
+<li><p>Sagui, C.; Darden, T. A. (1999). “Molecular Dynamics Simulations of Biomolecules:
+Long-Range Electrostatic Effects.” <em>Annu. Rev. Biophys. Biomol. Struct.</em> 28, 155-179.
+<a class="reference external" href="https://doi.org/10.1146/annurev.biophys.28.1.155">DOI: 10.1146/annurev.biophys.28.1.155</a></p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="neighborlist.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Neighbor Lists</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="dispersion.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">DFT-D3(BJ) Dispersion Correction</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#overview-of-available-methods">Overview of Available Methods</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#quick-start">Quick Start</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#data-formats">Data Formats</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tensor-specifications">Tensor Specifications</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-representations">Neighbor Representations</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ewald-summation">Ewald Summation</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#mathematical-background">Mathematical Background</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#usage-examples">Usage Examples</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#explicit-parameters">Explicit Parameters</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#automatic-parameter-estimation">Automatic Parameter Estimation</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#separating-real-and-reciprocal-space">Separating real- and reciprocal-space</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#particle-mesh-ewald-pme">Particle Mesh Ewald (PME)</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Mathematical Background</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Usage Examples</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#basic-usage">Basic Usage</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#mesh-spacing">Mesh Spacing</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Automatic Parameter Estimation</a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pme-vs-ewald-when-to-use-each">PME vs Ewald: When to Use Each</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#multipole-electrostatics">Multipole Electrostatics</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multipole-coefficient-layout">Multipole Coefficient Layout</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ewald-multipole">Ewald Multipole</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pme-multipole">PME Multipole</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">Mathematical Background</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#use-cases">Use Cases</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#batched-calculations">Batched Calculations</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#autograd-support">Autograd Support</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#position-gradients-forces">Position Gradients (Forces)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#charge-gradients">Charge Gradients</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cell-gradients-stress">Cell Gradients (Stress)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#parameter-estimation">Parameter Estimation</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ewald-parameters">Ewald Parameters</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pme-parameters">PME Parameters</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#units">Units</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#theory-background">Theory Background</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-ewald-splitting">The Ewald Splitting</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#charge-neutrality">Charge Neutrality</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#b-spline-interpolation-pme">B-Spline Interpolation (PME)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#common-issues">Common Issues</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#validation">Validation</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#references">References</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/userguide/components/electrostatics.md.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

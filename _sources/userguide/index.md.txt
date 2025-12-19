@@ -41,13 +41,15 @@ neighbor_matrix, num_neighbors, shifts = cell_list(
 )
 
 # Or get neighbor list (COO format) for graph neural networks
-neighbor_list, num_neighbors, shifts = cell_list(
+neighbor_list, neighbor_ptr, shifts = cell_list(
     positions, cutoff, cell, pbc, return_neighbor_list=True
 )
 source_indices = neighbor_list[0]
 target_indices = neighbor_list[1]
 
 print(f"Found {neighbor_list.shape[1]} neighbor pairs")
+# neighbor_ptr is a CSR-style pointer; compute num_neighbors from it
+num_neighbors = neighbor_ptr[1:] - neighbor_ptr[:-1]
 print(f"Average neighbors per atom: {num_neighbors.float().mean():.1f}")
 ```
 
@@ -59,6 +61,7 @@ print(f"Average neighbors per atom: {num_neighbors.float().mean():.1f}")
 ## Core Components
 
 - [NeighborLists](components/neighborlist)
+- [Electrostatics](components/electrostatics)
 - [Dispersion Corrections](components/dispersion)
 
 ## Advanced Usage
@@ -80,6 +83,7 @@ about/faq
 :hidden:
 
 components/neighborlist
+components/electrostatics
 components/dispersion
 ```
 

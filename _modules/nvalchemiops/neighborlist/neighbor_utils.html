@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.neighborlist.neighbor_utils &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>nvalchemiops.neighborlist.neighbor_utils &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -41,7 +41,7 @@
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -690,7 +690,7 @@ document.write(`
 <a class="viewcode-back" href="../../../modules/neighborlist.html#nvalchemiops.neighborlist.estimate_max_neighbors">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">estimate_max_neighbors</span><span class="p">(</span>
     <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
-    <span class="n">atomic_density</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.5</span><span class="p">,</span>
+    <span class="n">atomic_density</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.35</span><span class="p">,</span>
     <span class="n">safety_factor</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
 <span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Estimate maximum neighbors per atom based on volume calculations.</span>
@@ -720,7 +720,7 @@ document.write(`
 <span class="sd">    neighbors = safety_factor * density × cutoff_sphere_volume</span>
 <span class="sd">    where density = N_atoms / cell_volume and cutoff_sphere_volume = (4/3)\pi r³</span>
 
-<span class="sd">    The result is rounded up to the next power of 2 for memory alignment.</span>
+<span class="sd">    The result is rounded up to the multiple of 16 for memory alignment.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">cutoff</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
         <span class="k">return</span> <span class="mi">0</span>
@@ -731,9 +731,28 @@ document.write(`
     <span class="n">expected_neighbors</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">safety_factor</span> <span class="o">*</span> <span class="n">cutoff_sphere_volume</span><span class="p">)</span>
 
     <span class="c1"># Round up to next power of 2 for memory alignment and safety</span>
-    <span class="n">max_neighbors_estimate</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pow</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">expected_neighbors</span><span class="p">))))</span>
+    <span class="n">max_neighbors_estimate</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">expected_neighbors</span> <span class="o">/</span> <span class="mi">16</span><span class="p">))</span> <span class="o">*</span> <span class="mi">16</span>
     <span class="k">return</span> <span class="n">max_neighbors_estimate</span></div>
 
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">NeighborOverflowError</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Exception raised when the number of neighbors larger than the maximum allowed.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;The number of neighbors is larger than the maximum allowed: </span><span class="si">{</span><span class="n">num_neighbors</span><span class="si">}</span><span class="s2"> &gt; </span><span class="si">{</span><span class="n">max_neighbors</span><span class="si">}</span><span class="s2">.&quot;</span>
+        <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">assert_max_neighbors</span><span class="p">(</span><span class="n">neighbor_matrix</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Assert that the number of neighbors is not larger than size of the neighbor matrix.&quot;&quot;&quot;</span>
+    <span class="n">max_neighbors</span> <span class="o">=</span> <span class="mi">0</span> <span class="k">if</span> <span class="n">num_neighbors</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="n">num_neighbors</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">max_neighbors</span> <span class="o">&gt;</span> <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]:</span>
+        <span class="k">raise</span> <span class="n">NeighborOverflowError</span><span class="p">(</span>
+            <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+            <span class="n">max_neighbors</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">max_neighbors</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> <span class="k">else</span> <span class="n">max_neighbors</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+        <span class="p">)</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">get_neighbor_list_from_neighbor_matrix</span><span class="p">(</span>
@@ -798,11 +817,10 @@ document.write(`
             <span class="k">else</span> <span class="p">(</span><span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">)</span>
         <span class="p">)</span>
         <span class="k">return</span> <span class="n">returns</span>
-    <span class="k">if</span> <span class="n">num_neighbors</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">&gt;</span> <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]:</span>
-        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-            <span class="sa">f</span><span class="s2">&quot;The max number of neighbors is larger than the neighbor matrix: </span><span class="si">{</span><span class="n">num_neighbors</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="si">}</span><span class="s2"> &gt; </span><span class="si">{</span><span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">.&quot;</span>
-            <span class="sa">f</span><span class="s2">&quot;Neighbor List construction will not be correct.&quot;</span>
-        <span class="p">)</span>
+
+    <span class="c1"># Raise NeighborOverflowError if the number of neighbors is larger than the neighbor matrix</span>
+    <span class="n">assert_max_neighbors</span><span class="p">(</span><span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">)</span>
+
     <span class="n">mask</span> <span class="o">=</span> <span class="n">neighbor_matrix</span> <span class="o">!=</span> <span class="n">fill_value</span>
     <span class="n">dtype</span> <span class="o">=</span> <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">dtype</span>
     <span class="n">i_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">mask</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="p">)</span>

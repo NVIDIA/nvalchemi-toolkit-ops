@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Simple Neighbor List Example &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>Simple Neighbor List Example &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -348,14 +348,23 @@ document.write(`
 <nav class="bd-docs-nav bd-links"
      aria-label="Section Navigation">
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
-  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
-<li class="toctree-l1 has-children"><a class="reference internal" href="../interactions/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="../interactions/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
 
-<li class="toctree-l2"><a class="reference internal" href="../interactions/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
 </ul>
 </li>
-<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../electrostatics/index.html">Electrostatics</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">Simple Neighbor List Example</a></li>
 
 
@@ -607,26 +616,26 @@ METHOD 1: CELL LIST ALGORITHM (O(N))
 ======================================================================
 
 --- Large System (30,000 atoms) ---
-Returned neighbor matrix: shape torch.Size([30000, 2048])
-  neighbor_matrix: (num_atoms, max_neighbors) = torch.Size([30000, 2048])
+Returned neighbor matrix: shape torch.Size([30000, 928])
+  neighbor_matrix: (num_atoms, max_neighbors) = torch.Size([30000, 928])
   num_neighbors: (num_atoms,) = torch.Size([30000])
-  shifts: (num_atoms, max_neighbors, 3) = torch.Size([30000, 2048, 3])
-Total neighbor pairs: 471714
-Average neighbors per atom: 15.72
+  shifts: (num_atoms, max_neighbors, 3) = torch.Size([30000, 928, 3])
+Total neighbor pairs: 471810
+Average neighbors per atom: 15.73
 
-Returned neighbor list (COO format): shape torch.Size([2, 471714])
-  neighbor_list: (2, num_pairs) = torch.Size([2, 471714])
-  source_atoms: torch.Size([471714])
-  target_atoms: torch.Size([471714])
-  shifts: (num_pairs, 3) = torch.Size([471714, 3])
-Total pairs (COO): 471714
+Returned neighbor list (COO format): shape torch.Size([2, 471810])
+  neighbor_list: (2, num_pairs) = torch.Size([2, 471810])
+  source_atoms: torch.Size([471810])
+  target_atoms: torch.Size([471810])
+  shifts: (num_pairs, 3) = torch.Size([471810, 3])
+Total pairs (COO): 471810
 
 First 5 neighbor pairs:
-  Atom 0 -&gt; Atom 9305, shift: [0, 0, 0]
-  Atom 0 -&gt; Atom 18106, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 2094, shift: [0, 0, 0]
   Atom 0 -&gt; Atom 1158, shift: [0, 0, 0]
-  Atom 0 -&gt; Atom 12684, shift: [0, 0, 0]
-  Atom 0 -&gt; Atom 16803, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 8931, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 9305, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 8939, shift: [0, 0, 0]
 </pre></div>
 </div>
 </section>
@@ -664,7 +673,7 @@ METHOD 2: NAIVE ALGORITHM (O(N²))
 ======================================================================
 
 --- Small System (100 atoms) ---
-Returned neighbor matrix: shape torch.Size([100, 2048])
+Returned neighbor matrix: shape torch.Size([100, 928])
 Total neighbor pairs: 5152
 Average neighbors per atom: 51.52
 
@@ -683,101 +692,75 @@ Neighbor ptr shape: torch.Size([101])
 
 <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Small System (100 atoms) ---&quot;</span><span class="p">)</span>
 
-<span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span><span class="p">:</span>
-    <span class="c1"># Cell list on small system</span>
-    <span class="n">cell_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">cell_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="c1"># Warmup</span>
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-        <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">cell_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-        <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
-    <span class="n">cell_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">cell_time_small</span> <span class="o">=</span> <span class="n">cell_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">cell_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
-
-    <span class="c1"># Naive on small system</span>
-    <span class="n">naive_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">naive_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-        <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
-            <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
-        <span class="p">)</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">naive_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-        <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
-            <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
-        <span class="p">)</span>
-    <span class="n">naive_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">naive_time_small</span> <span class="o">=</span> <span class="n">naive_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">naive_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
-
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">cell_time_small</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_cell_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">naive_time_small</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_naive_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_small</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_small</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="p">)</span>
-<span class="k">else</span><span class="p">:</span>
-    <span class="c1"># CPU timing - just compute results without detailed timing</span>
+<span class="c1"># Cell list on small system</span>
+<span class="n">cell_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">cell_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="c1"># Warmup</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
     <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+<span class="n">cell_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_time_small</span> <span class="o">=</span> <span class="n">cell_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">cell_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="c1"># Naive on small system</span>
+<span class="n">naive_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">naive_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
     <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
         <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
     <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">num_neighbors_cell_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">num_neighbors_naive_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_small</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_small</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_small</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+        <span class="n">small_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">small_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
     <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;(Timing skipped on CPU)&quot;</span><span class="p">)</span>
+<span class="n">naive_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_time_small</span> <span class="o">=</span> <span class="n">naive_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">naive_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">cell_time_small</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_cell_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">naive_time_small</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_naive_small</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_small</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_small</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- Large System (30,000 atoms) ---&quot;</span><span class="p">)</span>
 
-<span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span><span class="p">:</span>
-    <span class="c1"># Cell list on large system</span>
-    <span class="n">cell_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">cell_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">cell_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-        <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_large</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">large_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">large_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
-    <span class="n">cell_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">cell_time_large</span> <span class="o">=</span> <span class="n">cell_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">cell_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
-
-    <span class="c1"># Naive on large system (will be slower)</span>
-    <span class="n">naive_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">naive_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">naive_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
-        <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_large</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
-            <span class="n">large_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">large_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
-        <span class="p">)</span>
-    <span class="n">naive_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
-    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-    <span class="n">naive_time_large</span> <span class="o">=</span> <span class="n">naive_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">naive_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
-
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">cell_time_large</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_cell_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">naive_time_large</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_naive_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_large</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_large</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Speedup (cell list vs naive): </span><span class="si">{</span><span class="n">naive_time_large</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">cell_time_large</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
-<span class="k">else</span><span class="p">:</span>
-    <span class="c1"># CPU - just compute results without detailed timing</span>
+<span class="c1"># Cell list on large system</span>
+<span class="n">cell_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">cell_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
     <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_cell_large</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">large_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">large_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+<span class="n">cell_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">cell_time_large</span> <span class="o">=</span> <span class="n">cell_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">cell_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="c1"># Naive on large system (will be slower)</span>
+<span class="n">naive_start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">naive_end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
     <span class="n">_</span><span class="p">,</span> <span class="n">num_neighbors_naive_large</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
         <span class="n">large_positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">large_cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
     <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">num_neighbors_cell_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">num_neighbors_naive_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_large</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_large</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-    <span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;(Timing skipped on CPU)&quot;</span><span class="p">)</span>
+<span class="n">naive_end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">naive_time_large</span> <span class="o">=</span> <span class="n">naive_start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">naive_end</span><span class="p">)</span> <span class="o">/</span> <span class="mf">10.0</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell list:  </span><span class="si">{</span><span class="n">cell_time_large</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_cell_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Naive:      </span><span class="si">{</span><span class="n">naive_time_large</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">num_neighbors_naive_large</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">}</span><span class="s2"> pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;Results match: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">equal</span><span class="p">(</span><span class="n">num_neighbors_cell_large</span><span class="p">,</span><span class="w"> </span><span class="n">num_neighbors_naive_large</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Speedup (cell list vs naive): </span><span class="si">{</span><span class="n">naive_time_large</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">cell_time_large</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
@@ -785,16 +768,16 @@ ALGORITHM COMPARISON
 ======================================================================
 
 --- Small System (100 atoms) ---
-Cell list:  0.424 ms, 5152 pairs
-Naive:      0.304 ms, 5152 pairs
+Cell list:  0.9260959625244141 ms, 5152 pairs
+Naive:      0.5366496086120606 ms, 5152 pairs
 Results match: True
 
 --- Large System (30,000 atoms) ---
-Cell list:  1.102 ms, 471714 pairs
-Naive:      12.572 ms, 471714 pairs
+Cell list:  3.2818241119384766 ms, 471810 pairs
+Naive:      38.406439208984374 ms, 471810 pairs
 Results match: True
 
-Speedup (cell list vs naive): 11.4x
+Speedup (cell list vs naive): 11.7x
 </pre></div>
 </div>
 </section>
@@ -879,7 +862,7 @@ Small system (auto-selects naive):
   Method selected: naive (auto)
 
 Large system (auto-selects cell_list):
-  Total pairs: 471714
+  Total pairs: 471810
   Method selected: cell_list (auto)
 
 --- Explicit Method Selection ---
@@ -991,8 +974,8 @@ Allocated cell list cache with 7 components
 Built cell list with [10, 10, 10] cells per dimension
 
 --- Step 4: Query Neighbors ---
-Query found 471714 neighbor pairs
-Average neighbors per atom: 15.72
+Query found 471810 neighbor pairs
+Average neighbors per atom: 15.73
 </pre></div>
 </div>
 </section>
@@ -1090,10 +1073,10 @@ First 10 neighbor distances:
   Pair 5: atom 0 -&gt; 74, distance = 3.5964 Å
   Pair 6: atom 0 -&gt; 78, distance = 4.2534 Å
   Pair 7: atom 0 -&gt; 87, distance = 4.2602 Å
-  Pair 8: atom 0 -&gt; 97, distance = 3.2057 Å
-  Pair 9: atom 0 -&gt; 33, distance = 4.9199 Å
+  Pair 8: atom 0 -&gt; 2, distance = 4.3182 Å
+  Pair 9: atom 0 -&gt; 15, distance = 4.3769 Å
 
-Max distance in pairs: 4.9199 Å
+Max distance in pairs: 4.8273 Å
 Cutoff distance: 5.0000 Å
 ✓ All neighbor distances are within the cutoff
 </pre></div>
@@ -1104,7 +1087,7 @@ Cutoff distance: 5.0000 Å
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Example completed successfully!
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.201 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.494 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighborlist-01-simple-neighbor-list-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../../_downloads/e6bb2681aab85454093239863c7c5972/01_simple_neighbor_list.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">01_simple_neighbor_list.ipynb</span></code></a></p>

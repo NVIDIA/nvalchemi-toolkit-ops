@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:05.741** total execution time for 6 files **from all galleries**:
+**00:43.830** total execution time for 10 files **from all galleries**:
 
 .. container::
 
@@ -32,21 +32,33 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
+   * - :ref:`sphx_glr_examples_electrostatics_03_pme_example.py` (``../examples/electrostatics/03_pme_example.py``)
+     - 00:15.372
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py` (``../examples/electrostatics/02_ewald_summation_example.py``)
+     - 00:11.751
+     - 0.0
+   * - :ref:`sphx_glr_examples_01_bspline_visualization.py` (``../examples/01_bspline_visualization.py``)
+     - 00:06.808
+     - 0.0
    * - :ref:`sphx_glr_examples_neighborlist_04_neighbors_list_torch_compile_performance.py` (``../examples/neighborlist/04_neighbors_list_torch_compile_performance.py``)
-     - 00:02.654
+     - 00:05.153
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py` (``../examples/electrostatics/01_coulomb_example.py``)
+     - 00:02.610
      - 0.0
    * - :ref:`sphx_glr_examples_neighborlist_02_batch_neighbor_list.py` (``../examples/neighborlist/02_batch_neighbor_list.py``)
-     - 00:02.214
-     - 0.0
-   * - :ref:`sphx_glr_examples_interactions_01_dftd3_molecule.py` (``../examples/interactions/01_dftd3_molecule.py``)
-     - 00:00.310
-     - 0.0
-   * - :ref:`sphx_glr_examples_interactions_02_dftd3_batch_crystals.py` (``../examples/interactions/02_dftd3_batch_crystals.py``)
-     - 00:00.292
+     - 00:01.182
      - 0.0
    * - :ref:`sphx_glr_examples_neighborlist_01_simple_neighbor_list.py` (``../examples/neighborlist/01_simple_neighbor_list.py``)
-     - 00:00.201
+     - 00:00.494
+     - 0.0
+   * - :ref:`sphx_glr_examples_dispersion_01_dftd3_molecule.py` (``../examples/dispersion/01_dftd3_molecule.py``)
+     - 00:00.215
+     - 0.0
+   * - :ref:`sphx_glr_examples_dispersion_02_dftd3_batch_crystals.py` (``../examples/dispersion/02_dftd3_batch_crystals.py``)
+     - 00:00.212
      - 0.0
    * - :ref:`sphx_glr_examples_neighborlist_03_rebuild_neighborlist_detection.py` (``../examples/neighborlist/03_rebuild_neighborlist_detection.py``)
-     - 00:00.070
+     - 00:00.034
      - 0.0

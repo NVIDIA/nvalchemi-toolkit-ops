@@ -189,101 +189,75 @@ print("=" * 70)
 
 print("\n--- Small System (100 atoms) ---")
 
-if device.type == "cuda":
-    # Cell list on small system
-    cell_start = torch.cuda.Event(enable_timing=True)
-    cell_end = torch.cuda.Event(enable_timing=True)
-    # Warmup
-    for _ in range(10):
-        _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
-    torch.cuda.synchronize()
-    cell_start.record()
-    for _ in range(10):
-        _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
-    cell_end.record()
-    torch.cuda.synchronize()
-    cell_time_small = cell_start.elapsed_time(cell_end) / 10.0
-
-    # Naive on small system
-    naive_start = torch.cuda.Event(enable_timing=True)
-    naive_end = torch.cuda.Event(enable_timing=True)
-    for _ in range(10):
-        _, num_neighbors_naive_small, _ = naive_neighbor_list(
-            small_positions, cutoff, cell=small_cell, pbc=pbc
-        )
-    torch.cuda.synchronize()
-    naive_start.record()
-    for _ in range(10):
-        _, num_neighbors_naive_small, _ = naive_neighbor_list(
-            small_positions, cutoff, cell=small_cell, pbc=pbc
-        )
-    naive_end.record()
-    torch.cuda.synchronize()
-    naive_time_small = naive_start.elapsed_time(naive_end) / 10.0
-
-    print(f"Cell list:  {cell_time_small:.3f} ms, {num_neighbors_cell_small.sum()} pairs")
-    print(f"Naive:      {naive_time_small:.3f} ms, {num_neighbors_naive_small.sum()} pairs")
-    print(
-        f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
-    )
-else:
-    # CPU timing - just compute results without detailed timing
+# Cell list on small system
+cell_start = torch.cuda.Event(enable_timing=True)
+cell_end = torch.cuda.Event(enable_timing=True)
+# Warmup
+for _ in range(10):
     _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
+torch.cuda.synchronize()
+cell_start.record()
+for _ in range(10):
+    _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
+cell_end.record()
+torch.cuda.synchronize()
+cell_time_small = cell_start.elapsed_time(cell_end) / 10.0
+
+# Naive on small system
+naive_start = torch.cuda.Event(enable_timing=True)
+naive_end = torch.cuda.Event(enable_timing=True)
+for _ in range(10):
     _, num_neighbors_naive_small, _ = naive_neighbor_list(
         small_positions, cutoff, cell=small_cell, pbc=pbc
     )
-    print(f"Cell list:  {num_neighbors_cell_small.sum()} pairs")
-    print(f"Naive:      {num_neighbors_naive_small.sum()} pairs")
-    print(
-        f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
+torch.cuda.synchronize()
+naive_start.record()
+for _ in range(10):
+    _, num_neighbors_naive_small, _ = naive_neighbor_list(
+        small_positions, cutoff, cell=small_cell, pbc=pbc
     )
-    print("(Timing skipped on CPU)")
+naive_end.record()
+torch.cuda.synchronize()
+naive_time_small = naive_start.elapsed_time(naive_end) / 10.0
+
+print(f"Cell list:  {cell_time_small} ms, {num_neighbors_cell_small.sum()} pairs")
+print(f"Naive:      {naive_time_small} ms, {num_neighbors_naive_small.sum()} pairs")
+print(
+    f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
+)
 
 print("\n--- Large System (30,000 atoms) ---")
 
-if device.type == "cuda":
-    # Cell list on large system
-    cell_start = torch.cuda.Event(enable_timing=True)
-    cell_end = torch.cuda.Event(enable_timing=True)
-    torch.cuda.synchronize()
-    cell_start.record()
-    for _ in range(10):
-        _, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
-    cell_end.record()
-    torch.cuda.synchronize()
-    cell_time_large = cell_start.elapsed_time(cell_end) / 10.0
-
-    # Naive on large system (will be slower)
-    naive_start = torch.cuda.Event(enable_timing=True)
-    naive_end = torch.cuda.Event(enable_timing=True)
-    torch.cuda.synchronize()
-    naive_start.record()
-    for _ in range(10):
-        _, num_neighbors_naive_large, _ = naive_neighbor_list(
-            large_positions, cutoff, cell=large_cell, pbc=pbc
-        )
-    naive_end.record()
-    torch.cuda.synchronize()
-    naive_time_large = naive_start.elapsed_time(naive_end) / 10.0
-
-    print(f"Cell list:  {cell_time_large:.3f} ms, {num_neighbors_cell_large.sum()} pairs")
-    print(f"Naive:      {naive_time_large:.3f} ms, {num_neighbors_naive_large.sum()} pairs")
-    print(
-        f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
-    )
-    print(f"\nSpeedup (cell list vs naive): {naive_time_large / cell_time_large:.1f}x")
-else:
-    # CPU - just compute results without detailed timing
+# Cell list on large system
+cell_start = torch.cuda.Event(enable_timing=True)
+cell_end = torch.cuda.Event(enable_timing=True)
+torch.cuda.synchronize()
+cell_start.record()
+for _ in range(10):
     _, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
+cell_end.record()
+torch.cuda.synchronize()
+cell_time_large = cell_start.elapsed_time(cell_end) / 10.0
+
+# Naive on large system (will be slower)
+naive_start = torch.cuda.Event(enable_timing=True)
+naive_end = torch.cuda.Event(enable_timing=True)
+torch.cuda.synchronize()
+naive_start.record()
+for _ in range(10):
     _, num_neighbors_naive_large, _ = naive_neighbor_list(
         large_positions, cutoff, cell=large_cell, pbc=pbc
     )
-    print(f"Cell list:  {num_neighbors_cell_large.sum()} pairs")
-    print(f"Naive:      {num_neighbors_naive_large.sum()} pairs")
-    print(
-        f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
-    )
-    print("(Timing skipped on CPU)")
+naive_end.record()
+torch.cuda.synchronize()
+naive_time_large = naive_start.elapsed_time(naive_end) / 10.0
+
+print(f"Cell list:  {cell_time_large} ms, {num_neighbors_cell_large.sum()} pairs")
+print(f"Naive:      {naive_time_large} ms, {num_neighbors_naive_large.sum()} pairs")
+print(
+    f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
+)
+print(f"\nSpeedup (cell list vs naive): {naive_time_large / cell_time_large:.1f}x")
 
 # %%
 # Method 3: Unified neighbor_list Wrapper (Recommended)

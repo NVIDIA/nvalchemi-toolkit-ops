@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>DFT-D3(BJ) Dispersion Correction &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>DFT-D3(BJ) Dispersion Correction &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -57,7 +57,7 @@
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Examples Gallery" href="../../examples/index.html" />
-    <link rel="prev" title="Neighbor Lists" href="neighborlist.html" />
+    <link rel="prev" title="Electrostatic Interactions" href="electrostatics.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
@@ -359,6 +359,7 @@ document.write(`
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighborlist.html">Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">DFT-D3(BJ) Dispersion Correction</a></li>
 </ul>
 </div>
@@ -418,9 +419,8 @@ document.write(`
                 <article class="bd-article">
                   
   <!-- markdownlint-disable MD013 -->
-<!-- markdownlint-disable MD013 -->
 <section class="tex2jax_ignore mathjax_ignore" id="dft-d3-bj-dispersion-correction">
-<span id="id1"></span><h1>DFT-D3(BJ) Dispersion Correction<a class="headerlink" href="#dft-d3-bj-dispersion-correction" title="Link to this heading">#</a></h1>
+<span id="dispersion-userguide"></span><h1>DFT-D3(BJ) Dispersion Correction<a class="headerlink" href="#dft-d3-bj-dispersion-correction" title="Link to this heading">#</a></h1>
 <p>Dispersion corrections account for van der Waals interactions that standard DFT
 functionals underestimate. ALCHEMI Toolkit-Ops provides GPU-accelerated DFT-D3
 with Becke-Johnson damping via <a class="reference external" href="https://nvidia.github.io/warp/">NVIDIA Warp</a>,
@@ -909,8 +909,8 @@ for a complete list.</p>
 </section>
 <section id="theory-background">
 <h2>Theory Background<a class="headerlink" href="#theory-background" title="Link to this heading">#</a></h2>
-<p>This section summarizes the DFT-D3 method <a class="footnote-reference brackets" href="#grimme2010" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> with Becke-Johnson
-damping <a class="footnote-reference brackets" href="#grimme2011" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>. For complete derivations and benchmarks, see the
+<p>This section summarizes the DFT-D3 method <a class="footnote-reference brackets" href="#grimme2010" id="id1" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> with Becke-Johnson
+damping <a class="footnote-reference brackets" href="#grimme2011" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>. For complete derivations and benchmarks, see the
 original publications.</p>
 <section id="dispersion-energy-expression">
 <h3>Dispersion Energy Expression<a class="headerlink" href="#dispersion-energy-expression" title="Link to this heading">#</a></h3>
@@ -931,7 +931,7 @@ original publications.</p>
 </section>
 <section id="coordination-dependent-c6">
 <h3>Coordination-Dependent C6<a class="headerlink" href="#coordination-dependent-c6" title="Link to this heading">#</a></h3>
-<p>A key innovation in DFT-D3 <a class="footnote-reference brackets" href="#grimme2010" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> is environment-dependent C6 coefficients.
+<p>A key innovation in DFT-D3 <a class="footnote-reference brackets" href="#grimme2010" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> is environment-dependent C6 coefficients.
 The C6 coefficient adapts to the local chemical environment via Gaussian
 interpolation over reference coordination numbers:</p>
 <div class="math notranslate nohighlight">
@@ -943,7 +943,7 @@ interpolation over reference coordination numbers:</p>
 </section>
 <section id="becke-johnson-damping">
 <h3>Becke-Johnson Damping<a class="headerlink" href="#becke-johnson-damping" title="Link to this heading">#</a></h3>
-<p>The BJ damping function <a class="footnote-reference brackets" href="#grimme2011" id="id5" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a> prevents unphysical short-range behavior
+<p>The BJ damping function <a class="footnote-reference brackets" href="#grimme2011" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a> prevents unphysical short-range behavior
 while providing improved accuracy for equilibrium geometries:</p>
 <div class="math notranslate nohighlight">
 \[f_{\text{damp}} = a_1 \sqrt{C_8^{ij}/C_6^{ij}} + a_2\]</div>
@@ -1035,7 +1035,7 @@ argument: <span class="math notranslate nohighlight">\(\exp(\text{arg}_k - \text
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="grimme2010" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id2">1</a>,<a role="doc-backlink" href="#id4">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id1">1</a>,<a role="doc-backlink" href="#id3">2</a>)</span>
 <p>Grimme, S.; Antony, J.; Ehrlich, S.; Krieg, H. “A consistent and
 accurate ab initio parametrization of density functional dispersion
 correction (DFT-D) for the 94 elements H-Pu.” <em>J. Chem. Phys.</em> <strong>2010</strong>,
@@ -1043,7 +1043,7 @@ correction (DFT-D) for the 94 elements H-Pu.” <em>J. Chem. Phys.</em> <strong>
 </aside>
 <aside class="footnote brackets" id="grimme2011" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id3">1</a>,<a role="doc-backlink" href="#id5">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id2">1</a>,<a role="doc-backlink" href="#id4">2</a>)</span>
 <p>Grimme, S.; Ehrlich, S.; Goerigk, L. “Effect of the damping
 function in dispersion corrected density functional theory.”
 <em>J. Comput. Chem.</em> <strong>2011</strong>, <em>32</em>, 1456-1465.
@@ -1062,12 +1062,12 @@ function in dispersion corrected density functional theory.”
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="neighborlist.html"
+       href="electrostatics.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Neighbor Lists</p>
+        <p class="prev-next-title">Electrostatic Interactions</p>
       </div>
     </a>
     <a class="right-next"

@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>User Guide &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>User Guide &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -357,6 +357,7 @@ document.write(`
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="components/neighborlist.html">Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="components/electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="components/dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
 </ul>
 </div>
@@ -445,13 +446,15 @@ the neighbor matrix (or equivalently, list):</p>
 <span class="p">)</span>
 
 <span class="c1"># Or get neighbor list (COO format) for graph neural networks</span>
-<span class="n">neighbor_list</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+<span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
     <span class="n">positions</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
 <span class="p">)</span>
 <span class="n">source_indices</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 <span class="n">target_indices</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="n">neighbor_list</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2"> neighbor pairs&quot;</span><span class="p">)</span>
+<span class="c1"># neighbor_ptr is a CSR-style pointer; compute num_neighbors from it</span>
+<span class="n">num_neighbors</span> <span class="o">=</span> <span class="n">neighbor_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-</span> <span class="n">neighbor_ptr</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Average neighbors per atom: </span><span class="si">{</span><span class="n">num_neighbors</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
@@ -467,6 +470,7 @@ the neighbor matrix (or equivalently, list):</p>
 <h2>Core Components<a class="headerlink" href="#core-components" title="Link to this heading">#</a></h2>
 <ul class="simple">
 <li><p><a class="reference internal" href="components/neighborlist.html"><span class="doc std std-doc">NeighborLists</span></a></p></li>
+<li><p><a class="reference internal" href="components/electrostatics.html"><span class="doc std std-doc">Electrostatics</span></a></p></li>
 <li><p><a class="reference internal" href="components/dispersion.html"><span class="doc std std-doc">Dispersion Corrections</span></a></p></li>
 </ul>
 </section>

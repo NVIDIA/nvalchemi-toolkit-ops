@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Batch Neighbor List Example &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>Batch Neighbor List Example &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -348,14 +348,23 @@ document.write(`
 <nav class="bd-docs-nav bd-links"
      aria-label="Section Navigation">
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
-  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
-<li class="toctree-l1 has-children"><a class="reference internal" href="../interactions/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="../interactions/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
 
-<li class="toctree-l2"><a class="reference internal" href="../interactions/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
 </ul>
 </li>
-<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../electrostatics/index.html">Electrostatics</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
 
 
@@ -643,7 +652,7 @@ Batch configuration:
 METHOD 1: BATCH CELL LIST (O(N))
 ======================================================================
 
-Returned neighbor matrix: torch.Size([43, 2048])
+Returned neighbor matrix: torch.Size([43, 928])
   Total neighbor pairs: 1376
   Average neighbors per atom: 32.00
 
@@ -721,7 +730,7 @@ Pairs per system:
 METHOD 2: BATCH NAIVE ALGORITHM (O(N²))
 ======================================================================
 Small systems batch: 11 total atoms
-Returned neighbor matrix: torch.Size([11, 2048])
+Returned neighbor matrix: torch.Size([11, 928])
 Total neighbor pairs: 32
 
 Verification (naive vs cell list):
@@ -811,7 +820,7 @@ Al-fcc(2x2x2):
   Atoms: 32
   Neighbor pairs: 1344
   Avg neighbors per atom: 42.00
-  Sample pairs: (0-&gt;24) (0-&gt;22) (0-&gt;28)
+  Sample pairs: (0-&gt;22) (0-&gt;28) (0-&gt;26)
 </pre></div>
 </div>
 </section>
@@ -910,7 +919,7 @@ Batch supports different parameters per system:
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Example completed successfully!
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 2.214 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.182 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighborlist-02-batch-neighbor-list-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../../_downloads/187af7d527c1a2a174618704ff415ab7/02_batch_neighbor_list.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">02_batch_neighbor_list.ipynb</span></code></a></p>

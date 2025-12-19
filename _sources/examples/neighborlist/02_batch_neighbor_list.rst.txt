@@ -282,7 +282,7 @@ Process all systems simultaneously with cell list algorithm
     METHOD 1: BATCH CELL LIST (O(N))
     ======================================================================
 
-    Returned neighbor matrix: torch.Size([43, 2048])
+    Returned neighbor matrix: torch.Size([43, 928])
       Total neighbor pairs: 1376
       Average neighbors per atom: 32.00
 
@@ -377,7 +377,7 @@ For comparison, use naive algorithm on batch of small systems
     METHOD 2: BATCH NAIVE ALGORITHM (O(N²))
     ======================================================================
     Small systems batch: 11 total atoms
-    Returned neighbor matrix: torch.Size([11, 2048])
+    Returned neighbor matrix: torch.Size([11, 928])
     Total neighbor pairs: 32
 
     Verification (naive vs cell list):
@@ -484,7 +484,7 @@ Extract individual system results from batch
       Atoms: 32
       Neighbor pairs: 1344
       Avg neighbors per atom: 42.00
-      Sample pairs: (0->24) (0->22) (0->28) 
+      Sample pairs: (0->22) (0->28) (0->26) 
 
 
 
@@ -635,7 +635,7 @@ Show that each system can have different properties
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 2.214 seconds)
+   **Total running time of the script:** (0 minutes 1.182 seconds)
 
 
 .. _sphx_glr_download_examples_neighborlist_02_batch_neighbor_list.py:

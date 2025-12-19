@@ -229,26 +229,26 @@ The cell list algorithm uses spatial decomposition for efficient neighbor findin
     ======================================================================
 
     --- Large System (30,000 atoms) ---
-    Returned neighbor matrix: shape torch.Size([30000, 2048])
-      neighbor_matrix: (num_atoms, max_neighbors) = torch.Size([30000, 2048])
+    Returned neighbor matrix: shape torch.Size([30000, 928])
+      neighbor_matrix: (num_atoms, max_neighbors) = torch.Size([30000, 928])
       num_neighbors: (num_atoms,) = torch.Size([30000])
-      shifts: (num_atoms, max_neighbors, 3) = torch.Size([30000, 2048, 3])
-    Total neighbor pairs: 471714
-    Average neighbors per atom: 15.72
+      shifts: (num_atoms, max_neighbors, 3) = torch.Size([30000, 928, 3])
+    Total neighbor pairs: 471810
+    Average neighbors per atom: 15.73
 
-    Returned neighbor list (COO format): shape torch.Size([2, 471714])
-      neighbor_list: (2, num_pairs) = torch.Size([2, 471714])
-      source_atoms: torch.Size([471714])
-      target_atoms: torch.Size([471714])
-      shifts: (num_pairs, 3) = torch.Size([471714, 3])
-    Total pairs (COO): 471714
+    Returned neighbor list (COO format): shape torch.Size([2, 471810])
+      neighbor_list: (2, num_pairs) = torch.Size([2, 471810])
+      source_atoms: torch.Size([471810])
+      target_atoms: torch.Size([471810])
+      shifts: (num_pairs, 3) = torch.Size([471810, 3])
+    Total pairs (COO): 471810
 
     First 5 neighbor pairs:
-      Atom 0 -> Atom 9305, shift: [0, 0, 0]
-      Atom 0 -> Atom 18106, shift: [0, 0, 0]
+      Atom 0 -> Atom 2094, shift: [0, 0, 0]
       Atom 0 -> Atom 1158, shift: [0, 0, 0]
-      Atom 0 -> Atom 12684, shift: [0, 0, 0]
-      Atom 0 -> Atom 16803, shift: [0, 0, 0]
+      Atom 0 -> Atom 8931, shift: [0, 0, 0]
+      Atom 0 -> Atom 9305, shift: [0, 0, 0]
+      Atom 0 -> Atom 8939, shift: [0, 0, 0]
 
 
 
@@ -303,7 +303,7 @@ The naive algorithm computes all pairwise distances
     ======================================================================
 
     --- Small System (100 atoms) ---
-    Returned neighbor matrix: shape torch.Size([100, 2048])
+    Returned neighbor matrix: shape torch.Size([100, 928])
     Total neighbor pairs: 5152
     Average neighbors per atom: 51.52
 
@@ -320,7 +320,7 @@ Comparing Cell List vs Naive Algorithm
 ======================================
 Compare performance and verify results match
 
-.. GENERATED FROM PYTHON SOURCE LINES 185-288
+.. GENERATED FROM PYTHON SOURCE LINES 185-262
 
 .. code-block:: Python
 
@@ -331,101 +331,75 @@ Compare performance and verify results match
 
     print("\n--- Small System (100 atoms) ---")
 
-    if device.type == "cuda":
-        # Cell list on small system
-        cell_start = torch.cuda.Event(enable_timing=True)
-        cell_end = torch.cuda.Event(enable_timing=True)
-        # Warmup
-        for _ in range(10):
-            _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
-        torch.cuda.synchronize()
-        cell_start.record()
-        for _ in range(10):
-            _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
-        cell_end.record()
-        torch.cuda.synchronize()
-        cell_time_small = cell_start.elapsed_time(cell_end) / 10.0
-
-        # Naive on small system
-        naive_start = torch.cuda.Event(enable_timing=True)
-        naive_end = torch.cuda.Event(enable_timing=True)
-        for _ in range(10):
-            _, num_neighbors_naive_small, _ = naive_neighbor_list(
-                small_positions, cutoff, cell=small_cell, pbc=pbc
-            )
-        torch.cuda.synchronize()
-        naive_start.record()
-        for _ in range(10):
-            _, num_neighbors_naive_small, _ = naive_neighbor_list(
-                small_positions, cutoff, cell=small_cell, pbc=pbc
-            )
-        naive_end.record()
-        torch.cuda.synchronize()
-        naive_time_small = naive_start.elapsed_time(naive_end) / 10.0
-
-        print(f"Cell list:  {cell_time_small:.3f} ms, {num_neighbors_cell_small.sum()} pairs")
-        print(f"Naive:      {naive_time_small:.3f} ms, {num_neighbors_naive_small.sum()} pairs")
-        print(
-            f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
-        )
-    else:
-        # CPU timing - just compute results without detailed timing
+    # Cell list on small system
+    cell_start = torch.cuda.Event(enable_timing=True)
+    cell_end = torch.cuda.Event(enable_timing=True)
+    # Warmup
+    for _ in range(10):
         _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
+    torch.cuda.synchronize()
+    cell_start.record()
+    for _ in range(10):
+        _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
+    cell_end.record()
+    torch.cuda.synchronize()
+    cell_time_small = cell_start.elapsed_time(cell_end) / 10.0
+
+    # Naive on small system
+    naive_start = torch.cuda.Event(enable_timing=True)
+    naive_end = torch.cuda.Event(enable_timing=True)
+    for _ in range(10):
         _, num_neighbors_naive_small, _ = naive_neighbor_list(
             small_positions, cutoff, cell=small_cell, pbc=pbc
         )
-        print(f"Cell list:  {num_neighbors_cell_small.sum()} pairs")
-        print(f"Naive:      {num_neighbors_naive_small.sum()} pairs")
-        print(
-            f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
+    torch.cuda.synchronize()
+    naive_start.record()
+    for _ in range(10):
+        _, num_neighbors_naive_small, _ = naive_neighbor_list(
+            small_positions, cutoff, cell=small_cell, pbc=pbc
         )
-        print("(Timing skipped on CPU)")
+    naive_end.record()
+    torch.cuda.synchronize()
+    naive_time_small = naive_start.elapsed_time(naive_end) / 10.0
+
+    print(f"Cell list:  {cell_time_small} ms, {num_neighbors_cell_small.sum()} pairs")
+    print(f"Naive:      {naive_time_small} ms, {num_neighbors_naive_small.sum()} pairs")
+    print(
+        f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
+    )
 
     print("\n--- Large System (30,000 atoms) ---")
 
-    if device.type == "cuda":
-        # Cell list on large system
-        cell_start = torch.cuda.Event(enable_timing=True)
-        cell_end = torch.cuda.Event(enable_timing=True)
-        torch.cuda.synchronize()
-        cell_start.record()
-        for _ in range(10):
-            _, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
-        cell_end.record()
-        torch.cuda.synchronize()
-        cell_time_large = cell_start.elapsed_time(cell_end) / 10.0
-
-        # Naive on large system (will be slower)
-        naive_start = torch.cuda.Event(enable_timing=True)
-        naive_end = torch.cuda.Event(enable_timing=True)
-        torch.cuda.synchronize()
-        naive_start.record()
-        for _ in range(10):
-            _, num_neighbors_naive_large, _ = naive_neighbor_list(
-                large_positions, cutoff, cell=large_cell, pbc=pbc
-            )
-        naive_end.record()
-        torch.cuda.synchronize()
-        naive_time_large = naive_start.elapsed_time(naive_end) / 10.0
-
-        print(f"Cell list:  {cell_time_large:.3f} ms, {num_neighbors_cell_large.sum()} pairs")
-        print(f"Naive:      {naive_time_large:.3f} ms, {num_neighbors_naive_large.sum()} pairs")
-        print(
-            f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
-        )
-        print(f"\nSpeedup (cell list vs naive): {naive_time_large / cell_time_large:.1f}x")
-    else:
-        # CPU - just compute results without detailed timing
+    # Cell list on large system
+    cell_start = torch.cuda.Event(enable_timing=True)
+    cell_end = torch.cuda.Event(enable_timing=True)
+    torch.cuda.synchronize()
+    cell_start.record()
+    for _ in range(10):
         _, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
+    cell_end.record()
+    torch.cuda.synchronize()
+    cell_time_large = cell_start.elapsed_time(cell_end) / 10.0
+
+    # Naive on large system (will be slower)
+    naive_start = torch.cuda.Event(enable_timing=True)
+    naive_end = torch.cuda.Event(enable_timing=True)
+    torch.cuda.synchronize()
+    naive_start.record()
+    for _ in range(10):
         _, num_neighbors_naive_large, _ = naive_neighbor_list(
             large_positions, cutoff, cell=large_cell, pbc=pbc
         )
-        print(f"Cell list:  {num_neighbors_cell_large.sum()} pairs")
-        print(f"Naive:      {num_neighbors_naive_large.sum()} pairs")
-        print(
-            f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
-        )
-        print("(Timing skipped on CPU)")
+    naive_end.record()
+    torch.cuda.synchronize()
+    naive_time_large = naive_start.elapsed_time(naive_end) / 10.0
+
+    print(f"Cell list:  {cell_time_large} ms, {num_neighbors_cell_large.sum()} pairs")
+    print(f"Naive:      {naive_time_large} ms, {num_neighbors_naive_large.sum()} pairs")
+    print(
+        f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
+    )
+    print(f"\nSpeedup (cell list vs naive): {naive_time_large / cell_time_large:.1f}x")
 
 
 
@@ -441,28 +415,28 @@ Compare performance and verify results match
     ======================================================================
 
     --- Small System (100 atoms) ---
-    Cell list:  0.424 ms, 5152 pairs
-    Naive:      0.304 ms, 5152 pairs
+    Cell list:  0.9260959625244141 ms, 5152 pairs
+    Naive:      0.5366496086120606 ms, 5152 pairs
     Results match: True
 
     --- Large System (30,000 atoms) ---
-    Cell list:  1.102 ms, 471714 pairs
-    Naive:      12.572 ms, 471714 pairs
+    Cell list:  3.2818241119384766 ms, 471810 pairs
+    Naive:      38.406439208984374 ms, 471810 pairs
     Results match: True
 
-    Speedup (cell list vs naive): 11.4x
+    Speedup (cell list vs naive): 11.7x
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 289-293
+.. GENERATED FROM PYTHON SOURCE LINES 263-267
 
 Method 3: Unified neighbor_list Wrapper (Recommended)
 =====================================================
 The neighbor_list() wrapper provides a unified API that automatically
 selects the best algorithm based on system size and parameters
 
-.. GENERATED FROM PYTHON SOURCE LINES 293-359
+.. GENERATED FROM PYTHON SOURCE LINES 267-333
 
 .. code-block:: Python
 
@@ -552,7 +526,7 @@ selects the best algorithm based on system size and parameters
       Method selected: naive (auto)
 
     Large system (auto-selects cell_list):
-      Total pairs: 471714
+      Total pairs: 471810
       Method selected: cell_list (auto)
 
     --- Explicit Method Selection ---
@@ -578,13 +552,13 @@ selects the best algorithm based on system size and parameters
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 360-363
+.. GENERATED FROM PYTHON SOURCE LINES 334-337
 
 Method 4: Low-level Cell List API with Caching
 ==============================================
 For advanced users: separate build and query phases for efficient caching
 
-.. GENERATED FROM PYTHON SOURCE LINES 363-432
+.. GENERATED FROM PYTHON SOURCE LINES 337-406
 
 .. code-block:: Python
 
@@ -681,19 +655,19 @@ For advanced users: separate build and query phases for efficient caching
     Built cell list with [10, 10, 10] cells per dimension
 
     --- Step 4: Query Neighbors ---
-    Query found 471714 neighbor pairs
-    Average neighbors per atom: 15.72
+    Query found 471810 neighbor pairs
+    Average neighbors per atom: 15.73
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 433-436
+.. GENERATED FROM PYTHON SOURCE LINES 407-410
 
 Understanding Half-Fill Mode
 ============================
 Control whether to store both (i,j) and (j,i) pairs
 
-.. GENERATED FROM PYTHON SOURCE LINES 436-459
+.. GENERATED FROM PYTHON SOURCE LINES 410-433
 
 .. code-block:: Python
 
@@ -743,12 +717,12 @@ Control whether to store both (i,j) and (j,i) pairs
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 460-462
+.. GENERATED FROM PYTHON SOURCE LINES 434-436
 
 Validate neighbor distances
 ===========================
 
-.. GENERATED FROM PYTHON SOURCE LINES 462-502
+.. GENERATED FROM PYTHON SOURCE LINES 436-476
 
 .. code-block:: Python
 
@@ -814,17 +788,17 @@ Validate neighbor distances
       Pair 5: atom 0 -> 74, distance = 3.5964 Å
       Pair 6: atom 0 -> 78, distance = 4.2534 Å
       Pair 7: atom 0 -> 87, distance = 4.2602 Å
-      Pair 8: atom 0 -> 97, distance = 3.2057 Å
-      Pair 9: atom 0 -> 33, distance = 4.9199 Å
+      Pair 8: atom 0 -> 2, distance = 4.3182 Å
+      Pair 9: atom 0 -> 15, distance = 4.3769 Å
 
-    Max distance in pairs: 4.9199 Å
+    Max distance in pairs: 4.8273 Å
     Cutoff distance: 5.0000 Å
     ✓ All neighbor distances are within the cutoff
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 503-504
+.. GENERATED FROM PYTHON SOURCE LINES 477-478
 
 .. code-block:: Python
 
@@ -846,7 +820,7 @@ Validate neighbor distances
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.201 seconds)
+   **Total running time of the script:** (0 minutes 0.494 seconds)
 
 
 .. _sphx_glr_download_examples_neighborlist_01_simple_neighbor_list.py:

@@ -1,0 +1,1333 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.math.gto &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../_static/documentation_options.js?v=95e61db4"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/math/gto';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.math.gto</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: LicenseRef-NvidiaProprietary</span>
+<span class="c1">#</span>
+<span class="c1"># NVIDIA CORPORATION, its affiliates and licensors retain all intellectual</span>
+<span class="c1"># property and proprietary rights in and to this material, related</span>
+<span class="c1"># documentation and any modifications thereto. Any use, reproduction,</span>
+<span class="c1"># disclosure or distribution of this material and related documentation</span>
+<span class="c1"># without an express license agreement from NVIDIA CORPORATION or</span>
+<span class="c1"># its affiliates is strictly prohibited.</span>
+
+<span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Gaussian Type Orbital (GTO) Basis Functions</span>
+<span class="sd">============================================</span>
+
+<span class="sd">This module provides Warp functions for evaluating Gaussian Type Orbital (GTO)</span>
+<span class="sd">basis functions, which are used for representing multipole charge distributions</span>
+<span class="sd">in electrostatics calculations.</span>
+
+<span class="sd">Mathematical Background</span>
+<span class="sd">-----------------------</span>
+
+<span class="sd">A Gaussian Type Orbital (GTO) density function combines a spherical harmonic</span>
+<span class="sd">with a Gaussian radial factor:</span>
+
+<span class="sd">.. math::</span>
+<span class="sd">    \phi_{l,m}(\mathbf{r}, \sigma) = N_l \cdot Y_l^m(\hat{\mathbf{r}}) \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right)</span>
+
+<span class="sd">where:</span>
+<span class="sd">- :math:`Y_l^m` is the real spherical harmonic of degree l and order m</span>
+<span class="sd">- :math:`\sigma` is the Gaussian width parameter</span>
+<span class="sd">- :math:`N_l` is a normalization constant</span>
+<span class="sd">- :math:`r = |\mathbf{r}|` is the distance from the origin</span>
+
+<span class="sd">Normalization Convention</span>
+<span class="sd">------------------------</span>
+
+<span class="sd">We use **integral normalization** such that:</span>
+
+<span class="sd">- For L=0 (monopole): :math:`\int \phi_{0,0}(\mathbf{r}) d\mathbf{r} = 1`</span>
+<span class="sd">- For L&gt;0: :math:`\int \phi_{l,m}(\mathbf{r}) d\mathbf{r} = 0` (by symmetry)</span>
+
+<span class="sd">The normalization constant is:</span>
+
+<span class="sd">.. math::</span>
+<span class="sd">    N_l = \frac{\sqrt{4\pi}}{(2\pi\sigma^2)^{3/2}}</span>
+
+<span class="sd">This ensures that a charge distribution :math:`\rho(\mathbf{r}) = q \cdot \phi_{0,0}(\mathbf{r})`</span>
+<span class="sd">integrates to total charge :math:`q`.</span>
+
+<span class="sd">Fourier Transform</span>
+<span class="sd">-----------------</span>
+
+<span class="sd">The GTO has an analytical Fourier transform:</span>
+
+<span class="sd">.. math::</span>
+<span class="sd">    \hat{\phi}_{l,m}(\mathbf{k}, \sigma) = \left(\frac{i}{2}\right)^l \cdot \sqrt{4\pi} \cdot Y_l^m(\hat{\mathbf{k}}) \cdot \exp\left(-\frac{k^2 \sigma^2}{2}\right)</span>
+
+<span class="sd">This is the key property that makes GTOs useful for reciprocal space calculations:</span>
+<span class="sd">- The Gaussian factor damps high-frequency components (smooth in real space)</span>
+<span class="sd">- The spherical harmonic factor encodes the angular dependence</span>
+<span class="sd">- The :math:`(i/2)^l` factor arises from the Fourier transform of the radial part</span>
+
+<span class="sd">Relationship to Ewald Parameter</span>
+<span class="sd">-------------------------------</span>
+
+<span class="sd">The GTO width :math:`\sigma` relates to the Ewald splitting parameter :math:`\alpha` by:</span>
+
+<span class="sd">.. math::</span>
+<span class="sd">    \sigma = \frac{1}{2\alpha}</span>
+
+<span class="sd">This means smaller :math:`\sigma` (more localized GTOs) corresponds to larger :math:`\alpha`</span>
+<span class="sd">(more emphasis on real-space interactions).</span>
+
+<span class="sd">Usage in Warp Kernels</span>
+<span class="sd">---------------------</span>
+
+<span class="sd">These are Warp functions designed to be called from within Warp kernels::</span>
+
+<span class="sd">    @wp.kernel</span>
+<span class="sd">    def my_kernel(</span>
+<span class="sd">        positions: wp.array(dtype=wp.vec3d),</span>
+<span class="sd">        sigma: wp.float64,</span>
+<span class="sd">        output: wp.array(dtype=wp.float64),</span>
+<span class="sd">    ):</span>
+<span class="sd">        i = wp.tid()</span>
+<span class="sd">        r = positions[i]</span>
+
+<span class="sd">        # Evaluate L=0 GTO density</span>
+<span class="sd">        density = gto_density_l0(r, sigma)</span>
+
+<span class="sd">        # Evaluate L=1 GTO densities (3 components)</span>
+<span class="sd">        density_l1 = gto_density_l1(r, sigma)</span>
+
+<span class="sd">References</span>
+<span class="sd">----------</span>
+<span class="sd">- Helgaker, T., Jørgensen, P., &amp; Olsen, J. (2000). Molecular electronic-structure</span>
+<span class="sd">  theory. John Wiley &amp; Sons. (Chapter on Gaussian basis functions)</span>
+<span class="sd">- The e3nn library: https://e3nn.org/</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.spherical_harmonics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">Y00_COEFF</span><span class="p">,</span>
+    <span class="n">Y1_COEFF</span><span class="p">,</span>
+    <span class="n">Y2_0_COEFF</span><span class="p">,</span>
+    <span class="n">Y2_M1_COEFF</span><span class="p">,</span>
+    <span class="n">Y2_M2_COEFF</span><span class="p">,</span>
+    <span class="n">Y2_P1_COEFF</span><span class="p">,</span>
+    <span class="n">Y2_P2_COEFF</span><span class="p">,</span>
+    <span class="n">eval_spherical_harmonics_l1</span><span class="p">,</span>
+    <span class="n">eval_spherical_harmonics_l2</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Mathematical Constants</span>
+<span class="c1"># =============================================================================</span>
+
+<span class="c1"># pi and related constants</span>
+<span class="n">PI</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">))</span>
+<span class="n">TWOPI</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">))</span>
+<span class="n">SQRT_4PI</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">4.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)))</span>  <span class="c1"># sqrt(4*pi)</span>
+
+<span class="c1"># Small value for numerical stability</span>
+<span class="n">EPSILON</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1e-30</span><span class="p">))</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">rsqrt</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># GTO Density Functions (Real Space)</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_normalization</span><span class="p">(</span><span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute the GTO normalization constant.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        N = \frac{\sqrt{4\pi}}{(2\pi \sigma^2)^{3/2}} = \frac{\sqrt{4\pi}}{(2\pi)^{3/2} \sigma^3}</span>
+
+<span class="sd">    This ensures that :math:`\int \phi_{0,0}(r) dr = 1`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.float64</span>
+<span class="sd">        Normalization constant N.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="n">sigma3</span> <span class="o">=</span> <span class="n">sigma2</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="c1"># (2*pi)^(3/2) = (2*pi) * sqrt(2*pi) ~= 15.7496...</span>
+    <span class="n">twopi_3_2</span> <span class="o">=</span> <span class="n">TWOPI</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">TWOPI</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">SQRT_4PI</span> <span class="o">/</span> <span class="p">(</span><span class="n">twopi_3_2</span> <span class="o">*</span> <span class="n">sigma3</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_gaussian_factor</span><span class="p">(</span><span class="n">r2</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute the Gaussian radial factor exp(-r^2/(2sigma^2)).</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \exp\left(-\frac{r^2}{2\sigma^2}\right)</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    r2 : wp.float64</span>
+<span class="sd">        Squared distance :math:`r^2 = |r|^2`.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.float64</span>
+<span class="sd">        :math:`\exp(-r^2/(2\sigma^2))`</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">r2</span> <span class="o">/</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">sigma2</span><span class="p">))</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_density_l0</span><span class="p">(</span><span class="n">r</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute GTO density for L=0 (s-orbital).</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \phi_{0,0}(r, \sigma) = N \cdot Y_0^0 \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right)</span>
+<span class="sd">                              = N \cdot \frac{1}{\sqrt{4\pi}} \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right)</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    r : wp.vec3d</span>
+<span class="sd">        Position vector relative to GTO center.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.float64</span>
+<span class="sd">        GTO density value at position r.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">r2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">gto_normalization</span><span class="p">(</span><span class="n">sigma</span><span class="p">)</span>
+    <span class="n">gauss</span> <span class="o">=</span> <span class="n">gto_gaussian_factor</span><span class="p">(</span><span class="n">r2</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">norm</span> <span class="o">*</span> <span class="n">Y00_COEFF</span> <span class="o">*</span> <span class="n">gauss</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_density_l1</span><span class="p">(</span><span class="n">r</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute GTO density for L=1 (p-orbital).</span>
+
+<span class="sd">    Returns the three L=1 components:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \begin{aligned}</span>
+<span class="sd">        \phi_{1,-1}(r, \sigma) &amp;= N \cdot Y_1^{-1}(\hat{r}) \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right) \quad (\propto y/r) \\</span>
+<span class="sd">        \phi_{1,0}(r, \sigma) &amp;= N \cdot Y_1^0(\hat{r}) \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right) \quad (\propto z/r) \\</span>
+<span class="sd">        \phi_{1,+1}(r, \sigma) &amp;= N \cdot Y_1^{+1}(\hat{r}) \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right) \quad (\propto x/r)</span>
+<span class="sd">        \end{aligned}</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    r : wp.vec3d</span>
+<span class="sd">        Position vector relative to GTO center.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.vec3d</span>
+<span class="sd">        :math:`(\phi_{1,-1}, \phi_{1,0}, \phi_{1,+1})` values.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">r2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">gto_normalization</span><span class="p">(</span><span class="n">sigma</span><span class="p">)</span>
+    <span class="n">gauss</span> <span class="o">=</span> <span class="n">gto_gaussian_factor</span><span class="p">(</span><span class="n">r2</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+
+    <span class="c1"># Get spherical harmonic values</span>
+    <span class="n">y_l1</span> <span class="o">=</span> <span class="n">eval_spherical_harmonics_l1</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>  <span class="c1"># (Y_1^{-1}, Y_1^0, Y_1^{+1})</span>
+
+    <span class="n">prefactor</span> <span class="o">=</span> <span class="n">norm</span> <span class="o">*</span> <span class="n">gauss</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">(</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l1</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l1</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l1</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_density_l2</span><span class="p">(</span><span class="n">r</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span>
+    <span class="n">length</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute GTO density for L=2 (quadrupole/d-orbital).</span>
+
+<span class="sd">    Returns the five L=2 components:</span>
+<span class="sd">    :math:`\phi_{2,-2}, \phi_{2,-1}, \phi_{2,0}, \phi_{2,+1}, \phi_{2,+2}`</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    r : wp.vec3d</span>
+<span class="sd">        Position vector relative to GTO center.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.vec(5)</span>
+<span class="sd">        The five L=2 GTO density values.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">r2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">gto_normalization</span><span class="p">(</span><span class="n">sigma</span><span class="p">)</span>
+    <span class="n">gauss</span> <span class="o">=</span> <span class="n">gto_gaussian_factor</span><span class="p">(</span><span class="n">r2</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+
+    <span class="c1"># Get spherical harmonic values</span>
+    <span class="n">y_l2</span> <span class="o">=</span> <span class="n">eval_spherical_harmonics_l2</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+
+    <span class="n">prefactor</span> <span class="o">=</span> <span class="n">norm</span> <span class="o">*</span> <span class="n">gauss</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">3</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">4</span><span class="p">],</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># GTO Fourier Transform Functions (k-Space)</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_fourier_l0</span><span class="p">(</span><span class="n">k</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute Fourier transform of L=0 GTO.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \begin{aligned}</span>
+<span class="sd">        \hat{\phi}_{0,0}(k, \sigma) &amp;= (i/2)^0 \cdot \sqrt{4\pi} \cdot Y_0^0(\hat{k}) \cdot \exp(-k^2\sigma^2/2) \\</span>
+<span class="sd">        &amp;= \sqrt{4\pi} \cdot \frac{1}{\sqrt{4\pi}} \cdot \exp(-k^2\sigma^2/2) \\</span>
+<span class="sd">        &amp;= \exp(-k^2\sigma^2/2)</span>
+<span class="sd">        \end{aligned}</span>
+
+<span class="sd">    Note: For L=0, the result is purely real.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    k : wp.vec3d</span>
+<span class="sd">        Wave vector.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.float64</span>
+<span class="sd">        Real part of the Fourier transform (imaginary part is 0 for L=0).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">k2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+    <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">k2</span> <span class="o">*</span> <span class="n">sigma2</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span><span class="p">))</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_fourier_l1_real</span><span class="p">(</span><span class="n">k</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute real part of Fourier transform of L=1 GTO.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \begin{aligned}</span>
+<span class="sd">        \hat{\phi}_{1,m}(k, \sigma) &amp;= (i/2)^1 \cdot \sqrt{4\pi} \cdot Y_1^m(\hat{k}) \cdot \exp(-k^2\sigma^2/2) \\</span>
+<span class="sd">        &amp;= \frac{i}{2} \cdot \sqrt{4\pi} \cdot Y_1^m(\hat{k}) \cdot \exp(-k^2\sigma^2/2)</span>
+<span class="sd">        \end{aligned}</span>
+
+<span class="sd">    For L=1, the :math:`(i/2)^1 = i/2` factor makes the result purely imaginary.</span>
+<span class="sd">    This function returns the coefficient of the imaginary part divided by i,</span>
+<span class="sd">    i.e., the &quot;real coefficient&quot; such that :math:`\hat{\phi} = i \cdot \text{result}`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    k : wp.vec3d</span>
+<span class="sd">        Wave vector.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.vec3d</span>
+<span class="sd">        Coefficients for :math:`(\hat{\phi}_{1,-1}, \hat{\phi}_{1,0}, \hat{\phi}_{1,+1})`.</span>
+<span class="sd">        The actual Fourier transform is i times these values.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">k2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+    <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="n">gauss</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">k2</span> <span class="o">*</span> <span class="n">sigma2</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span><span class="p">))</span>
+
+    <span class="c1"># Get spherical harmonic values for k direction</span>
+    <span class="n">y_l1</span> <span class="o">=</span> <span class="n">eval_spherical_harmonics_l1</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+
+    <span class="c1"># Coefficient: (1/2) * sqrt(4*pi) * Y * exp(...)</span>
+    <span class="c1"># The i factor is handled by returning the imaginary coefficient</span>
+    <span class="n">prefactor</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">SQRT_4PI</span> <span class="o">*</span> <span class="n">gauss</span>
+
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">(</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l1</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l1</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l1</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_fourier_l1_imag</span><span class="p">(</span><span class="n">k</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute imaginary part of Fourier transform of L=1 GTO.</span>
+
+<span class="sd">    This is the same as gto_fourier_l1_real since the result is purely imaginary</span>
+<span class="sd">    and we return the coefficient of i.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    k : wp.vec3d</span>
+<span class="sd">        Wave vector.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.vec3d</span>
+<span class="sd">        Imaginary coefficients for :math:`(\hat{\phi}_{1,-1}, \hat{\phi}_{1,0}, \hat{\phi}_{1,+1})`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">gto_fourier_l1_real</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_fourier_l2_real</span><span class="p">(</span><span class="n">k</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span>
+    <span class="n">length</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute real part of Fourier transform of L=2 GTO.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \begin{aligned}</span>
+<span class="sd">        \hat{\phi}_{2,m}(k, \sigma) &amp;= (i/2)^2 \cdot \sqrt{4\pi} \cdot Y_2^m(\hat{k}) \cdot \exp(-k^2\sigma^2/2) \\</span>
+<span class="sd">        &amp;= -\frac{1}{4} \cdot \sqrt{4\pi} \cdot Y_2^m(\hat{k}) \cdot \exp(-k^2\sigma^2/2)</span>
+<span class="sd">        \end{aligned}</span>
+
+<span class="sd">    For L=2, the :math:`(i/2)^2 = -1/4` factor makes the result purely real (negative).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    k : wp.vec3d</span>
+<span class="sd">        Wave vector.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.vec(5)</span>
+<span class="sd">        Real parts of the five L=2 Fourier coefficients.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">k2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+    <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="n">gauss</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">k2</span> <span class="o">*</span> <span class="n">sigma2</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span><span class="p">))</span>
+
+    <span class="c1"># Get spherical harmonic values for k direction</span>
+    <span class="n">y_l2</span> <span class="o">=</span> <span class="n">eval_spherical_harmonics_l2</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+
+    <span class="c1"># Coefficient: (-1/4) * sqrt(4*pi) * Y * exp(...)</span>
+    <span class="n">prefactor</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="o">-</span><span class="mf">0.25</span><span class="p">)</span> <span class="o">*</span> <span class="n">SQRT_4PI</span> <span class="o">*</span> <span class="n">gauss</span>
+
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">3</span><span class="p">],</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y_l2</span><span class="p">[</span><span class="mi">4</span><span class="p">],</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># GTO Integral Functions</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_integral_l0</span><span class="p">(</span><span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute the integral of L=0 GTO over all space.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \int \phi_{0,0}(r, \sigma) d^3r = 1</span>
+
+<span class="sd">    By construction with our normalization.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter (not used, integral is always 1).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.float64</span>
+<span class="sd">        Always returns 1.0.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_self_overlap</span><span class="p">(</span><span class="n">L</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute the self-overlap integral of a GTO.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \langle \phi_{l,m} | \phi_{l,m} \rangle = \int |\phi_{l,m}(r, \sigma)|^2 d^3r</span>
+
+<span class="sd">    For our normalization, this gives a specific value depending on L.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    L : int</span>
+<span class="sd">        Angular momentum quantum number.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.float64</span>
+<span class="sd">        Self-overlap integral value.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># The self-overlap depends on sigma and L</span>
+    <span class="c1"># For normalized GTOs: &lt;phi|phi&gt; = N^2 * integral |Y|^2 exp(-r^2/sigma^2) d^3r</span>
+    <span class="c1"># This evaluates to specific values based on the Gaussian integral</span>
+    <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="n">sigma3</span> <span class="o">=</span> <span class="n">sigma2</span> <span class="o">*</span> <span class="n">sigma</span>
+
+    <span class="c1"># For L=0: The integral is (sigma*sqrt(pi))^3 / (2*pi*sigma^2)^3 * 4*pi/(4*pi) = 1/(pi*sigma^3)^(1/2) approximately</span>
+    <span class="c1"># Actually, let&#39;s compute it properly:</span>
+    <span class="c1"># &lt;phi|phi&gt; = N^2 * |Y|^2 integrated over sphere * radial integral</span>
+    <span class="c1"># For spherical harmonics: integral |Y_l^m|^2 dOmega = 1 (orthonormal)</span>
+    <span class="c1"># Radial: integral exp(-r^2/sigma^2) 4*pi*r^2 dr = (pi*sigma^2)^(3/2)</span>
+    <span class="c1"># So: &lt;phi|phi&gt; = N^2 * (pi*sigma^2)^(3/2)</span>
+
+    <span class="c1"># With N = sqrt(4*pi) / (2*pi*sigma^2)^(3/2):</span>
+    <span class="c1"># N^2 = 4*pi / (2*pi)^3 * sigma^6</span>
+    <span class="c1"># &lt;phi|phi&gt; = [4*pi / (8*pi^3 * sigma^6)] * (pi*sigma^2)^(3/2)</span>
+    <span class="c1">#           = [4*pi / (8*pi^3 * sigma^6)] * pi^(3/2) * sigma^3</span>
+    <span class="c1">#           = 4*pi * pi^(3/2) / (8*pi^3 * sigma^3)</span>
+    <span class="c1">#           = pi^(5/2) / (2*pi^3 * sigma^3)</span>
+    <span class="c1">#           = 1 / (2*pi^(1/2) * sigma^3)</span>
+    <span class="c1">#           = 1 / (2*sqrt(pi) * sigma^3)</span>
+
+    <span class="n">sqrt_pi</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">PI</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">sqrt_pi</span> <span class="o">*</span> <span class="n">sigma3</span><span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Combined Evaluation Functions</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_density_all</span><span class="p">(</span><span class="n">r</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span>
+    <span class="n">length</span><span class="o">=</span><span class="mi">9</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute GTO density for all L=0,1,2 components.</span>
+
+<span class="sd">    Returns all 9 components (1 + 3 + 5) in order:</span>
+<span class="sd">    :math:`[\phi_{0,0}, \phi_{1,-1}, \phi_{1,0}, \phi_{1,+1}, \phi_{2,-2}, \phi_{2,-1}, \phi_{2,0}, \phi_{2,+1}, \phi_{2,+2}]`</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    r : wp.vec3d</span>
+<span class="sd">        Position vector relative to GTO center.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.vec(9)</span>
+<span class="sd">        All 9 GTO density values.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">r2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">gto_normalization</span><span class="p">(</span><span class="n">sigma</span><span class="p">)</span>
+    <span class="n">gauss</span> <span class="o">=</span> <span class="n">gto_gaussian_factor</span><span class="p">(</span><span class="n">r2</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+    <span class="n">prefactor</span> <span class="o">=</span> <span class="n">norm</span> <span class="o">*</span> <span class="n">gauss</span>
+
+    <span class="c1"># Compute spherical harmonics</span>
+    <span class="n">r2_safe</span> <span class="o">=</span> <span class="n">r2</span> <span class="o">+</span> <span class="n">EPSILON</span>
+    <span class="n">r_inv</span> <span class="o">=</span> <span class="n">rsqrt</span><span class="p">(</span><span class="n">r2_safe</span><span class="p">)</span>
+    <span class="n">r2_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">r2_safe</span>
+
+    <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span> <span class="o">=</span> <span class="n">r</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">r</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+    <span class="n">x2</span><span class="p">,</span> <span class="n">y2</span><span class="p">,</span> <span class="n">z2</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">*</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span> <span class="o">*</span> <span class="n">z</span>
+
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec</span><span class="p">(</span>
+        <span class="c1"># L=0</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y00_COEFF</span><span class="p">,</span>
+        <span class="c1"># L=1</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y1_COEFF</span> <span class="o">*</span> <span class="n">y</span> <span class="o">*</span> <span class="n">r_inv</span><span class="p">,</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y1_COEFF</span> <span class="o">*</span> <span class="n">z</span> <span class="o">*</span> <span class="n">r_inv</span><span class="p">,</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y1_COEFF</span> <span class="o">*</span> <span class="n">x</span> <span class="o">*</span> <span class="n">r_inv</span><span class="p">,</span>
+        <span class="c1"># L=2</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y2_M2_COEFF</span> <span class="o">*</span> <span class="n">x</span> <span class="o">*</span> <span class="n">y</span> <span class="o">*</span> <span class="n">r2_inv</span><span class="p">,</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y2_M1_COEFF</span> <span class="o">*</span> <span class="n">y</span> <span class="o">*</span> <span class="n">z</span> <span class="o">*</span> <span class="n">r2_inv</span><span class="p">,</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y2_0_COEFF</span> <span class="o">*</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">3.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">z2</span> <span class="o">-</span> <span class="n">r2_safe</span><span class="p">)</span> <span class="o">*</span> <span class="n">r2_inv</span><span class="p">,</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y2_P1_COEFF</span> <span class="o">*</span> <span class="n">x</span> <span class="o">*</span> <span class="n">z</span> <span class="o">*</span> <span class="n">r2_inv</span><span class="p">,</span>
+        <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y2_P2_COEFF</span> <span class="o">*</span> <span class="p">(</span><span class="n">x2</span> <span class="o">-</span> <span class="n">y2</span><span class="p">)</span> <span class="o">*</span> <span class="n">r2_inv</span><span class="p">,</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Gradient Functions</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">gto_density_l0_gradient</span><span class="p">(</span><span class="n">r</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;Compute gradient of L=0 GTO density with respect to r.</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        \begin{aligned}</span>
+<span class="sd">        \nabla \phi_{0,0} &amp;= \nabla \left[N \cdot Y_0^0 \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right)\right] \\</span>
+<span class="sd">        &amp;= N \cdot Y_0^0 \cdot \left(-\frac{r}{\sigma^2}\right) \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right) \\</span>
+<span class="sd">        &amp;= \phi_{0,0} \cdot \left(-\frac{r}{\sigma^2}\right)</span>
+<span class="sd">        \end{aligned}</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    r : wp.vec3d</span>
+<span class="sd">        Position vector.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.vec3d</span>
+<span class="sd">        Gradient vector :math:`\nabla \phi_{0,0}`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
+    <span class="n">density</span> <span class="o">=</span> <span class="n">gto_density_l0</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+
+    <span class="c1"># grad(phi) = phi * (-r/sigma^2)</span>
+    <span class="n">factor</span> <span class="o">=</span> <span class="o">-</span><span class="n">density</span> <span class="o">/</span> <span class="n">sigma2</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">(</span><span class="n">factor</span> <span class="o">*</span> <span class="n">r</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">r</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">factor</span> <span class="o">*</span> <span class="n">r</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># PyTorch Wrappers for Testing</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_eval_gto_density_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">),</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="n">L_max</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">output</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate Gaussian Type Orbital (GTO) density functions at multiple positions.</span>
+
+<span class="sd">    Computes φ_{l,m}(r, σ) = N_l · Y_l^m(r̂) · exp(-r²/(2σ²)) for all harmonics</span>
+<span class="sd">    up to L_max. The normalization N_l ensures ∫φ_{0,0} dr = 1.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [N]</span>
+
+<span class="sd">    One thread per position.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3d), shape (N,)</span>
+<span class="sd">        Position vectors relative to GTO center.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter (σ). Relates to Ewald parameter via σ = 1/(2α).</span>
+<span class="sd">    L_max : int</span>
+<span class="sd">        Maximum angular momentum quantum number (0, 1, or 2).</span>
+<span class="sd">    output : wp.array2d(dtype=wp.float64), shape (N, num_components)</span>
+<span class="sd">        Output GTO density values where num_components is:</span>
+<span class="sd">        - L_max=0: 1 component  (s-orbital/monopole)</span>
+<span class="sd">        - L_max=1: 4 components (s + p-orbitals/monopole + dipole)</span>
+<span class="sd">        - L_max=2: 9 components (s + p + d-orbitals/monopole + dipole + quadrupole)</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - Uses integral normalization: N = √(4π) / (2πσ²)^(3/2).</span>
+<span class="sd">    - GTOs decay exponentially with distance from center.</span>
+<span class="sd">    - L=0 integrates to 1; L&gt;0 integrates to 0 by symmetry.</span>
+<span class="sd">    - Useful for multipole charge distributions in electrostatics.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+    <span class="n">r2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+    <span class="n">norm</span> <span class="o">=</span> <span class="n">gto_normalization</span><span class="p">(</span><span class="n">sigma</span><span class="p">)</span>
+    <span class="n">gauss</span> <span class="o">=</span> <span class="n">gto_gaussian_factor</span><span class="p">(</span><span class="n">r2</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+    <span class="n">prefactor</span> <span class="o">=</span> <span class="n">norm</span> <span class="o">*</span> <span class="n">gauss</span>
+
+    <span class="c1"># L=0</span>
+    <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">Y00_COEFF</span>
+
+    <span class="k">if</span> <span class="n">L_max</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">y1</span> <span class="o">=</span> <span class="n">eval_spherical_harmonics_l1</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y1</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y1</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y1</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">L_max</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="n">y2</span> <span class="o">=</span> <span class="n">eval_spherical_harmonics_l2</span><span class="p">(</span><span class="n">r</span><span class="p">)</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y2</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">5</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y2</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">6</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y2</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">7</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y2</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>
+        <span class="n">output</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">8</span><span class="p">]</span> <span class="o">=</span> <span class="n">prefactor</span> <span class="o">*</span> <span class="n">y2</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_eval_gto_fourier_kernel</span><span class="p">(</span>
+    <span class="n">k_vectors</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">),</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="n">L_max</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">output_real</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+    <span class="n">output_imag</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate Fourier transforms of GTO density functions at multiple k-vectors.</span>
+
+<span class="sd">    Computes φ̂_{l,m}(k, σ) = (i/2)^l · √(4π) · Y_l^m(k̂) · exp(-k²σ²/2).</span>
+<span class="sd">    The Gaussian factor damps high-frequency components, making GTOs smooth in real space.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [K]</span>
+
+<span class="sd">    One thread per k-vector.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    k_vectors : wp.array(dtype=wp.vec3d), shape (K,)</span>
+<span class="sd">        Reciprocal space wave vectors.</span>
+<span class="sd">    sigma : wp.float64</span>
+<span class="sd">        Gaussian width parameter (σ). Same σ as real-space GTOs.</span>
+<span class="sd">    L_max : int</span>
+<span class="sd">        Maximum angular momentum quantum number (0, 1, or 2).</span>
+<span class="sd">    output_real : wp.array2d(dtype=wp.float64), shape (K, num_components)</span>
+<span class="sd">        Real part of Fourier coefficients.</span>
+<span class="sd">    output_imag : wp.array2d(dtype=wp.float64), shape (K, num_components)</span>
+<span class="sd">        Imaginary part of Fourier coefficients.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - L=0: Purely real (imag=0). Result is exp(-k²σ²/2).</span>
+<span class="sd">    - L=1: Purely imaginary (real=0). Factor (i/2)^1 = i/2.</span>
+<span class="sd">    - L=2: Purely real (imag=0). Factor (i/2)^2 = -1/4.</span>
+<span class="sd">    - Analytical Fourier transforms enable efficient reciprocal-space calculations.</span>
+<span class="sd">    - Used for multipole electrostatics in reciprocal space.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">k</span> <span class="o">=</span> <span class="n">k_vectors</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+    <span class="c1"># L=0: purely real</span>
+    <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">gto_fourier_l0</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+    <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">L_max</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="c1"># L=1: purely imaginary (real part is 0)</span>
+        <span class="n">f1</span> <span class="o">=</span> <span class="n">gto_fourier_l1_imag</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">f1</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="n">f1</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span> <span class="o">=</span> <span class="n">f1</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">L_max</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="c1"># L=2: purely real (imaginary part is 0)</span>
+        <span class="n">f2</span> <span class="o">=</span> <span class="n">gto_fourier_l2_real</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">sigma</span><span class="p">)</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="n">f2</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">5</span><span class="p">]</span> <span class="o">=</span> <span class="n">f2</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">6</span><span class="p">]</span> <span class="o">=</span> <span class="n">f2</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">7</span><span class="p">]</span> <span class="o">=</span> <span class="n">f2</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span>
+        <span class="n">output_real</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">8</span><span class="p">]</span> <span class="o">=</span> <span class="n">f2</span><span class="p">[</span><span class="mi">4</span><span class="p">]</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">5</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">6</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">7</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+        <span class="n">output_imag</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="mi">8</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="eval_gto_density_pytorch">
+<a class="viewcode-back" href="../../../modules/utilities.html#nvalchemiops.math.eval_gto_density_pytorch">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">eval_gto_density_pytorch</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">L_max</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate GTO densities from PyTorch tensors.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : torch.Tensor</span>
+<span class="sd">        Input positions [N, 3] as float64.</span>
+<span class="sd">    sigma : float</span>
+<span class="sd">        Gaussian width parameter.</span>
+<span class="sd">    L_max : int</span>
+<span class="sd">        Maximum angular momentum (0, 1, or 2). Default: 2.</span>
+<span class="sd">    device : torch.device, optional</span>
+<span class="sd">        Device for computation.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor</span>
+<span class="sd">        GTO density values [N, num_components].</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">N</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">num_components</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="mi">9</span><span class="p">}[</span><span class="n">L_max</span><span class="p">]</span>
+
+    <span class="n">output</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">N</span><span class="p">,</span> <span class="n">num_components</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">device_from_torch</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">wp_positions</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">)</span>
+    <span class="n">wp_output</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">kernel</span><span class="o">=</span><span class="n">_eval_gto_density_kernel</span><span class="p">,</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">N</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">wp_positions</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">sigma</span><span class="p">),</span> <span class="n">L_max</span><span class="p">],</span>
+        <span class="n">outputs</span><span class="o">=</span><span class="p">[</span><span class="n">wp_output</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">output</span></div>
+
+
+
+<div class="viewcode-block" id="eval_gto_fourier_pytorch">
+<a class="viewcode-back" href="../../../modules/utilities.html#nvalchemiops.math.eval_gto_fourier_pytorch">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">eval_gto_fourier_pytorch</span><span class="p">(</span>
+    <span class="n">k_vectors</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">L_max</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="n">device</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Evaluate GTO Fourier transforms from PyTorch tensors.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    k_vectors : torch.Tensor</span>
+<span class="sd">        Input wave vectors [K, 3] as float64.</span>
+<span class="sd">    sigma : float</span>
+<span class="sd">        Gaussian width parameter.</span>
+<span class="sd">    L_max : int</span>
+<span class="sd">        Maximum angular momentum (0, 1, or 2). Default: 2.</span>
+<span class="sd">    device : torch.device, optional</span>
+<span class="sd">        Device for computation.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[torch.Tensor, torch.Tensor]</span>
+<span class="sd">        (real_part, imag_part) each of shape [K, num_components].</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">k_vectors</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">K</span> <span class="o">=</span> <span class="n">k_vectors</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">num_components</span> <span class="o">=</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">:</span> <span class="mi">9</span><span class="p">}[</span><span class="n">L_max</span><span class="p">]</span>
+
+    <span class="n">output_real</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">K</span><span class="p">,</span> <span class="n">num_components</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">output_imag</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">K</span><span class="p">,</span> <span class="n">num_components</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="n">wp_device</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">device_from_torch</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">wp_k</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">k_vectors</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">)</span>
+    <span class="n">wp_real</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">output_real</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">wp_imag</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">output_imag</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">kernel</span><span class="o">=</span><span class="n">_eval_gto_fourier_kernel</span><span class="p">,</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">K</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">wp_k</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">sigma</span><span class="p">),</span> <span class="n">L_max</span><span class="p">],</span>
+        <span class="n">outputs</span><span class="o">=</span><span class="p">[</span><span class="n">wp_real</span><span class="p">,</span> <span class="n">wp_imag</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">wp_device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">output_real</span><span class="p">,</span> <span class="n">output_imag</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

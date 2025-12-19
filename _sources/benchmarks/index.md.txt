@@ -11,6 +11,7 @@ systems, and so on.
 :maxdepth: 1
 
 neighborlist
+electrostatics
 dftd3
 ```
 

@@ -1,0 +1,93 @@
+
+
+.. _sphx_glr_examples_electrostatics:
+
+Electrostatics
+==============
+
+Examples demonstrating GPU-accelerated computation of long-range electrostatic
+interactions in periodic systems using Coulomb, Ewald summation, and Particle
+Mesh Ewald (PME).
+
+These examples show how to:
+
+* Compute direct Coulomb interactions (damped and undamped)
+* Use Ewald summation for periodic systems with automatic parameter estimation
+* Apply Particle Mesh Ewald (PME) for O(N log N) scaling
+* Work with neighbor list and neighbor matrix formats
+* Perform batch evaluation for multiple systems
+* Leverage autograd for computing forces and gradients
+
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbnails">
+
+.. thumbnail-parent-div-open
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute Coulomb electrostatic interactions using GPU-accelerated kernels. The implementation supports both direct (undamped) Coulomb interactions and damped interactions used as the real-space component in Ewald/PME methods.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_01_coulomb_example_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Coulomb Electrostatic Interactions</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions in periodic systems using the Ewald summation method. Ewald splits the slowly converging Coulomb sum into rapidly converging real-space and reciprocal-space components.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_02_ewald_summation_example_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Ewald Summation for Long-Range Electrostatics</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions using the Particle Mesh Ewald (PME) method. PME achieves O(N log N) scaling by using FFT-based mesh interpolation for the reciprocal-space contribution.">
+
+.. only:: html
+
+  .. image:: /examples/electrostatics/images/thumb/sphx_glr_03_pme_example_thumb.png
+    :alt:
+
+  :ref:`sphx_glr_examples_electrostatics_03_pme_example.py`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">Particle Mesh Ewald (PME) for Long-Range Electrostatics</div>
+    </div>
+
+
+.. thumbnail-parent-div-close
+
+.. raw:: html
+
+    </div>
+
+
+.. toctree::
+   :hidden:
+
+   /examples/electrostatics/01_coulomb_example
+   /examples/electrostatics/02_ewald_summation_example
+   /examples/electrostatics/03_pme_example
+

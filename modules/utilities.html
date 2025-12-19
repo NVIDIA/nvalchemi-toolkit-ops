@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.math and nvalchemiops.types: Utilities &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>nvalchemiops.math and nvalchemiops.types: Utilities &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -51,10 +51,12 @@
     <script src="../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/utilities';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="prev" title="nvalchemiops.interactions.dispersion: Dispersion Corrections" href="dispersion.html" />
+    <link rel="prev" title="nvalchemiops.interactions.electrostatics: Electrostatic Interactions" href="electrostatics.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
@@ -350,6 +352,7 @@ document.write(`
   <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="neighborlist.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist</span></code>: Neighbor Lists</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.types</span></code>: Utilities</a></li>
 </ul>
 </div>
@@ -412,9 +415,69 @@ document.write(`
 <h1><a class="reference internal" href="#module-nvalchemiops.math" title="nvalchemiops.math"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code></a> and <a class="reference internal" href="#module-nvalchemiops.types" title="nvalchemiops.types"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.types</span></code></a>: Utilities<a class="headerlink" href="#nvalchemiops-math-and-nvalchemiops-types-utilities" title="Link to this heading">#</a></h1>
 <section id="module-nvalchemiops.math">
 <span id="mathematical-utilities"></span><h2>Mathematical Utilities<a class="headerlink" href="#module-nvalchemiops.math" title="Link to this heading">#</a></h2>
+<section id="id1">
+<h3>Mathematical Utilities<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
+<p>This module provides low-level mathematical functions implemented in Warp
+for use in GPU-accelerated scientific computing.</p>
+<section id="available-submodules">
+<h4>Available Submodules<a class="headerlink" href="#available-submodules" title="Link to this heading">#</a></h4>
+<dl class="simple">
+<dt>spherical_harmonics</dt><dd><p>Real spherical harmonics <span class="math notranslate nohighlight">\(Y_l^m\)</span> for angular momentum <span class="math notranslate nohighlight">\(L \leq 2\)</span>.
+Used in multipole expansions for electrostatics.</p>
+</dd>
+<dt>gto</dt><dd><p>Gaussian Type Orbital (GTO) basis functions for multipole charge distributions.
+Includes real-space densities and Fourier transforms for <span class="math notranslate nohighlight">\(L \leq 2\)</span>.</p>
+</dd>
+</dl>
+</section>
+</section>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.math.eval_gto_density_pytorch">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.math.</span></span><span class="sig-name descname"><span class="pre">eval_gto_density_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">L_max</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/math/gto.html#eval_gto_density_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.math.eval_gto_density_pytorch" title="Link to this definition">#</a></dt>
+<dd><p>Evaluate GTO densities from PyTorch tensors.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>torch.Tensor</em>) – Input positions [N, 3] as float64.</p></li>
+<li><p><strong>sigma</strong> (<em>float</em>) – Gaussian width parameter.</p></li>
+<li><p><strong>L_max</strong> (<em>int</em>) – Maximum angular momentum (0, 1, or 2). Default: 2.</p></li>
+<li><p><strong>device</strong> (<em>torch.device</em><em>, </em><em>optional</em>) – Device for computation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>GTO density values [N, num_components].</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>torch.Tensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.math.eval_gto_fourier_pytorch">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.math.</span></span><span class="sig-name descname"><span class="pre">eval_gto_fourier_pytorch</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">k_vectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">sigma</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">L_max</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/math/gto.html#eval_gto_fourier_pytorch"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.math.eval_gto_fourier_pytorch" title="Link to this definition">#</a></dt>
+<dd><p>Evaluate GTO Fourier transforms from PyTorch tensors.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>k_vectors</strong> (<em>torch.Tensor</em>) – Input wave vectors [K, 3] as float64.</p></li>
+<li><p><strong>sigma</strong> (<em>float</em>) – Gaussian width parameter.</p></li>
+<li><p><strong>L_max</strong> (<em>int</em>) – Maximum angular momentum (0, 1, or 2). Default: 2.</p></li>
+<li><p><strong>device</strong> (<em>torch.device</em><em>, </em><em>optional</em>) – Device for computation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>(real_part, imag_part) each of shape [K, num_components].</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>tuple[torch.Tensor, torch.Tensor]</p>
+</dd>
+</dl>
+</dd></dl>
+
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.math.wpdivmod">
-<span class="sig-prename descclassname"><span class="pre">nvalchemiops.math.</span></span><span class="sig-name descname"><span class="pre">wpdivmod</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">a</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">b</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/math.html#wpdivmod"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.math.wpdivmod" title="Link to this definition">#</a></dt>
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.math.</span></span><span class="sig-name descname"><span class="pre">wpdivmod</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">a</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">b</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/math/math.html#wpdivmod"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.math.wpdivmod" title="Link to this definition">#</a></dt>
 <dd><p>Warp implementation of the divmod utility.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
@@ -509,12 +572,12 @@ document.write(`
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="dispersion.html"
+       href="electrostatics.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions</p>
       </div>
     </a>
 </div>
@@ -536,6 +599,12 @@ document.write(`
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#module-nvalchemiops.math">Mathematical Utilities</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Mathematical Utilities</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#available-submodules">Available Submodules</a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.eval_gto_density_pytorch"><code class="docutils literal notranslate"><span class="pre">eval_gto_density_pytorch()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.eval_gto_fourier_pytorch"><code class="docutils literal notranslate"><span class="pre">eval_gto_fourier_pytorch()</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.math.wpdivmod"><code class="docutils literal notranslate"><span class="pre">wpdivmod()</span></code></a></li>
 </ul>
 </li>

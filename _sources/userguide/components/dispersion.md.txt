@@ -2,10 +2,6 @@
 
 (dispersion_userguide)=
 
-<!-- markdownlint-disable MD013 -->
-
-(dispersion_userguide)=
-
 # DFT-D3(BJ) Dispersion Correction
 
 Dispersion corrections account for van der Waals interactions that standard DFT

@@ -1,0 +1,1405 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Particle Mesh Ewald (PME) for Long-Range Electrostatics &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'examples/electrostatics/03_pme_example';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Neighbor Lists" href="../neighborlist/index.html" />
+    <link rel="prev" title="Ewald Summation for Long-Range Electrostatics" href="02_ewald_summation_example.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Electrostatics</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../neighborlist/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../neighborlist/01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighborlist/02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighborlist/03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighborlist/04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Examples Gallery</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Electrostatics</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Particle...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-examples-electrostatics-03-pme-example-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="particle-mesh-ewald-pme-for-long-range-electrostatics">
+<span id="sphx-glr-examples-electrostatics-03-pme-example-py"></span><h1>Particle Mesh Ewald (PME) for Long-Range Electrostatics<a class="headerlink" href="#particle-mesh-ewald-pme-for-long-range-electrostatics" title="Link to this heading">#</a></h1>
+<p>This example demonstrates how to compute long-range electrostatic interactions
+using the Particle Mesh Ewald (PME) method. PME achieves O(N log N) scaling by
+using FFT-based mesh interpolation for the reciprocal-space contribution.</p>
+<p>In this example you will learn:</p>
+<ul class="simple">
+<li><p>How to set up and run PME with automatic parameter estimation</p></li>
+<li><p>Using neighbor list and neighbor matrix formats</p></li>
+<li><p>Understanding convergence with accuracy-based parameter estimation</p></li>
+<li><p>Effect of the splitting parameter alpha and accuracy</p></li>
+<li><p>Batch evaluation for multiple systems</p></li>
+<li><p>Comparison between PME and standard Ewald summation</p></li>
+<li><p>Computing charge gradients for ML potential training</p></li>
+</ul>
+<p>PME accelerates the reciprocal-space sum using B-spline interpolation:</p>
+<ol class="arabic simple">
+<li><p>Spread charges to mesh using B-splines</p></li>
+<li><p>FFT to reciprocal space</p></li>
+<li><p>Multiply by Green’s function</p></li>
+<li><p>Inverse FFT to get potentials</p></li>
+<li><p>Interpolate forces back to atom positions</p></li>
+</ol>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>This script is intended as an API demonstration. Do not use this script
+for performance benchmarking; refer to the <cite>benchmarks</cite> folder instead.</p>
+</div>
+<section id="setup-and-imports">
+<h2>Setup and Imports<a class="headerlink" href="#setup-and-imports" title="Link to this heading">#</a></h2>
+<p>First, we import the necessary modules. The PME API provides unified functions
+that handle both single-system and batched calculations.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ewald_real_space</span><span class="p">,</span>
+    <span class="n">ewald_summation</span><span class="p">,</span>
+    <span class="n">particle_mesh_ewald</span><span class="p">,</span>
+    <span class="n">pme_reciprocal_space</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics.parameters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">estimate_pme_parameters</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighborlist</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span> <span class="k">as</span> <span class="n">neighbor_list_fn</span>
+</pre></div>
+</div>
+</section>
+<section id="configure-device">
+<h2>Configure Device<a class="headerlink" href="#configure-device" title="Link to this heading">#</a></h2>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">():</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda:0&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Using CUDA device: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Using CPU&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Using CUDA device: NVIDIA L4
+</pre></div>
+</div>
+</section>
+<section id="create-a-nacl-crystal-system">
+<h2>Create a NaCl Crystal System<a class="headerlink" href="#create-a-nacl-crystal-system" title="Link to this heading">#</a></h2>
+<p>We define a helper function to create NaCl rock salt crystal supercells.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">create_nacl_system</span><span class="p">(</span><span class="n">n_cells</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">,</span> <span class="n">lattice_constant</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.64</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Create a NaCl crystal supercell.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    n_cells : int</span>
+<span class="sd">        Number of unit cells in each direction.</span>
+<span class="sd">    lattice_constant : float</span>
+<span class="sd">        NaCl lattice constant in Angstroms.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    positions, charges, cell, pbc : torch.Tensor</span>
+<span class="sd">        System tensors.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">base_positions</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span> <span class="p">[</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]])</span>
+    <span class="n">base_charges</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">])</span>
+
+    <span class="n">positions</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">charges</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_cells</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_cells</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_cells</span><span class="p">):</span>
+                <span class="n">offset</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">k</span><span class="p">])</span>
+                <span class="k">for</span> <span class="n">pos</span><span class="p">,</span> <span class="n">charge</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">base_positions</span><span class="p">,</span> <span class="n">base_charges</span><span class="p">):</span>
+                    <span class="n">positions</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">pos</span> <span class="o">+</span> <span class="n">offset</span><span class="p">)</span> <span class="o">*</span> <span class="n">lattice_constant</span><span class="p">)</span>
+                    <span class="n">charges</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">charge</span><span class="p">)</span>
+
+    <span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">charges</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">charges</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">lattice_constant</span> <span class="o">*</span> <span class="n">n_cells</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">pbc</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span>
+</pre></div>
+</div>
+</section>
+<section id="basic-usage-with-automatic-parameters">
+<h2>Basic Usage with Automatic Parameters<a class="headerlink" href="#basic-usage-with-automatic-parameters" title="Link to this heading">#</a></h2>
+<p>The simplest way to use PME is with automatic parameter estimation.
+Given an accuracy tolerance, the API estimates optimal alpha, mesh dimensions,
+and real-space cutoff.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Create a NaCl crystal (3×3×3 unit cells = 54 atoms)</span>
+<span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span> <span class="o">=</span> <span class="n">create_nacl_system</span><span class="p">(</span><span class="n">n_cells</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;System: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span><span class="si">}</span><span class="s2"> atoms NaCl crystal&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cell size: </span><span class="si">{</span><span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total charge: </span><span class="si">{</span><span class="n">charges</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> (should be 0 for neutral)&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>System: 54 atoms NaCl crystal
+Cell size: 16.92 Å
+Total charge: 0.0 (should be 0 for neutral)
+</pre></div>
+</div>
+<p>Estimate optimal PME parameters:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">params</span> <span class="o">=</span> <span class="n">estimate_pme_parameters</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">cpu</span><span class="p">(),</span> <span class="n">cell</span><span class="o">.</span><span class="n">cpu</span><span class="p">(),</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Estimated parameters (accuracy=1e-6):&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  alpha = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  mesh_dimensions = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="n">spacing</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">params</span><span class="o">.</span><span class="n">mesh_spacing</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">params</span><span class="o">.</span><span class="n">mesh_spacing</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">==</span> <span class="mi">2</span> <span class="k">else</span> <span class="n">params</span><span class="o">.</span><span class="n">mesh_spacing</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  mesh_spacing = (</span><span class="si">{</span><span class="n">spacing</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">spacing</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">spacing</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">) Å&quot;</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  real_space_cutoff = </span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Estimated parameters (accuracy=1e-6):
+  alpha = 0.2037
+  mesh_dimensions = (64, 64, 64)
+  mesh_spacing = (0.26, 0.26, 0.26) Å
+  real_space_cutoff = 18.25 Å
+</pre></div>
+</div>
+<p>Build neighbor list and run PME:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>  <span class="c1"># Parameters estimated automatically</span>
+<span class="p">)</span>
+<span class="n">t1</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+
+<span class="n">total_energy</span> <span class="o">=</span> <span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">PME Results:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total energy: </span><span class="si">{</span><span class="n">total_energy</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Energy per atom: </span><span class="si">{</span><span class="n">total_energy</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max force magnitude: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">forces</span><span class="p">,</span><span class="w"> </span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Time: </span><span class="si">{</span><span class="p">(</span><span class="n">t1</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">t0</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>PME Results:
+  Total energy: -9.743761
+  Energy per atom: -0.180440
+  Max force magnitude: 0.000000
+  Time: 15170.04 ms
+</pre></div>
+</div>
+</section>
+<section id="neighbor-list-vs-neighbor-matrix-format">
+<h2>Neighbor List vs Neighbor Matrix Format<a class="headerlink" href="#neighbor-list-vs-neighbor-matrix-format" title="Link to this heading">#</a></h2>
+<p>PME supports both neighbor formats, producing identical results.
+We use the estimated parameters from above for consistency.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Build both formats using the estimated real-space cutoff</span>
+<span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Neighbor format comparison (accuracy=1e-6):&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Using alpha=</span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, mesh_dims=</span><span class="si">{</span><span class="n">params</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Neighbor format comparison (accuracy=1e-6):
+  Using alpha=0.2037, mesh_dims=(64, 64, 64)
+</pre></div>
+</div>
+<p>Using neighbor list format:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">energies_list</span><span class="p">,</span> <span class="n">forces_list</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>  <span class="c1"># Parameters estimated automatically</span>
+<span class="p">)</span>
+<span class="n">t_list</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  List format: E=</span><span class="si">{</span><span class="n">energies_list</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">, time=</span><span class="si">{</span><span class="n">t_list</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>List format: E=-9.743761, time=5.18 ms
+</pre></div>
+</div>
+<p>Using neighbor matrix format:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">energies_matrix</span><span class="p">,</span> <span class="n">forces_matrix</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_matrix</span><span class="o">=</span><span class="n">neighbor_matrix</span><span class="p">,</span>
+    <span class="n">neighbor_matrix_shifts</span><span class="o">=</span><span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>  <span class="c1"># Same accuracy for comparison</span>
+<span class="p">)</span>
+<span class="n">t_matrix</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Matrix format: E=</span><span class="si">{</span><span class="n">energies_matrix</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">, time=</span><span class="si">{</span><span class="n">t_matrix</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms&quot;</span><span class="p">)</span>
+
+<span class="n">energy_diff</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">energies_list</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">-</span> <span class="n">energies_matrix</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+<span class="n">force_diff</span> <span class="o">=</span> <span class="p">(</span><span class="n">forces_list</span> <span class="o">-</span> <span class="n">forces_matrix</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Energy difference: </span><span class="si">{</span><span class="n">energy_diff</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max force difference: </span><span class="si">{</span><span class="n">force_diff</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>  Matrix format: E=-9.743761, time=10.89 ms
+
+Energy difference: 0.00e+00
+Max force difference: 2.20e-17
+</pre></div>
+</div>
+</section>
+<section id="convergence-with-accuracy-parameter">
+<h2>Convergence with Accuracy Parameter<a class="headerlink" href="#convergence-with-accuracy-parameter" title="Link to this heading">#</a></h2>
+<p>The PME accuracy depends on the accuracy parameter, which controls both the
+mesh resolution and alpha parameter. The parameter estimation uses optimal
+formulas to balance computational cost between real and reciprocal space.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">accuracies</span> <span class="o">=</span> <span class="p">[</span><span class="mf">1e-2</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">,</span> <span class="mf">1e-4</span><span class="p">,</span> <span class="mf">1e-5</span><span class="p">,</span> <span class="mf">1e-6</span><span class="p">,</span> <span class="mf">1e-7</span><span class="p">]</span>
+<span class="n">results_acc</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Convergence with Accuracy Target:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  Accuracy | alpha  | mesh_dims    | r_cutoff | Energy       | Time&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  &quot;</span> <span class="o">+</span> <span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">75</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Convergence with Accuracy Target:
+  Accuracy | alpha  | mesh_dims    | r_cutoff | Energy       | Time
+  ---------------------------------------------------------------------------
+</pre></div>
+</div>
+<p>Run PME with different accuracy targets:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="n">acc</span> <span class="ow">in</span> <span class="n">accuracies</span><span class="p">:</span>
+    <span class="c1"># Estimate optimal parameters for this accuracy</span>
+    <span class="n">params_acc</span> <span class="o">=</span> <span class="n">estimate_pme_parameters</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="n">acc</span><span class="p">)</span>
+
+    <span class="c1"># Build neighbor list with appropriate cutoff</span>
+    <span class="n">nl_acc</span><span class="p">,</span> <span class="n">nptr_acc</span><span class="p">,</span> <span class="n">ns_acc</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">params_acc</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+        <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">energies_acc</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+        <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+        <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_acc</span><span class="p">,</span>
+        <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_acc</span><span class="p">,</span>
+        <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_acc</span><span class="p">,</span>
+        <span class="n">accuracy</span><span class="o">=</span><span class="n">acc</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">t_elapsed</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+    <span class="n">total_e</span> <span class="o">=</span> <span class="n">energies_acc</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">results_acc</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">acc</span><span class="p">,</span> <span class="n">params_acc</span><span class="p">,</span> <span class="n">total_e</span><span class="p">,</span> <span class="n">t_elapsed</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;   </span><span class="si">{</span><span class="n">acc</span><span class="si">:</span><span class="s2">.0e</span><span class="si">}</span><span class="s2">  |  </span><span class="si">{</span><span class="n">params_acc</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">  | </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">params_acc</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="p">)</span><span class="si">:</span><span class="s2">12s</span><span class="si">}</span><span class="s2"> |&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;   </span><span class="si">{</span><span class="n">params_acc</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">  | </span><span class="si">{</span><span class="n">total_e</span><span class="si">:</span><span class="s2">10.6f</span><span class="si">}</span><span class="s2">  | </span><span class="si">{</span><span class="n">t_elapsed</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms&quot;</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>1e-02  |  0.204  | (8, 8, 8)    |   10.54  |  -9.755594  | 4.53 ms
+1e-03  |  0.204  | (16, 16, 16) |   12.91  |  -9.745599  | 5.26 ms
+1e-04  |  0.204  | (16, 16, 16) |   14.90  |  -9.743791  | 2.81 ms
+1e-05  |  0.204  | (32, 32, 32) |   16.66  |  -9.743703  | 4.47 ms
+1e-06  |  0.204  | (64, 64, 64) |   18.25  |  -9.743761  | 3.51 ms
+1e-07  |  0.204  | (64, 64, 64) |   19.71  |  -9.743762  | 3.24 ms
+</pre></div>
+</div>
+<p>Show convergence relative to highest accuracy:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">ref_energy_acc</span> <span class="o">=</span> <span class="n">results_acc</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">][</span><span class="mi">2</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Relative error from reference (accuracy=1e-7):&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">acc</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">results_acc</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]:</span>
+    <span class="n">rel_err</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">((</span><span class="n">e</span> <span class="o">-</span> <span class="n">ref_energy_acc</span><span class="p">)</span> <span class="o">/</span> <span class="n">ref_energy_acc</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  accuracy=</span><span class="si">{</span><span class="n">acc</span><span class="si">:</span><span class="s2">.0e</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">rel_err</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Relative error from reference (accuracy=1e-7):
+  accuracy=1e-02: 1.21e-03
+  accuracy=1e-03: 1.89e-04
+  accuracy=1e-04: 2.98e-06
+  accuracy=1e-05: 5.99e-06
+  accuracy=1e-06: 8.65e-08
+</pre></div>
+</div>
+</section>
+<section id="effect-of-accuracy-on-pme-parameters">
+<h2>Effect of Accuracy on PME Parameters<a class="headerlink" href="#effect-of-accuracy-on-pme-parameters" title="Link to this heading">#</a></h2>
+<p>The accuracy parameter controls how alpha and mesh dimensions are chosen.
+Lower accuracy targets require larger meshes and cutoffs.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">positions_2</span><span class="p">,</span> <span class="n">charges_2</span><span class="p">,</span> <span class="n">cell_2</span><span class="p">,</span> <span class="n">pbc_2</span> <span class="o">=</span> <span class="n">create_nacl_system</span><span class="p">(</span><span class="n">n_cells</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">accuracies</span> <span class="o">=</span> <span class="p">[</span><span class="mf">1e-2</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">,</span> <span class="mf">1e-4</span><span class="p">,</span> <span class="mf">1e-5</span><span class="p">,</span> <span class="mf">1e-6</span><span class="p">]</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Accuracy Effect on PME Parameters:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  Accuracy | alpha | mesh_dims | real_cutoff | Total Energy&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  &quot;</span> <span class="o">+</span> <span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">65</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Accuracy Effect on PME Parameters:
+  Accuracy | alpha | mesh_dims | real_cutoff | Total Energy
+  -----------------------------------------------------------------
+</pre></div>
+</div>
+<p>Sweep through accuracy values:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="n">accuracy</span> <span class="ow">in</span> <span class="n">accuracies</span><span class="p">:</span>
+    <span class="n">params_acc</span> <span class="o">=</span> <span class="n">estimate_pme_parameters</span><span class="p">(</span>
+        <span class="n">positions_2</span><span class="o">.</span><span class="n">cpu</span><span class="p">(),</span> <span class="n">cell_2</span><span class="o">.</span><span class="n">cpu</span><span class="p">(),</span> <span class="n">accuracy</span><span class="o">=</span><span class="n">accuracy</span>
+    <span class="p">)</span>
+
+    <span class="n">nl_acc</span><span class="p">,</span> <span class="n">nptr_acc</span><span class="p">,</span> <span class="n">ns_acc</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+        <span class="n">positions_2</span><span class="p">,</span>
+        <span class="n">params_acc</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell_2</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_2</span><span class="p">,</span>
+        <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">energies_acc</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">positions_2</span><span class="p">,</span>
+        <span class="n">charges</span><span class="o">=</span><span class="n">charges_2</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell_2</span><span class="p">,</span>
+        <span class="n">alpha</span><span class="o">=</span><span class="n">params_acc</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+        <span class="n">mesh_dimensions</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">params_acc</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="p">),</span>
+        <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_acc</span><span class="p">,</span>
+        <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_acc</span><span class="p">,</span>
+        <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_acc</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;   </span><span class="si">{</span><span class="n">accuracy</span><span class="si">:</span><span class="s2">.0e</span><span class="si">}</span><span class="s2">  |  </span><span class="si">{</span><span class="n">params_acc</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">  | </span><span class="si">{</span><span class="nb">str</span><span class="p">(</span><span class="n">params_acc</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="p">)</span><span class="si">:</span><span class="s2">9s</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="sa">f</span><span class="s2">&quot;  |    </span><span class="si">{</span><span class="n">params_acc</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">5.2f</span><span class="si">}</span><span class="s2">   | </span><span class="si">{</span><span class="n">energies_acc</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>1e-02  |  0.25  | (8, 8, 8)  |     8.60   | -2.869979
+1e-03  |  0.25  | (8, 8, 8)  |    10.54   | -2.886155
+1e-04  |  0.25  | (16, 16, 16)  |    12.17   | -2.886909
+1e-05  |  0.25  | (32, 32, 32)  |    13.60   | -2.887047
+1e-06  |  0.25  | (32, 32, 32)  |    14.90   | -2.887036
+</pre></div>
+</div>
+</section>
+<section id="accessing-real-space-and-reciprocal-space-components">
+<h2>Accessing Real-Space and Reciprocal-Space Components<a class="headerlink" href="#accessing-real-space-and-reciprocal-space-components" title="Link to this heading">#</a></h2>
+<p>You can compute the components separately if needed.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">params_comp</span> <span class="o">=</span> <span class="n">estimate_pme_parameters</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">)</span>
+
+<span class="n">nl_comp</span><span class="p">,</span> <span class="n">nptr_comp</span><span class="p">,</span> <span class="n">ns_comp</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">params_comp</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Energy Components:&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Energy Components:
+</pre></div>
+</div>
+<p>Real-space component (uses same kernel as Ewald):</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">real_energy</span> <span class="o">=</span> <span class="n">ewald_real_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="n">params_comp</span><span class="o">.</span><span class="n">alpha</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_comp</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_comp</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_comp</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Real-space: </span><span class="si">{</span><span class="n">real_energy</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Real-space: -3.549335
+</pre></div>
+</div>
+<p>PME reciprocal-space component (FFT-based):</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">recip_energy</span> <span class="o">=</span> <span class="n">pme_reciprocal_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="n">params_comp</span><span class="o">.</span><span class="n">alpha</span><span class="p">,</span>
+    <span class="n">mesh_dimensions</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">params_comp</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Reciprocal-space (PME): </span><span class="si">{</span><span class="n">recip_energy</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total: </span><span class="si">{</span><span class="p">(</span><span class="n">real_energy</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">recip_energy</span><span class="o">.</span><span class="n">sum</span><span class="p">())</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Reciprocal-space (PME): -6.194456
+Total: -9.743791
+</pre></div>
+</div>
+</section>
+<section id="charge-gradients-for-ml-potentials">
+<h2>Charge Gradients for ML Potentials<a class="headerlink" href="#charge-gradients-for-ml-potentials" title="Link to this heading">#</a></h2>
+<p>PME supports computing analytical charge gradients (∂E/∂q_i), which are useful
+for training machine learning potentials that predict atomic partial charges.
+The charge gradient represents the electrostatic potential at each atom.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Charge Gradients:&quot;</span><span class="p">)</span>
+
+<span class="c1"># Compute PME reciprocal-space with charge gradients</span>
+<span class="n">recip_energies</span><span class="p">,</span> <span class="n">recip_forces</span><span class="p">,</span> <span class="n">recip_charge_grads</span> <span class="o">=</span> <span class="n">pme_reciprocal_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="n">params_comp</span><span class="o">.</span><span class="n">alpha</span><span class="p">,</span>
+    <span class="n">mesh_dimensions</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="n">params_comp</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="p">),</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_charge_gradients</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  PME reciprocal charge gradients shape: </span><span class="si">{</span><span class="n">recip_charge_grads</span><span class="o">.</span><span class="n">shape</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  PME reciprocal charge gradients range: [</span><span class="si">{</span><span class="n">recip_charge_grads</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">recip_charge_grads</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Compute real-space with charge gradients</span>
+<span class="n">real_energies</span><span class="p">,</span> <span class="n">real_forces</span><span class="p">,</span> <span class="n">real_charge_grads</span> <span class="o">=</span> <span class="n">ewald_real_space</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="n">params_comp</span><span class="o">.</span><span class="n">alpha</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_comp</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_comp</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_comp</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_charge_gradients</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Real-space charge gradients range: [</span><span class="si">{</span><span class="n">real_charge_grads</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">real_charge_grads</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># Total charge gradient is the sum of components</span>
+<span class="n">total_charge_grads</span> <span class="o">=</span> <span class="n">real_charge_grads</span> <span class="o">+</span> <span class="n">recip_charge_grads</span>
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;  Total charge gradients range: [</span><span class="si">{</span><span class="n">total_charge_grads</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">total_charge_grads</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Charge Gradients:
+  PME reciprocal charge gradients shape: torch.Size([54])
+  PME reciprocal charge gradients range: [-0.2295, 0.2295]
+  Real-space charge gradients range: [-0.1315, 0.1315]
+  Total charge gradients range: [-0.3609, 0.3609]
+</pre></div>
+</div>
+<p>Full PME with charge gradients in one call:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">energies_full</span><span class="p">,</span> <span class="n">forces_full</span><span class="p">,</span> <span class="n">charge_grads_full</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_comp</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_comp</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_comp</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">compute_charge_gradients</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span>
+    <span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">  Full PME charge gradients range: [</span><span class="si">{</span><span class="n">charge_grads_full</span><span class="o">.</span><span class="n">min</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">charge_grads_full</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">]&quot;</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Full PME charge gradients range: [-0.3609, 0.3609]
+</pre></div>
+</div>
+<p>Verify charge gradients against autograd:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">charges</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">energies_total</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_comp</span><span class="p">,</span>
+    <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_comp</span><span class="p">,</span>
+    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_comp</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+<span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+<span class="n">energies_total</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+<span class="n">autograd_charge_grads</span> <span class="o">=</span> <span class="n">charges</span><span class="o">.</span><span class="n">grad</span><span class="o">.</span><span class="n">clone</span><span class="p">()</span>
+<span class="n">charges</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">charges</span><span class="o">.</span><span class="n">grad</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="c1"># Compare explicit vs autograd charge gradients</span>
+<span class="n">charge_grad_diff</span> <span class="o">=</span> <span class="p">(</span><span class="n">charge_grads_full</span> <span class="o">-</span> <span class="n">autograd_charge_grads</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Explicit vs Autograd charge gradient max diff: </span><span class="si">{</span><span class="n">charge_grad_diff</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Explicit vs Autograd charge gradient max diff: 2.22e-16
+</pre></div>
+</div>
+</section>
+<section id="batch-evaluation">
+<h2>Batch Evaluation<a class="headerlink" href="#batch-evaluation" title="Link to this heading">#</a></h2>
+<p>Multiple systems can be evaluated simultaneously using batch_idx.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">n_systems</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="n">all_positions</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">all_charges</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">all_cells</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">all_pbc</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">batch_idx_list</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Batch Evaluation: Creating </span><span class="si">{</span><span class="n">n_systems</span><span class="si">}</span><span class="s2"> systems...&quot;</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_systems</span><span class="p">):</span>
+    <span class="n">n_cells</span> <span class="o">=</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">2</span>  <span class="c1"># 2×2×2, 3×3×3, 4×4×4</span>
+    <span class="n">pos</span><span class="p">,</span> <span class="n">chrg</span><span class="p">,</span> <span class="n">cell_i</span><span class="p">,</span> <span class="n">pbc_i</span> <span class="o">=</span> <span class="n">create_nacl_system</span><span class="p">(</span><span class="n">n_cells</span><span class="o">=</span><span class="n">n_cells</span><span class="p">)</span>
+    <span class="n">batch_idx_list</span><span class="o">.</span><span class="n">extend</span><span class="p">([</span><span class="n">i</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">pos</span><span class="p">))</span>
+    <span class="n">all_positions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>
+    <span class="n">all_charges</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">chrg</span><span class="p">)</span>
+    <span class="n">all_cells</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cell_i</span><span class="p">)</span>
+    <span class="n">all_pbc</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">pbc_i</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  System </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span><span class="si">}</span><span class="s2"> atoms (</span><span class="si">{</span><span class="n">n_cells</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">n_cells</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">n_cells</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Batch Evaluation: Creating 3 systems...
+  System 0: 16 atoms (2×2×2)
+  System 1: 54 atoms (3×3×3)
+  System 2: 128 atoms (4×4×4)
+</pre></div>
+</div>
+<p>Concatenate all systems:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="n">positions_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_positions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">charges_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_charges</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">cells_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_cells</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">pbc_batch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cat</span><span class="p">(</span><span class="n">all_pbc</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">batch_idx</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">batch_idx_list</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+<span class="c1"># Estimate parameters for the batch with desired accuracy</span>
+<span class="n">params_batch</span> <span class="o">=</span> <span class="n">estimate_pme_parameters</span><span class="p">(</span>
+    <span class="n">positions_batch</span><span class="p">,</span> <span class="n">cells_batch</span><span class="p">,</span> <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-5</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Total atoms: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">positions_batch</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Per-system alphas: </span><span class="si">{</span><span class="n">params_batch</span><span class="o">.</span><span class="n">alpha</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Mesh dimensions: </span><span class="si">{</span><span class="n">params_batch</span><span class="o">.</span><span class="n">mesh_dimensions</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Real-space cutoff: </span><span class="si">{</span><span class="n">params_batch</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Total atoms: 198
+Per-system alphas: [0.24943219038054099, 0.20366053061902537, 0.17637519326429443]
+Mesh dimensions: (32, 32, 32)
+Real-space cutoff: 19.24 Å
+</pre></div>
+</div>
+<p>Build batched neighbor list and run:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Use the maximum real-space cutoff across all systems</span>
+<span class="n">real_cutoff_batch</span> <span class="o">=</span> <span class="n">params_batch</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+<span class="n">neighbor_matrix_batch</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts_batch</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+    <span class="n">positions_batch</span><span class="p">,</span>
+    <span class="n">real_cutoff_batch</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cells_batch</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_batch</span><span class="p">,</span>
+    <span class="n">method</span><span class="o">=</span><span class="s2">&quot;batch_naive&quot;</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">energies_batch</span><span class="p">,</span> <span class="n">forces_batch</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions</span><span class="o">=</span><span class="n">positions_batch</span><span class="p">,</span>
+    <span class="n">charges</span><span class="o">=</span><span class="n">charges_batch</span><span class="p">,</span>
+    <span class="n">cell</span><span class="o">=</span><span class="n">cells_batch</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+    <span class="n">neighbor_matrix</span><span class="o">=</span><span class="n">neighbor_matrix_batch</span><span class="p">,</span>
+    <span class="n">neighbor_matrix_shifts</span><span class="o">=</span><span class="n">neighbor_matrix_shifts_batch</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>  <span class="c1"># Parameters estimated automatically for batch</span>
+<span class="p">)</span>
+<span class="n">t_batch</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Batch evaluation time: </span><span class="si">{</span><span class="n">t_batch</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Per-system results:&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_systems</span><span class="p">):</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="o">==</span> <span class="n">i</span>
+    <span class="n">n_atoms</span> <span class="o">=</span> <span class="n">mask</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">sys_energy</span> <span class="o">=</span> <span class="n">energies_batch</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="n">max_force</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">forces_batch</span><span class="p">[</span><span class="n">mask</span><span class="p">],</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  System </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">n_atoms</span><span class="si">}</span><span class="s2"> atoms, E=</span><span class="si">{</span><span class="n">sys_energy</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, |F|_max=</span><span class="si">{</span><span class="n">max_force</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Batch evaluation time: 32.91 ms
+
+Per-system results:
+  System 0: 16 atoms, E=-2.8870, |F|_max=0.0000
+  System 1: 54 atoms, E=-9.7438, |F|_max=0.0000
+  System 2: 128 atoms, E=-23.0963, |F|_max=0.0000
+</pre></div>
+</div>
+<p>Verify batch vs individual calculations:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Verification (individual calculations with same accuracy):&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_systems</span><span class="p">):</span>
+    <span class="n">mask</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="o">==</span> <span class="n">i</span>
+    <span class="n">pos_i</span> <span class="o">=</span> <span class="n">positions_batch</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span>
+    <span class="n">chrg_i</span> <span class="o">=</span> <span class="n">charges_batch</span><span class="p">[</span><span class="n">mask</span><span class="p">]</span>
+    <span class="n">cell_i</span> <span class="o">=</span> <span class="n">cells_batch</span><span class="p">[</span><span class="n">i</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="n">pbc_i</span> <span class="o">=</span> <span class="n">pbc_batch</span><span class="p">[</span><span class="n">i</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+
+    <span class="c1"># Use same cutoff as batch for fair comparison</span>
+    <span class="n">nl_i</span><span class="p">,</span> <span class="n">nptr_i</span><span class="p">,</span> <span class="n">ns_i</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+        <span class="n">pos_i</span><span class="p">,</span> <span class="n">real_cutoff_batch</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell_i</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_i</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+
+    <span class="n">e_i</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">pos_i</span><span class="p">,</span>
+        <span class="n">charges</span><span class="o">=</span><span class="n">chrg_i</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell_i</span><span class="p">,</span>
+        <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_i</span><span class="p">,</span>
+        <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_i</span><span class="p">,</span>
+        <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_i</span><span class="p">,</span>
+        <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>  <span class="c1"># Same accuracy as batch</span>
+    <span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  System </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">: E=</span><span class="si">{</span><span class="n">e_i</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Verification (individual calculations with same accuracy):
+  System 0: E=-2.8870
+  System 1: E=-9.7438
+  System 2: E=-23.0963
+</pre></div>
+</div>
+</section>
+<section id="pme-vs-standard-ewald-comparison">
+<h2>PME vs Standard Ewald Comparison<a class="headerlink" href="#pme-vs-standard-ewald-comparison" title="Link to this heading">#</a></h2>
+<p>PME becomes more efficient than standard Ewald for larger systems due to
+its O(N log N) scaling vs O(N²) for explicit k-vector summation.
+Both methods use the same accuracy target for fair comparison.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics.parameters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">estimate_ewald_parameters</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">system_sizes</span> <span class="o">=</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span>
+<span class="n">accuracy_cmp</span> <span class="o">=</span> <span class="mf">1e-5</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">PME vs Ewald Performance (accuracy=</span><span class="si">{</span><span class="n">accuracy_cmp</span><span class="si">:</span><span class="s2">.0e</span><span class="si">}</span><span class="s2">):&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  N_cells | N_atoms | Ewald (ms) | PME (ms)  | Energy diff&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  &quot;</span> <span class="o">+</span> <span class="s2">&quot;-&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>PME vs Ewald Performance (accuracy=1e-05):
+  N_cells | N_atoms | Ewald (ms) | PME (ms)  | Energy diff
+  ------------------------------------------------------------
+</pre></div>
+</div>
+<p>Compare timing and accuracy:</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="n">n_cells</span> <span class="ow">in</span> <span class="n">system_sizes</span><span class="p">:</span>
+    <span class="n">pos_cmp</span><span class="p">,</span> <span class="n">chrg_cmp</span><span class="p">,</span> <span class="n">cell_cmp</span><span class="p">,</span> <span class="n">pbc_cmp</span> <span class="o">=</span> <span class="n">create_nacl_system</span><span class="p">(</span><span class="n">n_cells</span><span class="o">=</span><span class="n">n_cells</span><span class="p">)</span>
+
+    <span class="c1"># Estimate parameters for both methods</span>
+    <span class="n">ewald_params</span> <span class="o">=</span> <span class="n">estimate_ewald_parameters</span><span class="p">(</span><span class="n">pos_cmp</span><span class="p">,</span> <span class="n">cell_cmp</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="n">accuracy_cmp</span><span class="p">)</span>
+    <span class="n">pme_params</span> <span class="o">=</span> <span class="n">estimate_pme_parameters</span><span class="p">(</span><span class="n">pos_cmp</span><span class="p">,</span> <span class="n">cell_cmp</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="n">accuracy_cmp</span><span class="p">)</span>
+
+    <span class="c1"># Use the larger cutoff to ensure both methods have same neighbors</span>
+    <span class="n">real_cutoff_cmp</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span>
+        <span class="n">ewald_params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+        <span class="n">pme_params</span><span class="o">.</span><span class="n">real_space_cutoff</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span>
+    <span class="p">)</span>
+
+    <span class="n">nl_cmp</span><span class="p">,</span> <span class="n">nptr_cmp</span><span class="p">,</span> <span class="n">ns_cmp</span> <span class="o">=</span> <span class="n">neighbor_list_fn</span><span class="p">(</span>
+        <span class="n">pos_cmp</span><span class="p">,</span> <span class="n">real_cutoff_cmp</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell_cmp</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc_cmp</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Standard Ewald with automatic parameter estimation</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">energies_ewald</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">pos_cmp</span><span class="p">,</span>
+        <span class="n">charges</span><span class="o">=</span><span class="n">chrg_cmp</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell_cmp</span><span class="p">,</span>
+        <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_cmp</span><span class="p">,</span>
+        <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_cmp</span><span class="p">,</span>
+        <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_cmp</span><span class="p">,</span>
+        <span class="n">accuracy</span><span class="o">=</span><span class="n">accuracy_cmp</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span><span class="p">:</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">t_ewald</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+    <span class="c1"># PME with automatic parameter estimation</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">energies_pme</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">pos_cmp</span><span class="p">,</span>
+        <span class="n">charges</span><span class="o">=</span><span class="n">chrg_cmp</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell_cmp</span><span class="p">,</span>
+        <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl_cmp</span><span class="p">,</span>
+        <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nptr_cmp</span><span class="p">,</span>
+        <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">ns_cmp</span><span class="p">,</span>
+        <span class="n">accuracy</span><span class="o">=</span><span class="n">accuracy_cmp</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">device</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="s2">&quot;cuda&quot;</span><span class="p">:</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">t_pme</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+    <span class="n">e_diff</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">energies_ewald</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">-</span> <span class="n">energies_pme</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;    </span><span class="si">{</span><span class="n">n_cells</span><span class="si">}</span><span class="s2">     | </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pos_cmp</span><span class="p">)</span><span class="si">:</span><span class="s2">5d</span><span class="si">}</span><span class="s2">   | </span><span class="si">{</span><span class="n">t_ewald</span><span class="si">:</span><span class="s2">9.2f</span><span class="si">}</span><span class="s2">  | </span><span class="si">{</span><span class="n">t_pme</span><span class="si">:</span><span class="s2">8.2f</span><span class="si">}</span><span class="s2">  | </span><span class="si">{</span><span class="n">e_diff</span><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Note: PME becomes increasingly efficient for larger systems.&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>    2     |    16   |      2.29  |     2.94  | 2.53e-06
+    3     |    54   |      2.06  |     3.30  | 4.31e-08
+    4     |   128   |      3.38  |     3.17  | 2.47e-06
+
+Note: PME becomes increasingly efficient for larger systems.
+</pre></div>
+</div>
+</section>
+<section id="summary">
+<h2>Summary<a class="headerlink" href="#summary" title="Link to this heading">#</a></h2>
+<p>This example demonstrated:</p>
+<ol class="arabic simple">
+<li><p><strong>Automatic parameter estimation</strong> for alpha and mesh dimensions using
+<code class="docutils literal notranslate"><span class="pre">estimate_pme_parameters</span></code> with target accuracy</p></li>
+<li><p><strong>Neighbor format flexibility</strong> with list and matrix formats</p></li>
+<li><p><strong>Accuracy-based convergence</strong> showing how the accuracy parameter
+controls both mesh resolution and real-space cutoff</p></li>
+<li><p><strong>Accuracy-parameter relationships</strong> for PME</p></li>
+<li><p><strong>Component access</strong> for real-space and reciprocal-space</p></li>
+<li><p><strong>Charge gradients</strong> (∂E/∂q_i) for ML potential training</p></li>
+<li><p><strong>Batch evaluation</strong> for multiple systems with automatic per-system alpha</p></li>
+<li><p><strong>PME vs Ewald</strong> performance comparison with same accuracy</p></li>
+</ol>
+<p>Key PME steps:</p>
+<ul class="simple">
+<li><p>Charge spreading: <span class="math notranslate nohighlight">\(Q(\\mathbf{x}) = \\sum_i q_i M_p(\\mathbf{x} - \\mathbf{r}_i)\)</span></p></li>
+<li><p>FFT convolution: <span class="math notranslate nohighlight">\(\\tilde{\\Phi}(\\mathbf{k}) = G(\\mathbf{k}) \\tilde{Q}(\\mathbf{k})\)</span></p></li>
+<li><p>Force interpolation from mesh gradients</p></li>
+<li><p>Charge gradient: <span class="math notranslate nohighlight">\(\\frac{\\partial E}{\\partial q_i} = \\phi_i\)</span> (electrostatic potential)</p></li>
+</ul>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">PME example complete!&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>PME example complete!
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 15.372 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-electrostatics-03-pme-example-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/95fd059c450cf78e8307283c55418e3f/03_pme_example.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">03_pme_example.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/98a03241ef8ff5e1b053e339d02e096b/03_pme_example.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">03_pme_example.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/5a83ffe40904ed66f256e44eb2d965b7/03_pme_example.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">03_pme_example.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="02_ewald_summation_example.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Ewald Summation for Long-Range Electrostatics</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../neighborlist/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Neighbor Lists</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#setup-and-imports">Setup and Imports</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configure-device">Configure Device</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#create-a-nacl-crystal-system">Create a NaCl Crystal System</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#basic-usage-with-automatic-parameters">Basic Usage with Automatic Parameters</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-list-vs-neighbor-matrix-format">Neighbor List vs Neighbor Matrix Format</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#convergence-with-accuracy-parameter">Convergence with Accuracy Parameter</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#effect-of-accuracy-on-pme-parameters">Effect of Accuracy on PME Parameters</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#accessing-real-space-and-reciprocal-space-components">Accessing Real-Space and Reciprocal-Space Components</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#charge-gradients-for-ml-potentials">Charge Gradients for ML Potentials</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-evaluation">Batch Evaluation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pme-vs-standard-ewald-comparison">PME vs Standard Ewald Comparison</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#summary">Summary</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/examples/electrostatics/03_pme_example.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

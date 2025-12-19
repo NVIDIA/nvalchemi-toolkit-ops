@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.neighborlist.naive &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>nvalchemiops.neighborlist.naive &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -41,7 +41,7 @@
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -881,9 +881,9 @@ document.write(`
 <span class="sd">        Variable-length tuple depending on input parameters. The return pattern follows:</span>
 
 <span class="sd">        - No PBC, matrix format: ``(neighbor_matrix, num_neighbors)``</span>
-<span class="sd">        - No PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr)``</span>
+<span class="sd">        - No PBC, list format: ``(neighbor_list, neighbor_ptr)``</span>
 <span class="sd">        - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``</span>
-<span class="sd">        - With PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr, neighbor_list_shifts)``</span>
+<span class="sd">        - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``</span>
 
 <span class="sd">        **Components returned:**</span>
 

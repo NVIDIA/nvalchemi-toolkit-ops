@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Examples Gallery &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>Examples Gallery &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -54,7 +54,7 @@
     <script>DOCUMENTATION_OPTIONS.pagename = 'examples/index';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Interactions" href="interactions/index.html" />
+    <link rel="next" title="B-Spline Interpolation for Particle Mesh Methods" href="01_bspline_visualization.html" />
     <link rel="prev" title="DFT-D3(BJ) Dispersion Correction" href="../userguide/components/dispersion.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -349,13 +349,22 @@ document.write(`
      aria-label="Section Navigation">
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
-<li class="toctree-l1 has-children"><a class="reference internal" href="interactions/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="interactions/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+<li class="toctree-l1"><a class="reference internal" href="01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="dispersion/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
 
-<li class="toctree-l2"><a class="reference internal" href="interactions/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
 </ul>
 </li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="neighborlist/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="electrostatics/index.html">Electrostatics</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="electrostatics/03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="neighborlist/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="neighborlist/01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
 
 
@@ -452,7 +461,12 @@ Each example is a fully executable Python script that showcases different featur
 of the library, from basic neighbor list construction to advanced dispersion corrections.</p>
 <p>All examples are designed to run on both CPU and GPU, automatically detecting available
 hardware. The code can be downloaded as Python scripts or Jupyter notebooks.</p>
-<div class="sphx-glr-thumbnails"></div></section>
+<div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates B-spline charge spreading and gathering operations used in Particle Mesh Ewald (PME) and related methods. B-splines provide smooth interpolation between particle positions and mesh grid points."><img alt="" src="../_images/sphx_glr_01_bspline_visualization_thumb.png" />
+<p><a class="reference internal" href="01_bspline_visualization.html#sphx-glr-examples-01-bspline-visualization-py"><span class="std std-ref">B-Spline Interpolation for Particle Mesh Methods</span></a></p>
+  <div class="sphx-glr-thumbnail-title">B-Spline Interpolation for Particle Mesh Methods</div>
+</div></div><div class="toctree-wrapper compound">
+</div>
+</section>
 <section id="interactions">
 <h1>Interactions<a class="headerlink" href="#interactions" title="Link to this heading">#</a></h1>
 <p>Examples demonstrating GPU-accelerated computation of atomic interactions,
@@ -464,11 +478,35 @@ including DFT-D3 dispersion corrections with environment-dependent C6 coefficien
 <li><p>Integrate with PyTorch for differentiable workflows</p></li>
 </ul>
 <div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using GPU-accelerated kernels."><img alt="" src="../_images/sphx_glr_01_dftd3_molecule_thumb.png" />
-<p><a class="reference internal" href="interactions/01_dftd3_molecule.html#sphx-glr-examples-interactions-01-dftd3-molecule-py"><span class="std std-ref">DFT-D3 Dispersion Correction for a Molecule</span></a></p>
+<p><a class="reference internal" href="dispersion/01_dftd3_molecule.html#sphx-glr-examples-dispersion-01-dftd3-molecule-py"><span class="std std-ref">DFT-D3 Dispersion Correction for a Molecule</span></a></p>
   <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for a Molecule</div>
 </div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates GPU-accelerated DFT-D3 calculations for batches of periodic crystal structures. Batch processing is essential for high-throughput computational materials screening and allows efficient parallelization across multiple structures simultaneously."><img alt="" src="../_images/sphx_glr_02_dftd3_batch_crystals_thumb.png" />
-<p><a class="reference internal" href="interactions/02_dftd3_batch_crystals.html#sphx-glr-examples-interactions-02-dftd3-batch-crystals-py"><span class="std std-ref">DFT-D3 Dispersion Correction for Batched Crystals</span></a></p>
+<p><a class="reference internal" href="dispersion/02_dftd3_batch_crystals.html#sphx-glr-examples-dispersion-02-dftd3-batch-crystals-py"><span class="std std-ref">DFT-D3 Dispersion Correction for Batched Crystals</span></a></p>
   <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for Batched Crystals</div>
+</div></div></section>
+<section id="electrostatics">
+<h1>Electrostatics<a class="headerlink" href="#electrostatics" title="Link to this heading">#</a></h1>
+<p>Examples demonstrating GPU-accelerated computation of long-range electrostatic
+interactions in periodic systems using Coulomb, Ewald summation, and Particle
+Mesh Ewald (PME).</p>
+<p>These examples show how to:</p>
+<ul class="simple">
+<li><p>Compute direct Coulomb interactions (damped and undamped)</p></li>
+<li><p>Use Ewald summation for periodic systems with automatic parameter estimation</p></li>
+<li><p>Apply Particle Mesh Ewald (PME) for O(N log N) scaling</p></li>
+<li><p>Work with neighbor list and neighbor matrix formats</p></li>
+<li><p>Perform batch evaluation for multiple systems</p></li>
+<li><p>Leverage autograd for computing forces and gradients</p></li>
+</ul>
+<div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute Coulomb electrostatic interactions using GPU-accelerated kernels. The implementation supports both direct (undamped) Coulomb interactions and damped interactions used as the real-space component in Ewald/PME methods."><img alt="" src="../_images/sphx_glr_01_coulomb_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/01_coulomb_example.html#sphx-glr-examples-electrostatics-01-coulomb-example-py"><span class="std std-ref">Coulomb Electrostatic Interactions</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Coulomb Electrostatic Interactions</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions in periodic systems using the Ewald summation method. Ewald splits the slowly converging Coulomb sum into rapidly converging real-space and reciprocal-space components."><img alt="" src="../_images/sphx_glr_02_ewald_summation_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/02_ewald_summation_example.html#sphx-glr-examples-electrostatics-02-ewald-summation-example-py"><span class="std std-ref">Ewald Summation for Long-Range Electrostatics</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Ewald Summation for Long-Range Electrostatics</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions using the Particle Mesh Ewald (PME) method. PME achieves O(N log N) scaling by using FFT-based mesh interpolation for the reciprocal-space contribution."><img alt="" src="../_images/sphx_glr_03_pme_example_thumb.png" />
+<p><a class="reference internal" href="electrostatics/03_pme_example.html#sphx-glr-examples-electrostatics-03-pme-example-py"><span class="std std-ref">Particle Mesh Ewald (PME) for Long-Range Electrostatics</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Particle Mesh Ewald (PME) for Long-Range Electrostatics</div>
 </div></div></section>
 <section id="neighbor-lists">
 <h1>Neighbor Lists<a class="headerlink" href="#neighbor-lists" title="Link to this heading">#</a></h1>
@@ -527,11 +565,11 @@ cell list algorithms.</p>
       </div>
     </a>
     <a class="right-next"
-       href="interactions/index.html"
+       href="01_bspline_visualization.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Interactions</p>
+        <p class="prev-next-title">B-Spline Interpolation for Particle Mesh Methods</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -555,6 +593,7 @@ cell list algorithms.</p>
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#">Examples Gallery</a></li>
 <li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#interactions">Interactions</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#electrostatics">Electrostatics</a></li>
 <li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-lists">Neighbor Lists</a></li>
 </ul>
 

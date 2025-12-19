@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.neighborlist.neighborlist &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>nvalchemiops.neighborlist.neighborlist &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -41,7 +41,7 @@
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -535,6 +535,7 @@ document.write(`
 <span class="sd">            Maximum number of atoms per system.</span>
 <span class="sd">            Used in batch naive implementation with PBC. If not provided, it will be computed automaticaly.</span>
 <span class="sd">            Can be provided to avoid CUDA synchronization.</span>
+
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
 <span class="sd">    results : tuple of torch.Tensor</span>
@@ -542,15 +543,15 @@ document.write(`
 
 <span class="sd">        **Single cutoff:**</span>
 <span class="sd">          - No PBC, matrix format: ``(neighbor_matrix, num_neighbors)``</span>
-<span class="sd">          - No PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr)``</span>
+<span class="sd">          - No PBC, list format: ``(neighbor_list, neighbor_ptr)``</span>
 <span class="sd">          - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``</span>
-<span class="sd">          - With PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr, neighbor_list_shifts)``</span>
+<span class="sd">          - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``</span>
 
 <span class="sd">        **Dual cutoff:**</span>
 <span class="sd">          - No PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)``</span>
-<span class="sd">          - No PBC, list format: ``(neighbor_list1, num_neighbors1, neighbor_ptr1, neighbor_list2, num_neighbors2, neighbor_ptr2)``</span>
+<span class="sd">          - No PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``</span>
 <span class="sd">          - With PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1, neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``</span>
-<span class="sd">          - With PBC, list format: ``(neighbor_list1, num_neighbors1, neighbor_ptr1, neighbor_list_shifts1, neighbor_list2, num_neighbors2, neighbor_ptr2, neighbor_list_shifts2)``</span>
+<span class="sd">          - With PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list_shifts1, neighbor_list2, neighbor_ptr2, neighbor_list_shifts2)``</span>
 
 <span class="sd">        **Components returned:**</span>
 
@@ -591,7 +592,7 @@ document.write(`
 
 <span class="sd">    Single cutoff, list format, no PBC::</span>
 
-<span class="sd">        &gt;&gt;&gt; nlist, num = neighbor_list(pos, 5.0, return_neighbor_list=True)</span>
+<span class="sd">        &gt;&gt;&gt; nlist, ptr = neighbor_list(pos, 5.0, return_neighbor_list=True)</span>
 
 <span class="sd">    Dual cutoff, matrix format, with PBC::</span>
 

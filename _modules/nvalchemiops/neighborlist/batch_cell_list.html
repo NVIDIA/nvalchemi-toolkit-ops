@@ -7,7 +7,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>nvalchemiops.neighborlist.batch_cell_list &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>nvalchemiops.neighborlist.batch_cell_list &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -41,7 +41,7 @@
 <link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../../../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -624,8 +624,8 @@ document.write(`
     <span class="n">s_cell_offset</span> <span class="o">=</span> <span class="n">cell_offsets</span><span class="p">[</span><span class="n">system_idx</span><span class="p">]</span>
 
     <span class="c1"># Transform to fractional coordinates for this system</span>
-    <span class="n">inverse_cell_transpose</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">inverse</span><span class="p">(</span><span class="n">s_cell_matrix</span><span class="p">))</span>
-    <span class="n">fractional_position</span> <span class="o">=</span> <span class="n">inverse_cell_transpose</span> <span class="o">*</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">inverse_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">inverse</span><span class="p">(</span><span class="n">s_cell_matrix</span><span class="p">)</span>
+    <span class="n">fractional_position</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">*</span> <span class="n">inverse_cell</span>
 
     <span class="c1"># Determine which cell this atom belongs to within its system</span>
     <span class="n">cell_coords</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
@@ -724,8 +724,8 @@ document.write(`
     <span class="n">s_cell_offset</span> <span class="o">=</span> <span class="n">cell_offsets</span><span class="p">[</span><span class="n">system_idx</span><span class="p">]</span>
 
     <span class="c1"># Transform to fractional coordinates</span>
-    <span class="n">inverse_cell_transpose</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">inverse</span><span class="p">(</span><span class="n">s_cell_matrix</span><span class="p">))</span>
-    <span class="n">fractional_position</span> <span class="o">=</span> <span class="n">inverse_cell_transpose</span> <span class="o">*</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">inverse_cell</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">inverse</span><span class="p">(</span><span class="n">s_cell_matrix</span><span class="p">)</span>
+    <span class="n">fractional_position</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">*</span> <span class="n">inverse_cell</span>
 
     <span class="c1"># Determine which cell this atom belongs to within its system</span>
     <span class="n">cell_coords</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3i</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
@@ -844,7 +844,7 @@ document.write(`
     <span class="n">central_atom_position</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">central_atom_cell_coords</span> <span class="o">=</span> <span class="n">atom_to_cell_mapping</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
 
-    <span class="n">s_cell_transpose</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="n">cell</span><span class="p">[</span><span class="n">system_idx</span><span class="p">])</span>
+    <span class="n">s_cell</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="n">system_idx</span><span class="p">]</span>
     <span class="n">s_cells_per_dimension</span> <span class="o">=</span> <span class="n">cells_per_dimension</span><span class="p">[</span><span class="n">system_idx</span><span class="p">]</span>
     <span class="n">s_cell_offset</span> <span class="o">=</span> <span class="n">cell_offsets</span><span class="p">[</span><span class="n">system_idx</span><span class="p">]</span>
     <span class="n">s_neighbor_search_radius</span> <span class="o">=</span> <span class="n">neighbor_search_radius</span><span class="p">[</span><span class="n">system_idx</span><span class="p">]</span>
@@ -928,9 +928,9 @@ document.write(`
                     <span class="k">else</span><span class="p">:</span>
                         <span class="n">shift_z</span> <span class="o">=</span> <span class="mi">0</span>
 
-                    <span class="c1"># Check if this is the same atom with no periodic shift</span>
-                    <span class="n">is_zero_shift</span> <span class="o">=</span> <span class="n">shift_x</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">shift_y</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">shift_z</span> <span class="o">==</span> <span class="mi">0</span>
-                    <span class="k">if</span> <span class="n">dx</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">dy</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">dz</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">is_zero_shift</span><span class="p">:</span>
+                    <span class="c1"># For home cell (dx=dy=dz=0), only process j &gt; i</span>
+                    <span class="c1"># to avoid double counting</span>
+                    <span class="k">if</span> <span class="n">dx</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">dy</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">dz</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
                         <span class="k">if</span> <span class="n">neighbor_atom_idx</span> <span class="o">&lt;=</span> <span class="n">atom_idx</span><span class="p">:</span>
                             <span class="k">continue</span>
 
@@ -941,7 +941,7 @@ document.write(`
                         <span class="nb">type</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)(</span><span class="n">shift_z</span><span class="p">),</span>
                     <span class="p">)</span>
                     <span class="c1"># Convert to Cartesian shift</span>
-                    <span class="n">cartesian_shift</span> <span class="o">=</span> <span class="n">s_cell_transpose</span> <span class="o">*</span> <span class="n">fractional_shift</span>
+                    <span class="n">cartesian_shift</span> <span class="o">=</span> <span class="n">fractional_shift</span> <span class="o">*</span> <span class="n">s_cell</span>
 
                     <span class="c1"># Calculate distance with periodic correction</span>
                     <span class="n">neighbor_pos</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">neighbor_atom_idx</span><span class="p">]</span>

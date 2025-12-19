@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>nvalchemiops.neighborlist: Neighbor Lists &#8212; ALCHEMI Toolkit-Ops 0.1.0 documentation</title>
+    <title>nvalchemiops.neighborlist: Neighbor Lists &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
   
   
   
@@ -42,7 +42,7 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=38b66d78"></script>
+    <script src="../_static/documentation_options.js?v=95e61db4"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script>let toggleHintShow = 'Click to show';</script>
@@ -351,6 +351,7 @@ document.write(`
   <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist</span></code>: Neighbor Lists</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.types</span></code>: Utilities</a></li>
 </ul>
 </div>
@@ -549,16 +550,16 @@ Can be provided to avoid CUDA synchronization.</p>
 <dl class="simple">
 <dt><strong>Single cutoff:</strong></dt><dd><ul class="simple">
 <li><p>No PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors)</span></code></p></li>
-<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_ptr)</span></code></p></li>
+<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr)</span></code></p></li>
 <li><p>With PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_matrix_shifts)</span></code></p></li>
-<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
+<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
 </ul>
 </dd>
 <dt><strong>Dual cutoff:</strong></dt><dd><ul class="simple">
 <li><p>No PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_matrix2,</span> <span class="pre">num_neighbors2)</span></code></p></li>
-<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">num_neighbors2,</span> <span class="pre">neighbor_ptr2)</span></code></p></li>
+<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">neighbor_ptr2)</span></code></p></li>
 <li><p>With PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_matrix_shifts1,</span> <span class="pre">neighbor_matrix2,</span> <span class="pre">num_neighbors2,</span> <span class="pre">neighbor_matrix_shifts2)</span></code></p></li>
-<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">neighbor_list_shifts1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">num_neighbors2,</span> <span class="pre">neighbor_ptr2,</span> <span class="pre">neighbor_list_shifts2)</span></code></p></li>
+<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">neighbor_list_shifts1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">neighbor_ptr2,</span> <span class="pre">neighbor_list_shifts2)</span></code></p></li>
 </ul>
 </dd>
 </dl>
@@ -613,7 +614,7 @@ components (neighbor_data2, num_neighbor_data2, neighbor_shift_data2) appended t
 </pre></div>
 </div>
 <p>Single cutoff, list format, no PBC:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">nlist</span><span class="p">,</span> <span class="n">num</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span><span class="n">pos</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">nlist</span><span class="p">,</span> <span class="n">ptr</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span><span class="n">pos</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>Dual cutoff, matrix format, with PBC:</p>
@@ -690,9 +691,9 @@ and only convert to a neighbor list format if absolutely necessary.</p></li>
 <dd class="field-even"><p><p><strong>results</strong> – Variable-length tuple depending on input parameters. The return pattern follows:</p>
 <ul class="simple">
 <li><p>No PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors)</span></code></p></li>
-<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_ptr)</span></code></p></li>
+<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr)</span></code></p></li>
 <li><p>With PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_matrix_shifts)</span></code></p></li>
-<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
+<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
 </ul>
 <p><strong>Components returned:</strong></p>
 <ul>
@@ -849,7 +850,7 @@ If None, allocated internally to build the cell list.</p></li>
 <dd class="field-even"><p><p><strong>results</strong> – Variable-length tuple depending on input parameters. The return pattern follows:</p>
 <ul class="simple">
 <li><p>Matrix format (default): <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_matrix_shifts)</span></code></p></li>
-<li><p>List format (return_neighbor_list=True): <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
+<li><p>List format (return_neighbor_list=True): <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
 </ul>
 <p><strong>Components returned:</strong></p>
 <ul>
@@ -1062,9 +1063,9 @@ If not provided, it will be computed automaticaly. Can be provided to avoid CUDA
 <dd class="field-even"><p><p><strong>results</strong> – Variable-length tuple depending on input parameters. The return pattern follows:</p>
 <ul class="simple">
 <li><p>No PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors)</span></code></p></li>
-<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_ptr)</span></code></p></li>
+<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr)</span></code></p></li>
 <li><p>With PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_matrix_shifts)</span></code></p></li>
-<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">num_neighbors,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
+<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list,</span> <span class="pre">neighbor_ptr,</span> <span class="pre">neighbor_list_shifts)</span></code></p></li>
 </ul>
 <p><strong>Components returned:</strong></p>
 <ul>
@@ -1401,9 +1402,9 @@ Must be pre-allocated. Updated in-place with actual neighbor counts.</p></li>
 <dd class="field-even"><p><p><strong>results</strong> – Variable-length tuple with interleaved results for cutoff1 and cutoff2. The return pattern follows:</p>
 <ul class="simple">
 <li><p>No PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_matrix2,</span> <span class="pre">num_neighbors2)</span></code></p></li>
-<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">num_neighbors2,</span> <span class="pre">neighbor_ptr2)</span></code></p></li>
+<li><p>No PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">neighbor_ptr2)</span></code></p></li>
 <li><p>With PBC, matrix format: <code class="docutils literal notranslate"><span class="pre">(neighbor_matrix1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_matrix_shifts1,</span> <span class="pre">neighbor_matrix2,</span> <span class="pre">num_neighbors2,</span> <span class="pre">neighbor_matrix_shifts2)</span></code></p></li>
-<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">num_neighbors1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">shifts1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">num_neighbors2,</span> <span class="pre">neighbor_ptr2,</span> <span class="pre">shifts2)</span></code></p></li>
+<li><p>With PBC, list format: <code class="docutils literal notranslate"><span class="pre">(neighbor_list1,</span> <span class="pre">neighbor_ptr1,</span> <span class="pre">neighbor_list_shifts1,</span> <span class="pre">neighbor_list2,</span> <span class="pre">neighbor_ptr2,</span> <span class="pre">neighbor_list_shifts2)</span></code></p></li>
 </ul>
 <p><strong>Components returned (interleaved for each cutoff):</strong></p>
 <ul>
@@ -1884,7 +1885,7 @@ cubic cells and uniform atomic distribution.</p>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.neighborlist.estimate_max_neighbors">
-<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighborlist.</span></span><span class="sig-name descname"><span class="pre">estimate_max_neighbors</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atomic_density</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.5</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">safety_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/neighborlist/neighbor_utils.html#estimate_max_neighbors"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighborlist.estimate_max_neighbors" title="Link to this definition">#</a></dt>
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighborlist.</span></span><span class="sig-name descname"><span class="pre">estimate_max_neighbors</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atomic_density</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.35</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">safety_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">5.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/nvalchemiops/neighborlist/neighbor_utils.html#estimate_max_neighbors"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighborlist.estimate_max_neighbors" title="Link to this definition">#</a></dt>
 <dd><p>Estimate maximum neighbors per atom based on volume calculations.</p>
 <p>Uses atomic density and cutoff volume to estimate a conservative upper bound
 on the number of neighbors any atom could have. This maintains torch.compile
@@ -1909,7 +1910,7 @@ empty systems, total atom count for degenerate cells.</p>
 <p>The estimation uses the formula:
 neighbors = safety_factor * density × cutoff_sphere_volume
 where density = N_atoms / cell_volume and cutoff_sphere_volume = (4/3)pi r³</p>
-<p>The result is rounded up to the next power of 2 for memory alignment.</p>
+<p>The result is rounded up to the multiple of 16 for memory alignment.</p>
 </dd></dl>
 
 <dl class="py function">
