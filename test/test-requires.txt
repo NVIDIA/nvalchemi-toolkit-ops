@@ -1,2 +1,3 @@
 pymatgen>=2025.0.0
 vesin==0.4.2
+torch-pme @ git+https://github.com/lab-cosmo/torch-pme.git

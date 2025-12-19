@@ -36,6 +36,8 @@ from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 from .test_utils import (
     create_batch_systems,
+    create_structure_HoTlPd,
+    create_structure_SiCu,
 )
 
 
@@ -879,6 +881,43 @@ class TestBatchNaiveDualCutoffMainAPI:
 
         # Both matrices should have same number of columns
         assert neighbor_matrix1.shape[1] == neighbor_matrix2.shape[1] == 10
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_HoTlPd(self, device, dtype):
+        positions1, cell1, pbc1 = create_structure_HoTlPd(dtype, device)
+        positions2, cell2, pbc2 = create_structure_SiCu(dtype, device)
+        positions = torch.cat([positions1, positions2], dim=0)
+        cell = torch.stack([cell1, cell2], dim=0)
+        pbc = torch.stack([pbc1, pbc2], dim=0)
+        batch_idx = torch.tensor(
+            [0] * len(positions1) + [1] * len(positions2),
+            dtype=torch.int32,
+            device=device,
+        )
+        batch_ptr = torch.tensor(
+            [0, len(positions1), len(positions)], dtype=torch.int32, device=device
+        )
+        reference = [
+            torch.tensor([[13, 13, 13, 14, 14, 14, 11, 11, 11, 6, 6]]),
+            torch.tensor([[42, 42, 42, 36, 36, 36, 41, 41, 44, 26, 26]]),
+        ]
+
+        _, num_neighbors1, _, _, num_neighbors2, _ = (
+            batch_naive_neighbor_list_dual_cutoff(
+                positions=positions,
+                cutoff1=4.0,
+                cutoff2=6.0,
+                pbc=pbc,
+                cell=cell,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors1=20,
+                max_neighbors2=50,
+            )
+        )
+        assert (num_neighbors1.cpu() == reference[0]).all()
+        assert (num_neighbors2.cpu() == reference[1]).all()
 
 
 class TestBatchNaiveDualCutoffPerformanceAndScaling:

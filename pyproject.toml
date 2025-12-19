@@ -12,8 +12,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
-    "warp-lang >= 1.9.0",
-    "torch>=2.7.0",
+    "warp-lang >= 1.10.0",
+    "torch>=2.8.0",
     "numpy",
 ]
 keywords = [

@@ -35,6 +35,8 @@ from .test_utils import (
     create_nonorthorhombic_system,
     create_random_system,
     create_simple_cubic_system,
+    create_structure_HoTlPd,
+    create_structure_SiCu,
 )
 
 devices = ["cpu"]
@@ -385,6 +387,36 @@ class TestCellListAPI:
                 rij = positions[atom_j] - positions[atom_i] + shift
                 dist = torch.norm(rij, dim=0).item()
                 assert dist < cutoff + 1e-5, f"Distance {dist} exceeds cutoff {cutoff}"
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_HoTlPd(self, device, dtype):
+        positions, cell, pbc = create_structure_HoTlPd(dtype, device)
+        reference = [
+            torch.tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0]]),
+            torch.tensor([[13, 13, 13, 14, 14, 14, 11, 11, 11]]),
+            torch.tensor([[42, 42, 42, 36, 36, 36, 41, 41, 44]]),
+        ]
+        for i, cutoff in enumerate((1.0, 4.0, 6.0)):
+            _, num_neighbors, _ = cell_list(
+                positions=positions, cutoff=cutoff, pbc=pbc, cell=cell
+            )
+            assert (num_neighbors.cpu() == reference[i]).all()
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_SiCu(self, device, dtype):
+        positions, cell, pbc = create_structure_SiCu(dtype, device)
+        reference = [
+            torch.tensor([[0, 0]]),
+            torch.tensor([[6, 6]]),
+            torch.tensor([[26, 26]]),
+        ]
+        for i, cutoff in enumerate((1.0, 4.0, 6.0)):
+            _, num_neighbors, _ = cell_list(
+                positions=positions, cutoff=cutoff, pbc=pbc, cell=cell
+            )
+            assert (num_neighbors.cpu() == reference[i]).all()
 
 
 class TestEdgeCases:

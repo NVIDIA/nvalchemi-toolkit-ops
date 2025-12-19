@@ -36,6 +36,8 @@ from .test_utils import (
     brute_force_neighbors,
     create_random_system,
     create_simple_cubic_system,
+    create_structure_HoTlPd,
+    create_structure_SiCu,
 )
 
 try:
@@ -510,6 +512,34 @@ class TestBatchCellListAPI:
                 rij = positions[atom_j] - positions[atom_i] + shift
                 dist = torch.norm(rij, dim=0).item()
                 assert dist < cutoff + 1e-5, f"Distance {dist} exceeds cutoff {cutoff}"
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_HoTlPd(self, device, dtype):
+        positions1, cell1, pbc1 = create_structure_HoTlPd(dtype, device)
+        positions2, cell2, pbc2 = create_structure_SiCu(dtype, device)
+        positions = torch.cat([positions1, positions2], dim=0)
+        cell = torch.stack([cell1, cell2], dim=0)
+        pbc = torch.stack([pbc1, pbc2], dim=0)
+        batch_idx = torch.tensor(
+            [0] * len(positions1) + [1] * len(positions2),
+            dtype=torch.int32,
+            device=device,
+        )
+        reference = [
+            torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            torch.tensor([13, 13, 13, 14, 14, 14, 11, 11, 11, 6, 6]),
+            torch.tensor([42, 42, 42, 36, 36, 36, 41, 41, 44, 26, 26]),
+        ]
+        for i, cutoff in enumerate((1.0, 4.0, 6.0)):
+            _, num_neighbors, _ = batch_cell_list(
+                positions,
+                cutoff,
+                cell,
+                pbc,
+                batch_idx,
+            )
+            assert (num_neighbors.cpu() == reference[i]).all()
 
 
 class TestBatchEdgeCases:

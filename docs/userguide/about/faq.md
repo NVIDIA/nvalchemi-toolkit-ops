@@ -73,6 +73,4 @@ and the
 If a kernel is expected to be `torch.compile` compatible but is not working,
 please open a Github [Issue][issues_].
 
----
-
 [issues_]: https://www.github.com/NVIDIA/nvalchemi-toolkit-ops/issues/new/choose

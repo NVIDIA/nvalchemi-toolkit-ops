@@ -486,9 +486,9 @@ def naive_neighbor_list(
         Variable-length tuple depending on input parameters. The return pattern follows:
 
         - No PBC, matrix format: ``(neighbor_matrix, num_neighbors)``
-        - No PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr)``
+        - No PBC, list format: ``(neighbor_list, neighbor_ptr)``
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
-        - With PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr, neighbor_list_shifts)``
+        - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
         **Components returned:**
 

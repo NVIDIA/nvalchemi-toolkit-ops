@@ -295,7 +295,7 @@ def compute_naive_num_shifts(
 
 def estimate_max_neighbors(
     cutoff: float,
-    atomic_density: float = 0.5,
+    atomic_density: float = 0.35,
     safety_factor: float = 5.0,
 ) -> int:
     r"""Estimate maximum neighbors per atom based on volume calculations.
@@ -325,7 +325,7 @@ def estimate_max_neighbors(
     neighbors = safety_factor * density × cutoff_sphere_volume
     where density = N_atoms / cell_volume and cutoff_sphere_volume = (4/3)\pi r³
 
-    The result is rounded up to the next power of 2 for memory alignment.
+    The result is rounded up to the multiple of 16 for memory alignment.
     """
     if cutoff <= 0:
         return 0
@@ -336,8 +336,27 @@ def estimate_max_neighbors(
     expected_neighbors = max(1, safety_factor * cutoff_sphere_volume)
 
     # Round up to next power of 2 for memory alignment and safety
-    max_neighbors_estimate = int(math.pow(2, math.ceil(math.log2(expected_neighbors))))
+    max_neighbors_estimate = int(math.ceil(expected_neighbors / 16)) * 16
     return max_neighbors_estimate
+
+
+class NeighborOverflowError(Exception):
+    """Exception raised when the number of neighbors larger than the maximum allowed."""
+
+    def __init__(self, max_neighbors: int, num_neighbors: int):
+        super().__init__(
+            f"The number of neighbors is larger than the maximum allowed: {num_neighbors} > {max_neighbors}."
+        )
+
+
+def assert_max_neighbors(neighbor_matrix: torch.Tensor, num_neighbors: torch.Tensor):
+    """Assert that the number of neighbors is not larger than size of the neighbor matrix."""
+    max_neighbors = 0 if num_neighbors.numel() == 0 else num_neighbors.max()
+    if max_neighbors > neighbor_matrix.shape[1]:
+        raise NeighborOverflowError(
+            neighbor_matrix.shape[1],
+            max_neighbors if isinstance(max_neighbors, int) else max_neighbors.item(),
+        )
 
 
 def get_neighbor_list_from_neighbor_matrix(
@@ -402,11 +421,10 @@ def get_neighbor_list_from_neighbor_matrix(
             else (neighbor_list, neighbor_ptr)
         )
         return returns
-    if num_neighbors.max() > neighbor_matrix.shape[1]:
-        raise ValueError(
-            f"The max number of neighbors is larger than the neighbor matrix: {num_neighbors.max()} > {neighbor_matrix.shape[1]}."
-            f"Neighbor List construction will not be correct."
-        )
+
+    # Raise NeighborOverflowError if the number of neighbors is larger than the neighbor matrix
+    assert_max_neighbors(neighbor_matrix, num_neighbors)
+
     mask = neighbor_matrix != fill_value
     dtype = neighbor_matrix.dtype
     i_idx = torch.where(mask)[0].to(dtype)

@@ -249,6 +249,58 @@ def create_nonorthorhombic_system(
     return positions, cell, pbc
 
 
+def create_structure_HoTlPd(dtype, device):
+    """Return the structure of HoTlPd."""
+    positions = torch.tensor(
+        [
+            [4.64882481e00, 0.00000000e00, 1.87730266e00],
+            [1.56295308e00, 2.70711418e00, 1.87730266e00],
+            [-2.32441241e00, 4.02600045e00, 1.87730266e00],
+            [2.08725046e00, 0.00000000e00, 0.00000000e00],
+            [2.84374025e00, 4.92550268e00, 0.00000000e00],
+            [-1.04362523e00, 1.80761195e00, 0.00000000e00],
+            [-3.88994531e-06, 4.48874533e00, 0.00000000e00],
+            [3.88736937e00, 2.24436930e00, 0.00000000e00],
+            [0.00000000e00, 0.00000000e00, 1.87730266e00],
+        ],
+        dtype=dtype,
+        device=device,
+    )
+    cell = torch.tensor(
+        [
+            [7.77473097, 0.0, 0.0],
+            [-3.88736549, 6.73311463, 0.0],
+            [0.0, 0.0, 3.75460533],
+        ],
+        dtype=dtype,
+        device=device,
+    )
+    pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+    return positions, cell, pbc
+
+
+def create_structure_SiCu(dtype, device):
+    positions = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+        ],
+        dtype=dtype,
+        device=device,
+    )
+    cell = torch.tensor(
+        [
+            [0.0, 3.0, 3.0],
+            [3.0, 0.0, 3.0],
+            [3.0, 3.0, 0.0],
+        ],
+        dtype=dtype,
+        device=device,
+    )
+    pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+    return positions, cell, pbc
+
+
 def create_batch_systems(
     num_systems: int = 3,
     atoms_per_system: list = None,

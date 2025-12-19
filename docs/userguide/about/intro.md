@@ -260,6 +260,100 @@ dict). See the [dispersion documentation](../components/dispersion) for paramete
 setup and loading from standard reference files.
 ```
 
+### Electrostatic Interactions
+
+The {func}`~nvalchemiops.interactions.electrostatics.ewald.ewald_summation` and
+{func}`~nvalchemiops.interactions.electrostatics.pme.particle_mesh_ewald` functions
+compute long-range Coulomb interactions in periodic systems. Both methods split the
+slowly-converging $1/r$ potential into real-space (short-range) and reciprocal-space
+(long-range) components, with automatic parameter estimation based on target accuracy.
+
+```{tip}
+For systems with <5000 atoms, use Ewald summation. For larger systems, PME provides
+$O(N \log N)$ scaling via FFT-accelerated reciprocal-space calculations.
+```
+
+Choose the right method based on your system size:
+
+::::{tab-set}
+
+:::{tab-item} Ewald
+:sync: ewald
+
+Small to medium systems (<5000 atoms)
+
+```python
+from nvalchemiops.interactions.electrostatics import ewald_summation
+from nvalchemiops.neighborlist import neighbor_list
+
+# Build neighbor list
+neighbors, _, shifts = neighbor_list(
+    positions, cutoff=10.0, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Compute electrostatics (parameters estimated automatically)
+energies, forces = ewald_summation(
+    positions, charges, cell, neighbor_list=neighbors,
+    neighbor_shifts=shifts, accuracy=1e-6
+)
+```
+
+Uses explicit k-vector summation in reciprocal space — $O(N^2)$ scaling.
+:::
+
+:::{tab-item} PME
+:sync: pme
+
+Large systems (>5000 atoms)
+
+```python
+from nvalchemiops.interactions.electrostatics import particle_mesh_ewald
+from nvalchemiops.neighborlist import neighbor_list
+
+# Build neighbor list
+neighbors, _, shifts = neighbor_list(
+    positions, cutoff=10.0, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Compute electrostatics with FFT acceleration
+energies, forces = particle_mesh_ewald(
+    positions, charges, cell, neighbor_list=neighbors,
+    neighbor_shifts=shifts, accuracy=1e-6
+)
+```
+
+Uses FFT-based reciprocal-space calculation — $O(N \log N)$ scaling.
+:::
+
+:::{tab-item} Batch
+:sync: batch
+
+Multiple systems processed simultaneously
+
+```python
+from nvalchemiops.interactions.electrostatics import ewald_summation
+from nvalchemiops.neighborlist import neighbor_list
+
+# Build batched neighbor list
+neighbors, _, shifts = neighbor_list(
+    positions, cutoff=10.0, cell=cells, pbc=pbc,
+    batch_idx=batch_idx, return_neighbor_list=True
+)
+
+# Batched electrostatics
+energies, forces = ewald_summation(
+    positions, charges, cell=cells, neighbor_list=neighbors,
+    neighbor_shifts=shifts, batch_idx=batch_idx, accuracy=1e-6
+)
+```
+
+Returns per-atom energies; sum by system using `batch_idx`.
+:::
+
+::::
+
+## Ecosystem Integration
+
 ALCHEMI Toolkit-Ops integrates with the scientific Python ecosystem:
 
 ### PyTorch
@@ -288,4 +382,6 @@ ensuring compatibility with established workflows.
    spatial algorithm details
 3. Explore [DFT-D3 dispersion corrections](../components/dispersion) for
    energy and force calculations
-4. Check the `examples/` directory for complete working scripts
+4. Learn about [electrostatic interactions](../components/electrostatics) for
+   Ewald summation and PME calculations
+5. Check the `examples/` directory for complete working scripts

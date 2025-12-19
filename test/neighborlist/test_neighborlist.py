@@ -46,7 +46,11 @@ class TestNeighborListAutoSelection:
             pytest.skip("CUDA not available")
 
         # Small system: 100 atoms
-        positions = torch.randn(100, 3, dtype=dtype, device=device)
+        target_density = 0.25
+        num_atoms = 100
+        volume = num_atoms / target_density
+        box_size = volume ** (1 / 3)
+        positions = torch.rand(num_atoms, 3, dtype=dtype, device=device) * box_size
         cutoff = 2.0
 
         # Call wrapper with no method specified

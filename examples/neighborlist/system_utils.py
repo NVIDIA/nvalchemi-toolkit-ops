@@ -74,6 +74,7 @@ def create_bulk_structure(
 
     return structure
 
+
 def create_molecule_structure(name: str, box_size: float = 10.0) -> Structure:
     """Create a simple molecular structure with predefined coordinates.
 

@@ -29,6 +29,7 @@ from nvalchemiops.neighborlist.naive import (
     naive_neighbor_list,
 )
 from nvalchemiops.neighborlist.neighbor_utils import (
+    NeighborOverflowError,
     _compute_naive_num_shifts,
     _expand_naive_shifts,
     _update_neighbor_matrix,
@@ -43,6 +44,8 @@ from .test_utils import (
     brute_force_neighbors,
     create_random_system,
     create_simple_cubic_system,
+    create_structure_HoTlPd,
+    create_structure_SiCu,
 )
 
 try:
@@ -702,7 +705,7 @@ class TestNaiveUtilityFunctions:
         assert shifts.shape == (6, 3), "Should return shift vectors"
 
         # Test error conditions
-        with pytest.raises(ValueError):
+        with pytest.raises(NeighborOverflowError):
             num_neighbors = torch.tensor([8, 8, 8, 8], dtype=torch.int32, device=device)
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix,
@@ -937,6 +940,36 @@ class TestNaiveMainAPI:
                 cell=None,
                 max_neighbors=10,
             )
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_HoTlPd(self, device, dtype):
+        positions, cell, pbc = create_structure_HoTlPd(dtype, device)
+        reference = [
+            torch.tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0]]),
+            torch.tensor([[13, 13, 13, 14, 14, 14, 11, 11, 11]]),
+            torch.tensor([[42, 42, 42, 36, 36, 36, 41, 41, 44]]),
+        ]
+        for i, cutoff in enumerate((1.0, 4.0, 6.0)):
+            _, num_neighbors, _ = naive_neighbor_list(
+                positions=positions, cutoff=cutoff, pbc=pbc, cell=cell
+            )
+            assert (num_neighbors.cpu() == reference[i]).all()
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_SiCu(self, device, dtype):
+        positions, cell, pbc = create_structure_SiCu(dtype, device)
+        reference = [
+            torch.tensor([[0, 0]]),
+            torch.tensor([[6, 6]]),
+            torch.tensor([[26, 26]]),
+        ]
+        for i, cutoff in enumerate((1.0, 4.0, 6.0)):
+            _, num_neighbors, _ = naive_neighbor_list(
+                positions=positions, cutoff=cutoff, pbc=pbc, cell=cell
+            )
+            assert (num_neighbors.cpu() == reference[i]).all()
 
 
 class TestNaivePerformanceAndScaling:

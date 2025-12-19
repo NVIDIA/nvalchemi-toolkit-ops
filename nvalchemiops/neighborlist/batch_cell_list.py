@@ -231,8 +231,8 @@ def _batch_cell_list_count_atoms_per_bin(
     s_cell_offset = cell_offsets[system_idx]
 
     # Transform to fractional coordinates for this system
-    inverse_cell_transpose = wp.transpose(wp.inverse(s_cell_matrix))
-    fractional_position = inverse_cell_transpose * positions[atom_idx]
+    inverse_cell = wp.inverse(s_cell_matrix)
+    fractional_position = positions[atom_idx] * inverse_cell
 
     # Determine which cell this atom belongs to within its system
     cell_coords = wp.vec3i(0, 0, 0)
@@ -331,8 +331,8 @@ def _batch_cell_list_bin_atoms(
     s_cell_offset = cell_offsets[system_idx]
 
     # Transform to fractional coordinates
-    inverse_cell_transpose = wp.transpose(wp.inverse(s_cell_matrix))
-    fractional_position = inverse_cell_transpose * positions[atom_idx]
+    inverse_cell = wp.inverse(s_cell_matrix)
+    fractional_position = positions[atom_idx] * inverse_cell
 
     # Determine which cell this atom belongs to within its system
     cell_coords = wp.vec3i(0, 0, 0)
@@ -451,7 +451,7 @@ def _batch_cell_list_build_neighbor_matrix(
     central_atom_position = positions[atom_idx]
     central_atom_cell_coords = atom_to_cell_mapping[atom_idx]
 
-    s_cell_transpose = wp.transpose(cell[system_idx])
+    s_cell = cell[system_idx]
     s_cells_per_dimension = cells_per_dimension[system_idx]
     s_cell_offset = cell_offsets[system_idx]
     s_neighbor_search_radius = neighbor_search_radius[system_idx]
@@ -535,9 +535,9 @@ def _batch_cell_list_build_neighbor_matrix(
                     else:
                         shift_z = 0
 
-                    # Check if this is the same atom with no periodic shift
-                    is_zero_shift = shift_x == 0 and shift_y == 0 and shift_z == 0
-                    if dx == 0 and dy == 0 and dz == 0 and is_zero_shift:
+                    # For home cell (dx=dy=dz=0), only process j > i
+                    # to avoid double counting
+                    if dx == 0 and dy == 0 and dz == 0:
                         if neighbor_atom_idx <= atom_idx:
                             continue
 
@@ -548,7 +548,7 @@ def _batch_cell_list_build_neighbor_matrix(
                         type(cutoff)(shift_z),
                     )
                     # Convert to Cartesian shift
-                    cartesian_shift = s_cell_transpose * fractional_shift
+                    cartesian_shift = fractional_shift * s_cell
 
                     # Calculate distance with periodic correction
                     neighbor_pos = positions[neighbor_atom_idx]

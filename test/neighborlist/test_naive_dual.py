@@ -36,6 +36,8 @@ from .test_utils import (
     brute_force_neighbors,
     create_random_system,
     create_simple_cubic_system,
+    create_structure_HoTlPd,
+    create_structure_SiCu,
 )
 
 try:
@@ -781,6 +783,45 @@ class TestNaiveDualCutoffMainAPI:
         assert (
             len(result) == 4
         )  # neighbor_matrix1, neighbor_matrix2, num_neighbors1, num_neighbors2
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_HoTlPd(self, device, dtype):
+        positions, cell, pbc = create_structure_HoTlPd(dtype, device)
+        reference = [
+            torch.tensor([13, 13, 13, 14, 14, 14, 11, 11, 11]),
+            torch.tensor([42, 42, 42, 36, 36, 36, 41, 41, 44]),
+        ]
+
+        _, num_neighbors1, _, _, num_neighbors2, _ = naive_neighbor_list_dual_cutoff(
+            positions=positions,
+            cutoff1=4.0,
+            cutoff2=6.0,
+            pbc=pbc,
+            cell=cell,
+            max_neighbors1=20,
+            max_neighbors2=50,
+        )
+        assert (num_neighbors1.cpu() == reference[0]).all()
+        assert (num_neighbors2.cpu() == reference[1]).all()
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_num_neighbors_SiCu(self, device, dtype):
+        positions, cell, pbc = create_structure_SiCu(dtype, device)
+        reference = [torch.tensor([6, 6]), torch.tensor([26, 26])]
+
+        _, num_neighbors1, _, _, num_neighbors2, _ = naive_neighbor_list_dual_cutoff(
+            positions=positions,
+            cutoff1=4.0,
+            cutoff2=6.0,
+            pbc=pbc,
+            cell=cell,
+            max_neighbors1=20,
+            max_neighbors2=50,
+        )
+        assert (num_neighbors1.cpu() == reference[0]).all()
+        assert (num_neighbors2.cpu() == reference[1]).all()
 
 
 class TestNaiveDualCutoffPerformanceAndScaling:

@@ -9,6 +9,7 @@ operations critical to atomistic workflows.
 
 - O(N) cell list algorithms for neighbor list construction
 - DFT-D3(BJ) dispersion corrections with environment-dependent C6 coefficients
+- Ewald and particle mesh Ewald (PME) methods for electrostatic calculations
 - Batch processing for multiple systems with heterogeneous parameters
 - Native PyTorch tensor support with `torch.compile` compatibility
 - Dense or sparse COO output formats for graph neural networks

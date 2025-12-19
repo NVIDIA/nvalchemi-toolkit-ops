@@ -50,7 +50,7 @@ def load_nl_csv(
     batch_sizes = df["batch_size"].unique()
     series = {}
     for batch_size in batch_sizes:
-        df_batch = df[df["batch_size"] == batch_size]
+        df_batch = df[df["batch_size"] == batch_size].sort_values("total_atoms")
         series[batch_size] = BenchmarkData(
             total_atoms=df_batch["total_atoms"].values,
             median_time_ms=df_batch["median_time_ms"].values,
@@ -88,7 +88,7 @@ def load_dftd3_csv(
         batch_sizes = df["batch_size"].unique()
         series = {}
         for batch_size in batch_sizes:
-            df_batch = df[df["batch_size"] == batch_size]
+            df_batch = df[df["batch_size"] == batch_size].sort_values("total_atoms")
             series[batch_size] = BenchmarkData(
                 total_atoms=df_batch["total_atoms"].values,
                 median_time_ms=df_batch["median_time_ms"].values,
@@ -96,10 +96,11 @@ def load_dftd3_csv(
             )
         return series
     else:
+        df_sorted = df.sort_values("total_atoms")
         return BenchmarkData(
-            total_atoms=df["total_atoms"].values,
-            median_time_ms=df["median_time_ms"].values,
-            peak_memory_mb=df["peak_memory_mb"].values,
+            total_atoms=df_sorted["total_atoms"].values,
+            median_time_ms=df_sorted["median_time_ms"].values,
+            peak_memory_mb=df_sorted["peak_memory_mb"].values,
         )
 
 
@@ -561,6 +562,345 @@ def generate_dftd3_plots(results_dir: Path, output_dir: Path) -> None:
     _generate_dftd3_per_backend_plots(non_batched_files, batched_files, output_dir)
 
 
+def load_electrostatics_csv(
+    filepath: Path,
+    method: str | None = None,
+    component: str | None = None,
+) -> dict[int, BenchmarkData] | BenchmarkData:
+    """
+    Load electrostatics benchmark results from CSV file.
+
+    Parameters
+    ----------
+    filepath
+        Path to the CSV file.
+    method
+        Filter by method ('ewald' or 'pme'). If None, includes all.
+    component
+        Filter by component ('real', 'reciprocal', 'full'). If None, includes all.
+
+    Returns
+    -------
+    dict[int, BenchmarkData] | BenchmarkData
+        If file contains multiple batch sizes, returns dict mapping batch_size to BenchmarkData.
+        Otherwise, returns single BenchmarkData tuple.
+    """
+    df = pd.read_csv(filepath)
+
+    # Convert inf to nan so matplotlib will skip those points
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    # Filter by method and component if specified
+    if method is not None:
+        df = df[df["method"] == method]
+    if component is not None:
+        df = df[df["component"] == component]
+
+    # Filter to only include mode='single' for single systems, mode='batched' for batched
+    # This prevents mixing single-system and batched-with-batch_size=1 data
+    if "mode" in df.columns:
+        # Separate single and batched modes
+        df_single = df[df["mode"] == "single"]
+        df_batched = df[df["mode"] == "batched"]
+
+        # Check if we have both modes
+        has_single = len(df_single) > 0
+        has_batched = len(df_batched) > 0
+
+        if has_single and has_batched:
+            # We have both modes - group batched by batch_size
+            series = {}
+
+            # Add single systems as batch_size=1
+            if len(df_single) > 0:
+                df_single_sorted = df_single.sort_values("total_atoms")
+                series[1] = BenchmarkData(
+                    total_atoms=df_single_sorted["total_atoms"].values,
+                    median_time_ms=df_single_sorted["median_time_ms"].values,
+                    peak_memory_mb=df_single_sorted["peak_memory_mb"].values,
+                )
+
+            # Add batched systems by their actual batch_size
+            batch_sizes = df_batched["batch_size"].unique()
+            for batch_size in sorted(batch_sizes):
+                # Skip batch_size=1 from batched mode to avoid confusion
+                if batch_size == 1:
+                    continue
+                df_batch = df_batched[
+                    df_batched["batch_size"] == batch_size
+                ].sort_values("total_atoms")
+                series[batch_size] = BenchmarkData(
+                    total_atoms=df_batch["total_atoms"].values,
+                    median_time_ms=df_batch["median_time_ms"].values,
+                    peak_memory_mb=df_batch["peak_memory_mb"].values,
+                )
+            return series
+        elif has_batched:
+            # Only batched mode
+            df = df_batched
+        else:
+            # Only single mode
+            df = df_single
+
+    # Check if we have multiple batch sizes
+    batch_sizes = df["batch_size"].unique()
+
+    if len(batch_sizes) > 1:
+        series = {}
+        for batch_size in batch_sizes:
+            df_batch = df[df["batch_size"] == batch_size].sort_values("total_atoms")
+            series[batch_size] = BenchmarkData(
+                total_atoms=df_batch["total_atoms"].values,
+                median_time_ms=df_batch["median_time_ms"].values,
+                peak_memory_mb=df_batch["peak_memory_mb"].values,
+            )
+        return series
+    else:
+        df_sorted = df.sort_values("total_atoms")
+        return BenchmarkData(
+            total_atoms=df_sorted["total_atoms"].values,
+            median_time_ms=df_sorted["median_time_ms"].values,
+            peak_memory_mb=df_sorted["peak_memory_mb"].values,
+        )
+
+
+def _parse_electrostatics_filename(filename: str) -> tuple[str, str, str] | None:
+    """
+    Parse electrostatics benchmark filename to extract method, backend, and GPU SKU.
+
+    Parameters
+    ----------
+    filename
+        The filename stem (without extension).
+
+    Returns
+    -------
+    tuple[str, str, str] | None
+        Tuple of (method, backend, gpu_sku) or None if parsing fails.
+
+    Notes
+    -----
+    Filenames follow the pattern: electrostatics_benchmark_<method>_<backend>_<gpu_sku>.csv
+    """
+    known_methods = ["ewald", "pme"]
+    known_backends = ["nvalchemiops", "torchpme"]
+
+    prefix = "electrostatics_benchmark_"
+    if not filename.startswith(prefix):
+        return None
+
+    remainder = filename[len(prefix) :]
+
+    # Try to match known methods first
+    for method in known_methods:
+        if remainder.startswith(method + "_"):
+            rest = remainder[len(method) + 1 :]
+            # Now try to match backend
+            for backend in known_backends:
+                if rest.startswith(backend + "_"):
+                    gpu_sku = rest[len(backend) + 1 :]
+                    return method, backend, gpu_sku
+
+    return None
+
+
+def generate_electrostatics_plots(results_dir: Path, output_dir: Path) -> None:
+    """
+    Generate all electrostatics benchmark plots.
+
+    Parameters
+    ----------
+    results_dir
+        Directory containing CSV benchmark results.
+    output_dir
+        Directory to write output plots.
+    """
+    pattern = "electrostatics_benchmark_*.csv"
+    csv_files = list(results_dir.glob(pattern))
+
+    if not csv_files:
+        print("No electrostatics CSV files found")
+        return
+
+    print(f"\nFound {len(csv_files)} electrostatics CSV files")
+
+    # Group files by method and backend
+    files_by_method: dict[str, dict[str, Path]] = {"ewald": {}, "pme": {}}
+    gpu_sku = None
+
+    for csv_file in csv_files:
+        parsed = _parse_electrostatics_filename(csv_file.stem)
+        if parsed is None:
+            print(f"  Warning: Could not parse filename {csv_file.name}")
+            continue
+
+        method, backend, gpu_sku = parsed
+        if method in files_by_method:
+            files_by_method[method][backend] = csv_file
+
+    if gpu_sku is None:
+        print("  Warning: Could not determine GPU SKU")
+        gpu_sku = "unknown"
+
+    # Generate plots for each method
+    for method in ["ewald", "pme"]:
+        backend_files = files_by_method.get(method, {})
+        if not backend_files:
+            print(f"  No files found for method: {method}")
+            continue
+
+        print(f"\n  Generating plots for {method}...")
+
+        # 1. Backend comparison plots (single systems only)
+        _generate_electrostatics_comparison_plots(
+            method, backend_files, gpu_sku, output_dir
+        )
+
+        # 2. Per-backend plots (single + batched)
+        for backend, csv_file in backend_files.items():
+            _generate_electrostatics_backend_plots(
+                method, backend, csv_file, gpu_sku, output_dir
+            )
+
+
+def _generate_electrostatics_comparison_plots(
+    method: str,
+    backend_files: dict[str, Path],
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """
+    Generate comparison plots across backends for a given method.
+
+    Only uses single-system (batch_size=1) data for fair comparison.
+    """
+    comparison_time_series = {}
+    comparison_memory_series = {}
+
+    for backend, csv_file in backend_files.items():
+        # Load data, filter for single systems
+        data = load_electrostatics_csv(csv_file)
+
+        if isinstance(data, dict):
+            # Multiple batch sizes - use only batch_size=1
+            if 1 in data:
+                single_data = data[1]
+            else:
+                # Find the smallest batch size
+                min_batch = min(data.keys())
+                single_data = data[min_batch]
+        else:
+            single_data = data
+
+        comparison_time_series[backend] = (
+            single_data.total_atoms,
+            single_data.median_time_ms,
+        )
+        comparison_memory_series[backend] = (
+            single_data.total_atoms,
+            single_data.peak_memory_mb,
+        )
+
+    if not comparison_time_series:
+        return
+
+    # Time scaling comparison
+    output_path = (
+        output_dir / f"electrostatics_scaling_{method}_comparison_{gpu_sku}.png"
+    )
+    plot_series(
+        comparison_time_series,
+        output_path,
+        title=f"{method.upper()} Scaling (Backend Comparison)",
+        x_label="Number of atoms",
+        y_label="Median time (ms)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Throughput comparison
+    output_path = (
+        output_dir / f"electrostatics_throughput_{method}_comparison_{gpu_sku}.png"
+    )
+    plot_throughput(
+        comparison_time_series,
+        output_path,
+        title=f"{method.upper()} Throughput (Backend Comparison)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Memory comparison
+    output_path = (
+        output_dir / f"electrostatics_memory_{method}_comparison_{gpu_sku}.png"
+    )
+    plot_memory(
+        comparison_memory_series,
+        output_path,
+        title=f"{method.upper()} Memory (Backend Comparison)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+
+def _generate_electrostatics_backend_plots(
+    method: str,
+    backend: str,
+    csv_file: Path,
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """
+    Generate plots for a specific method/backend combination.
+
+    Shows single and batched results together.
+    """
+    data = load_electrostatics_csv(csv_file)
+
+    if isinstance(data, dict):
+        # Multiple batch sizes
+        time_series = {}
+        memory_series = {}
+        for batch_size, d in data.items():
+            label = "single" if batch_size == 1 else f"batch={batch_size}"
+            time_series[label] = (d.total_atoms, d.median_time_ms)
+            memory_series[label] = (d.total_atoms, d.peak_memory_mb)
+    else:
+        # Single batch size
+        time_series = {"single": (data.total_atoms, data.median_time_ms)}
+        memory_series = {"single": (data.total_atoms, data.peak_memory_mb)}
+
+    # Time scaling
+    output_path = (
+        output_dir / f"electrostatics_scaling_{method}_{backend}_{gpu_sku}.png"
+    )
+    plot_series(
+        time_series,
+        output_path,
+        title=f"{method.upper()} Scaling ({backend})",
+        x_label="Total atoms",
+        y_label="Median time (ms)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Throughput
+    output_path = (
+        output_dir / f"electrostatics_throughput_{method}_{backend}_{gpu_sku}.png"
+    )
+    plot_throughput(
+        time_series,
+        output_path,
+        title=f"{method.upper()} Throughput ({backend})",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Memory
+    output_path = output_dir / f"electrostatics_memory_{method}_{backend}_{gpu_sku}.png"
+    plot_memory(
+        memory_series,
+        output_path,
+        title=f"{method.upper()} Memory ({backend})",
+    )
+    print(f"    Generated: {output_path.name}")
+
+
 def _generate_dftd3_per_backend_plots(
     non_batched_files: list[Path],
     batched_files: list[Path],
@@ -673,6 +1013,7 @@ def main() -> None:
     # Generate plots for each benchmark type
     generate_nl_plots(results_dir, output_dir)
     generate_dftd3_plots(results_dir, output_dir)
+    generate_electrostatics_plots(results_dir, output_dir)
 
     print("\nPlot generation complete!")
 

@@ -204,8 +204,8 @@ def _cell_list_count_atoms_per_bin(
     atom_idx = wp.tid()
 
     # Transform to fractional coordinates
-    inverse_cell_transpose = wp.transpose(wp.inverse(cell[0]))
-    fractional_position = inverse_cell_transpose * positions[atom_idx]
+    inverse_cell = wp.inverse(cell[0])
+    fractional_position = positions[atom_idx] * inverse_cell
 
     # Determine which cell this atom belongs to
     cell_coords = wp.vec3i(0, 0, 0)
@@ -326,8 +326,8 @@ def _cell_list_bin_atoms(
         return
 
     # Transform to fractional coordinates
-    inverse_cell_transpose = wp.transpose(wp.inverse(cell[0]))
-    fractional_position = inverse_cell_transpose * positions[atom_idx]
+    inverse_cell = wp.inverse(cell[0])
+    fractional_position = positions[atom_idx] * inverse_cell
 
     # Determine which cell this atom belongs to
     cell_coords = wp.vec3i(0, 0, 0)
@@ -434,7 +434,6 @@ def _cell_list_build_neighbor_matrix(
     Performance Optimizations:
     - Uses cutoff squared to avoid expensive sqrt operations
     - Caches cells_per_dimension and pbc in registers to reduce memory access
-    - Computes cell_transpose only when needed (late in the pipeline)
     - Uses scalar variables instead of vec3 where possible to reduce register pressure
     - Unrolls PBC boundary checks for better branch prediction
     - Explicitly computes distance components to enable vectorization
@@ -448,10 +447,8 @@ def _cell_list_build_neighbor_matrix(
     central_atom_shift = atom_periodic_shifts[atom_idx]
     max_neighbors = neighbor_matrix.shape[1]
 
-    # Load cell matrix once (compute transpose only when needed)
+    # Load cell matrix once
     cell_mat = cell[0]
-    # OPTIMIZATION: Compute transpose ONCE outside the loop, not inside!
-    cell_transpose = wp.transpose(cell_mat)
 
     # Cache cells_per_dimension in registers (small, accessed frequently)
     cpd_x = cells_per_dimension[0]
@@ -525,20 +522,19 @@ def _cell_list_build_neighbor_matrix(
                     else:
                         shift_z = 0
 
-                    # For home cell (dx=dy=dz=0) with zero shift, only process j > i
-                    # to avoid double counting pairs within the same cell
-                    is_zero_shift = shift_x == 0 and shift_y == 0 and shift_z == 0
-                    if dx == 0 and dy == 0 and dz == 0 and is_zero_shift:
+                    # For home cell (dx=dy=dz=0), only process j > i
+                    # to avoid double counting
+                    if dx == 0 and dy == 0 and dz == 0:
                         if neighbor_atom_idx <= atom_idx:
                             continue
 
-                    # Calculate Cartesian shift (using pre-computed transpose from line 449)
+                    # Calculate Cartesian shift
                     fractional_shift = type(central_atom_position)(
                         type(central_atom_position[0])(shift_x),
                         type(central_atom_position[0])(shift_y),
                         type(central_atom_position[0])(shift_z),
                     )
-                    cartesian_shift = cell_transpose * fractional_shift
+                    cartesian_shift = fractional_shift * cell_mat
 
                     # Calculate distance squared
                     neighbor_pos = positions[neighbor_atom_idx]
@@ -1291,7 +1287,7 @@ def cell_list(
         Variable-length tuple depending on input parameters. The return pattern follows:
 
         - Matrix format (default): ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
-        - List format (return_neighbor_list=True): ``(neighbor_list, num_neighbors, neighbor_ptr, neighbor_list_shifts)``
+        - List format (return_neighbor_list=True): ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
         **Components returned:**
 

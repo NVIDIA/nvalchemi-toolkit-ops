@@ -140,6 +140,7 @@ def neighbor_list(
             Maximum number of atoms per system.
             Used in batch naive implementation with PBC. If not provided, it will be computed automaticaly.
             Can be provided to avoid CUDA synchronization.
+
     Returns
     -------
     results : tuple of torch.Tensor
@@ -147,15 +148,15 @@ def neighbor_list(
 
         **Single cutoff:**
           - No PBC, matrix format: ``(neighbor_matrix, num_neighbors)``
-          - No PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr)``
+          - No PBC, list format: ``(neighbor_list, neighbor_ptr)``
           - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
-          - With PBC, list format: ``(neighbor_list, num_neighbors, neighbor_ptr, neighbor_list_shifts)``
+          - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
         **Dual cutoff:**
           - No PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)``
-          - No PBC, list format: ``(neighbor_list1, num_neighbors1, neighbor_ptr1, neighbor_list2, num_neighbors2, neighbor_ptr2)``
+          - No PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``
           - With PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1, neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
-          - With PBC, list format: ``(neighbor_list1, num_neighbors1, neighbor_ptr1, neighbor_list_shifts1, neighbor_list2, num_neighbors2, neighbor_ptr2, neighbor_list_shifts2)``
+          - With PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list_shifts1, neighbor_list2, neighbor_ptr2, neighbor_list_shifts2)``
 
         **Components returned:**
 
@@ -196,7 +197,7 @@ def neighbor_list(
 
     Single cutoff, list format, no PBC::
 
-        >>> nlist, num = neighbor_list(pos, 5.0, return_neighbor_list=True)
+        >>> nlist, ptr = neighbor_list(pos, 5.0, return_neighbor_list=True)
 
     Dual cutoff, matrix format, with PBC::
 

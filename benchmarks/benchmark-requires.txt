@@ -7,3 +7,4 @@ click>=8.0.0
 nvtx>=0.2.13
 torch-dftd @ git+https://github.com/pfnet-research/torch-dftd@067808d
 pyyaml>=6.0.3
+torch-pme @ git+https://github.com/lab-cosmo/torch-pme.git

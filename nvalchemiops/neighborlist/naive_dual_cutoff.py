@@ -656,9 +656,9 @@ def naive_neighbor_list_dual_cutoff(
         Variable-length tuple with interleaved results for cutoff1 and cutoff2. The return pattern follows:
 
         - No PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2)``
-        - No PBC, list format: ``(neighbor_list1, num_neighbors1, neighbor_ptr1, neighbor_list2, num_neighbors2, neighbor_ptr2)``
+        - No PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2)``
         - With PBC, matrix format: ``(neighbor_matrix1, num_neighbors1, neighbor_matrix_shifts1, neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
-        - With PBC, list format: ``(neighbor_list1, num_neighbors1, neighbor_ptr1, shifts1, neighbor_list2, num_neighbors2, neighbor_ptr2, shifts2)``
+        - With PBC, list format: ``(neighbor_list1, neighbor_ptr1, neighbor_list_shifts1, neighbor_list2, neighbor_ptr2, neighbor_list_shifts2)``
 
         **Components returned (interleaved for each cutoff):**
 
