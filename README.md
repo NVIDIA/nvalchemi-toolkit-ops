@@ -138,6 +138,44 @@ d3_energies, d3_forces, coord_nums, d3_virials = dftd3(
 
 </details>
 
+<details>
+<summary>Electrostatic via particle mesh Ewald</summary>
+
+This example shows how to compute the per-atom and system energies
+as well as the forces using the particle mesh Ewald interface.
+
+
+```python
+import torch
+from nvalchemiops.interactions.electrostatics import particle_mesh_ewald
+
+# the following parameters need to be constructed ahead of time
+positions = ...  # [num_atoms, 3]
+atomic_numbers = ...  # [num_atoms]
+cell = ...  # [num_systems, 3, 3]
+pbc = ...  # [num_systems, 3]
+atomic_charges = ... # [num_atoms]
+# construct neighbor matrix
+neighbor_matrix, num_neighbors, shift_matrix = neighbor_list(
+    positions,
+    cutoff=...,  # on the order of ~20 Angstroms
+    cell=cell,
+    pbc=pbc,
+)
+# call PME, using automatic parameter tuning
+atom_energies, atom_forces = particle_mesh_ewald(
+    positions=positions,
+    charges=atomic_charges,
+    cell=cell,
+    neighbor_matrix=neighbor_matrix,
+    neighbor_matrix_shifts=shift_matrix,
+    accuracy=1e-6
+)
+system_energy = atom_energies.sum()
+```
+
+</details>
+
 ## Roadmap
 
 Currently, we have the following features that are being implemented, or are planned
@@ -145,9 +183,7 @@ to be implemented soon:
 
 - A variety of widely used pair-potentials, including
     - Ziebler-Biersack-Littmark (ZBL)
-    - Coulomb
     - Lennard-Jones
-    - Ewald and particle mesh Ewald (PME)
     - Quantum Drude Oscillator
 - DFT-D4 dispersion corrections
 - Primitives typically used with machine learned interatomic potentials, such as:
