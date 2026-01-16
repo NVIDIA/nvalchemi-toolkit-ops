@@ -18,6 +18,7 @@ in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
 - Neighborhood computation, including naive $O(N^2)$ and cell list $O(N)$
 implementations
 - Dispersion corrections via Becke-Johnson damped DFT-D3
+- Electrostatic interactions, including Ewald and particle mesh Ewald algorithms
 
 Kernels are naturally intended to be highly scalable (>100,000 atoms) and generally
 optimized for high throughput operations (on the order of several microseconds per
@@ -139,7 +140,7 @@ d3_energies, d3_forces, coord_nums, d3_virials = dftd3(
 </details>
 
 <details>
-<summary>Electrostatic via particle mesh Ewald</summary>
+<summary>Electrostatics via particle mesh Ewald</summary>
 
 This example shows how to compute the per-atom and system energies
 as well as the forces using the particle mesh Ewald interface.
