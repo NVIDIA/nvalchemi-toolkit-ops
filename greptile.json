@@ -1,10 +1,33 @@
 {
-    "customContext": {
-        "files": [
-            {
-                "path": "docs/userguide/about/kernel-style-guide.md",
-                "content": "Style guide for Warp kernel development in NVIDIA ALCHEMI Toolkit-Ops."
-            }
-        ]
-    }
+  "comment": "",
+  "fixWithAI": false,
+  "commentTypes": [
+    "logic",
+    "syntax",
+    "style"
+  ],
+  "ignorePatterns": "greptile.json\n",
+  "summarySection": {
+    "included": true,
+    "collapsible": false,
+    "defaultOpen": false
+  },
+  "confidenceScoreSection": {
+    "included": false,
+    "defaultOpen": false,
+    "collapsible": false
+  },
+  "sequenceDiagramSection": {
+    "included": false,
+    "defaultOpen": false,
+    "collapsible": false
+  },
+  "customContext": {
+    "files": [
+        {
+            "path": "docs/userguide/about/kernel-style-guide.md",
+            "content": "Style guide for Warp kernel development in NVIDIA ALCHEMI Toolkit-Ops."
+        }
+    ]
+  }
 }
