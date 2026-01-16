@@ -7,6 +7,9 @@
     "style"
   ],
   "ignorePatterns": "greptile.json\n",
+  "excludeAuthors": [
+    "dependabot[bot]"
+  ],
   "summarySection": {
     "included": true,
     "collapsible": false,
