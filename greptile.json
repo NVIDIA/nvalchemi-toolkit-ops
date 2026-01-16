@@ -24,10 +24,14 @@
   },
   "customContext": {
     "files": [
-        {
-            "path": "docs/userguide/about/kernel-style-guide.md",
-            "content": "Style guide for Warp kernel development in NVIDIA ALCHEMI Toolkit-Ops."
-        }
+      {
+        "path": "docs/userguide/about/kernel-style-guide.md",
+        "content": "Style guide for Warp kernel development in NVIDIA ALCHEMI Toolkit-Ops."
+      },
+      {
+        "path": "CONTRIBUTING.md",
+        "content": "Guidelines for contributing to NVIDIA ALCHEMI Toolkit-Ops."
+      }
     ]
   }
 }
