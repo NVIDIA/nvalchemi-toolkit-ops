@@ -48,3 +48,12 @@
 ## Additional Notes
 
 <!-- Any additional information that reviewers should know -->
+
+> [!TIP]
+> This repository uses Greptile, an AI code review service, to help conduct
+> pull request reviews. We encourage contributors to read and consider suggestions
+> made by Greptile, but note that human maintainers will provide the necessary
+> reviews for merging: Greptile's comments are **not** a qualitative judgement
+> of your code, nor is it an indication that the PR will be accepted/rejected.
+> We encourage the use of emoji reactions to Greptile comments, depending on
+> their usefulness and accuracy.
