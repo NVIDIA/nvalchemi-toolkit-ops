@@ -67,6 +67,7 @@ dev = [
 ]
 benchmark = [
     "natsort",
+    "nvidia-ml-py",  # pynvml for GPU memory tracking
 ]
 docs = [
     "sphinx>=6.0.0",

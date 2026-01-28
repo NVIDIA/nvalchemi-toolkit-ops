@@ -14,14 +14,11 @@ uv sync --group benchmark
 # 2. Generate benchmark structures (if not present)
 cd nh3 && bash generate_pbc_pdbs.sh
 
-# 3. Test everything works (recommended before sharing)
-bash test_benchmark_suite.sh --quick
-
-# 4. Run benchmarks
+# 3. Run benchmarks
 uv run python benchmark_suite.py --benchmark all
 
-# 5. Plot results
-uv run python plot_combined_benchmarks.py
+# 4. Plot results
+uv run python plot_combined_benchmarks.py ./benchmark-results/benchmark_YYYY-MM-DD_HH-MM-SS/
 ```
 
 ## Directory Structure
@@ -34,10 +31,10 @@ benchmarks-temp/
 └── nh3/                         # NH3 test systems
     ├── generate_pbc_pdbs.sh     # Interactive PDB generator
     ├── ammonia.pdb              # Single NH3 molecule template
-    ├── ammonia_pbc_128.pdb      # 128 atoms (32 molecules)
-    ├── ammonia_pbc_256.pdb      # 256 atoms (64 molecules)
+    ├── ammonia_pbc_128.pdb      # 128 atoms
+    ├── ammonia_pbc_256.pdb      # 256 atoms
     ├── ...
-    └── ammonia_pbc_131072.pdb   # 128k atoms (32768 molecules)
+    └── ammonia_pbc_131072.pdb   # 128k atoms
 ```
 
 ## Benchmark Suite
@@ -114,23 +111,23 @@ This measures **sustained throughput** without sync overhead pollution.
 
 ## Test Systems
 
-NH3 (ammonia) molecules packed into cubic periodic boxes using Packmol:
+NH3 (ammonia) packed into cubic periodic boxes using Packmol:
 
-| Atoms | Molecules | Cell Size (Å) | Use Case |
-|-------|-----------|---------------|----------|
-| 128 | 32 | 10.99 | Batching (×1024) |
-| 256 | 64 | 13.85 | Batching (×512) |
-| 512 | 128 | 17.44 | Batching (×256) |
-| 1k | 256 | 21.98 | Batching (×128) |
-| 2k | 512 | 27.69 | Batching (×64) |
-| 4k | 1024 | 34.89 | Batching (×32) |
-| 8k | 2048 | 43.96 | Batching (×16) |
-| 16k | 4096 | 55.38 | Batching (×8) |
-| 32k | 8192 | 69.78 | Batching (×4) |
-| 64k | 16384 | 87.91 | Batching (×2) |
-| 128k | 32768 | 110.76 | Single system |
+| Atoms | Cell Size (Å) | Use Case |
+|-------|---------------|----------|
+| 128 | 10.99 | Batching (×1024) |
+| 256 | 13.85 | Batching (×512) |
+| 512 | 17.44 | Batching (×256) |
+| 1k | 21.98 | Batching (×128) |
+| 2k | 27.69 | Batching (×64) |
+| 4k | 34.89 | Batching (×32) |
+| 8k | 43.96 | Batching (×16) |
+| 16k | 55.38 | Batching (×8) |
+| 32k | 69.78 | Batching (×4) |
+| 64k | 87.91 | Batching (×2) |
+| 128k | 110.76 | Single system |
 
-Cell length formula: `L = (41.47 × N_molecules)^(1/3)` Å
+Cell length formula: `L = (41.47 × N_atoms / 4)^(1/3)` Å
 
 ### Generating Test Structures
 
@@ -194,30 +191,6 @@ Output: `combined_benchmarks.png` and `combined_benchmarks_notitle.png` (for sli
 1. **OOM Prevention**: High accuracy (1e-6) automatically skipped for systems ≥128k atoms
 2. **D3 6Å cutoff**: Skipped in plots (too short for meaningful dispersion)
 3. **Large systems**: 256k+ atoms require significant time with Packmol
-
-## Testing Before Sharing
-
-Use the test script to validate everything works:
-
-```bash
-# Quick smoke test (~20 seconds)
-bash test_benchmark_suite.sh --quick
-
-# Standard test with multiple benchmarks (~2-5 minutes)
-bash test_benchmark_suite.sh
-
-# Full test with all configurations (~10-30 minutes)
-bash test_benchmark_suite.sh --full
-```
-
-The test script checks:
-- Python environment and CUDA availability
-- nvalchemiops and natsort imports
-- NH3 PDB files exist
-- D3 parameters available
-- CLI argument parsing
-- Actual benchmark execution
-- Output CSV file validation
 
 ## Troubleshooting
 

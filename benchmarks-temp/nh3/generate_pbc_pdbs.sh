@@ -163,11 +163,10 @@ ALL_SIZES=(128 256 512 1024 2048 4096 8192 16384 32768 65536 131072 262144 52428
 
 echo "Available system sizes:"
 echo ""
-printf "  %-4s  %-10s  %-12s  %s\n" "No." "Atoms" "Molecules" "Est. Time"
-echo "  ─────────────────────────────────────────────"
+printf "  %-4s  %-10s  %s\n" "No." "Atoms" "Est. Time"
+echo "  ─────────────────────────────────"
 for i in "${!ALL_SIZES[@]}"; do
     n_atoms=${ALL_SIZES[$i]}
-    n_mols=$((n_atoms / 4))
     formatted=$(format_atoms $n_atoms)
     
     # Rough time estimates
@@ -181,7 +180,7 @@ for i in "${!ALL_SIZES[@]}"; do
         est_time="2-30min"
     fi
     
-    printf "  %-4s  %-10s  %-12s  %s\n" "$((i+1)))" "$formatted" "$n_mols" "$est_time"
+    printf "  %-4s  %-10s  %s\n" "$((i+1)))" "$formatted" "$est_time"
 done
 echo ""
 
@@ -283,7 +282,7 @@ for n_atoms in "${SELECTED_SIZES[@]}"; do
     # Show progress
     progress_bar $((current - 1)) $total "Overall"
     echo ""
-    info "[$current/$total] Generating ${formatted} atoms (${n_mols} molecules), cell=${cell_length} Å"
+    info "[$current/$total] Generating ${formatted} atoms, cell=${cell_length} Å"
     
     # Create Packmol input file
     cat > "$inp_file" << EOF
@@ -361,12 +360,11 @@ if [ $success_count -gt 0 ]; then
     for n_atoms in "${SELECTED_SIZES[@]}"; do
         pdb_file="ammonia_pbc_${n_atoms}.pdb"
         if [ -f "$pdb_file" ]; then
-            n_mols=$((n_atoms / 4))
             cell_length=$(calc_cell_length $n_atoms)
             size=$(du -h "$pdb_file" | cut -f1)
             formatted=$(format_atoms $n_atoms)
-            printf "  %-25s  %6s atoms  %8s mols  %8s Å  %6s\n" \
-                "$pdb_file" "$formatted" "$n_mols" "$cell_length" "$size"
+            printf "  %-25s  %6s atoms  %8s Å  %6s\n" \
+                "$pdb_file" "$formatted" "$cell_length" "$size"
         fi
     done
 fi

@@ -11,9 +11,12 @@ Plots all benchmark results in a single figure:
 Output: 13.333 x 10 inches (4:3 aspect, taller for 4 panels)
 
 Usage:
-    python plot_combined_benchmarks.py
+    python plot_combined_benchmarks.py /path/to/benchmark_results/
+    python plot_combined_benchmarks.py --input-dir ./benchmark-results/benchmark_2026-01-27_12-00-00
+    python plot_combined_benchmarks.py --input-dir ./results --output-dir ./plots
 """
 
+import argparse
 import csv
 from pathlib import Path
 import matplotlib
@@ -22,9 +25,8 @@ import matplotlib.pyplot as plt
 from matplotlib.transforms import blended_transform_factory
 import numpy as np
 
-# ============== CONFIG ==============
-INPUT_DIR = Path('/home/nfedik/projects/deep-dive-11-25/benchmark/benchmark-results/H100-2026-01-20')
-OUTPUT_DIR = INPUT_DIR
+# ============== DEFAULT PATHS ==============
+SCRIPT_DIR = Path(__file__).parent
 
 # Figure size - 2x2 panels, each panel 16:9-ish
 FIG_WIDTH = 13.333
@@ -522,20 +524,103 @@ def plot_electrostatics_batched(results, ax):
         ax.set_title('C. Electrostatics | Constant 128k atoms, variable system and batch sizes', fontsize=TITLE_SIZE - 2, fontweight='bold', loc='left')
 
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Plot combined benchmark results from CSV files.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    python plot_combined_benchmarks.py ./benchmark-results/benchmark_2026-01-27_12-00-00
+    python plot_combined_benchmarks.py --input-dir ./results --output-dir ./plots
+    python plot_combined_benchmarks.py -i ./results -o ./plots --no-titles
+        """
+    )
+    
+    parser.add_argument(
+        'input_dir',
+        nargs='?',
+        type=Path,
+        default=None,
+        help='Directory containing benchmark CSV files (required)'
+    )
+    
+    parser.add_argument(
+        '--input-dir', '-i',
+        type=Path,
+        default=None,
+        dest='input_dir_opt',
+        help='Directory containing benchmark CSV files (alternative to positional)'
+    )
+    
+    parser.add_argument(
+        '--output-dir', '-o',
+        type=Path,
+        default=None,
+        help='Output directory for plots (default: same as input)'
+    )
+    
+    parser.add_argument(
+        '--no-titles',
+        action='store_true',
+        help='Generate plots without panel titles (for slides)'
+    )
+    
+    parser.add_argument(
+        '--include-charge-gradients',
+        action='store_true',
+        help='Include charge gradient lines in electrostatics plots'
+    )
+    
+    args = parser.parse_args()
+    
+    # Resolve input directory (positional takes precedence over --input-dir)
+    if args.input_dir is not None:
+        args.resolved_input_dir = args.input_dir
+    elif args.input_dir_opt is not None:
+        args.resolved_input_dir = args.input_dir_opt
+    else:
+        parser.error('Input directory is required. Specify as positional argument or with --input-dir')
+    
+    # Resolve output directory
+    if args.output_dir is not None:
+        args.resolved_output_dir = args.output_dir
+    else:
+        args.resolved_output_dir = args.resolved_input_dir
+    
+    return args
+
+
 def main():
+    args = parse_args()
+    
+    input_dir = args.resolved_input_dir
+    output_dir = args.resolved_output_dir
+    
+    # Update global flags based on args
+    global SHOW_TITLES, INCLUDE_CHARGE_GRADIENTS
+    if args.no_titles:
+        SHOW_TITLES = False
+    if args.include_charge_gradients:
+        INCLUDE_CHARGE_GRADIENTS = True
+    
     print('='*70)
     print('COMBINED BENCHMARK PLOTTING')
     print('='*70)
-    print(f'Input directory: {INPUT_DIR}')
-    print(f'Output directory: {OUTPUT_DIR}')
+    print(f'Input directory: {input_dir}')
+    print(f'Output directory: {output_dir}')
     
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not input_dir.exists():
+        print(f'ERROR: Input directory does not exist: {input_dir}')
+        return 1
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load all CSVs with warnings for missing files
-    nl_csv = INPUT_DIR / 'benchmark_nl_results.csv'
-    d3_csv = INPUT_DIR / 'benchmark_d3_scaling_results.csv'
-    electro_csv = INPUT_DIR / 'benchmark_electrostatics_results.csv'
-    electro_128k_csv = INPUT_DIR / 'benchmark_electrostatics_128k_results.csv'
+    nl_csv = input_dir / 'benchmark_nl_results.csv'
+    d3_csv = input_dir / 'benchmark_d3_scaling_results.csv'
+    electro_csv = input_dir / 'benchmark_electrostatics_results.csv'
+    electro_128k_csv = input_dir / 'benchmark_electrostatics_128k_results.csv'
     
     print()
     nl_results = load_csv(nl_csv)
@@ -584,34 +669,19 @@ def main():
     plt.tight_layout()
     plt.subplots_adjust(hspace=0.55, wspace=0.25, top=0.92)
     
-    output_path = OUTPUT_DIR / 'combined_benchmarks.png'
+    # Save with appropriate filename based on --no-titles flag
+    if args.no_titles:
+        output_path = output_dir / 'combined_benchmarks_notitle.png'
+    else:
+        output_path = output_dir / 'combined_benchmarks.png'
+    
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f'\nSaved: {output_path}')
-    
-    # Save version without titles for PowerPoint slides
     plt.close(fig)
     
-    # Regenerate with no titles
-    global SHOW_TITLES
-    SHOW_TITLES = False
-    
-    fig2, axes2 = plt.subplots(2, 2, figsize=(FIG_WIDTH, FIG_HEIGHT))
-    plot_nl_scaling(nl_results, axes2[0, 0])
-    plot_d3_scaling(d3_results, axes2[0, 1])
-    plot_electrostatics_batched(electro_128k_results, axes2[1, 0])
-    plot_electrostatics_scaling(electro_results, axes2[1, 1])
-    
-    plt.tight_layout()
-    plt.subplots_adjust(hspace=0.35, wspace=0.25)
-    
-    output_path_notitle = OUTPUT_DIR / 'combined_benchmarks_notitle.png'
-    plt.savefig(output_path_notitle, dpi=300, bbox_inches='tight')
-    print(f'Saved: {output_path_notitle}')
-    
-    plt.close(fig2)
-    
     print('\nDone!')
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    exit(main())

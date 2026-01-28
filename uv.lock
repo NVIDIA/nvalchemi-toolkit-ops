@@ -838,6 +838,7 @@ torch = [
 [package.dev-dependencies]
 benchmark = [
     { name = "natsort" },
+    { name = "nvidia-ml-py" },
 ]
 dev = [
     { name = "coverage" },
@@ -891,7 +892,10 @@ requires-dist = [
 provides-extras = ["torch"]
 
 [package.metadata.requires-dev]
-benchmark = [{ name = "natsort" }]
+benchmark = [
+    { name = "natsort" },
+    { name = "nvidia-ml-py" },
+]
 dev = [
     { name = "coverage", specifier = ">=7.2.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
@@ -1031,6 +1035,15 @@ version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/79/12978b96bd44274fe38b5dde5cfb660b1d114f70a65ef962bcbbed99b549/nvidia_cusparselt_cu12-0.7.1-py3-none-manylinux2014_x86_64.whl", hash = "sha256:f1bb701d6b930d5a7cea44c19ceb973311500847f81b634d802b7b539dc55623", size = 287193691, upload-time = "2025-02-26T00:15:44.104Z" },
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.590.48"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/a0/f4fc18cf72f06821a9a665085435b901449986855519d5b3843532db35e9/nvidia_ml_py-13.590.48.tar.gz", hash = "sha256:8184d1be52914ac7f0991cd1c0d946c65dc88a840c754cd12c274b77b88760dd", size = 49732, upload-time = "2026-01-22T01:14:56.456Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/72/fb2af0d259a651affdce65fd6a495f0e07a685a0136baf585c5065204ee7/nvidia_ml_py-13.590.48-py3-none-any.whl", hash = "sha256:fd43d30ee9cd0b7940f5f9f9220b68d42722975e3992b6c21d14144c48760e43", size = 50680, upload-time = "2026-01-22T01:14:55.281Z" },
 ]
 
 [[package]]
