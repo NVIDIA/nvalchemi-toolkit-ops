@@ -1,0 +1,9 @@
+tolerance 2.0
+seed 12345
+filetype pdb
+output ammonia_pbc_2048.pdb
+
+structure ammonia.pdb
+  number 512
+  inside cube 0.0 0.0 0.0 27.691
+end structure

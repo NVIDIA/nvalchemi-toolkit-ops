@@ -65,6 +65,9 @@ dev = [
     "pytest-cov>=7.0.0",
     {include-group="docs"},
 ]
+benchmark = [
+    "natsort",
+]
 docs = [
     "sphinx>=6.0.0",
     "sphinx-design",
