@@ -42,6 +42,10 @@ torch = [
     "torch>=2.8.0",
 ]
 
+jax = [
+    "jax",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["nvalchemiops"]
 
