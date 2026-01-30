@@ -12,17 +12,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""JAX dispersion interactions API.
-
-This module provides JAX bindings for dispersion corrections (DFT-D3).
-"""
-
-from __future__ import annotations
-
-from nvalchemiops.jax.interactions.dispersion._dftd3 import D3Parameters, dftd3
-
-__all__ = [
-    "dftd3",
-    "D3Parameters",
-]
