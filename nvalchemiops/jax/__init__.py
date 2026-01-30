@@ -12,6 +12,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""JAX bindings for nvalchemiops.
+
+This module provides JAX-compatible wrappers for GPU-accelerated atomistic
+simulation primitives implemented in NVIDIA Warp.
+"""
 
 import importlib
 
@@ -20,3 +25,21 @@ if importlib.util.find_spec("jax") is None:
         "JAX is required for `nvalchemiops.jax` namespace."
         " Please install via `pip install 'nvalchemiops[jax]'`."
     )
+
+from nvalchemiops.jax.types import (
+    get_warp_device,
+    get_warp_device_from_array,
+    get_wp_dtype,
+    get_wp_mat_dtype,
+    get_wp_vec_dtype,
+    jax_to_warp,
+)
+
+__all__ = [
+    "get_warp_device",
+    "get_warp_device_from_array",
+    "get_wp_dtype",
+    "get_wp_mat_dtype",
+    "get_wp_vec_dtype",
+    "jax_to_warp",
+]
