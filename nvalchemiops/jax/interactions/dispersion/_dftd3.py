@@ -60,24 +60,79 @@ Using neighbor list format:
 ... )
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
 import warp as wp
+from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.interactions.dispersion._dftd3 import (
-    dftd3_nl as wp_dftd3_nl,
+    _cn_forces_contrib_kernel_matrix_overload as wp_cn_forces_contrib_nm,
 )
 from nvalchemiops.interactions.dispersion._dftd3 import (
-    dftd3_nm as wp_dftd3_nm,
+    _cn_forces_contrib_kernel_overload as wp_cn_forces_contrib_nl,
 )
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _cn_kernel_matrix_overload as wp_cn_kernel_nm,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _cn_kernel_overload as wp_cn_kernel_nl,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _compute_cartesian_shifts_matrix_overload as wp_compute_cartesian_shifts_nm,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _compute_cartesian_shifts_overload as wp_compute_cartesian_shifts_nl,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _direct_forces_and_dE_dCN_kernel_matrix_overload as wp_direct_forces_kernel_nm,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _direct_forces_and_dE_dCN_kernel_overload as wp_direct_forces_kernel_nl,
+)
+
+# ==============================================================================
+# JAX Kernel Wrappers (jax_kernel around Warp kernel overloads)
+# ==============================================================================
+
+# --- Pass 0: Cartesian Shift Computation ---
+
+compute_cartesian_shifts_nm = jax_kernel(
+    wp_compute_cartesian_shifts_nm[wp.float32], num_outputs=1
+)
+compute_cartesian_shifts_nl = jax_kernel(
+    wp_compute_cartesian_shifts_nl[wp.float32], num_outputs=1
+)
+# --- Pass 1: Coordination Number Computation ---
+
+cn_kernel_nm = jax_kernel(wp_cn_kernel_nm[wp.float32], num_outputs=1)
+cn_kernel_nl = jax_kernel(wp_cn_kernel_nl[wp.float32], num_outputs=1)
+# --- Pass 2: Direct Forces and dE/dCN Computation ---
+
+direct_forces_kernel_nm = jax_kernel(
+    wp_direct_forces_kernel_nm[wp.float32], num_outputs=4
+)
+direct_forces_kernel_nl = jax_kernel(
+    wp_direct_forces_kernel_nl[wp.float32], num_outputs=4
+)
+
+# --- Pass 3: CN-Dependent Force Contribution ---
+
+cn_forces_contrib_nm = jax_kernel(wp_cn_forces_contrib_nm[wp.float32], num_outputs=2)
+cn_forces_contrib_nl = jax_kernel(wp_cn_forces_contrib_nl[wp.float32], num_outputs=2)
 
 __all__ = [
     "D3Parameters",
     "dftd3",
+    "compute_cartesian_shifts_nm",
+    "compute_cartesian_shifts_nl",
+    "cn_kernel_nm",
+    "cn_kernel_nl",
+    "direct_forces_kernel_nm",
+    "direct_forces_kernel_nl",
+    "cn_forces_contrib_nm",
+    "cn_forces_contrib_nl",
 ]
 
 
@@ -235,8 +290,9 @@ def _dftd3_nm_impl(
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
-    """Internal implementation for neighbor matrix format using Warp kernels."""
+    """Internal implementation for neighbor matrix format using jax_kernel wrappers."""
     num_atoms = positions.shape[0]
+    max_neighbors = neighbor_matrix.shape[1] if num_atoms > 0 else 0
 
     # Set fill_value if not provided
     if fill_value is None:
@@ -263,120 +319,134 @@ def _dftd3_nm_impl(
     else:
         num_systems = 1
 
-    # Determine vector/matrix dtype based on positions
-    if positions.dtype == jnp.float64:
-        vec_dtype = wp.vec3d
-        mat_dtype = wp.mat33d
-    else:
-        vec_dtype = wp.vec3f
-        mat_dtype = wp.mat33f
-
-    # Infer device from JAX array placement if not provided
-    # Also get JAX device for output array allocation
-    if device is None:
-        # Check if JAX array is on GPU
-        try:
-            jax_device = positions.devices().pop()
-            device_kind = jax_device.platform
-            if device_kind == "gpu":
-                device = "cuda:0"
-            else:
-                device = "cpu"
-        except (AttributeError, KeyError):
-            jax_device = jax.devices("cpu")[0]
-            device = "cpu"
-    else:
-        # Map warp device string to JAX device
-        if device.startswith("cuda"):
-            jax_device = jax.devices("gpu")[0]
-        else:
-            jax_device = jax.devices("cpu")[0]
+    # Infer JAX device from positions array
+    jax_device = positions.devices().pop()
 
     # Create batch indices if not provided
     if batch_idx is None:
         batch_idx = jax.device_put(jnp.zeros(num_atoms, dtype=jnp.int32), jax_device)
 
-    # Convert JAX input arrays to Warp using dlpack (zero-copy when possible)
-    # JAX arrays are already contiguous by design
-    positions_wp = wp.from_dlpack(positions, dtype=vec_dtype)
-    numbers_wp = wp.from_dlpack(numbers.astype(jnp.int32), dtype=wp.int32)
-    neighbor_matrix_wp = wp.from_dlpack(
-        neighbor_matrix.astype(jnp.int32), dtype=wp.int32
-    )
-    batch_idx_wp = wp.from_dlpack(batch_idx.astype(jnp.int32), dtype=wp.int32)
+    # Ensure arrays have correct dtypes for kernels (float32 for now)
+    positions_f32 = positions.astype(jnp.float32)
+    numbers_i32 = numbers.astype(jnp.int32)
+    neighbor_matrix_i32 = neighbor_matrix.astype(jnp.int32)
+    batch_idx_i32 = batch_idx.astype(jnp.int32)
+    covalent_radii_f32 = covalent_radii.astype(jnp.float32)
+    r4r2_f32 = r4r2.astype(jnp.float32)
+    c6_reference_f32 = c6_reference.astype(jnp.float32)
+    coord_num_ref_f32 = coord_num_ref.astype(jnp.float32)
 
-    # Convert parameters to float32 and to Warp arrays using dlpack
-    covalent_radii_wp = wp.from_dlpack(
-        covalent_radii.astype(jnp.float32), dtype=wp.float32
-    )
-    r4r2_wp = wp.from_dlpack(r4r2.astype(jnp.float32), dtype=wp.float32)
-    c6_reference_wp = wp.from_dlpack(c6_reference.astype(jnp.float32), dtype=wp.float32)
-    coord_num_ref_wp = wp.from_dlpack(
-        coord_num_ref.astype(jnp.float32), dtype=wp.float32
-    )
+    # Precompute inv_w for S5 switching
+    if s5_smoothing_off > s5_smoothing_on:
+        inv_w = 1.0 / (s5_smoothing_off - s5_smoothing_on)
+    else:
+        inv_w = 0.0
 
-    # Handle cell and shifts for PBC
+    # Pass 0: Handle PBC - determine if periodic and compute cartesian shifts
     if cell is not None and neighbor_matrix_shifts is not None:
-        cell_wp = wp.from_dlpack(cell.astype(positions.dtype), dtype=mat_dtype)
-        neighbor_matrix_shifts_wp = wp.from_dlpack(
-            neighbor_matrix_shifts.astype(jnp.int32), dtype=wp.vec3i
+        periodic = True
+        cell_f32 = cell.astype(jnp.float32)
+        neighbor_matrix_shifts_i32 = neighbor_matrix_shifts.astype(jnp.int32)
+
+        # compute_cartesian_shifts returns a tuple with 1 output
+        # Launch dim is derived from first array argument, but we need 2D launch (num_atoms, max_neighbors)
+        # Use launch_dims parameter to specify
+        (cartesian_shifts,) = compute_cartesian_shifts_nm(
+            cell_f32,
+            neighbor_matrix_shifts_i32,
+            neighbor_matrix_i32,
+            batch_idx_i32,
+            jnp.int32(fill_value),
+            launch_dims=(num_atoms, max_neighbors),
         )
     else:
-        cell_wp = None
-        neighbor_matrix_shifts_wp = None
-
-    # Allocate output arrays in JAX on the same device as inputs
-    # Warp kernel writes directly to JAX array's memory (zero-copy)
-    energy = jax.device_put(jnp.zeros(num_systems, dtype=jnp.float32), jax_device)
-    forces = jax.device_put(jnp.zeros((num_atoms, 3), dtype=jnp.float32), jax_device)
-    coord_num = jax.device_put(jnp.zeros(num_atoms, dtype=jnp.float32), jax_device)
-    if compute_virial:
-        virial = jax.device_put(
-            jnp.zeros((num_systems, 3, 3), dtype=jnp.float32), jax_device
+        periodic = False
+        # Create zero shifts array (not used but need correct shape for kernel)
+        cartesian_shifts = jax.device_put(
+            jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.float32), jax_device
         )
-    else:
-        virial = jax.device_put(jnp.zeros((0, 3, 3), dtype=jnp.float32), jax_device)
 
-    # Convert JAX output arrays to Warp via dlpack (zero-copy view)
-    energy_wp = wp.from_dlpack(energy, dtype=wp.float32)
-    forces_wp = wp.from_dlpack(forces, dtype=wp.vec3f)
-    coord_num_wp = wp.from_dlpack(coord_num, dtype=wp.float32)
-    virial_wp = wp.from_dlpack(virial, dtype=wp.mat33f)
-
-    # Call Warp launcher
-    wp_dftd3_nm(
-        positions=positions_wp,
-        numbers=numbers_wp,
-        neighbor_matrix=neighbor_matrix_wp,
-        covalent_radii=covalent_radii_wp,
-        r4r2=r4r2_wp,
-        c6_reference=c6_reference_wp,
-        coord_num_ref=coord_num_ref_wp,
-        a1=a1,
-        a2=a2,
-        s8=s8,
-        coord_num=coord_num_wp,
-        forces=forces_wp,
-        energy=energy_wp,
-        virial=virial_wp,
-        vec_dtype=vec_dtype,
-        k1=k1,
-        k3=k3,
-        s6=s6,
-        s5_smoothing_on=s5_smoothing_on,
-        s5_smoothing_off=s5_smoothing_off,
-        fill_value=fill_value,
-        batch_idx=batch_idx_wp,
-        cell=cell_wp,
-        neighbor_matrix_shifts=neighbor_matrix_shifts_wp,
-        compute_virial=compute_virial,
-        device=device,
+    # Pass 1: Compute coordination numbers
+    # cn_kernel_nm returns a tuple with 1 output (coord_num)
+    # Inputs: positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii, k1, fill_value, periodic
+    # Launch dim is inferred from the first array argument (positions_f32)
+    (coord_num,) = cn_kernel_nm(
+        positions_f32,
+        numbers_i32,
+        neighbor_matrix_i32,
+        cartesian_shifts,
+        covalent_radii_f32,
+        jnp.float32(k1),
+        jnp.int32(fill_value),
+        periodic,
     )
 
-    # Synchronize device to ensure Warp kernel writes are visible to JAX
-    wp.synchronize_device(device)
+    # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
+    # direct_forces_kernel_nm returns a tuple with 4 outputs (dE_dCN, forces, energy, virial)
+    # Inputs (20): positions, numbers, neighbor_matrix, cartesian_shifts, coord_num, r4r2,
+    #              c6_reference, coord_num_ref, k3, a1, a2, s6, s8, s5_on, s5_off, inv_w,
+    #              fill_value, periodic, batch_idx, compute_virial
+    # Outputs (4): dE_dCN, forces, energy, virial (returned, not passed)
+    # Output dims: dE_dCN [num_atoms], forces [num_atoms] (vec3f), energy [num_systems], virial [num_systems] (mat33f)
+    # Note: virial always needs a valid shape even when not computed (kernel still returns it)
+    dE_dCN, forces, energy, virial = direct_forces_kernel_nm(
+        positions_f32,
+        numbers_i32,
+        neighbor_matrix_i32,
+        cartesian_shifts,
+        coord_num,
+        r4r2_f32,
+        c6_reference_f32,
+        coord_num_ref_f32,
+        jnp.float32(k3),
+        jnp.float32(a1),
+        jnp.float32(a2),
+        jnp.float32(s6),
+        jnp.float32(s8),
+        jnp.float32(s5_smoothing_on),
+        jnp.float32(s5_smoothing_off),
+        jnp.float32(inv_w),
+        jnp.int32(fill_value),
+        periodic,
+        batch_idx_i32,
+        compute_virial,
+        output_dims={
+            "dE_dCN": (num_atoms,),
+            "forces": (num_atoms,),
+            "energy": (num_systems,),
+            "virial": (num_systems,),
+        },
+    )
 
-    # Return JAX arrays (which now contain computed values via shared memory)
+    # Pass 3: Add CN-dependent force contribution
+    # cn_forces_contrib_nm returns a tuple with 2 outputs (forces, virial)
+    # Inputs (11): positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii,
+    #              dE_dCN, k1, fill_value, periodic, batch_idx, compute_virial
+    # Outputs (2): forces, virial (returned, not passed)
+    # Note: These are NEW forces/virial arrays - they need to be added to existing ones
+    forces_cn, virial_cn = cn_forces_contrib_nm(
+        positions_f32,
+        numbers_i32,
+        neighbor_matrix_i32,
+        cartesian_shifts,
+        covalent_radii_f32,
+        dE_dCN,
+        jnp.float32(k1),
+        jnp.int32(fill_value),
+        periodic,
+        batch_idx_i32,
+        compute_virial,
+        output_dims={
+            "forces": (num_atoms,),
+            "virial": (num_systems,),
+        },
+    )
+
+    # Add CN force contribution to direct forces
+    forces = forces + forces_cn
+    virial = virial + virial_cn
+
+    # Return JAX arrays
     if compute_virial:
         return energy, forces, coord_num, virial
     else:
@@ -409,7 +479,7 @@ def _dftd3_nl_impl(
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
-    """Internal implementation for neighbor list format using Warp kernels."""
+    """Internal implementation for neighbor list format using jax_kernel wrappers."""
     num_atoms = positions.shape[0]
     num_edges = idx_j.shape[0]
 
@@ -434,117 +504,129 @@ def _dftd3_nl_impl(
     else:
         num_systems = 1
 
-    # Determine vector/matrix dtype based on positions
-    if positions.dtype == jnp.float64:
-        vec_dtype = wp.vec3d
-        mat_dtype = wp.mat33d
-    else:
-        vec_dtype = wp.vec3f
-        mat_dtype = wp.mat33f
-
-    # Infer device from JAX array placement if not provided
-    # Also get JAX device for output array allocation
-    if device is None:
-        # Check if JAX array is on GPU
-        try:
-            jax_device = positions.devices().pop()
-            device_kind = jax_device.platform
-            if device_kind == "gpu":
-                device = "cuda:0"
-            else:
-                device = "cpu"
-        except (AttributeError, KeyError):
-            jax_device = jax.devices("cpu")[0]
-            device = "cpu"
-    else:
-        # Map warp device string to JAX device
-        if device.startswith("cuda"):
-            jax_device = jax.devices("gpu")[0]
-        else:
-            jax_device = jax.devices("cpu")[0]
+    # Infer JAX device from positions array
+    jax_device = positions.devices().pop()
 
     # Create batch indices if not provided
     if batch_idx is None:
         batch_idx = jax.device_put(jnp.zeros(num_atoms, dtype=jnp.int32), jax_device)
 
-    # Convert JAX input arrays to Warp using dlpack (zero-copy when possible)
-    # JAX arrays are already contiguous by design
-    positions_wp = wp.from_dlpack(positions, dtype=vec_dtype)
-    numbers_wp = wp.from_dlpack(numbers.astype(jnp.int32), dtype=wp.int32)
-    idx_j_wp = wp.from_dlpack(idx_j.astype(jnp.int32), dtype=wp.int32)
-    neighbor_ptr_wp = wp.from_dlpack(neighbor_ptr.astype(jnp.int32), dtype=wp.int32)
-    batch_idx_wp = wp.from_dlpack(batch_idx.astype(jnp.int32), dtype=wp.int32)
+    # Ensure arrays have correct dtypes for kernels (float32 for now)
+    positions_f32 = positions.astype(jnp.float32)
+    numbers_i32 = numbers.astype(jnp.int32)
+    idx_j_i32 = idx_j.astype(jnp.int32)
+    neighbor_ptr_i32 = neighbor_ptr.astype(jnp.int32)
+    batch_idx_i32 = batch_idx.astype(jnp.int32)
+    covalent_radii_f32 = covalent_radii.astype(jnp.float32)
+    r4r2_f32 = r4r2.astype(jnp.float32)
+    c6_reference_f32 = c6_reference.astype(jnp.float32)
+    coord_num_ref_f32 = coord_num_ref.astype(jnp.float32)
 
-    # Convert parameters to float32 and to Warp arrays using dlpack
-    covalent_radii_wp = wp.from_dlpack(
-        covalent_radii.astype(jnp.float32), dtype=wp.float32
-    )
-    r4r2_wp = wp.from_dlpack(r4r2.astype(jnp.float32), dtype=wp.float32)
-    c6_reference_wp = wp.from_dlpack(c6_reference.astype(jnp.float32), dtype=wp.float32)
-    coord_num_ref_wp = wp.from_dlpack(
-        coord_num_ref.astype(jnp.float32), dtype=wp.float32
-    )
-
-    # Handle cell and shifts for PBC
-    if unit_shifts is not None and cell is not None:
-        cell_wp = wp.from_dlpack(cell.astype(positions.dtype), dtype=mat_dtype)
-        unit_shifts_wp = wp.from_dlpack(unit_shifts.astype(jnp.int32), dtype=wp.vec3i)
+    # Precompute inv_w for S5 switching
+    if s5_smoothing_off > s5_smoothing_on:
+        inv_w = 1.0 / (s5_smoothing_off - s5_smoothing_on)
     else:
-        cell_wp = None
-        unit_shifts_wp = None
+        inv_w = 0.0
 
-    # Allocate output arrays in JAX on the same device as inputs
-    # Warp kernel writes directly to JAX array's memory (zero-copy)
-    energy = jax.device_put(jnp.zeros(num_systems, dtype=jnp.float32), jax_device)
-    forces = jax.device_put(jnp.zeros((num_atoms, 3), dtype=jnp.float32), jax_device)
-    coord_num = jax.device_put(jnp.zeros(num_atoms, dtype=jnp.float32), jax_device)
-    if compute_virial:
-        virial = jax.device_put(
-            jnp.zeros((num_systems, 3, 3), dtype=jnp.float32), jax_device
+    # Pass 0: Handle PBC - determine if periodic and compute cartesian shifts
+    if unit_shifts is not None and cell is not None:
+        periodic = True
+        cell_f32 = cell.astype(jnp.float32)
+        unit_shifts_i32 = unit_shifts.astype(jnp.int32)
+
+        # compute_cartesian_shifts_nl returns a tuple with 1 output
+        (cartesian_shifts,) = compute_cartesian_shifts_nl(
+            cell_f32,
+            unit_shifts_i32,
+            neighbor_ptr_i32,
+            batch_idx_i32,
         )
     else:
-        virial = jax.device_put(jnp.zeros((0, 3, 3), dtype=jnp.float32), jax_device)
+        periodic = False
+        # Create zero shifts array (not used but need correct shape for kernel)
+        cartesian_shifts = jax.device_put(
+            jnp.zeros((num_edges, 3), dtype=jnp.float32), jax_device
+        )
 
-    # Convert JAX output arrays to Warp via dlpack (zero-copy view)
-    energy_wp = wp.from_dlpack(energy, dtype=wp.float32)
-    forces_wp = wp.from_dlpack(forces, dtype=wp.vec3f)
-    coord_num_wp = wp.from_dlpack(coord_num, dtype=wp.float32)
-    virial_wp = wp.from_dlpack(virial, dtype=wp.mat33f)
-
-    # Call Warp launcher
-    wp_dftd3_nl(
-        positions=positions_wp,
-        numbers=numbers_wp,
-        idx_j=idx_j_wp,
-        neighbor_ptr=neighbor_ptr_wp,
-        covalent_radii=covalent_radii_wp,
-        r4r2=r4r2_wp,
-        c6_reference=c6_reference_wp,
-        coord_num_ref=coord_num_ref_wp,
-        a1=a1,
-        a2=a2,
-        s8=s8,
-        coord_num=coord_num_wp,
-        forces=forces_wp,
-        energy=energy_wp,
-        virial=virial_wp,
-        vec_dtype=vec_dtype,
-        k1=k1,
-        k3=k3,
-        s6=s6,
-        s5_smoothing_on=s5_smoothing_on,
-        s5_smoothing_off=s5_smoothing_off,
-        batch_idx=batch_idx_wp,
-        cell=cell_wp,
-        unit_shifts=unit_shifts_wp,
-        compute_virial=compute_virial,
-        device=device,
+    # Pass 1: Compute coordination numbers
+    # cn_kernel_nl returns a tuple with 1 output (coord_num)
+    # Inputs: positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii, k1, periodic
+    # Launch dim is inferred from the first array argument (positions_f32)
+    (coord_num,) = cn_kernel_nl(
+        positions_f32,
+        numbers_i32,
+        idx_j_i32,
+        neighbor_ptr_i32,
+        cartesian_shifts,
+        covalent_radii_f32,
+        jnp.float32(k1),
+        periodic,
     )
 
-    # Synchronize device to ensure Warp kernel writes are visible to JAX
-    wp.synchronize_device(device)
+    # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
+    # direct_forces_kernel_nl returns a tuple with 4 outputs (dE_dCN, forces, energy, virial)
+    # Inputs (17): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, coord_num, r4r2,
+    #              c6_reference, coord_num_ref, k3, a1, a2, s6, s8, s5_on, s5_off, inv_w,
+    #              periodic, batch_idx, compute_virial
+    # Outputs (4): dE_dCN, forces, energy, virial (returned, not passed)
+    dE_dCN, forces, energy, virial = direct_forces_kernel_nl(
+        positions_f32,
+        numbers_i32,
+        idx_j_i32,
+        neighbor_ptr_i32,
+        cartesian_shifts,
+        coord_num,
+        r4r2_f32,
+        c6_reference_f32,
+        coord_num_ref_f32,
+        jnp.float32(k3),
+        jnp.float32(a1),
+        jnp.float32(a2),
+        jnp.float32(s6),
+        jnp.float32(s8),
+        jnp.float32(s5_smoothing_on),
+        jnp.float32(s5_smoothing_off),
+        jnp.float32(inv_w),
+        periodic,
+        batch_idx_i32,
+        compute_virial,
+        output_dims={
+            "dE_dCN": (num_atoms,),
+            "forces": (num_atoms,),
+            "energy": (num_systems,),
+            "virial": (num_systems,),
+        },
+    )
 
-    # Return JAX arrays (which now contain computed values via shared memory)
+    # Pass 3: Add CN-dependent force contribution
+    # cn_forces_contrib_nl returns a tuple with 2 outputs (forces, virial)
+    # Inputs (9): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii,
+    #              dE_dCN, k1, periodic, batch_idx, compute_virial
+    # Outputs (2): forces, virial (returned, not passed)
+    # Note: These are NEW forces/virial arrays - they need to be added to existing ones
+    forces_cn, virial_cn = cn_forces_contrib_nl(
+        positions_f32,
+        numbers_i32,
+        idx_j_i32,
+        neighbor_ptr_i32,
+        cartesian_shifts,
+        covalent_radii_f32,
+        dE_dCN,
+        jnp.float32(k1),
+        periodic,
+        batch_idx_i32,
+        compute_virial,
+        output_dims={
+            "forces": (num_atoms,),
+            "virial": (num_systems,),
+        },
+    )
+
+    # Add CN force contribution to direct forces
+    forces = forces + forces_cn
+    virial = virial + virial_cn
+
+    # Return JAX arrays
     if compute_virial:
         return energy, forces, coord_num, virial
     else:
