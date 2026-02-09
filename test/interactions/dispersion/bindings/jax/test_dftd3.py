@@ -43,12 +43,16 @@ def place_on_device(arr: jax.Array, device_type: str) -> jax.Array:
 # ==============================================================================
 
 
-@pytest.fixture(params=["cpu", "gpu"])
-def device(request):
-    """Parametrized fixture for testing on CPU and GPU."""
-    if request.param == "gpu" and len(jax.devices("gpu")) == 0:
+@pytest.fixture()
+def device():
+    """GPU device fixture. Skips when no CUDA device is available.
+
+    jax_kernel wrappers are CUDA-only (Warp JAX FFI limitation),
+    so DFT-D3 JAX binding tests only run on GPU.
+    """
+    if len(jax.devices("gpu")) == 0:
         pytest.skip("No CUDA device available.")
-    return request.param
+    return "gpu"
 
 
 @pytest.fixture(scope="module")
@@ -553,110 +557,6 @@ class TestDFT_D3Dtypes:
         assert jnp.allclose(energy_f64, energy_f32, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(forces_f64, forces_f32, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num_f64, coord_num_f32, rtol=1e-5, atol=1e-7)
-
-
-# ==============================================================================
-# CPU-GPU Consistency Tests
-# ==============================================================================
-
-
-class TestCPUGPUConsistency:
-    """Test that CPU and GPU produce identical results."""
-
-    def test_cpu_gpu_consistency(self, h2_system, functional_params, d3_params):
-        """Test CPU and GPU produce identical results."""
-        if len(jax.devices("gpu")) == 0:
-            pytest.skip("No CUDA device available for GPU comparison")
-
-        # Setup inputs on CPU
-        positions_cpu = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), "cpu"
-        )
-        numbers_cpu = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), "cpu"
-        )
-        neighbor_matrix_cpu = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), "cpu"
-        )
-
-        # Place d3_params on CPU
-        d3_params_cpu = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, "cpu"),
-            r4r2=place_on_device(d3_params.r4r2, "cpu"),
-            c6ab=place_on_device(d3_params.c6ab, "cpu"),
-            cn_ref=place_on_device(d3_params.cn_ref, "cpu"),
-        )
-
-        # Run on CPU
-        result_cpu = dftd3(
-            positions_cpu,
-            numbers_cpu,
-            a1=functional_params["a1"],
-            a2=functional_params["a2"],
-            s8=functional_params["s8"],
-            neighbor_matrix=neighbor_matrix_cpu,
-            d3_params=d3_params_cpu,
-        )
-        energy_cpu = result_cpu[0]
-        forces_cpu = result_cpu[1]
-        coord_num_cpu = result_cpu[2]
-
-        # Setup inputs on GPU
-        positions_gpu = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), "gpu"
-        )
-        numbers_gpu = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), "gpu"
-        )
-        neighbor_matrix_gpu = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), "gpu"
-        )
-
-        # Place d3_params on GPU
-        d3_params_gpu = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, "gpu"),
-            r4r2=place_on_device(d3_params.r4r2, "gpu"),
-            c6ab=place_on_device(d3_params.c6ab, "gpu"),
-            cn_ref=place_on_device(d3_params.cn_ref, "gpu"),
-        )
-
-        # Run on GPU
-        result_gpu = dftd3(
-            positions_gpu,
-            numbers_gpu,
-            a1=functional_params["a1"],
-            a2=functional_params["a2"],
-            s8=functional_params["s8"],
-            neighbor_matrix=neighbor_matrix_gpu,
-            d3_params=d3_params_gpu,
-        )
-        energy_gpu = result_gpu[0]
-        forces_gpu = result_gpu[1]
-        coord_num_gpu = result_gpu[2]
-
-        # Move GPU results to CPU for comparison
-        energy_gpu_cpu = jnp.asarray(energy_gpu)
-        forces_gpu_cpu = jnp.asarray(forces_gpu)
-        coord_num_gpu_cpu = jnp.asarray(coord_num_gpu)
-
-        # Move CPU results to same place for comparison
-        energy_cpu_np = jnp.asarray(energy_cpu)
-        forces_cpu_np = jnp.asarray(forces_cpu)
-        coord_num_cpu_np = jnp.asarray(coord_num_cpu)
-
-        # Compare results using numpy arrays to avoid device conflicts
-        assert jnp.allclose(
-            np.asarray(energy_gpu_cpu), np.asarray(energy_cpu_np), rtol=1e-5, atol=1e-7
-        )
-        assert jnp.allclose(
-            np.asarray(forces_gpu_cpu), np.asarray(forces_cpu_np), rtol=1e-5, atol=1e-7
-        )
-        assert jnp.allclose(
-            np.asarray(coord_num_gpu_cpu),
-            np.asarray(coord_num_cpu_np),
-            rtol=1e-5,
-            atol=1e-7,
-        )
 
 
 # ==============================================================================

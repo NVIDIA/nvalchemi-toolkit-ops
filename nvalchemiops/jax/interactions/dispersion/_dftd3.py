@@ -111,16 +111,28 @@ cn_kernel_nl = jax_kernel(wp_cn_kernel_nl[wp.float32], num_outputs=1)
 # --- Pass 2: Direct Forces and dE/dCN Computation ---
 
 direct_forces_kernel_nm = jax_kernel(
-    wp_direct_forces_kernel_nm[wp.float32], num_outputs=4
+    wp_direct_forces_kernel_nm[wp.float32],
+    num_outputs=4,
+    in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
 )
 direct_forces_kernel_nl = jax_kernel(
-    wp_direct_forces_kernel_nl[wp.float32], num_outputs=4
+    wp_direct_forces_kernel_nl[wp.float32],
+    num_outputs=4,
+    in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
 )
 
 # --- Pass 3: CN-Dependent Force Contribution ---
 
-cn_forces_contrib_nm = jax_kernel(wp_cn_forces_contrib_nm[wp.float32], num_outputs=2)
-cn_forces_contrib_nl = jax_kernel(wp_cn_forces_contrib_nl[wp.float32], num_outputs=2)
+cn_forces_contrib_nm = jax_kernel(
+    wp_cn_forces_contrib_nm[wp.float32],
+    num_outputs=2,
+    in_out_argnames=["forces", "virial"],
+)
+cn_forces_contrib_nl = jax_kernel(
+    wp_cn_forces_contrib_nl[wp.float32],
+    num_outputs=2,
+    in_out_argnames=["forces", "virial"],
+)
 
 __all__ = [
     "D3Parameters",
@@ -386,9 +398,16 @@ def _dftd3_nm_impl(
     # Inputs (20): positions, numbers, neighbor_matrix, cartesian_shifts, coord_num, r4r2,
     #              c6_reference, coord_num_ref, k3, a1, a2, s6, s8, s5_on, s5_off, inv_w,
     #              fill_value, periodic, batch_idx, compute_virial
-    # Outputs (4): dE_dCN, forces, energy, virial (returned, not passed)
-    # Output dims: dE_dCN [num_atoms], forces [num_atoms] (vec3f), energy [num_systems], virial [num_systems] (mat33f)
-    # Note: virial always needs a valid shape even when not computed (kernel still returns it)
+    # Inputs (4 in_out): dE_dCN, forces, energy, virial (pre-allocated, zeroed)
+    # Outputs (4): dE_dCN, forces, energy, virial (modified versions returned)
+    # Output dims: dE_dCN [num_atoms], forces [num_atoms, 3], energy [num_systems], virial [num_systems, 3, 3]
+    # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
+    #       and the kernel uses atomic_add for energy/virial
+    dE_dCN_init = jnp.zeros(num_atoms, dtype=jnp.float32)
+    forces_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    energy_init = jnp.zeros(num_systems, dtype=jnp.float32)
+    virial_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+
     dE_dCN, forces, energy, virial = direct_forces_kernel_nm(
         positions_f32,
         numbers_i32,
@@ -410,20 +429,24 @@ def _dftd3_nm_impl(
         periodic,
         batch_idx_i32,
         compute_virial,
-        output_dims={
-            "dE_dCN": (num_atoms,),
-            "forces": (num_atoms,),
-            "energy": (num_systems,),
-            "virial": (num_systems,),
-        },
+        dE_dCN_init,
+        forces_init,
+        energy_init,
+        virial_init,
     )
 
     # Pass 3: Add CN-dependent force contribution
     # cn_forces_contrib_nm returns a tuple with 2 outputs (forces, virial)
     # Inputs (11): positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii,
     #              dE_dCN, k1, fill_value, periodic, batch_idx, compute_virial
-    # Outputs (2): forces, virial (returned, not passed)
-    # Note: These are NEW forces/virial arrays - they need to be added to existing ones
+    # Inputs (2 in_out): forces, virial (pre-allocated, zeroed)
+    # Outputs (2): forces, virial (modified versions returned)
+    # Note: These are NEW forces/virial arrays - they will be added to existing ones after kernel
+    # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
+    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial
+    forces_cn_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+
     forces_cn, virial_cn = cn_forces_contrib_nm(
         positions_f32,
         numbers_i32,
@@ -436,10 +459,8 @@ def _dftd3_nm_impl(
         periodic,
         batch_idx_i32,
         compute_virial,
-        output_dims={
-            "forces": (num_atoms,),
-            "virial": (num_systems,),
-        },
+        forces_cn_init,
+        virial_cn_init,
     )
 
     # Add CN force contribution to direct forces
@@ -568,7 +589,15 @@ def _dftd3_nl_impl(
     # Inputs (17): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, coord_num, r4r2,
     #              c6_reference, coord_num_ref, k3, a1, a2, s6, s8, s5_on, s5_off, inv_w,
     #              periodic, batch_idx, compute_virial
-    # Outputs (4): dE_dCN, forces, energy, virial (returned, not passed)
+    # Inputs (4 in_out): dE_dCN, forces, energy, virial (pre-allocated, zeroed)
+    # Outputs (4): dE_dCN, forces, energy, virial (modified versions returned)
+    # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
+    #       and the kernel uses atomic_add for energy/virial
+    dE_dCN_init = jnp.zeros(num_atoms, dtype=jnp.float32)
+    forces_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    energy_init = jnp.zeros(num_systems, dtype=jnp.float32)
+    virial_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+
     dE_dCN, forces, energy, virial = direct_forces_kernel_nl(
         positions_f32,
         numbers_i32,
@@ -590,20 +619,24 @@ def _dftd3_nl_impl(
         periodic,
         batch_idx_i32,
         compute_virial,
-        output_dims={
-            "dE_dCN": (num_atoms,),
-            "forces": (num_atoms,),
-            "energy": (num_systems,),
-            "virial": (num_systems,),
-        },
+        dE_dCN_init,
+        forces_init,
+        energy_init,
+        virial_init,
     )
 
     # Pass 3: Add CN-dependent force contribution
     # cn_forces_contrib_nl returns a tuple with 2 outputs (forces, virial)
     # Inputs (9): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii,
     #              dE_dCN, k1, periodic, batch_idx, compute_virial
-    # Outputs (2): forces, virial (returned, not passed)
-    # Note: These are NEW forces/virial arrays - they need to be added to existing ones
+    # Inputs (2 in_out): forces, virial (pre-allocated, zeroed)
+    # Outputs (2): forces, virial (modified versions returned)
+    # Note: These are NEW forces/virial arrays - they will be added to existing ones after kernel
+    # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
+    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial
+    forces_cn_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+
     forces_cn, virial_cn = cn_forces_contrib_nl(
         positions_f32,
         numbers_i32,
@@ -616,10 +649,8 @@ def _dftd3_nl_impl(
         periodic,
         batch_idx_i32,
         compute_virial,
-        output_dims={
-            "forces": (num_atoms,),
-            "virial": (num_systems,),
-        },
+        forces_cn_init,
+        virial_cn_init,
     )
 
     # Add CN force contribution to direct forces
