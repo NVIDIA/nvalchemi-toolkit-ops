@@ -1,0 +1,38 @@
+# Benchmark config: float64, virial enabled
+parameters:
+  warmup_iterations: 3
+  timing_iterations: 10
+  dtype: float64
+  device: cuda
+
+systems:
+  # Single system scaling
+  - name: cscl_single
+    system_type: cscl
+    mode: single
+    supercell_sizes: [3, 5, 10, 15]
+
+  # Batched - small systems (16 atoms each)
+  - name: cscl_batched_size2
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 2
+    batch_sizes: [1, 16, 256, 4096]
+
+  # Batched - medium systems (128 atoms each)
+  - name: cscl_batched_size4
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 4
+    batch_sizes: [1, 16, 256]
+
+methods:
+  - ewald
+  - pme
+
+components:
+  - full
+  - reciprocal
+
+compute_forces: true
+compute_virial: true
