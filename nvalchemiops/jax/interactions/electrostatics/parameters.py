@@ -126,7 +126,7 @@ def estimate_ewald_parameters(
     num_systems = cell.shape[0]
 
     # Compute volume per system: (B,)
-    volume = jnp.abs(jnp.linalg.det(cell)).squeeze(-1)
+    volume = jnp.abs(jnp.linalg.det(cell))
 
     # Get number of atoms per system: (B,)
     num_atoms = _count_atoms_per_system(positions, num_systems, batch_idx).astype(
@@ -229,7 +229,7 @@ def estimate_pme_parameters(
 
     # We need to compute alpha locally first
     num_systems = cell.shape[0]
-    volume = jnp.abs(jnp.linalg.det(cell)).squeeze(-1)
+    volume = jnp.abs(jnp.linalg.det(cell))
     num_atoms = _count_atoms_per_system(positions, num_systems, batch_idx).astype(
         positions.dtype
     )

@@ -168,7 +168,9 @@ def generate_k_vectors_ewald_summation(
         jnp.swapaxes(cell, -2, -1)
     )  # Transpose for column vectors
     k_vectors = miller_indices.astype(reciprocal_cell.dtype) @ reciprocal_cell
-    return jnp.squeeze(k_vectors, axis=0)
+    if k_vectors.shape[0] == 1:
+        return jnp.squeeze(k_vectors, axis=0)
+    return k_vectors
 
 
 def generate_k_vectors_pme(
