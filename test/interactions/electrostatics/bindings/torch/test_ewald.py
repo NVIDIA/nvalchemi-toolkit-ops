@@ -44,9 +44,16 @@ except ModuleNotFoundError:
 
 # Import test utilities for crystal structure generation
 from .test_utils import (
+    VIRIAL_DTYPE,
     create_cscl_supercell,
     create_wurtzite_system,
     create_zincblende_system,
+    fd_virial_full,
+    get_virial_neighbor_data,
+    make_non_neutral_system,
+    make_virial_batch_cscl_system,
+    make_virial_crystal_system,
+    make_virial_cscl_system,
 )
 
 # Tolerances
@@ -160,7 +167,7 @@ class TestDtypeSupport:
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     def test_real_space_dtype_returns_correct_type(self, device, dtype):
-        """Test that real-space returns tensors in input dtype."""
+        """Test that real-space returns energies in float64, forces in input dtype."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
@@ -170,7 +177,7 @@ class TestDtypeSupport:
         )
         alpha = torch.tensor([0.3], dtype=dtype, device=device)
 
-        # Test energy-only
+        # Test energy-only -- energies are always float64
         energies = ewald_real_space(
             positions,
             charges,
@@ -181,9 +188,9 @@ class TestDtypeSupport:
             neighbor_shifts=neighbor_shifts,
             compute_forces=False,
         )
-        assert energies.dtype == dtype, f"Expected {dtype}, got {energies.dtype}"
+        assert energies.dtype == torch.float64, f"Expected float64, got {energies.dtype}"
 
-        # Test with forces
+        # Test with forces -- forces match input dtype
         energies, forces = ewald_real_space(
             positions,
             charges,
@@ -194,13 +201,13 @@ class TestDtypeSupport:
             neighbor_shifts=neighbor_shifts,
             compute_forces=True,
         )
-        assert energies.dtype == dtype, f"Expected {dtype}, got {energies.dtype}"
+        assert energies.dtype == torch.float64, f"Expected float64, got {energies.dtype}"
         assert forces.dtype == dtype, f"Expected {dtype}, got {forces.dtype}"
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     def test_reciprocal_space_dtype_returns_correct_type(self, device, dtype):
-        """Test that reciprocal-space returns tensors in input dtype."""
+        """Test that reciprocal-space returns energies in float64, forces in input dtype."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
@@ -209,7 +216,7 @@ class TestDtypeSupport:
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0).squeeze(0)
         alpha = torch.tensor([0.3], dtype=dtype, device=device)
 
-        # Test energy-only
+        # Test energy-only -- energies are always float64
         energies = ewald_reciprocal_space(
             positions,
             charges,
@@ -218,9 +225,9 @@ class TestDtypeSupport:
             alpha,
             compute_forces=False,
         )
-        assert energies.dtype == dtype, f"Expected {dtype}, got {energies.dtype}"
+        assert energies.dtype == torch.float64, f"Expected float64, got {energies.dtype}"
 
-        # Test with forces
+        # Test with forces -- forces match input dtype
         energies, forces = ewald_reciprocal_space(
             positions,
             charges,
@@ -229,13 +236,13 @@ class TestDtypeSupport:
             alpha,
             compute_forces=True,
         )
-        assert energies.dtype == dtype, f"Expected {dtype}, got {energies.dtype}"
+        assert energies.dtype == torch.float64, f"Expected float64, got {energies.dtype}"
         assert forces.dtype == dtype, f"Expected {dtype}, got {forces.dtype}"
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     def test_ewald_summation_dtype_returns_correct_type(self, device, dtype):
-        """Test that full ewald_summation returns tensors in input dtype."""
+        """Test that full ewald_summation returns energies in float64, forces in input dtype."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
@@ -244,7 +251,7 @@ class TestDtypeSupport:
             create_dipole_system(device, dtype=dtype)
         )
 
-        # Test energy-only
+        # Test energy-only -- energies are always float64
         energies = ewald_summation(
             positions,
             charges,
@@ -256,9 +263,9 @@ class TestDtypeSupport:
             neighbor_shifts=neighbor_shifts,
             compute_forces=False,
         )
-        assert energies.dtype == dtype, f"Expected {dtype}, got {energies.dtype}"
+        assert energies.dtype == torch.float64, f"Expected float64, got {energies.dtype}"
 
-        # Test with forces
+        # Test with forces -- forces match input dtype
         energies, forces = ewald_summation(
             positions,
             charges,
@@ -270,7 +277,7 @@ class TestDtypeSupport:
             neighbor_shifts=neighbor_shifts,
             compute_forces=True,
         )
-        assert energies.dtype == dtype, f"Expected {dtype}, got {energies.dtype}"
+        assert energies.dtype == torch.float64, f"Expected float64, got {energies.dtype}"
         assert forces.dtype == dtype, f"Expected {dtype}, got {forces.dtype}"
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
@@ -355,7 +362,7 @@ class TestDtypeSupport:
         neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
         neighbor_shifts = torch.zeros((4, 3), dtype=torch.int32, device=device)
 
-        # Real space
+        # Real space -- energies always float64, forces match input dtype
         energies, forces = ewald_real_space(
             positions,
             charges,
@@ -367,10 +374,10 @@ class TestDtypeSupport:
             batch_idx=batch_idx,
             compute_forces=True,
         )
-        assert energies.dtype == dtype
+        assert energies.dtype == torch.float64
         assert forces.dtype == dtype
 
-        # Reciprocal space
+        # Reciprocal space -- energies always float64, forces match input dtype
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
         energies, forces = ewald_reciprocal_space(
             positions,
@@ -381,7 +388,7 @@ class TestDtypeSupport:
             batch_idx=batch_idx,
             compute_forces=True,
         )
-        assert energies.dtype == dtype
+        assert energies.dtype == torch.float64
         assert forces.dtype == dtype
 
 
@@ -1109,17 +1116,18 @@ class TestAutogradRealSpace:
     """Test autograd for real-space Ewald."""
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_position_gradients(self, device):
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_position_gradients(self, device, dtype):
         """Test gradients w.r.t. positions."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
         positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
+            create_dipole_system(device, dtype=dtype)
         )
         positions = positions.clone().requires_grad_(True)
-        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
 
         energies = ewald_real_space(
             positions,
@@ -1138,17 +1146,18 @@ class TestAutogradRealSpace:
         assert positions.grad.abs().sum() > 0
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_charge_gradients(self, device):
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_charge_gradients(self, device, dtype):
         """Test gradients w.r.t. charges."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
         positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
+            create_dipole_system(device, dtype=dtype)
         )
         charges = charges.clone().requires_grad_(True)
-        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
 
         energies = ewald_real_space(
             positions,
@@ -2064,16 +2073,17 @@ class TestAutogradReciprocalSpace:
     """Test autograd for reciprocal-space Ewald."""
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_position_gradients(self, device):
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_position_gradients(self, device, dtype):
         """Test gradients w.r.t. positions."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
-        positions, charges, cell, _, _, _ = create_dipole_system(device)
+        positions, charges, cell, _, _, _ = create_dipole_system(device, dtype=dtype)
         positions = positions.clone().requires_grad_(True)
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0).squeeze(0)
-        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
 
         energies = ewald_reciprocal_space(
             positions,
@@ -2089,16 +2099,17 @@ class TestAutogradReciprocalSpace:
         assert torch.isfinite(positions.grad).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_charge_gradients(self, device):
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_charge_gradients(self, device, dtype):
         """Test gradients w.r.t. charges."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
-        positions, charges, cell, _, _, _ = create_dipole_system(device)
+        positions, charges, cell, _, _, _ = create_dipole_system(device, dtype=dtype)
         charges = charges.clone().requires_grad_(True)
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0).squeeze(0)
-        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
 
         energies = ewald_reciprocal_space(
             positions,
@@ -2305,14 +2316,15 @@ class TestAutogradFullEwald:
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("compute_forces", [True, False])
-    def test_position_gradients(self, device, compute_forces):
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_position_gradients(self, device, compute_forces, dtype):
         """Test gradients w.r.t. positions."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
         positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
+            create_dipole_system(device, dtype=dtype)
         )
         positions = positions.clone().requires_grad_(True)
 
@@ -2348,14 +2360,15 @@ class TestAutogradFullEwald:
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("compute_forces", [True, False])
-    def test_charge_gradients(self, device, compute_forces):
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_charge_gradients(self, device, compute_forces, dtype):
         """Test gradients w.r.t. positions."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
         positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
+            create_dipole_system(device, dtype=dtype)
         )
         charges = charges.clone().requires_grad_(True)
 
@@ -4730,6 +4743,1067 @@ class TestEwaldSummationAutoEstimate:
         )
 
         assert all(torch.isfinite(result))
+
+
+###########################################################################################
+########################### Virial Tests ##################################################
+###########################################################################################
+
+
+class TestEwaldRealSpaceVirial:
+    """Test real-space Ewald virial against finite-difference strain derivatives."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_real_space_virial_shape(self, device):
+        """Virial output has correct shape."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        cutoff = 6.0
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        assert len(result) == 3
+        energies, forces, virial = result
+        assert virial.shape == (1, 3, 3)
+        assert virial.dtype == VIRIAL_DTYPE
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_real_space_virial_fd(self, device):
+        """Real-space virial matches finite-difference strain derivative."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        cutoff = 6.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+
+        def energy_fn(pos, c):
+            nl_new, np_new, us_new = cell_list(
+                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+            )
+            return ewald_real_space(
+                pos, charges, c, alpha,
+                neighbor_list=nl_new, neighbor_ptr=np_new, neighbor_shifts=us_new,
+                compute_forces=False,
+            ).sum()
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=get_virial_neighbor_data(positions, cell, cutoff)[0],
+            neighbor_ptr=get_virial_neighbor_data(positions, cell, cutoff)[1],
+            neighbor_shifts=get_virial_neighbor_data(positions, cell, cutoff)[2],
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device, h=1e-5)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg="Real-space virial does not match finite-difference reference",
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_real_space_virial_symmetry(self, device):
+        """Virial tensor should be approximately symmetric for cubic systems."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=6.0)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2].squeeze(0)
+        torch.testing.assert_close(
+            virial, virial.T,
+            atol=1e-6, rtol=1e-6,
+            msg="Virial tensor is not symmetric",
+        )
+
+
+class TestEwaldReciprocalSpaceVirial:
+    """Test reciprocal-space Ewald virial against finite-difference."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_reciprocal_virial_shape(self, device):
+        """Reciprocal virial output has correct shape."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        assert len(result) == 3
+        energies, forces, virial = result
+        assert virial.shape == (1, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_reciprocal_virial_fd(self, device):
+        """Reciprocal virial matches finite-difference strain derivative."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+
+        def energy_fn(pos, c):
+            kv = generate_k_vectors_ewald_summation(c, k_cutoff=3.0)
+            return ewald_reciprocal_space(
+                pos, charges, c, kv, alpha,
+                compute_forces=False,
+            ).sum()
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device, h=1e-5)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg="Reciprocal virial does not match finite-difference reference",
+        )
+
+
+class TestEwaldTotalVirial:
+    """Test total Ewald virial (real + reciprocal) against finite-difference."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_total_virial_shape(self, device):
+        """Total virial has correct shape."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        k_cutoff = 3.0
+        cutoff = 6.0
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+
+        result = ewald_summation(
+            positions, charges, cell,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            alpha=alpha, k_cutoff=k_cutoff,
+            compute_forces=True, compute_virial=True,
+        )
+        assert len(result) == 3
+        energies, forces, virial = result
+        assert virial.shape == (1, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_total_virial_fd(self, device):
+        """Total Ewald virial matches finite-difference."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        k_cutoff = 3.0
+        cutoff = 6.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+
+        def energy_fn(pos, c):
+            nl_new, np_new, us_new = cell_list(
+                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+            )
+            return ewald_summation(
+                pos, charges, c,
+                neighbor_list=nl_new, neighbor_ptr=np_new, neighbor_shifts=us_new,
+                alpha=alpha, k_cutoff=k_cutoff,
+                compute_forces=False,
+            ).sum()
+
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+        result = ewald_summation(
+            positions, charges, cell,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            alpha=alpha, k_cutoff=k_cutoff,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device, h=1e-5)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg="Total Ewald virial does not match finite-difference reference",
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_virial_is_sum_of_components(self, device):
+        """Total virial = real-space virial + reciprocal virial."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        k_cutoff = 3.0
+        cutoff = 6.0
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=k_cutoff)
+
+        rs_result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        real_virial = rs_result[2]
+
+        rec_result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        recip_virial = rec_result[2]
+
+        total_result = ewald_summation(
+            positions, charges, cell,
+            alpha=alpha, k_vectors=k_vectors,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        total_virial = total_result[2]
+
+        torch.testing.assert_close(
+            total_virial, real_virial + recip_virial,
+            atol=1e-6, rtol=1e-6,
+            msg="Total virial != real + reciprocal virial",
+        )
+
+
+class TestEwaldVirialDtypeSupport:
+    """Virial output dtype matches input dtype for both float32 and float64."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_real_space_virial_dtype(self, device, dtype):
+        """Real-space virial dtype matches input dtype."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, dtype=dtype, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=5.0)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.dtype == dtype
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_reciprocal_virial_dtype(self, device, dtype):
+        """Reciprocal virial dtype matches input dtype."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, dtype=dtype, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.dtype == dtype
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_total_virial_dtype(self, device, dtype):
+        """Total Ewald summation virial dtype matches input dtype."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, dtype=dtype, device=device)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=5.0)
+
+        result = ewald_summation(
+            positions, charges, cell,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            alpha=alpha, k_cutoff=3.0,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.dtype == dtype
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_float32_vs_float64_virial_consistency(self, device):
+        """Float32 and float64 virials are close (loose tolerance)."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions_f32, charges_f32, cell_f32 = make_virial_cscl_system(1, dtype=torch.float32, device=device)
+        positions_f64, charges_f64, cell_f64 = make_virial_cscl_system(1, dtype=torch.float64, device=device)
+        alpha_f32 = torch.tensor([0.3], dtype=torch.float32, device=device)
+        alpha_f64 = torch.tensor([0.3], dtype=torch.float64, device=device)
+        k_vectors_f32 = generate_k_vectors_ewald_summation(cell_f32, k_cutoff=3.0)
+        k_vectors_f64 = generate_k_vectors_ewald_summation(cell_f64, k_cutoff=3.0)
+
+        result_f32 = ewald_reciprocal_space(
+            positions_f32, charges_f32, cell_f32, k_vectors_f32, alpha_f32,
+            compute_forces=True, compute_virial=True,
+        )
+        result_f64 = ewald_reciprocal_space(
+            positions_f64, charges_f64, cell_f64, k_vectors_f64, alpha_f64,
+            compute_forces=True, compute_virial=True,
+        )
+        torch.testing.assert_close(
+            result_f32[2].to(torch.float64), result_f64[2],
+            atol=1e-3, rtol=1e-3,
+            msg="Float32 and float64 reciprocal virials differ significantly",
+        )
+
+
+class TestEwaldVirialBatchConsistency:
+    """Batch virial matches single-system virial."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_real_space_virial_shape(self, device):
+        """Batch real-space virial has shape (B, 3, 3)."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha, batch_idx, _, _, _, _, n_atoms = (
+            make_virial_batch_cscl_system(1, device=device)
+        )
+        cutoff = 5.0
+
+        nl_0, nptr_0, us_0 = get_virial_neighbor_data(
+            positions[:n_atoms], cell[:1], cutoff
+        )
+        nl_1, nptr_1, us_1 = get_virial_neighbor_data(
+            positions[n_atoms:], cell[1:], cutoff
+        )
+
+        nl_1_offset = nl_1.clone()
+        nl_1_offset[0] += n_atoms
+        nl = torch.cat([nl_0, nl_1_offset], dim=1)
+        us = torch.cat([us_0, us_1], dim=0)
+        nptr = torch.cat([nptr_0, nptr_1[1:] + nptr_0[-1]])
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            batch_idx=batch_idx,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (2, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_reciprocal_virial_shape(self, device):
+        """Batch reciprocal virial has shape (B, 3, 3)."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha, batch_idx, _, _, _, _, _ = (
+            make_virial_batch_cscl_system(1, device=device)
+        )
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            batch_idx=batch_idx,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (2, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_reciprocal_virial_matches_single(self, device):
+        """Batch reciprocal virial matches single-system virial."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, alpha, batch_idx, \
+            pos_s, q_s, cell_s, alpha_s, _ = make_virial_batch_cscl_system(1, device=device)
+
+        k_vectors_single = generate_k_vectors_ewald_summation(cell_s, k_cutoff=3.0)
+        k_vectors_batch = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+
+        single_result = ewald_reciprocal_space(
+            pos_s, q_s, cell_s, k_vectors_single, alpha_s,
+            compute_forces=True, compute_virial=True,
+        )
+        single_virial = single_result[2]
+
+        batch_result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors_batch, alpha,
+            batch_idx=batch_idx,
+            compute_forces=True, compute_virial=True,
+        )
+        batch_virial = batch_result[2]
+
+        torch.testing.assert_close(
+            batch_virial[0], single_virial[0],
+            atol=1e-6, rtol=1e-6,
+            msg="Batch virial[0] != single virial",
+        )
+        torch.testing.assert_close(
+            batch_virial[1], single_virial[0],
+            atol=1e-6, rtol=1e-6,
+            msg="Batch virial[1] != single virial",
+        )
+
+
+class TestEwaldVirialNeighborMatrix:
+    """Virial computation with neighbor_matrix format."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_real_space_virial_neighbor_matrix(self, device):
+        """Virial has correct shape with neighbor_matrix format."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
+        cell = torch.eye(3, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0) * 10.0
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        neighbor_matrix = torch.tensor([[1], [0]], dtype=torch.int32, device=device)
+        neighbor_matrix_shifts = torch.zeros(2, 1, 3, dtype=torch.int32, device=device)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (1, 3, 3)
+        assert torch.isfinite(virial).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_real_space_virial_matrix_matches_list(self, device):
+        """Neighbor matrix virial matches neighbor list virial."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
+        cell = torch.eye(3, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0) * 10.0
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+
+        neighbor_list = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=device)
+        neighbor_ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros(2, 3, dtype=torch.int32, device=device)
+
+        result_list = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True, compute_virial=True,
+        )
+
+        neighbor_matrix = torch.tensor([[1], [0]], dtype=torch.int32, device=device)
+        neighbor_matrix_shifts = torch.zeros(2, 1, 3, dtype=torch.int32, device=device)
+
+        result_matrix = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True, compute_virial=True,
+        )
+
+        torch.testing.assert_close(
+            result_list[2], result_matrix[2],
+            atol=1e-8, rtol=1e-8,
+            msg="Neighbor list virial != neighbor matrix virial",
+        )
+
+
+class TestEwaldVirialNonCubicCells:
+    """Virial FD tests with non-cubic simulation cells."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_orthorhombic_cell_virial_fd(self, device):
+        """Real-space virial FD check on orthorhombic cell."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        cell = torch.tensor(
+            [[[8.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 12.0]]],
+            dtype=VIRIAL_DTYPE, device=device,
+        )
+        positions = torch.tensor(
+            [[2.0, 5.0, 6.0], [6.0, 5.0, 6.0]], dtype=VIRIAL_DTYPE, device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        cutoff = 5.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+
+        def energy_fn(pos, c):
+            nl_new, np_new, us_new = cell_list(
+                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+            )
+            return ewald_real_space(
+                pos, charges, c, alpha,
+                neighbor_list=nl_new, neighbor_ptr=np_new, neighbor_shifts=us_new,
+                compute_forces=False,
+            ).sum()
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg="Orthorhombic real-space virial does not match FD",
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_triclinic_cell_virial_fd(self, device):
+        """Real-space virial FD check on triclinic cell."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [2.0, 10.0, 0.0], [1.0, 1.0, 10.0]]],
+            dtype=VIRIAL_DTYPE, device=device,
+        )
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [5.0, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        cutoff = 6.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+
+        def energy_fn(pos, c):
+            nl_new, np_new, us_new = cell_list(
+                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+            )
+            return ewald_real_space(
+                pos, charges, c, alpha,
+                neighbor_list=nl_new, neighbor_ptr=np_new, neighbor_shifts=us_new,
+                compute_forces=False,
+            ).sum()
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg="Triclinic real-space virial does not match FD",
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_triclinic_reciprocal_virial_fd(self, device):
+        """Reciprocal virial FD check on triclinic cell."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [2.0, 10.0, 0.0], [1.0, 1.0, 10.0]]],
+            dtype=VIRIAL_DTYPE, device=device,
+        )
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [5.0, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+
+        def energy_fn(pos, c):
+            kv = generate_k_vectors_ewald_summation(c, k_cutoff=3.0)
+            return ewald_reciprocal_space(
+                pos, charges, c, kv, alpha,
+                compute_forces=False,
+            ).sum()
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg="Triclinic reciprocal virial does not match FD",
+        )
+
+
+class TestEwaldVirialCrystalSystems:
+    """Virial FD tests across different crystal systems."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("system_fn", [
+        create_cscl_supercell,
+        create_wurtzite_system,
+        create_zincblende_system,
+    ])
+    @pytest.mark.parametrize("alpha_val", [0.3, 0.5])
+    def test_real_space_virial_fd_crystals(self, device, system_fn, alpha_val):
+        """Real-space virial FD check for various crystal systems and alpha."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_crystal_system(system_fn, size=1, device=device)
+        alpha = torch.tensor([alpha_val], dtype=VIRIAL_DTYPE, device=device)
+        cutoff = 5.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+
+        def energy_fn(pos, c):
+            nl_new, np_new, us_new = cell_list(
+                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+            )
+            return ewald_real_space(
+                pos, charges, c, alpha,
+                neighbor_list=nl_new, neighbor_ptr=np_new, neighbor_shifts=us_new,
+                compute_forces=False,
+            ).sum()
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg=f"Real-space virial FD failed for {system_fn.__name__}, alpha={alpha_val}",
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("system_fn", [
+        create_cscl_supercell,
+        create_wurtzite_system,
+        create_zincblende_system,
+    ])
+    @pytest.mark.parametrize("alpha_val", [0.3, 0.5])
+    def test_reciprocal_virial_fd_crystals(self, device, system_fn, alpha_val):
+        """Reciprocal virial FD check for various crystal systems and alpha."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_crystal_system(system_fn, size=1, device=device)
+        alpha = torch.tensor([alpha_val], dtype=VIRIAL_DTYPE, device=device)
+
+        def energy_fn(pos, c):
+            kv = generate_k_vectors_ewald_summation(c, k_cutoff=3.0)
+            return ewald_reciprocal_space(
+                pos, charges, c, kv, alpha,
+                compute_forces=False,
+            ).sum()
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=1e-3, rtol=1e-3,
+            msg=f"Reciprocal virial FD failed for {system_fn.__name__}, alpha={alpha_val}",
+        )
+
+
+class TestEwaldVirialEdgeCases:
+    """Edge cases for virial computation."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_empty_neighbor_list_virial_zero(self, device):
+        """Empty neighbor list produces zero real-space virial."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [5.0, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
+        cell = torch.eye(3, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0) * 10.0
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+
+        neighbor_list = torch.zeros(2, 0, dtype=torch.int32, device=device)
+        neighbor_ptr = torch.zeros(3, dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros(0, 3, dtype=torch.int32, device=device)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (1, 3, 3)
+        assert torch.allclose(virial, torch.zeros_like(virial))
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_single_atom_virial_shape(self, device):
+        """Single atom system returns virial with correct shape."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions = torch.tensor([[5.0, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device)
+        charges = torch.tensor([1.0], dtype=VIRIAL_DTYPE, device=device)
+        cell = torch.eye(3, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0) * 10.0
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+
+        neighbor_list = torch.zeros(2, 0, dtype=torch.int32, device=device)
+        neighbor_ptr = torch.zeros(2, dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros(0, 3, dtype=torch.int32, device=device)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True, compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (1, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_virial_without_forces(self, device):
+        """compute_forces=False + compute_virial=True returns (energies, virial)."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=5.0)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=False, compute_virial=True,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        energies, virial = result
+        assert virial.shape == (1, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_virial_with_charge_gradients(self, device):
+        """compute_forces + compute_charge_gradients + compute_virial returns 4-tuple."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=5.0)
+
+        result = ewald_real_space(
+            positions, charges, cell, alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_charge_gradients=True, compute_virial=True,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+        energies, forces, charge_grads, virial = result
+        assert virial.shape == (1, 3, 3)
+        assert charge_grads.shape == (positions.shape[0],)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_reciprocal_virial_without_forces(self, device):
+        """Reciprocal: compute_forces=False + compute_virial=True returns (energies, virial)."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=3.0)
+
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=False, compute_virial=True,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        energies, virial = result
+        assert virial.shape == (1, 3, 3)
+
+
+class TestEwaldNonNeutralVirial:
+    """Virial FD tests for non-neutral (Q != 0) systems."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_ewald_total_virial_fd_non_neutral(self, device):
+        """Ewald total virial matches FD for a non-neutral system."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_non_neutral_system(device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        k_cutoff = torch.tensor([3.0], dtype=VIRIAL_DTYPE, device=device)
+        cutoff = 6.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+
+        def energy_fn(pos, c):
+            nl, nptr, us = cell_list(
+                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+            )
+            return ewald_summation(
+                pos, charges, c,
+                alpha=alpha, k_cutoff=k_cutoff,
+                neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+                compute_forces=False,
+            ).sum()
+
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
+        result = ewald_summation(
+            positions, charges, cell,
+            alpha=alpha, k_cutoff=k_cutoff,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full(energy_fn, positions, cell, device)
+
+        torch.testing.assert_close(
+            explicit_virial, fd_virial,
+            atol=2e-2, rtol=2e-2,
+            msg="Ewald total virial does not match FD for non-neutral system",
+        )
+
+
+class TestEwaldDifferentiableVirial:
+    """Stress-loss gradients through Ewald virial path."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_ewald_stress_loss_backprop_enabled(self, device, dtype):
+        """Stress loss contributes gradients when compute_virial=True."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, dtype=dtype, device=device)
+        charges = charges.clone().requires_grad_(True)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=6.0)
+
+        _, _, virial = ewald_summation(
+            positions, charges, cell,
+            alpha=alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+
+        stress_loss = virial.pow(2).sum()
+        stress_loss.backward()
+
+        assert charges.grad is not None
+        assert torch.isfinite(charges.grad).all()
+        assert charges.grad.abs().sum() > 0
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_ewald_virial_fd_charges(self, device):
+        """Ewald virial backward gives FD-correct charge gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=6.0)
+
+        def virial_sum(chg):
+            _, _, v = ewald_summation(
+                positions, chg, cell,
+                alpha=alpha,
+                neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+                compute_forces=True, compute_virial=True,
+            )
+            return v.sum()
+
+        chg = charges.clone().requires_grad_(True)
+        loss = virial_sum(chg)
+        loss.backward()
+        ad_grad = chg.grad.clone()
+
+        h = 1e-5
+        for i in range(min(4, len(charges))):
+            cp = charges.clone()
+            cp[i] += h
+            cm = charges.clone()
+            cm[i] -= h
+            fd = (virial_sum(cp).item() - virial_sum(cm).item()) / (2 * h)
+            rel = abs(ad_grad[i].item() - fd) / (abs(fd) + 1e-30)
+            assert rel < 0.02, (
+                f"atom {i}: AD={ad_grad[i].item():.8e}, FD={fd:.8e}, rel={rel:.2e}"
+            )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_mixed_energy_stress_loss(self, device):
+        """Mixed loss (energy + stress) gives correct combined gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=6.0)
+
+        chg = charges.clone().requires_grad_(True)
+        energies, _, virial = ewald_summation(
+            positions, chg, cell,
+            alpha=alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+
+        lam = 0.1
+        loss = energies.sum() + lam * virial.pow(2).sum()
+        loss.backward()
+        mixed_grad = chg.grad.clone()
+
+        chg2 = charges.clone().requires_grad_(True)
+        energies2, _, _ = ewald_summation(
+            positions, chg2, cell,
+            alpha=alpha,
+            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+            compute_forces=True, compute_virial=True,
+        )
+        energies2.sum().backward()
+        energy_only_grad = chg2.grad.clone()
+
+        diff = (mixed_grad - energy_only_grad).abs().sum().item()
+        assert diff > 1e-10, "Mixed loss should differ from energy-only loss"
+
+
+def _torchpme_ewald_energy(positions, charges, cell, alpha, k_cutoff, device):
+    """Compute total Ewald energy via torchpme EwaldCalculator."""
+    import math
+
+    smearing = 1.0 / (math.sqrt(2.0) * alpha)
+    potential = CoulombPotential(smearing=smearing).to(device=device, dtype=VIRIAL_DTYPE)
+    lr_wavelength = 2 * torch.pi / k_cutoff
+    calculator = EwaldCalculator(
+        potential=potential, lr_wavelength=lr_wavelength, full_neighbor_list=True,
+    ).to(device=device, dtype=VIRIAL_DTYPE)
+    charges_col = charges.unsqueeze(1)
+    cell_2d = cell.squeeze(0) if cell.dim() == 3 else cell
+    potentials = calculator._compute_kspace(charges_col, cell_2d, positions)
+    return (charges_col * potentials).flatten().sum()
+
+
+@pytest.mark.skipif(not HAS_TORCHPME, reason="torchpme not installed")
+class TestEwaldVirialTorchPMEParity:
+    """Cross-validate Ewald virial against torchpme via FD on torchpme energies."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_ewald_reciprocal_virial_vs_torchpme_fd(self, device):
+        """Ewald reciprocal virial matches FD of torchpme reciprocal energy."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(2, device=device)
+        alpha_val = 0.3
+        alpha = torch.tensor([alpha_val], dtype=VIRIAL_DTYPE, device=device)
+        # Use k_cutoff=8.0 so both our generator and torchpme produce enough
+        # k-vectors for the virial FD to be converged (at low cutoffs the two
+        # generators select different k-vector sets, causing spurious divergence).
+        k_cutoff = 8.0
+
+        def torchpme_energy_fn(pos, c):
+            return _torchpme_ewald_energy(pos, charges, c, alpha_val, k_cutoff, device)
+
+        fd_virial = fd_virial_full(torchpme_energy_fn, positions, cell, device, h=1e-5)
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=k_cutoff)
+        result = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        our_virial = result[2].squeeze(0)
+
+        torch.testing.assert_close(
+            our_virial, fd_virial,
+            atol=5e-3, rtol=5e-3,
+            msg="Ewald reciprocal virial does not match torchpme FD virial",
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_ewald_virial_charge_gradient_vs_torchpme_fd(self, device):
+        """d(sum(virial))/dq from autograd matches FD."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha_val = 0.3
+        alpha = torch.tensor([alpha_val], dtype=VIRIAL_DTYPE, device=device)
+        k_cutoff = 3.0
+
+        chg = charges.clone().requires_grad_(True)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=k_cutoff)
+        _, _, virial = ewald_reciprocal_space(
+            positions, chg, cell, k_vectors, alpha,
+            compute_forces=True, compute_virial=True,
+        )
+        virial.sum().backward()
+        ad_grad = chg.grad.clone()
+
+        h = 1e-5
+        for i in range(min(4, len(charges))):
+            def _virial_sum_i(q_perturbed):
+                kv = generate_k_vectors_ewald_summation(cell, k_cutoff=k_cutoff)
+                _, _, v = ewald_reciprocal_space(
+                    positions, q_perturbed, cell, kv, alpha,
+                    compute_forces=True, compute_virial=True,
+                )
+                return v.sum().item()
+
+            qp = charges.clone()
+            qp[i] += h
+            qm = charges.clone()
+            qm[i] -= h
+            fd_grad = (_virial_sum_i(qp) - _virial_sum_i(qm)) / (2 * h)
+
+            rel = abs(ad_grad[i].item() - fd_grad) / (abs(fd_grad) + 1e-30)
+            assert rel < 0.02, (
+                f"atom {i}: AD={ad_grad[i].item():.8e}, FD={fd_grad:.8e}, rel={rel:.2e}"
+            )
 
 
 if __name__ == "__main__":

@@ -63,6 +63,8 @@ dev = [
     "pytest-dependency>=0.6.0",
     "coverage>=7.2.0",
     "pytest-cov>=7.0.0",
+    "vesin==0.4.2",
+    "torch-pme==0.3.2",
     {include-group="docs"},
 ]
 docs = [

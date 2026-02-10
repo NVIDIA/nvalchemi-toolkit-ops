@@ -33,6 +33,9 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import numpy as np
+import torch
+
+from nvalchemiops.torch.neighbors import cell_list
 
 
 class CrystalSystem(NamedTuple):
@@ -402,6 +405,157 @@ def create_simple_cubic_system(
     )
 
 
+# =============================================================================
+# Virial Test Utilities
+# =============================================================================
+
+VIRIAL_DTYPE = torch.float64  # Need double precision for FD virial tests
+
+
+def make_virial_cscl_system(
+    size: int = 2, dtype: torch.dtype | None = None, device: torch.device | None = None,
+):
+    """Create a CsCl test system for virial tests.
+
+    Parameters
+    ----------
+    size : int
+        Supercell linear size.
+    dtype : torch.dtype, optional
+        Tensor dtype. Defaults to ``VIRIAL_DTYPE`` (float64).
+    device : torch.device, optional
+        Device. Defaults to CPU.
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        (positions, charges, cell) where cell has shape (1, 3, 3).
+    """
+    if dtype is None:
+        dtype = VIRIAL_DTYPE
+    if device is None:
+        device = torch.device("cpu")
+    crystal = create_cscl_supercell(size)
+    positions = torch.tensor(crystal.positions, dtype=dtype, device=device)
+    charges = torch.tensor(crystal.charges, dtype=dtype, device=device)
+    cell = torch.tensor(crystal.cell, dtype=dtype, device=device).unsqueeze(0)
+    return positions, charges, cell
+
+
+def get_virial_neighbor_data(positions, cell, cutoff=6.0):
+    """Compute neighbor list for virial test systems.
+
+    Returns
+    -------
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        (neighbor_list, neighbor_ptr, unit_shifts).
+    """
+    pbc = torch.tensor([True, True, True], dtype=torch.bool, device=positions.device)
+    neighbor_list, neighbor_ptr, unit_shifts = cell_list(
+        positions, cutoff, cell.squeeze(0), pbc, return_neighbor_list=True,
+    )
+    return neighbor_list, neighbor_ptr, unit_shifts
+
+
+def make_virial_batch_cscl_system(size: int = 1, device: torch.device | None = None):
+    """Create a 2-system batch from identical CsCl supercells.
+
+    Returns
+    -------
+    tuple
+        (positions, charges, cell, alpha, batch_idx,
+         pos_single, q_single, cell_single, alpha_single, n_atoms)
+    """
+    if device is None:
+        device = torch.device("cpu")
+    crystal = create_cscl_supercell(size)
+    n_atoms = len(crystal.charges)
+
+    pos_single = torch.tensor(crystal.positions, dtype=VIRIAL_DTYPE, device=device)
+    q_single = torch.tensor(crystal.charges, dtype=VIRIAL_DTYPE, device=device)
+    cell_single = torch.tensor(crystal.cell, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0)
+    alpha_single = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+
+    positions = torch.cat([pos_single, pos_single], dim=0)
+    charges = torch.cat([q_single, q_single], dim=0)
+    cell_batch = torch.cat([cell_single, cell_single], dim=0)
+    alpha = torch.tensor([0.3, 0.3], dtype=VIRIAL_DTYPE, device=device)
+    batch_idx = torch.cat([
+        torch.zeros(n_atoms, dtype=torch.int32, device=device),
+        torch.ones(n_atoms, dtype=torch.int32, device=device),
+    ])
+
+    return (positions, charges, cell_batch, alpha, batch_idx,
+            pos_single, q_single, cell_single, alpha_single, n_atoms)
+
+
+def make_virial_crystal_system(system_fn, size=1, device: torch.device | None = None):
+    """Create crystal system from a factory function for virial tests.
+
+    Parameters
+    ----------
+    system_fn : callable
+        One of ``create_cscl_supercell``, ``create_wurtzite_system``, etc.
+    """
+    if device is None:
+        device = torch.device("cpu")
+    crystal = system_fn(size)
+    positions = torch.tensor(crystal.positions, dtype=VIRIAL_DTYPE, device=device)
+    charges = torch.tensor(crystal.charges, dtype=VIRIAL_DTYPE, device=device)
+    cell = torch.tensor(crystal.cell, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0)
+    return positions, charges, cell
+
+
+def make_non_neutral_system(device: torch.device):
+    """Create a non-neutral 2-atom system (Q_total = +0.5) in a cubic cell."""
+    cell = torch.tensor(
+        [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+        dtype=VIRIAL_DTYPE, device=device,
+    )
+    positions = torch.tensor(
+        [[2.5, 5.0, 5.0], [7.5, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+    )
+    charges = torch.tensor([1.0, -0.5], dtype=VIRIAL_DTYPE, device=device)
+    return positions, charges, cell
+
+
+def apply_strain(positions, cell, epsilon, device):
+    """Apply infinitesimal strain: x' = (I + eps) @ x, cell' = (I + eps) @ cell."""
+    I_plus_eps = torch.eye(3, dtype=VIRIAL_DTYPE, device=device) + epsilon
+    new_positions = positions @ I_plus_eps.T
+    new_cell = cell @ I_plus_eps.T
+    return new_positions, new_cell
+
+
+def fd_virial_component(energy_fn, positions, cell, a, b, device, h=1e-5):
+    """Finite-difference virial for component (a, b).
+
+    virial_ab = -dE/d(epsilon_ab) ≈ -[E(+h) - E(-h)] / (2h)
+    """
+    eps_plus = torch.zeros(3, 3, dtype=VIRIAL_DTYPE, device=device)
+    eps_plus[a, b] = h
+    pos_p, cell_p = apply_strain(positions, cell, eps_plus, device)
+    E_plus = energy_fn(pos_p, cell_p)
+
+    eps_minus = torch.zeros(3, 3, dtype=VIRIAL_DTYPE, device=device)
+    eps_minus[a, b] = -h
+    pos_m, cell_m = apply_strain(positions, cell, eps_minus, device)
+    E_minus = energy_fn(pos_m, cell_m)
+
+    return -(E_plus - E_minus) / (2.0 * h)
+
+
+def fd_virial_full(energy_fn, positions, cell, device, h=1e-5):
+    """Compute full 3x3 virial tensor by finite differences."""
+    virial = torch.zeros(3, 3, dtype=VIRIAL_DTYPE, device=device)
+    for a in range(3):
+        for b in range(3):
+            virial[a, b] = fd_virial_component(
+                energy_fn, positions, cell, a, b, device, h
+            )
+    return virial
+
+
 # Convenience exports
 __all__ = [
     "CrystalSystem",
@@ -410,4 +564,13 @@ __all__ = [
     "create_zincblende_system",
     "create_nacl_system",
     "create_simple_cubic_system",
+    "VIRIAL_DTYPE",
+    "make_virial_cscl_system",
+    "get_virial_neighbor_data",
+    "make_virial_batch_cscl_system",
+    "make_virial_crystal_system",
+    "make_non_neutral_system",
+    "apply_strain",
+    "fd_virial_component",
+    "fd_virial_full",
 ]
