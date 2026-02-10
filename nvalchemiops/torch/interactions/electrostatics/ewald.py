@@ -177,8 +177,8 @@ def _ewald_reciprocal_virial_torch(
 
     if is_batch:
         # Batch case: k_vecs (B, K, 3), alpha (B,), cell (B, 3, 3)
-        k_sq = (k_vecs ** 2).sum(dim=-1)  # (B, K)
-        s_sq = rsf ** 2 + isf ** 2  # (B, K)
+        k_sq = (k_vecs**2).sum(dim=-1)  # (B, K)
+        s_sq = rsf**2 + isf**2  # (B, K)
 
         alpha_f64 = alpha.to(torch.float64)
         exp_factor = 0.25 / (alpha_f64[:, None] ** 2)  # (B, 1)
@@ -187,7 +187,9 @@ def _ewald_reciprocal_virial_torch(
         volume = torch.abs(torch.det(cell.to(torch.float64)))  # (B,)
 
         # Green's function: G(k) = (8*pi/V) * exp(-k^2/(4*alpha^2)) / k^2
-        green = EIGHTPI / volume[:, None] * torch.exp(-k_sq * exp_factor) / k_sq  # (B, K)
+        green = (
+            EIGHTPI / volume[:, None] * torch.exp(-k_sq * exp_factor) / k_sq
+        )  # (B, K)
 
         # Per-k energy: E(k) = 0.5 * |S_mod|^2 / G(k)
         energy_k = 0.5 * s_sq / green  # (B, K)
@@ -205,11 +207,11 @@ def _ewald_reciprocal_virial_torch(
         virial = eye * trace_term[:, None, None] - kk_term  # (B, 3, 3)
     else:
         # Single system: k_vecs (K, 3), alpha (1,), cell (1, 3, 3)
-        k_sq = (k_vecs ** 2).sum(dim=-1)  # (K,)
-        s_sq = rsf ** 2 + isf ** 2  # (K,)
+        k_sq = (k_vecs**2).sum(dim=-1)  # (K,)
+        s_sq = rsf**2 + isf**2  # (K,)
 
         alpha_val = alpha[0].to(torch.float64)
-        exp_factor = 0.25 / (alpha_val ** 2)
+        exp_factor = 0.25 / (alpha_val**2)
 
         volume = torch.abs(torch.det(cell[0].to(torch.float64)))
 
@@ -373,10 +375,26 @@ def _ewald_real_space_energy(
     name="alchemiops::_ewald_real_space_energy_forces",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
-    grad_arrays=["energies", "forces", "virial", "positions", "charges", "cell", "alpha"],
+    grad_arrays=[
+        "energies",
+        "forces",
+        "virial",
+        "positions",
+        "charges",
+        "cell",
+        "alpha",
+    ],
 )
 def _ewald_real_space_energy_forces(
     positions: torch.Tensor,
@@ -524,10 +542,26 @@ def _ewald_real_space_energy_matrix(
     name="alchemiops::_ewald_real_space_energy_forces_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
-    grad_arrays=["energies", "forces", "virial", "positions", "charges", "cell", "alpha"],
+    grad_arrays=[
+        "energies",
+        "forces",
+        "virial",
+        "positions",
+        "charges",
+        "cell",
+        "alpha",
+    ],
 )
 def _ewald_real_space_energy_forces_matrix(
     positions: torch.Tensor,
@@ -613,9 +647,17 @@ def _ewald_real_space_energy_forces_matrix(
     name="alchemiops::_ewald_real_space_energy_forces_charge_grad",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
         OutputSpec("charge_gradients", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -713,9 +755,17 @@ def _ewald_real_space_energy_forces_charge_grad(
     name="alchemiops::_ewald_real_space_energy_forces_charge_grad_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
         OutputSpec("charge_gradients", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -890,10 +940,26 @@ def _batch_ewald_real_space_energy(
     name="alchemiops::_batch_ewald_real_space_energy_forces",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
-    grad_arrays=["energies", "forces", "virial", "positions", "charges", "cell", "alpha"],
+    grad_arrays=[
+        "energies",
+        "forces",
+        "virial",
+        "positions",
+        "charges",
+        "cell",
+        "alpha",
+    ],
 )
 def _batch_ewald_real_space_energy_forces(
     positions: torch.Tensor,
@@ -932,9 +998,7 @@ def _batch_ewald_real_space_energy_forces(
     num_systems = cell.shape[0]
     energies = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
     forces = torch.zeros(num_atoms, 3, device=positions.device, dtype=input_dtype)
-    virial = torch.zeros(
-        num_systems, 3, 3, device=positions.device, dtype=input_dtype
-    )
+    virial = torch.zeros(num_systems, 3, 3, device=positions.device, dtype=input_dtype)
     wp_energies = warp_from_torch(energies, wp.float64, requires_grad=needs_grad_flag)
     wp_forces = warp_from_torch(forces, wp_vec, requires_grad=needs_grad_flag)
     wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
@@ -1052,10 +1116,26 @@ def _batch_ewald_real_space_energy_matrix(
     name="alchemiops::_batch_ewald_real_space_energy_forces_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
-    grad_arrays=["energies", "forces", "virial", "positions", "charges", "cell", "alpha"],
+    grad_arrays=[
+        "energies",
+        "forces",
+        "virial",
+        "positions",
+        "charges",
+        "cell",
+        "alpha",
+    ],
 )
 def _batch_ewald_real_space_energy_forces_matrix(
     positions: torch.Tensor,
@@ -1092,9 +1172,7 @@ def _batch_ewald_real_space_energy_forces_matrix(
     num_systems = cell.shape[0]
     energies = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
     forces = torch.zeros(num_atoms, 3, device=positions.device, dtype=input_dtype)
-    virial = torch.zeros(
-        num_systems, 3, 3, device=positions.device, dtype=input_dtype
-    )
+    virial = torch.zeros(num_systems, 3, 3, device=positions.device, dtype=input_dtype)
     wp_energies = warp_from_torch(energies, wp.float64, requires_grad=needs_grad_flag)
     wp_forces = warp_from_torch(forces, wp_vec, requires_grad=needs_grad_flag)
     wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
@@ -1147,9 +1225,17 @@ def _batch_ewald_real_space_energy_forces_matrix(
     name="alchemiops::_batch_ewald_real_space_energy_forces_charge_grad",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
         OutputSpec("charge_gradients", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -1200,9 +1286,7 @@ def _batch_ewald_real_space_energy_forces_charge_grad(
     energies = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
     forces = torch.zeros(num_atoms, 3, device=positions.device, dtype=input_dtype)
     charge_grads = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
-    virial = torch.zeros(
-        num_systems, 3, 3, device=positions.device, dtype=input_dtype
-    )
+    virial = torch.zeros(num_systems, 3, 3, device=positions.device, dtype=input_dtype)
     wp_energies = warp_from_torch(energies, wp.float64, requires_grad=needs_grad_flag)
     wp_forces = warp_from_torch(forces, wp_vec, requires_grad=needs_grad_flag)
     wp_charge_grads = warp_from_torch(
@@ -1255,9 +1339,17 @@ def _batch_ewald_real_space_energy_forces_charge_grad(
     name="alchemiops::_batch_ewald_real_space_energy_forces_charge_grad_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
         OutputSpec("charge_gradients", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -1306,9 +1398,7 @@ def _batch_ewald_real_space_energy_forces_charge_grad_matrix(
     energies = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
     forces = torch.zeros(num_atoms, 3, device=positions.device, dtype=input_dtype)
     charge_grads = torch.zeros(num_atoms, device=positions.device, dtype=torch.float64)
-    virial = torch.zeros(
-        num_systems, 3, 3, device=positions.device, dtype=input_dtype
-    )
+    virial = torch.zeros(num_systems, 3, 3, device=positions.device, dtype=input_dtype)
     wp_energies = warp_from_torch(energies, wp.float64, requires_grad=needs_grad_flag)
     wp_forces = warp_from_torch(forces, wp_vec, requires_grad=needs_grad_flag)
     wp_charge_grads = warp_from_torch(
@@ -1366,9 +1456,21 @@ def _batch_ewald_real_space_energy_forces_charge_grad_matrix(
     name="alchemiops::_ewald_reciprocal_space_energy",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
-    grad_arrays=["energies", "virial", "positions", "charges", "cell", "k_vectors", "alpha"],
+    grad_arrays=[
+        "energies",
+        "virial",
+        "positions",
+        "charges",
+        "cell",
+        "k_vectors",
+        "alpha",
+    ],
 )
 def _ewald_reciprocal_space_energy(
     positions: torch.Tensor,
@@ -1502,8 +1604,16 @@ def _ewald_reciprocal_space_energy(
     name="alchemiops::_ewald_reciprocal_space_energy_forces",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -1566,12 +1676,8 @@ def _ewald_reciprocal_space_energy_forces(
     )
     real_sf = torch.zeros(num_k, device=positions.device, dtype=torch.float64)
     imag_sf = torch.zeros(num_k, device=positions.device, dtype=torch.float64)
-    wp_real_sf = warp_from_torch(
-        real_sf, wp.float64, requires_grad=needs_grad_flag
-    )
-    wp_imag_sf = warp_from_torch(
-        imag_sf, wp.float64, requires_grad=needs_grad_flag
-    )
+    wp_real_sf = warp_from_torch(real_sf, wp.float64, requires_grad=needs_grad_flag)
+    wp_imag_sf = warp_from_torch(imag_sf, wp.float64, requires_grad=needs_grad_flag)
     total_charge = torch.zeros(1, device=positions.device, dtype=torch.float64)
     wp_total_charge = warp_from_torch(
         total_charge, wp.float64, requires_grad=needs_grad_flag
@@ -1671,9 +1777,17 @@ def _ewald_reciprocal_space_energy_forces(
     name="alchemiops::_ewald_reciprocal_space_energy_forces_charge_grad",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
         OutputSpec("charge_gradients", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -1859,9 +1973,21 @@ def _ewald_reciprocal_space_energy_forces_charge_grad(
     name="alchemiops::_batch_ewald_reciprocal_space_energy",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
-    grad_arrays=["energies", "virial", "positions", "charges", "cell", "k_vectors", "alpha"],
+    grad_arrays=[
+        "energies",
+        "virial",
+        "positions",
+        "charges",
+        "cell",
+        "k_vectors",
+        "alpha",
+    ],
 )
 def _batch_ewald_reciprocal_space_energy(
     positions: torch.Tensor,
@@ -2049,8 +2175,16 @@ def _batch_ewald_reciprocal_space_energy(
     name="alchemiops::_batch_ewald_reciprocal_space_energy_forces",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -2252,9 +2386,17 @@ def _batch_ewald_reciprocal_space_energy_forces(
     name="alchemiops::_batch_ewald_reciprocal_space_energy_forces_charge_grad",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
         OutputSpec("charge_gradients", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("virial", lambda pos, *_: get_wp_mat_dtype(pos.dtype), lambda pos, charges, cell, *_: (cell.shape[0], 3, 3)),
+        OutputSpec(
+            "virial",
+            lambda pos, *_: get_wp_mat_dtype(pos.dtype),
+            lambda pos, charges, cell, *_: (cell.shape[0], 3, 3),
+        ),
     ],
     grad_arrays=[
         "energies",
@@ -2417,7 +2559,9 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad(
             device=device,
         )
         if compute_virial and virial_grad:
-            virial = torch.zeros(num_systems, 3, 3, device=positions.device, dtype=input_dtype)
+            virial = torch.zeros(
+                num_systems, 3, 3, device=positions.device, dtype=input_dtype
+            )
             wp_virial = warp_from_torch(virial, wp_mat, requires_grad=True)
             volume = torch.abs(torch.det(cell.to(torch.float64)))
             wp_volume = warp_from_torch(volume, wp.float64)
@@ -2812,14 +2956,23 @@ def ewald_reciprocal_space(
         if dispatch_batch:
             energies, forces, charge_grads, virial = (
                 _batch_ewald_reciprocal_space_energy_forces_charge_grad(
-                    positions, charges, cell, k_vectors, alpha, batch_idx,
+                    positions,
+                    charges,
+                    cell,
+                    k_vectors,
+                    alpha,
+                    batch_idx,
                     compute_virial=compute_virial,
                 )
             )
         else:
             energies, forces, charge_grads, virial = (
                 _ewald_reciprocal_space_energy_forces_charge_grad(
-                    positions, charges, cell, k_vectors, alpha,
+                    positions,
+                    charges,
+                    cell,
+                    k_vectors,
+                    alpha,
                     compute_virial=compute_virial,
                 )
             )
@@ -2830,26 +2983,44 @@ def ewald_reciprocal_space(
     if dispatch_batch:
         if compute_forces:
             energies, forces, virial = _batch_ewald_reciprocal_space_energy_forces(
-                positions, charges, cell, k_vectors, alpha, batch_idx,
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                batch_idx,
                 compute_virial=compute_virial,
             )
             return _build_result(energies, forces, virial=virial)
         else:
             energies, virial = _batch_ewald_reciprocal_space_energy(
-                positions, charges, cell, k_vectors, alpha, batch_idx,
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                batch_idx,
                 compute_virial=compute_virial,
             )
             return _build_result(energies, virial=virial)
     else:
         if compute_forces:
             energies, forces, virial = _ewald_reciprocal_space_energy_forces(
-                positions, charges, cell, k_vectors, alpha,
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
                 compute_virial=compute_virial,
             )
             return _build_result(energies, forces, virial=virial)
         else:
             energies, virial = _ewald_reciprocal_space_energy(
-                positions, charges, cell, k_vectors, alpha,
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
                 compute_virial=compute_virial,
             )
             return _build_result(energies, virial=virial)

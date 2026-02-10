@@ -675,6 +675,7 @@ The virial is differentiable by default: when `compute_virial=True` and inputs
 require gradients, stress-based losses automatically back-propagate to model parameters.
 
 **Convention:**
+
 - Real-space: $W_\text{real} = -\frac{1}{2} \sum_{i<j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$,
   where $\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i$ and $\mathbf{F}_{ij}$ is the force on atom $i$ due to atom $j$.
 - Reciprocal-space: $W_\text{recip}(k) = E(k) \left[\delta_{ab} - \frac{2 k_a k_b}{k^2}\left(1 + \frac{k^2}{4\alpha^2}\right)\right]$

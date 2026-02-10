@@ -2321,9 +2321,15 @@ def _ewald_reciprocal_space_virial_kernel(
     # Use type() inline as constructor (Warp resolves at compile time)
     _virial_ref = virial[0]
     virial_k = type(_virial_ref)(
-        type(k_vec[0])(w00), type(k_vec[0])(w01), type(k_vec[0])(w02),
-        type(k_vec[0])(w10), type(k_vec[0])(w11), type(k_vec[0])(w12),
-        type(k_vec[0])(w20), type(k_vec[0])(w21), type(k_vec[0])(w22),
+        type(k_vec[0])(w00),
+        type(k_vec[0])(w01),
+        type(k_vec[0])(w02),
+        type(k_vec[0])(w10),
+        type(k_vec[0])(w11),
+        type(k_vec[0])(w12),
+        type(k_vec[0])(w20),
+        type(k_vec[0])(w21),
+        type(k_vec[0])(w22),
     )
     wp.atomic_add(virial, 0, virial_k)
 
@@ -2406,9 +2412,15 @@ def _batch_ewald_reciprocal_space_virial_kernel(
     # Use type() inline as constructor (Warp resolves at compile time)
     _virial_ref = virial[system_id]
     virial_k = type(_virial_ref)(
-        type(k_vec[0])(w00), type(k_vec[0])(w01), type(k_vec[0])(w02),
-        type(k_vec[0])(w10), type(k_vec[0])(w11), type(k_vec[0])(w12),
-        type(k_vec[0])(w20), type(k_vec[0])(w21), type(k_vec[0])(w22),
+        type(k_vec[0])(w00),
+        type(k_vec[0])(w01),
+        type(k_vec[0])(w02),
+        type(k_vec[0])(w10),
+        type(k_vec[0])(w11),
+        type(k_vec[0])(w12),
+        type(k_vec[0])(w20),
+        type(k_vec[0])(w21),
+        type(k_vec[0])(w22),
     )
     wp.atomic_add(virial, system_id, virial_k)
 

@@ -159,7 +159,11 @@ def _coulomb_energy_list(
     name="nvalchemiops::_coulomb_energy_forces_list",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )
@@ -311,7 +315,11 @@ def _coulomb_energy_matrix(
     name="nvalchemiops::_coulomb_energy_forces_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )
@@ -466,7 +474,11 @@ def _batch_coulomb_energy_list(
     name="nvalchemiops::_batch_coulomb_energy_forces_list",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )
@@ -624,7 +636,11 @@ def _batch_coulomb_energy_matrix(
     name="nvalchemiops::_batch_coulomb_energy_forces_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", lambda pos, *_: get_wp_vec_dtype(pos.dtype), lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )

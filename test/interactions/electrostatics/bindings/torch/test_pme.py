@@ -2684,9 +2684,13 @@ class TestPMEReciprocalVirial:
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=(16, 16, 16),
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2]
         assert virial.shape == (1, 3, 3)
@@ -2704,22 +2708,31 @@ class TestPMEReciprocalVirial:
 
         def energy_fn(pos, c):
             return pme_reciprocal_space(
-                pos, charges, c, alpha,
+                pos,
+                charges,
+                c,
+                alpha,
                 mesh_dimensions=mesh_dims,
                 compute_forces=False,
             ).sum()
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         explicit_virial = result[2].squeeze(0)
         fd_virial = fd_virial_full(energy_fn, positions, cell, device)
 
         torch.testing.assert_close(
-            explicit_virial, fd_virial,
-            atol=1e-2, rtol=1e-2,
+            explicit_virial,
+            fd_virial,
+            atol=1e-2,
+            rtol=1e-2,
             msg="PME reciprocal virial does not match FD",
         )
 
@@ -2733,14 +2746,20 @@ class TestPMEReciprocalVirial:
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=(16, 16, 16),
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2].squeeze(0)
         torch.testing.assert_close(
-            virial, virial.T,
-            atol=1e-6, rtol=1e-6,
+            virial,
+            virial.T,
+            atol=1e-6,
+            rtol=1e-6,
             msg="PME reciprocal virial is not symmetric",
         )
 
@@ -2751,13 +2770,19 @@ class TestPMEReciprocalVirial:
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
-        positions, charges, cell = make_virial_cscl_system(1, dtype=dtype, device=device)
+        positions, charges, cell = make_virial_cscl_system(
+            1, dtype=dtype, device=device
+        )
         alpha = torch.tensor([0.3], dtype=dtype, device=device)
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=(8, 8, 8),
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2]
         assert virial.dtype == dtype
@@ -2776,18 +2801,26 @@ class TestPMEReciprocalVirialMeshConvergence:
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
 
         ref_result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=(32, 32, 32),
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         ref_virial = ref_result[2].squeeze(0)
 
         prev_err = float("inf")
         for mesh_size in [8, 16, 32]:
             result = pme_reciprocal_space(
-                positions, charges, cell, alpha,
+                positions,
+                charges,
+                cell,
+                alpha,
                 mesh_dimensions=(mesh_size, mesh_size, mesh_size),
-                compute_forces=True, compute_virial=True,
+                compute_forces=True,
+                compute_virial=True,
             )
             virial = result[2].squeeze(0)
             err = (virial - ref_virial).abs().max().item()
@@ -2811,14 +2844,20 @@ class TestPMEReciprocalVirialSplineOrders:
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=(16, 16, 16),
             spline_order=spline_order,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2]
         assert virial.shape == (1, 3, 3)
-        assert torch.isfinite(virial).all(), f"Non-finite virial for spline_order={spline_order}"
+        assert torch.isfinite(virial).all(), (
+            f"Non-finite virial for spline_order={spline_order}"
+        )
 
 
 class TestPMEReciprocalVirialBatch:
@@ -2830,14 +2869,19 @@ class TestPMEReciprocalVirialBatch:
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
-        positions, charges, cell, alpha, batch_idx, \
-            _, _, _, _, _ = make_virial_batch_cscl_system(1, device=device)
+        positions, charges, cell, alpha, batch_idx, _, _, _, _, _ = (
+            make_virial_batch_cscl_system(1, device=device)
+        )
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=(8, 8, 8),
             batch_idx=batch_idx,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2]
         assert virial.shape == (2, 3, 3)
@@ -2848,13 +2892,17 @@ class TestPMEReciprocalVirialBatch:
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
-        positions, charges, cell, alpha, batch_idx, \
-            pos_s, q_s, cell_s, alpha_s, _ = make_virial_batch_cscl_system(1, device=device)
+        positions, charges, cell, alpha, batch_idx, pos_s, q_s, cell_s, alpha_s, _ = (
+            make_virial_batch_cscl_system(1, device=device)
+        )
         mesh_dims = (8, 8, 8)
 
         def energy_fn(pos, c):
             return pme_reciprocal_space(
-                pos, q_s, c, alpha_s,
+                pos,
+                q_s,
+                c,
+                alpha_s,
                 mesh_dimensions=mesh_dims,
                 compute_forces=False,
             ).sum()
@@ -2862,21 +2910,29 @@ class TestPMEReciprocalVirialBatch:
         fd_virial = fd_virial_full(energy_fn, pos_s, cell_s, device)
 
         batch_result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
             batch_idx=batch_idx,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         batch_virial = batch_result[2]
 
         torch.testing.assert_close(
-            batch_virial[0], fd_virial,
-            atol=1e-2, rtol=1e-2,
+            batch_virial[0],
+            fd_virial,
+            atol=1e-2,
+            rtol=1e-2,
             msg="Batch PME virial[0] does not match single-system FD",
         )
         torch.testing.assert_close(
-            batch_virial[1], fd_virial,
-            atol=1e-2, rtol=1e-2,
+            batch_virial[1],
+            fd_virial,
+            atol=1e-2,
+            rtol=1e-2,
             msg="Batch PME virial[1] does not match single-system FD",
         )
 
@@ -2886,32 +2942,45 @@ class TestPMEReciprocalVirialBatch:
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
-        positions, charges, cell, alpha, batch_idx, \
-            pos_s, q_s, cell_s, alpha_s, _ = make_virial_batch_cscl_system(1, device=device)
+        positions, charges, cell, alpha, batch_idx, pos_s, q_s, cell_s, alpha_s, _ = (
+            make_virial_batch_cscl_system(1, device=device)
+        )
 
         single_result = pme_reciprocal_space(
-            pos_s, q_s, cell_s, alpha_s,
+            pos_s,
+            q_s,
+            cell_s,
+            alpha_s,
             mesh_dimensions=(8, 8, 8),
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         single_virial = single_result[2]
 
         batch_result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=(8, 8, 8),
             batch_idx=batch_idx,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         batch_virial = batch_result[2]
 
         torch.testing.assert_close(
-            batch_virial[0:1], single_virial,
-            atol=1e-5, rtol=1e-5,
+            batch_virial[0:1],
+            single_virial,
+            atol=1e-5,
+            rtol=1e-5,
             msg="Batch PME virial[0] != single virial",
         )
         torch.testing.assert_close(
-            batch_virial[1:2], single_virial,
-            atol=1e-5, rtol=1e-5,
+            batch_virial[1:2],
+            single_virial,
+            atol=1e-5,
+            rtol=1e-5,
             msg="Batch PME virial[1] != single virial",
         )
 
@@ -2931,10 +3000,16 @@ class TestFullPMEVirial:
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
 
         result = particle_mesh_ewald(
-            positions, charges, cell,
-            alpha=alpha, mesh_dimensions=(16, 16, 16),
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=True, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2]
         assert virial.shape == (1, 3, 3)
@@ -2953,28 +3028,45 @@ class TestFullPMEVirial:
 
         def energy_fn(pos, c):
             nl_new, np_new, us_new = cell_list(
-                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+                pos,
+                cutoff,
+                c.squeeze(0),
+                pbc,
+                return_neighbor_list=True,
             )
             return particle_mesh_ewald(
-                pos, charges, c,
-                alpha=alpha, mesh_dimensions=mesh_dims,
-                neighbor_list=nl_new, neighbor_ptr=np_new, neighbor_shifts=us_new,
+                pos,
+                charges,
+                c,
+                alpha=alpha,
+                mesh_dimensions=mesh_dims,
+                neighbor_list=nl_new,
+                neighbor_ptr=np_new,
+                neighbor_shifts=us_new,
                 compute_forces=False,
             ).sum()
 
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
         result = particle_mesh_ewald(
-            positions, charges, cell,
-            alpha=alpha, mesh_dimensions=mesh_dims,
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=True, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=mesh_dims,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=True,
+            compute_virial=True,
         )
         explicit_virial = result[2].squeeze(0)
         fd_virial = fd_virial_full(energy_fn, positions, cell, device)
 
         torch.testing.assert_close(
-            explicit_virial, fd_virial,
-            atol=1e-2, rtol=1e-2,
+            explicit_virial,
+            fd_virial,
+            atol=1e-2,
+            rtol=1e-2,
             msg="Full PME virial does not match FD",
         )
 
@@ -2991,30 +3083,48 @@ class TestFullPMEVirial:
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
 
         rs_result = ewald_real_space(
-            positions, charges, cell, alpha,
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=True, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=True,
+            compute_virial=True,
         )
         real_virial = rs_result[2]
 
         rec_result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         recip_virial = rec_result[2]
 
         total_result = particle_mesh_ewald(
-            positions, charges, cell,
-            alpha=alpha, mesh_dimensions=mesh_dims,
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=True, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=mesh_dims,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=True,
+            compute_virial=True,
         )
         total_virial = total_result[2]
 
         torch.testing.assert_close(
-            total_virial, real_virial + recip_virial,
-            atol=1e-6, rtol=1e-6,
+            total_virial,
+            real_virial + recip_virial,
+            atol=1e-6,
+            rtol=1e-6,
             msg="Full PME virial != real + reciprocal virial",
         )
 
@@ -3030,10 +3140,16 @@ class TestFullPMEVirial:
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
 
         result = particle_mesh_ewald(
-            positions, charges, cell,
-            alpha=alpha, mesh_dimensions=(16, 16, 16),
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=False, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=False,
+            compute_virial=True,
         )
         assert isinstance(result, tuple)
         assert len(result) == 2
@@ -3052,10 +3168,17 @@ class TestFullPMEVirial:
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
 
         result = particle_mesh_ewald(
-            positions, charges, cell,
-            alpha=alpha, mesh_dimensions=(16, 16, 16),
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=True, compute_charge_gradients=True, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
         )
         assert isinstance(result, tuple)
         assert len(result) == 4
@@ -3075,10 +3198,13 @@ class TestPMEVirialNonCubicCells:
         device = torch.device(device)
         cell = torch.tensor(
             [[[8.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 12.0]]],
-            dtype=VIRIAL_DTYPE, device=device,
+            dtype=VIRIAL_DTYPE,
+            device=device,
         )
         positions = torch.tensor(
-            [[2.0, 5.0, 6.0], [6.0, 5.0, 6.0]], dtype=VIRIAL_DTYPE, device=device,
+            [[2.0, 5.0, 6.0], [6.0, 5.0, 6.0]],
+            dtype=VIRIAL_DTYPE,
+            device=device,
         )
         charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
@@ -3086,15 +3212,22 @@ class TestPMEVirialNonCubicCells:
 
         def energy_fn(pos, c):
             return pme_reciprocal_space(
-                pos, charges, c, alpha,
+                pos,
+                charges,
+                c,
+                alpha,
                 mesh_dimensions=mesh_dims,
                 compute_forces=False,
             ).sum()
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2]
         assert virial.shape == (1, 3, 3)
@@ -3103,8 +3236,10 @@ class TestPMEVirialNonCubicCells:
         explicit_virial = virial.squeeze(0)
         fd_virial = fd_virial_full(energy_fn, positions, cell, device)
         torch.testing.assert_close(
-            explicit_virial, fd_virial,
-            atol=1e-2, rtol=1e-2,
+            explicit_virial,
+            fd_virial,
+            atol=1e-2,
+            rtol=1e-2,
             msg="Orthorhombic PME reciprocal virial does not match FD",
         )
 
@@ -3116,10 +3251,13 @@ class TestPMEVirialNonCubicCells:
         device = torch.device(device)
         cell = torch.tensor(
             [[[10.0, 0.0, 0.0], [2.0, 10.0, 0.0], [1.0, 1.0, 10.0]]],
-            dtype=VIRIAL_DTYPE, device=device,
+            dtype=VIRIAL_DTYPE,
+            device=device,
         )
         positions = torch.tensor(
-            [[2.0, 5.0, 5.0], [7.0, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+            [[2.0, 5.0, 5.0], [7.0, 5.0, 5.0]],
+            dtype=VIRIAL_DTYPE,
+            device=device,
         )
         charges = torch.tensor([1.0, -1.0], dtype=VIRIAL_DTYPE, device=device)
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
@@ -3127,15 +3265,22 @@ class TestPMEVirialNonCubicCells:
 
         def energy_fn(pos, c):
             return pme_reciprocal_space(
-                pos, charges, c, alpha,
+                pos,
+                charges,
+                c,
+                alpha,
                 mesh_dimensions=mesh_dims,
                 compute_forces=False,
             ).sum()
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial = result[2]
         assert virial.shape == (1, 3, 3)
@@ -3144,8 +3289,10 @@ class TestPMEVirialNonCubicCells:
         explicit_virial = virial.squeeze(0)
         fd_virial = fd_virial_full(energy_fn, positions, cell, device)
         torch.testing.assert_close(
-            explicit_virial, fd_virial,
-            atol=1e-2, rtol=1e-2,
+            explicit_virial,
+            fd_virial,
+            atol=1e-2,
+            rtol=1e-2,
             msg="Triclinic PME reciprocal virial does not match FD",
         )
 
@@ -3164,24 +3311,35 @@ class TestPMEVirialPrecomputedKVectors:
         mesh_dims = (16, 16, 16)
 
         result_auto = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial_auto = result_auto[2]
 
         k_vectors, k_squared = generate_k_vectors_pme(cell, mesh_dims)
         result_pre = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
-            k_vectors=k_vectors, k_squared=k_squared,
-            compute_forces=True, compute_virial=True,
+            k_vectors=k_vectors,
+            k_squared=k_squared,
+            compute_forces=True,
+            compute_virial=True,
         )
         virial_pre = result_pre[2]
 
         torch.testing.assert_close(
-            virial_auto, virial_pre,
-            atol=1e-6, rtol=1e-6,
+            virial_auto,
+            virial_pre,
+            atol=1e-6,
+            rtol=1e-6,
             msg="PME virial with precomputed k-vectors != auto-generated",
         )
 
@@ -3190,11 +3348,14 @@ class TestPMEVirialCrystalSystems:
     """PME virial FD tests over multiple crystal structures."""
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    @pytest.mark.parametrize("crystal_factory", [
-        pytest.param(lambda: create_cscl_supercell(1), id="cscl"),
-        pytest.param(lambda: create_wurtzite_system(1), id="wurtzite"),
-        pytest.param(lambda: create_zincblende_system(1), id="zincblende"),
-    ])
+    @pytest.mark.parametrize(
+        "crystal_factory",
+        [
+            pytest.param(lambda: create_cscl_supercell(1), id="cscl"),
+            pytest.param(lambda: create_wurtzite_system(1), id="wurtzite"),
+            pytest.param(lambda: create_zincblende_system(1), id="zincblende"),
+        ],
+    )
     def test_full_pme_virial_fd_crystals(self, device, crystal_factory):
         """Full PME virial matches FD for various crystal systems."""
         if device == "cuda" and not torch.cuda.is_available():
@@ -3203,7 +3364,9 @@ class TestPMEVirialCrystalSystems:
         crystal = crystal_factory()
         positions = torch.tensor(crystal.positions, dtype=VIRIAL_DTYPE, device=device)
         charges = torch.tensor(crystal.charges, dtype=VIRIAL_DTYPE, device=device)
-        cell = torch.tensor(crystal.cell, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0)
+        cell = torch.tensor(crystal.cell, dtype=VIRIAL_DTYPE, device=device).unsqueeze(
+            0
+        )
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
         cutoff = 6.0
         mesh_dims = (16, 16, 16)
@@ -3211,28 +3374,45 @@ class TestPMEVirialCrystalSystems:
 
         def energy_fn(pos, c):
             nl, nptr, us = cell_list(
-                pos, cutoff, c.squeeze(0), pbc, return_neighbor_list=True,
+                pos,
+                cutoff,
+                c.squeeze(0),
+                pbc,
+                return_neighbor_list=True,
             )
             return particle_mesh_ewald(
-                pos, charges, c,
-                alpha=alpha, mesh_dimensions=mesh_dims,
-                neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
+                pos,
+                charges,
+                c,
+                alpha=alpha,
+                mesh_dimensions=mesh_dims,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=us,
                 compute_forces=False,
             ).sum()
 
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff)
         result = particle_mesh_ewald(
-            positions, charges, cell,
-            alpha=alpha, mesh_dimensions=mesh_dims,
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=True, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=mesh_dims,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=True,
+            compute_virial=True,
         )
         explicit_virial = result[2].squeeze(0)
         fd_virial = fd_virial_full(energy_fn, positions, cell, device)
 
         torch.testing.assert_close(
-            explicit_virial, fd_virial,
-            atol=1e-2, rtol=1e-2,
+            explicit_virial,
+            fd_virial,
+            atol=1e-2,
+            rtol=1e-2,
             msg="Full PME virial does not match FD",
         )
 
@@ -3252,22 +3432,31 @@ class TestPMENonNeutralVirial:
 
         def energy_fn(pos, c):
             return pme_reciprocal_space(
-                pos, charges, c, alpha,
+                pos,
+                charges,
+                c,
+                alpha,
                 mesh_dimensions=mesh_dims,
                 compute_forces=False,
             ).sum()
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_dimensions=mesh_dims,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         explicit_virial = result[2].squeeze(0)
         fd_virial = fd_virial_full(energy_fn, positions, cell, device)
 
         torch.testing.assert_close(
-            explicit_virial, fd_virial,
-            atol=2e-2, rtol=2e-2,
+            explicit_virial,
+            fd_virial,
+            atol=2e-2,
+            rtol=2e-2,
             msg="PME reciprocal virial does not match FD for non-neutral system",
         )
 
@@ -3282,16 +3471,24 @@ class TestPMEDifferentiableVirial:
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
-        positions, charges, cell = make_virial_cscl_system(1, dtype=dtype, device=device)
+        positions, charges, cell = make_virial_cscl_system(
+            1, dtype=dtype, device=device
+        )
         charges = charges.clone().requires_grad_(True)
         alpha = torch.tensor([0.3], dtype=dtype, device=device)
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=6.0)
 
         _, _, virial = particle_mesh_ewald(
-            positions, charges, cell,
-            alpha=alpha, mesh_dimensions=(16, 16, 16),
-            neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-            compute_forces=True, compute_virial=True,
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=us,
+            compute_forces=True,
+            compute_virial=True,
         )
 
         stress_loss = virial.pow(2).sum()
@@ -3313,10 +3510,16 @@ class TestPMEDifferentiableVirial:
 
         def virial_sum(chg):
             _, _, v = particle_mesh_ewald(
-                positions, chg, cell,
-                alpha=alpha, mesh_dimensions=(16, 16, 16),
-                neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=us,
-                compute_forces=True, compute_virial=True,
+                positions,
+                chg,
+                cell,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=us,
+                compute_forces=True,
+                compute_virial=True,
             )
             return v.sum()
 
@@ -3343,7 +3546,9 @@ def _torchpme_pme_energy(positions, charges, cell, alpha, mesh_spacing, device):
     import math
 
     smearing = 1.0 / (math.sqrt(2.0) * alpha)
-    potential = CoulombPotential(smearing=smearing).to(device=device, dtype=VIRIAL_DTYPE)
+    potential = CoulombPotential(smearing=smearing).to(
+        device=device, dtype=VIRIAL_DTYPE
+    )
     calculator = PMECalculator(
         potential=potential,
         mesh_spacing=mesh_spacing,
@@ -3374,21 +3579,32 @@ class TestPMEVirialTorchPMEParity:
 
         def torchpme_energy_fn(pos, c):
             return _torchpme_pme_energy(
-                pos, charges, c, alpha_val, mesh_spacing, device,
+                pos,
+                charges,
+                c,
+                alpha_val,
+                mesh_spacing,
+                device,
             )
 
         fd_virial = fd_virial_full(torchpme_energy_fn, positions, cell, device, h=1e-5)
 
         result = pme_reciprocal_space(
-            positions, charges, cell, alpha,
+            positions,
+            charges,
+            cell,
+            alpha,
             mesh_spacing=mesh_spacing,
-            compute_forces=True, compute_virial=True,
+            compute_forces=True,
+            compute_virial=True,
         )
         our_virial = result[2].squeeze(0)
 
         torch.testing.assert_close(
-            our_virial, fd_virial,
-            atol=5e-2, rtol=5e-2,
+            our_virial,
+            fd_virial,
+            atol=5e-2,
+            rtol=5e-2,
             msg="PME reciprocal virial does not match torchpme FD virial",
         )
 

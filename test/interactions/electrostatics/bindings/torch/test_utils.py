@@ -413,7 +413,9 @@ VIRIAL_DTYPE = torch.float64  # Need double precision for FD virial tests
 
 
 def make_virial_cscl_system(
-    size: int = 2, dtype: torch.dtype | None = None, device: torch.device | None = None,
+    size: int = 2,
+    dtype: torch.dtype | None = None,
+    device: torch.device | None = None,
 ):
     """Create a CsCl test system for virial tests.
 
@@ -452,7 +454,11 @@ def get_virial_neighbor_data(positions, cell, cutoff=6.0):
     """
     pbc = torch.tensor([True, True, True], dtype=torch.bool, device=positions.device)
     neighbor_list, neighbor_ptr, unit_shifts = cell_list(
-        positions, cutoff, cell.squeeze(0), pbc, return_neighbor_list=True,
+        positions,
+        cutoff,
+        cell.squeeze(0),
+        pbc,
+        return_neighbor_list=True,
     )
     return neighbor_list, neighbor_ptr, unit_shifts
 
@@ -473,20 +479,34 @@ def make_virial_batch_cscl_system(size: int = 1, device: torch.device | None = N
 
     pos_single = torch.tensor(crystal.positions, dtype=VIRIAL_DTYPE, device=device)
     q_single = torch.tensor(crystal.charges, dtype=VIRIAL_DTYPE, device=device)
-    cell_single = torch.tensor(crystal.cell, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0)
+    cell_single = torch.tensor(
+        crystal.cell, dtype=VIRIAL_DTYPE, device=device
+    ).unsqueeze(0)
     alpha_single = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
 
     positions = torch.cat([pos_single, pos_single], dim=0)
     charges = torch.cat([q_single, q_single], dim=0)
     cell_batch = torch.cat([cell_single, cell_single], dim=0)
     alpha = torch.tensor([0.3, 0.3], dtype=VIRIAL_DTYPE, device=device)
-    batch_idx = torch.cat([
-        torch.zeros(n_atoms, dtype=torch.int32, device=device),
-        torch.ones(n_atoms, dtype=torch.int32, device=device),
-    ])
+    batch_idx = torch.cat(
+        [
+            torch.zeros(n_atoms, dtype=torch.int32, device=device),
+            torch.ones(n_atoms, dtype=torch.int32, device=device),
+        ]
+    )
 
-    return (positions, charges, cell_batch, alpha, batch_idx,
-            pos_single, q_single, cell_single, alpha_single, n_atoms)
+    return (
+        positions,
+        charges,
+        cell_batch,
+        alpha,
+        batch_idx,
+        pos_single,
+        q_single,
+        cell_single,
+        alpha_single,
+        n_atoms,
+    )
 
 
 def make_virial_crystal_system(system_fn, size=1, device: torch.device | None = None):
@@ -510,10 +530,13 @@ def make_non_neutral_system(device: torch.device):
     """Create a non-neutral 2-atom system (Q_total = +0.5) in a cubic cell."""
     cell = torch.tensor(
         [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-        dtype=VIRIAL_DTYPE, device=device,
+        dtype=VIRIAL_DTYPE,
+        device=device,
     )
     positions = torch.tensor(
-        [[2.5, 5.0, 5.0], [7.5, 5.0, 5.0]], dtype=VIRIAL_DTYPE, device=device,
+        [[2.5, 5.0, 5.0], [7.5, 5.0, 5.0]],
+        dtype=VIRIAL_DTYPE,
+        device=device,
     )
     charges = torch.tensor([1.0, -0.5], dtype=VIRIAL_DTYPE, device=device)
     return positions, charges, cell

@@ -288,9 +288,7 @@ def warp_custom_op(
                     tdtype = _wp_dtype_to_torch(resolved_wp)
                 else:
                     tdtype = spec.torch_dtype
-                fake_outputs.append(
-                    torch.zeros(shape, device=device, dtype=tdtype)
-                )
+                fake_outputs.append(torch.zeros(shape, device=device, dtype=tdtype))
 
             if len(fake_outputs) == 1:
                 return fake_outputs[0]

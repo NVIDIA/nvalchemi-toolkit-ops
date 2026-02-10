@@ -590,9 +590,15 @@ def run_torchpme_ewald(
 
     # Compute forces and/or virial via autograd
     positions_grad = positions.clone().detach().requires_grad_(True)
-    cell_grad = cell_2d.clone().detach().requires_grad_(True) if compute_virial else cell_2d
+    cell_grad = (
+        cell_2d.clone().detach().requires_grad_(True) if compute_virial else cell_2d
+    )
     potentials_grad = calculator.forward(
-        charges_expanded, cell_grad, positions_grad, neighbor_indices, neighbor_distances
+        charges_expanded,
+        cell_grad,
+        positions_grad,
+        neighbor_indices,
+        neighbor_distances,
     )
     energy_grad = (potentials_grad * charges_expanded).sum()
     energy_grad.backward()
@@ -651,9 +657,15 @@ def run_torchpme_pme(
 
     # Compute forces and/or virial via autograd
     positions_grad = positions.clone().detach().requires_grad_(True)
-    cell_grad = cell_2d.clone().detach().requires_grad_(True) if compute_virial else cell_2d
+    cell_grad = (
+        cell_2d.clone().detach().requires_grad_(True) if compute_virial else cell_2d
+    )
     potentials_grad = calculator.forward(
-        charges_expanded, cell_grad, positions_grad, neighbor_indices, neighbor_distances
+        charges_expanded,
+        cell_grad,
+        positions_grad,
+        neighbor_indices,
+        neighbor_distances,
     )
     energy_grad = (potentials_grad * charges_expanded).sum()
     energy_grad.backward()
@@ -724,7 +736,9 @@ def run_benchmark(
             if method == "ewald":
 
                 def bench_fn():
-                    return run_torchpme_ewald(system_data, compute_forces, effective_virial)
+                    return run_torchpme_ewald(
+                        system_data, compute_forces, effective_virial
+                    )
             else:  # pme
 
                 def bench_fn():

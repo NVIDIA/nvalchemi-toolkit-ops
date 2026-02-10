@@ -1431,7 +1431,7 @@ def _compute_pme_reciprocal_virial(
     else:
         alpha_view = alpha_acc.view(-1) if alpha_acc.dim() == 0 else alpha_acc
 
-    exp_factor = 0.25 / (alpha_view ** 2)
+    exp_factor = 0.25 / (alpha_view**2)
 
     # Avoid division by zero at k=0
     safe_k_sq = k_sq_acc.clamp(min=1e-30)
