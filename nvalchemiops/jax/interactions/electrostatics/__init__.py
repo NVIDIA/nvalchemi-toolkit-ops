@@ -19,3 +19,14 @@ This module provides JAX bindings for electrostatic calculations (Coulomb, Ewald
 """
 
 from __future__ import annotations
+
+from warnings import warn
+
+import jax
+
+if not getattr(jax.config, "jax_enable_x64", False):
+    warn(
+        "Electrostatics kernels rely on FP64, and `jax_enable_x64` is set to False."
+        " `nvalchemiops` will set this value to True by default."
+    )
+    jax.config.update("jax_enable_x64", True)
