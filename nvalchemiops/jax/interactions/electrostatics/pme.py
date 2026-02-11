@@ -295,6 +295,13 @@ def pme_green_structure_factor(
         num_systems = cell.shape[0]
         kernel = _jax_batch_pme_green_sf[input_dtype]
 
+        # Ensure k_squared has batch dimension for batch kernels
+        k_sq = k_squared.astype(input_dtype)
+        if k_sq.ndim == 3:
+            k_sq = jnp.broadcast_to(
+                k_sq[jnp.newaxis], (num_systems, mesh_nx, mesh_ny, mesh_nz // 2 + 1)
+            )
+
         # Allocate outputs
         green_function = jnp.zeros(
             (num_systems, mesh_nx, mesh_ny, mesh_nz // 2 + 1), dtype=input_dtype
@@ -305,7 +312,7 @@ def pme_green_structure_factor(
 
         # Launch kernel
         green_out, sf_out = kernel(
-            k_squared.astype(input_dtype),
+            k_sq,
             miller_x,
             miller_y,
             miller_z,
