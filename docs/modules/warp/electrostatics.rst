@@ -30,6 +30,16 @@ Direct pairwise Coulomb interactions.
 .. autofunction:: batch_coulomb_energy_matrix
 .. autofunction:: batch_coulomb_energy_forces_matrix
 
+DSF Kernels
+^^^^^^^^^^^
+
+Damped Shifted Force (DSF) pairwise electrostatic summation.
+
+.. autofunction:: dsf
+.. autofunction:: dsf_pbc
+.. autofunction:: dsf_matrix
+.. autofunction:: dsf_matrix_pbc
+
 Ewald Kernels
 ^^^^^^^^^^^^^
 

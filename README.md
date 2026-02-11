@@ -18,7 +18,8 @@ in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
 - Neighborhood computation, including naive $O(N^2)$ and cell list $O(N)$
 implementations
 - Dispersion corrections via Becke-Johnson damped DFT-D3
-- Electrostatic interactions, including Ewald and particle mesh Ewald algorithms
+- Electrostatic interactions, including Ewald, particle mesh Ewald
+  (PME), and damped shifted force (DSF) algorithms
 
 Kernels are naturally intended to be highly scalable (>100,000 atoms) and generally
 optimized for high throughput operations (on the order of several microseconds per

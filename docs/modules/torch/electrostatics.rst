@@ -27,6 +27,13 @@ Direct pairwise Coulomb interactions.
 .. autofunction:: coulomb_forces
 .. autofunction:: coulomb_energy_forces
 
+DSF Coulomb
+-----------
+
+Damped Shifted Force (DSF) pairwise electrostatics with :math:`\mathcal{O}(N)` scaling.
+
+.. autofunction:: dsf_coulomb
+
 Ewald Components
 ----------------
 

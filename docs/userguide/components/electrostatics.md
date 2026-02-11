@@ -7,14 +7,17 @@
 Electrostatic interactions arise from Coulombic forces between charged particles.
 In periodic systems, the $1/r$ potential decays slowly, requiring special techniques
 to handle the conditionally convergent lattice sum. ALCHEMI Toolkit-Ops provides
-GPU-accelerated implementations of Ewald summation and Particle Mesh Ewald (PME)
+GPU-accelerated implementations of Ewald summation, Particle Mesh Ewald (PME), and
+Damped Shifted Force (DSF) electrostatics
 via [NVIDIA Warp](https://nvidia.github.io/warp/), with full PyTorch autograd support
 for machine learning applications.
 
 ```{tip}
-For most applications, start with {func}`~nvalchemiops.torch.interactions.electrostatics.ewald_summation`
-or {func}`~nvalchemiops.torch.interactions.electrostatics.particle_mesh_ewald`. These unified APIs
-automatically handle parameter estimation and dispatch to optimized kernels based on your input.
+For periodic systems, start with {func}`~nvalchemiops.torch.interactions.electrostatics.ewald_summation`
+or {func}`~nvalchemiops.torch.interactions.electrostatics.particle_mesh_ewald`. For non-periodic
+systems or large-scale simulations, consider approximate
+{func}`~nvalchemiops.torch.interactions.electrostatics.dsf_coulomb` which provides $O(N)$ scaling
+with smooth force continuity at the cutoff.
 ```
 
 ## Overview of Available Methods
@@ -24,7 +27,8 @@ ALCHEMI Toolkit-Ops provides electrostatics modules for point charges:
 | Method | Scaling | Best For |
 |--------|---------|----------|
 | **Ewald Summation** | $O(N^2)$ | Small/medium systems (<5000 atoms) |
-| **Particle Mesh Ewald** | $O(N \log N)$ | Large systems |
+| **Particle Mesh Ewald** | $O(N \log N)$ | Large periodic systems |
+| **Damped Shifted Force (DSF)** | $O(N)$ | Large systems, non-periodic |
 | **Direct Coulomb** | $O(N \times \text{pairs})$ | Non-periodic or as real-space component |
 | **Ewald Multipole** | $O(N^2)$ | Multipolar systems, small/medium |
 | **PME Multipole** | $O(N \log N)$ | Multipolar systems, large |
@@ -33,8 +37,14 @@ All methods support:
 
 - Single-system and batched calculations
 - Periodic boundary conditions
-- Automatic differentiation (positions, charges, cell)
+- Automatic differentiation (see per-method details below)
 - Both neighbor list (COO) and neighbor matrix formats
+
+| Method | Position gradients | Charge gradients | Cell gradients |
+|--------|--------------------|------------------|----------------|
+| Ewald / PME | Autograd | Autograd | Autograd |
+| Direct Coulomb | Autograd | Autograd | Autograd |
+| DSF | Analytical forces | Analytical (straight-through) | Analytical virial (PBC) |
 
 ## Quick Start
 
@@ -88,6 +98,34 @@ energies, forces = particle_mesh_ewald(
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
     accuracy=5e-4,
+    compute_forces=True,
+)
+```
+
+:::
+
+:::{tab-item} DSF Coulomb
+:sync: dsf
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import dsf_coulomb
+from nvalchemiops.torch.neighbors import neighbor_list
+
+# Build neighbor list (full list: each pair in both directions)
+neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
+    positions, cutoff=10.0, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Compute DSF electrostatics
+energies, forces = dsf_coulomb(
+    positions=positions,
+    charges=charges,
+    cutoff=10.0,
+    alpha=0.2,  # Damping parameter (0.0 for undamped shifted-force)
+    cell=cell,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    unit_shifts=neighbor_shifts,
     compute_forces=True,
 )
 ```
@@ -390,6 +428,349 @@ computational requirements.
 
 For small systems, direct Ewald may be faster due to lower overhead. For large
 systems, PME's $O(N \log N)$ scaling provides substantial speedup.
+
+## Damped Shifted Force (DSF)
+
+### Motivation
+
+Standard truncation of the $1/r$ Coulomb potential at a cutoff radius introduces
+two fundamental problems in molecular simulations:
+
+- **Charge imbalance**: The truncation sphere is generally not charge-neutral,
+  causing long-range potential oscillations and systematic errors in thermodynamic
+  properties.
+- **Force discontinuities**: Atoms crossing the cutoff boundary experience
+  instantaneous jumps in force, injecting energy into the system and violating
+  energy conservation during molecular dynamics.
+
+The Damped Shifted Force (DSF) method, introduced by Fennell and Gezelter (2006),
+solves both problems through a pairwise, real-space $\mathcal{O}(N)$ electrostatic
+summation technique. The core idea (building on the earlier Wolf summation) is that
+the neglected environment beyond the cutoff can be approximated from local structure:
+a neutralizing "image charge" is placed on the surface of the cutoff sphere for every
+charge within it. A shifted-force construction then ensures both the potential energy
+and the force smoothly vanish at the cutoff radius $R_c$.
+
+```{tip}
+DSF is particularly well-suited for non-periodic systems (clusters, droplets,
+interfaces) and extremely large systems where the $\mathcal{O}(N)$ scaling
+provides significant speedups over Ewald-based methods.
+```
+
+### Mathematical Background
+
+#### Shifted-Force Construction
+
+For a generic pair potential $v(r)$, the shifted-force form ensures both the
+potential and its derivative (force) vanish at the cutoff:
+
+```{math}
+V_{\text{SF}}(r) = v(r) - v(R_c) - v'(R_c)(r - R_c), \quad r \le R_c
+```
+
+This guarantees $V_{\text{SF}}(R_c) = 0$ and $F_{\text{SF}}(R_c) = -V'_{\text{SF}}(R_c) = 0$.
+
+For DSF, the base kernel is the damped Coulomb interaction
+$v(r) = \text{erfc}(\alpha r) / r$, where the complementary error function
+screens the interaction similarly to the real-space part of Ewald summation.
+
+#### DSF Pair Potential
+
+The potential energy for a pair of charges $i$ and $j$ at distance $r_{ij} \le R_c$:
+
+```{math}
+V_{\text{DSF}}(r_{ij}) = q_i q_j \left[ \frac{\text{erfc}(\alpha r_{ij})}{r_{ij}}
+- \frac{\text{erfc}(\alpha R_c)}{R_c}
++ \left( \frac{\text{erfc}(\alpha R_c)}{R_c^2}
++ \frac{2\alpha}{\sqrt{\pi}} \frac{e^{-\alpha^2 R_c^2}}{R_c}
+\right)(r_{ij} - R_c) \right]
+```
+
+For $r_{ij} > R_c$, $V_{\text{DSF}}(r_{ij}) = 0$.
+
+The three terms have clear physical interpretations:
+
+- **Damped Coulomb** ($\text{erfc}(\alpha r)/r$): The screened interaction between the charges.
+- **Potential shift** ($-\text{erfc}(\alpha R_c)/R_c$): Charge neutralization on the cutoff sphere, ensuring $V(R_c) = 0$.
+- **Force shift** (linear in $r - R_c$): Ensures the derivative (force) also vanishes at $R_c$, preventing energy drift.
+
+#### DSF Force
+
+The force between charges at distance $r_{ij} \le R_c$:
+
+```{math}
+\mathbf{F}_{\text{DSF}}(r_{ij}) = q_i q_j \left[ \left(
+\frac{\text{erfc}(\alpha r_{ij})}{r_{ij}^2}
++ \frac{2\alpha}{\sqrt{\pi}} \frac{e^{-\alpha^2 r_{ij}^2}}{r_{ij}}
+\right) - \left(
+\frac{\text{erfc}(\alpha R_c)}{R_c^2}
++ \frac{2\alpha}{\sqrt{\pi}} \frac{e^{-\alpha^2 R_c^2}}{R_c}
+\right) \right] \frac{\mathbf{r}_{ij}}{r_{ij}}
+```
+
+The subtracted constant ensures the force magnitude is exactly zero at $r_{ij} = R_c$.
+
+#### Self-Energy Correction
+
+Each charge interacts with its own neutralizing image charge on the cutoff sphere.
+This self-energy must be subtracted:
+
+```{math}
+U_i^{\text{self}} = -\left(
+\frac{\text{erfc}(\alpha R_c)}{2 R_c}
++ \frac{\alpha}{\sqrt{\pi}} \right) q_i^2
+```
+
+#### Total System Energy
+
+The total DSF electrostatic energy is:
+
+```{math}
+U_{\text{elec}} = \frac{1}{2} \sum_{i} \sum_{j \neq i} V_{\text{DSF}}(r_{ij}) + \sum_i U_i^{\text{self}}
+```
+
+```{note}
+The implementation assumes a **full neighbor list** where each pair $(i, j)$ appears
+in both directions. The factor of $1/2$ accounts for this double counting.
+```
+
+### Usage Examples
+
+#### Basic Energy and Forces
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import dsf_coulomb
+from nvalchemiops.torch.neighbors import neighbor_list
+
+# Build full neighbor list
+neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
+    positions, cutoff=10.0, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Compute DSF energy and forces
+energy, forces = dsf_coulomb(
+    positions=positions,
+    charges=charges,
+    cutoff=10.0,
+    alpha=0.2,
+    cell=cell,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    unit_shifts=neighbor_shifts,
+    compute_forces=True,
+)
+```
+
+#### With Periodic Boundary Conditions and Virial
+
+```python
+energy, forces, virial = dsf_coulomb(
+    positions=positions,
+    charges=charges,
+    cutoff=10.0,
+    alpha=0.2,
+    cell=cell,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    unit_shifts=neighbor_shifts,
+    compute_forces=True,
+    compute_virial=True,
+)
+# energy: (num_systems,), dtype=float64
+# forces: (num_atoms, 3), dtype matches input
+# virial: (num_systems, 3, 3), dtype matches input
+```
+
+#### Using Neighbor Matrix Format
+
+```python
+from nvalchemiops.torch.neighbors import cell_list
+
+# Build neighbor matrix
+neighbor_matrix, num_neighbors, shifts = cell_list(
+    positions, cutoff=10.0, cell=cell, pbc=pbc
+)
+
+energy, forces = dsf_coulomb(
+    positions=positions,
+    charges=charges,
+    cutoff=10.0,
+    alpha=0.2,
+    cell=cell,
+    neighbor_matrix=neighbor_matrix,
+    neighbor_matrix_shifts=shifts,
+    compute_forces=True,
+)
+```
+
+#### Charge Gradients for MLIP Training
+
+For machine learning interatomic potentials (MLIPs) with geometry-dependent charges,
+DSF supports charge gradient computation through PyTorch autograd:
+
+```python
+# Charges predicted by a neural network (requires_grad flows from the model)
+charges = charge_model(positions, atomic_numbers)
+
+energy, forces = dsf_coulomb(
+    positions=positions,
+    charges=charges,
+    cutoff=12.0,
+    alpha=0.2,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+)
+
+# Backpropagate through charges
+loss = (energy - ref_energy).pow(2).sum()
+loss.backward()
+# charges.grad now contains dE/dq * dloss/dE
+```
+
+```{note}
+Charge gradients ($\partial E / \partial q_i$) are computed analytically by the
+Warp kernel and propagated through PyTorch autograd via a "straight-through trick."
+The returned ``energy`` tensor is **not** differentiable with respect to ``positions``
+or ``cell`` through autograd -- forces and virials are computed analytically by the kernel.
+```
+
+#### Batched Calculations
+
+```python
+import torch
+from nvalchemiops.torch.interactions.electrostatics import dsf_coulomb
+
+# Concatenate atoms from multiple systems
+positions = torch.cat([pos_sys0, pos_sys1])
+charges = torch.cat([charges_sys0, charges_sys1])
+
+# System index for each atom
+batch_idx = torch.cat([
+    torch.zeros(len(pos_sys0), dtype=torch.int32),
+    torch.ones(len(pos_sys1), dtype=torch.int32),
+]).to(positions.device)
+
+energy, forces = dsf_coulomb(
+    positions=positions,
+    charges=charges,
+    cutoff=10.0,
+    alpha=0.2,
+    batch_idx=batch_idx,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    num_systems=2,
+)
+# energy: (2,) -- per-system energies
+# forces: (N, 3) -- per-atom forces
+```
+
+#### Undamped Shifted-Force Coulomb (alpha=0)
+
+Setting $\alpha = 0$ reduces DSF to a shifted-force bare Coulomb interaction
+(since $\text{erfc}(0) = 1$ and $e^0 = 1$):
+
+```python
+energy, forces = dsf_coulomb(
+    positions=positions,
+    charges=charges,
+    cutoff=12.0,
+    alpha=0.0,  # Undamped: shifted-force 1/r
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+)
+```
+
+### Parameter Guidance
+
+The accuracy of the DSF method is controlled by two parameters:
+
+| Parameter | Typical Range | Guidance |
+|-----------|---------------|----------|
+| $R_c$ (cutoff) | 10--15 | 12 is a common standard; 15 recommended for higher precision |
+| $\alpha$ (damping) | 0.0--0.25 | Controls convergence vs. accuracy trade-off |
+
+**Damping parameter regimes:**
+
+- $\alpha = 0.0$ (undamped): Best for structural properties (RDFs) and absolute
+  force magnitudes. Simplest form; no erfc damping overhead.
+- $\alpha \approx 0.2\text{--}0.25$: Best for long-time dynamics, collective motions,
+  and dielectric properties. Accelerates convergence with cutoff but over-damping
+  should be avoided.
+
+```{important}
+A practical convergence heuristic is to monitor $\text{erfc}(\alpha R_c)$:
+
+- **Most applications**: $\text{erfc}(\alpha R_c) < 10^{-3}$ is adequate.
+  For example, $\alpha = 0.2$ and $R_c = 12$ gives
+  $\text{erfc}(2.4) \approx 5 \times 10^{-4}$.
+- **High precision**: $\text{erfc}(\alpha R_c) < 10^{-5}$ is recommended.
+  For example, $\alpha = 0.2$ and $R_c = 15$ gives
+  $\text{erfc}(3.0) \approx 2 \times 10^{-5}$.
+```
+
+### When to Use DSF
+
+| Criterion | DSF | Ewald | PME |
+|-----------|-----|-------|-----|
+| Scaling | $O(N)$ | $O(N^2)$ | $O(N \log N)$ |
+| Periodicity required | No | Yes | Yes |
+| Force continuity at cutoff | Yes | Depends on cutoff | Depends on cutoff |
+| Self-energy correction | Built-in | Separate term | Separate term |
+| Best for | Large systems, clusters, non-periodic | Small periodic systems | Large periodic systems |
+| Charge gradients (dE/dq) | Analytic, via straight-through | Via autograd | Via autograd |
+
+**Choose DSF when:**
+
+- The system is **non-periodic** (clusters, droplets, interfaces) where Ewald/PME
+  would require artificial periodic boundary conditions.
+- The system is **extremely large** and the $O(N)$ scaling provides significant
+  speedups and memory savings over PME.
+- Training **MLIPs with geometry-dependent charges** where analytic $\partial E / \partial q$
+  is needed for backpropagation.
+
+**Choose Ewald/PME when:**
+
+- High accuracy of long-range electrostatics is critical for the target property
+  (e.g., dielectric constants, free energies of solvation).
+- The system is periodic and relatively small ($< 5000$ atoms), where Ewald's
+  lower overhead may be advantageous.
+
+### Applicability and Limitations
+
+**Applicability:**
+
+- Large-scale MD simulations with approximate Coulomb
+- Non-periodic and partially periodic systems (clusters, droplets, surfaces, interfaces)
+
+**Limitations:**
+
+- **Dielectric properties**: May slightly underestimate the dielectric constant
+  in some liquids if the cutoff is too small or damping too high. Typical cutoffs
+  of 12--15 provide adequate accuracy for most systems.
+- **Molecular torques**: Over-damping ($\alpha > 0.3$) can degrade the accuracy of
+  torques in molecular systems. Keep $\alpha \le 0.25$ for molecular simulations.
+- **Low-frequency phonons**: In crystal lattices, undamped DSF may deviate slightly
+  from Ewald results for very low-frequency modes, though $\alpha \approx 0.2$
+  typically resolves this.
+
+### Software Ecosystem
+
+The DSF method is widely implemented and validated across major simulation packages,
+including LAMMPS (`pair_style coul/dsf`), OpenMD, DL\_POLY, Cassandra, JAX-MD,
+and CP2K. This broad adoption provides extensive cross-validation of the method
+and its parameters.
+
+### References
+
+- Fennell, C. J.; Gezelter, J. D. (2006). "Is the Ewald summation still necessary?
+  Pairwise alternatives to the accepted standard for long-range electrostatics."
+  *J. Chem. Phys.* 124, 234104.
+  [DOI: 10.1063/1.2206581](https://doi.org/10.1063/1.2206581)
+
+- Wolf, D.; Keblinski, P.; Phillpot, S. R.; Eggebrecht, J. (1999). "Exact method
+  for the simulation of Coulombic systems by spherically truncated, pairwise r-1
+  summation." *J. Chem. Phys.* 110, 8254.
+  [DOI: 10.1063/1.478738](https://doi.org/10.1063/1.478738)
 
 ## Multipole Electrostatics
 
@@ -1016,6 +1397,16 @@ See the unit tests at `test/interactions/electrostatics/` in the repository.
 - Sagui, C.; Darden, T. A. (1999). "Molecular Dynamics Simulations of Biomolecules:
   Long-Range Electrostatic Effects." *Annu. Rev. Biophys. Biomol. Struct.* 28, 155-179.
   [DOI: 10.1146/annurev.biophys.28.1.155](https://doi.org/10.1146/annurev.biophys.28.1.155)
+
+- Fennell, C. J.; Gezelter, J. D. (2006). "Is the Ewald summation still necessary?
+  Pairwise alternatives to the accepted standard for long-range electrostatics."
+  *J. Chem. Phys.* 124, 234104.
+  [DOI: 10.1063/1.2206581](https://doi.org/10.1063/1.2206581)
+
+- Wolf, D.; Keblinski, P.; Phillpot, S. R.; Eggebrecht, J. (1999). "Exact method
+  for the simulation of Coulombic systems by spherically truncated, pairwise r-1
+  summation." *J. Chem. Phys.* 110, 8254.
+  [DOI: 10.1063/1.478738](https://doi.org/10.1063/1.478738)
 
 ---
 
