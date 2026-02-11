@@ -318,13 +318,20 @@ def _prepare_alpha_array(
     jax.Array
         Alpha array of shape (B,) or (1,).
     """
-    if isinstance(alpha, (float, int)):
-        return jnp.array([float(alpha)], dtype=dtype)
+    if isinstance(alpha, (int, float)):
+        return jnp.full(num_systems, float(alpha), dtype=dtype)
+    elif isinstance(alpha, jax.Array):
+        # generate elements from scalar
+        if alpha.ndim == 0:
+            return jnp.full(num_systems, alpha[0], dtype=dtype)
+        elif len(alpha) != num_systems:
+            raise ValueError(
+                f"alpha has {alpha.shape[0]} values but there are {num_systems} systems"
+            )
+        else:
+            return alpha.astype(dtype)
     else:
-        alpha_arr = jnp.asarray(alpha, dtype=dtype)
-        if alpha_arr.ndim == 0:
-            return alpha_arr.reshape(1)
-        return alpha_arr
+        raise TypeError(f"alpha must be float or jax.Array, got {type(alpha)}")
 
 
 def _compute_total_charge(charges: jax.Array, batch_idx: jax.Array | None) -> jax.Array:
@@ -445,6 +452,12 @@ def ewald_real_space(
     num_atoms = positions_cast.shape[0]
     is_batched = batch_idx is not None
 
+    # Expand cell to (B, 3, 3) if only (1, 3, 3) was given for a batch
+    if is_batched:
+        num_systems_from_idx = int(batch_idx.max()) + 1
+        if cell_cast.shape[0] == 1 and num_systems_from_idx > 1:
+            cell_cast = jnp.tile(cell_cast, (num_systems_from_idx, 1, 1))
+
     # Prepare alpha
     alpha_arr = _prepare_alpha_array(alpha, cell_cast.shape[0], dtype=dtype)
 
@@ -473,10 +486,10 @@ def ewald_real_space(
                         positions_cast,
                         charges_cast,
                         cell_cast,
+                        batch_idx_i32,
                         idx_j,
                         neighbor_ptr_i32,
                         neighbor_shifts_i32,
-                        batch_idx_i32,
                         alpha_arr,
                         energies,
                         forces,
@@ -492,10 +505,10 @@ def ewald_real_space(
                     positions_cast,
                     charges_cast,
                     cell_cast,
+                    batch_idx_i32,
                     idx_j,
                     neighbor_ptr_i32,
                     neighbor_shifts_i32,
-                    batch_idx_i32,
                     alpha_arr,
                     energies,
                     forces,
@@ -506,10 +519,10 @@ def ewald_real_space(
                     positions_cast,
                     charges_cast,
                     cell_cast,
+                    batch_idx_i32,
                     idx_j,
                     neighbor_ptr_i32,
                     neighbor_shifts_i32,
-                    batch_idx_i32,
                     alpha_arr,
                     energies,
                     launch_dims=(num_atoms,),
@@ -578,9 +591,9 @@ def ewald_real_space(
                         positions_cast,
                         charges_cast,
                         cell_cast,
+                        batch_idx_i32,
                         neighbor_matrix_i32,
                         neighbor_matrix_shifts_i32,
-                        batch_idx_i32,
                         wp.int32(mask_value),
                         alpha_arr,
                         energies,
@@ -597,9 +610,9 @@ def ewald_real_space(
                     positions_cast,
                     charges_cast,
                     cell_cast,
+                    batch_idx_i32,
                     neighbor_matrix_i32,
                     neighbor_matrix_shifts_i32,
-                    batch_idx_i32,
                     wp.int32(mask_value),
                     alpha_arr,
                     energies,
@@ -611,9 +624,9 @@ def ewald_real_space(
                     positions_cast,
                     charges_cast,
                     cell_cast,
+                    batch_idx_i32,
                     neighbor_matrix_i32,
                     neighbor_matrix_shifts_i32,
-                    batch_idx_i32,
                     wp.int32(mask_value),
                     alpha_arr,
                     energies,
@@ -736,6 +749,12 @@ def ewald_reciprocal_space(
     num_atoms = positions_cast.shape[0]
     is_batched = batch_idx is not None
 
+    # Expand cell to (B, 3, 3) if only (1, 3, 3) was given for a batch
+    if is_batched:
+        num_systems_from_idx = int(batch_idx.max()) + 1
+        if cell_cast.shape[0] == 1 and num_systems_from_idx > 1:
+            cell_cast = jnp.tile(cell_cast, (num_systems_from_idx, 1, 1))
+
     # Prepare alpha
     alpha_arr = _prepare_alpha_array(alpha, cell_cast.shape[0], dtype=dtype)
 
@@ -744,7 +763,13 @@ def ewald_reciprocal_space(
 
     # Determine k-vector dimensions
     if is_batched:
-        # k_vectors: (B, K, 3)
+        # k_vectors should be (B, K, 3); expand from (K, 3) if necessary
+        if k_vectors_cast.ndim == 2:
+            num_systems = int(batch_idx.max()) + 1
+            k_vectors_cast = jnp.tile(
+                k_vectors_cast[jnp.newaxis, :, :],
+                (num_systems, 1, 1),
+            )
         num_k = k_vectors_cast.shape[1]
         num_systems = k_vectors_cast.shape[0]
     else:
