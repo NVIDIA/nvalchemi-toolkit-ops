@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import warp as wp
 from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.interactions.electrostatics.coulomb import (
@@ -234,8 +233,8 @@ def coulomb_energy(
                 neighbor_ptr_i32,
                 neighbor_shifts_i32,
                 batch_idx_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
+                float(cutoff),
+                float(alpha),
                 energies,
                 launch_dims=(num_atoms,),
             )
@@ -247,8 +246,8 @@ def coulomb_energy(
                 idx_j,
                 neighbor_ptr_i32,
                 neighbor_shifts_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
+                float(cutoff),
+                float(alpha),
                 energies,
                 launch_dims=(num_atoms,),
             )
@@ -268,9 +267,9 @@ def coulomb_energy(
                 neighbor_matrix_i32,
                 neighbor_matrix_shifts_i32,
                 batch_idx_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
-                wp.int32(fill_value),
+                float(cutoff),
+                float(alpha),
+                int(fill_value),
                 energies,
                 launch_dims=(num_atoms,),
             )
@@ -281,9 +280,9 @@ def coulomb_energy(
                 cell_f64,
                 neighbor_matrix_i32,
                 neighbor_matrix_shifts_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
-                wp.int32(fill_value),
+                float(cutoff),
+                float(alpha),
+                int(fill_value),
                 energies,
                 launch_dims=(num_atoms,),
             )
@@ -462,8 +461,8 @@ def coulomb_energy_forces(
                 neighbor_ptr_i32,
                 neighbor_shifts_i32,
                 batch_idx_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
+                float(cutoff),
+                float(alpha),
                 energies,
                 forces,
                 launch_dims=(num_atoms,),
@@ -476,8 +475,8 @@ def coulomb_energy_forces(
                 idx_j,
                 neighbor_ptr_i32,
                 neighbor_shifts_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
+                float(cutoff),
+                float(alpha),
                 energies,
                 forces,
                 launch_dims=(num_atoms,),
@@ -498,9 +497,9 @@ def coulomb_energy_forces(
                 neighbor_matrix_i32,
                 neighbor_matrix_shifts_i32,
                 batch_idx_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
-                wp.int32(fill_value),
+                float(cutoff),
+                float(alpha),
+                int(fill_value),
                 energies,
                 forces,
                 launch_dims=(num_atoms,),
@@ -512,9 +511,9 @@ def coulomb_energy_forces(
                 cell_f64,
                 neighbor_matrix_i32,
                 neighbor_matrix_shifts_i32,
-                wp.float64(cutoff),
-                wp.float64(alpha),
-                wp.int32(fill_value),
+                float(cutoff),
+                float(alpha),
+                int(fill_value),
                 energies,
                 forces,
                 launch_dims=(num_atoms,),
