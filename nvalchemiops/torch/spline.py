@@ -551,7 +551,12 @@ def _spline_gather_gradient(
             mesh_ny,
             mesh_nz,
             spline_order,
-            *_: (num_systems, mesh_nx, mesh_ny, mesh_nz),
+            *_: (
+                num_systems,
+                mesh_nx,
+                mesh_ny,
+                mesh_nz,
+            ),
         ),
     ],
     grad_arrays=[
@@ -910,7 +915,12 @@ def _batch_spline_gather_gradient(
             mesh_ny,
             mesh_nz,
             spline_order,
-            *_: (num_channels, mesh_nx, mesh_ny, mesh_nz),
+            *_: (
+                num_channels,
+                mesh_nx,
+                mesh_ny,
+                mesh_nz,
+            ),
         ),
     ],
     grad_arrays=[

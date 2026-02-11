@@ -149,9 +149,6 @@ __all__ = [
     # PME - PyTorch bindings (deprecated, use nvalchemiops.torch.interactions.electrostatics)
     "particle_mesh_ewald",
     "pme_reciprocal_space",
-    "pme_green_structure_factor",
-    "pme_energy_corrections",
-    "pme_energy_corrections_with_charge_grad",
 ]
 
 # Deprecated PyTorch functions - lazy import with warning
