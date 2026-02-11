@@ -291,7 +291,9 @@ def generate_k_vectors_pme(
     # Transform Miller indices to Cartesian k-vectors
     # k_cart = [h, k, l] @ reciprocal_matrix^T
     # where reciprocal_matrix has reciprocal lattice vectors as rows
-    k_vectors = jnp.einsum("ijkd,bcd->bijkc", k_grid, reciprocal_cell).squeeze(0)
+    k_vectors = jnp.einsum("ijkd,bcd->bijkc", k_grid, reciprocal_cell)
+    if k_vectors.shape[0] == 1:
+        k_vectors = jnp.squeeze(k_vectors, axis=0)
 
     # Compute k^2 for Green's function
     k_squared = jnp.sum(k_vectors**2, axis=-1)
