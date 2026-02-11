@@ -1,0 +1,45 @@
+# DSF Accuracy Benchmark Configuration
+# =====================================
+# Compares nvalchemiops DSF electrostatic energy/forces against OpenMM PME
+# reference for NaCl crystal and 0.1M NaCl in water systems.
+#
+# Usage:
+#   python benchmark_dsf_accuracy.py --config benchmark_dsf_accuracy_config.yaml
+#   python benchmark_dsf_accuracy.py --config benchmark_dsf_accuracy_config.yaml --output-dir ./results
+
+parameters:
+  num_configurations: 16
+  seed: 42
+  device: cuda
+  dtypes: [float32, float64]
+
+# DSF parameter sweep
+dsf_parameters:
+  cutoffs: [9.0, 12.0, 15.0]
+  alphas: [0.1, 0.2, 0.3]
+
+# Neighbor list allocation: max_neighbors = ceil(density * 4/3 * pi * cutoff^3 * safety)
+neighbor_list:
+  density: 0.2
+  safety: 1.0
+
+# OpenMM PME reference settings
+openmm_reference:
+  ewald_error_tolerance: 1.0e-6
+
+# NaCl crystal system
+nacl_crystal:
+  supercell_sizes: [6, 8, 11]   # box: 33.8, 45.1, 62.0 A (up to ~4x cutoff 15)
+  displacement_std: 0.1    # Angstroms
+  displacement_max: 0.2    # Angstroms
+
+# 0.1M NaCl in water system
+nacl_water:
+  box_size: 6.5            # nm (65 Angstroms, ~4x cutoff 15)
+  ionic_strength: 0.1      # molar
+  forcefield:
+    - amber14-all.xml
+    - amber14/tip3p.xml
+  minimize_max_iterations: 500
+  nvt_steps: 500           # 1 ps at 2 fs timestep
+  temperature: 300         # K
