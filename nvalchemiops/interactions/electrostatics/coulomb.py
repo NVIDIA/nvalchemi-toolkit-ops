@@ -333,7 +333,7 @@ def _coulomb_energy_matrix_kernel(
         if r >= cutoff or r < wp.float64(1e-10):
             continue
 
-        prefactor = qi * qj
+        prefactor = wp.float64(0.5) * qi * qj
 
         if alpha > wp.float64(0.0):
             alpha_r = alpha * r
@@ -616,7 +616,7 @@ def _batch_coulomb_energy_matrix_kernel(
         if r >= cutoff or r < wp.float64(1e-10):
             continue
 
-        prefactor = qi * qj
+        prefactor = wp.float64(0.5) * qi * qj
 
         if alpha > wp.float64(0.0):
             alpha_r = alpha * r

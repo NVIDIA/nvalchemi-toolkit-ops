@@ -2466,5 +2466,114 @@ class TestBatchAutograd:
         assert cell.grad is not None
 
 
+class TestCoulombMatrixEnergyInvariance:
+    """Test that matrix format energy is consistent across energy-only and energy+forces."""
+
+    def test_matrix_energy_matches_energy_forces(self, device):
+        """Energy from coulomb_energy(matrix) should match energy from coulomb_energy_forces(matrix).
+
+        This is a regression test for a bug where the energy-only matrix kernel
+        used prefactor = qi*qj while the energy+forces matrix kernel used
+        prefactor = 0.5*qi*qj, producing inconsistent results.
+        """
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell = torch.tensor(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=torch.float64,
+            device=device,
+        )
+        neighbor_matrix = torch.tensor(
+            [[1, -1], [0, -1]], dtype=torch.int32, device=device
+        )
+        neighbor_matrix_shifts = torch.zeros(
+            (2, 2, 3), dtype=torch.int32, device=device
+        )
+
+        energy_only = coulomb_energy(
+            positions,
+            charges,
+            cell,
+            cutoff=10.0,
+            alpha=0.2,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            fill_value=-1,
+        )
+        energies_with_forces, _ = coulomb_energy_forces(
+            positions,
+            charges,
+            cell,
+            cutoff=10.0,
+            alpha=0.2,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            fill_value=-1,
+        )
+
+        torch.testing.assert_close(
+            energy_only.sum(), energies_with_forces.sum(), atol=1e-10, rtol=0.0
+        )
+
+    def test_batch_matrix_energy_matches_energy_forces(self, device):
+        """Batched matrix energy consistency check."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [50.0, 0.0, 0.0], [53.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [1.0, -1.0, 2.0, -2.0], dtype=torch.float64, device=device
+        )
+        cell = torch.tensor(
+            [
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        neighbor_matrix = torch.tensor(
+            [[1, -1], [0, -1], [3, -1], [2, -1]],
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_matrix_shifts = torch.zeros(
+            (4, 2, 3), dtype=torch.int32, device=device
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        energy_only = coulomb_energy(
+            positions,
+            charges,
+            cell,
+            cutoff=10.0,
+            alpha=0.2,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            fill_value=-1,
+            batch_idx=batch_idx,
+        )
+        energies_with_forces, _ = coulomb_energy_forces(
+            positions,
+            charges,
+            cell,
+            cutoff=10.0,
+            alpha=0.2,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            fill_value=-1,
+            batch_idx=batch_idx,
+        )
+
+        torch.testing.assert_close(
+            energy_only.sum(), energies_with_forces.sum(), atol=1e-10, rtol=0.0
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

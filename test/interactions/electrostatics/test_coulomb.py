@@ -756,13 +756,10 @@ class TestWpCoulombEnergyMatrix:
             device=device,
         )
 
-        # Total energies should be close (matrix format counts each pair twice)
+        # Total energies should match -- both formats use 0.5 prefactor with full NL
         csr_total = sum(energies_csr.numpy())
         mat_total = sum(energies_mat.numpy())
-        # Matrix format doesn't use 0.5 prefactor, so it counts full energy per pair
-        # and each pair is counted twice (once from each atom's perspective)
-        # So mat_total = 2 * csr_total if csr uses half neighbor list
-        assert mat_total == pytest.approx(2 * csr_total, rel=1e-10)
+        assert mat_total == pytest.approx(csr_total, rel=1e-10)
 
     def test_energy_forces_matrix(self, device, two_atom_matrix_system):
         """Test energy and forces with matrix format."""
@@ -944,14 +941,13 @@ class TestWpBatchCoulombEnergyMatrix:
         )
 
         result = energies.numpy()
-        # System 0: E = q1*q2/r = 1*(-1)/2 = -0.5 (counted twice in matrix format)
-        # System 1: E = q1*q2/r = 2*(-1)/4 = -0.5 (counted twice in matrix format)
+        # System 0: E = 0.5 * q1*q2/r = 0.5 * 1*(-1)/2 = -0.25 per atom, total -0.5
+        # System 1: E = 0.5 * q1*q2/r = 0.5 * 2*(-1)/4 = -0.25 per atom, total -0.5
         system_0_energy = result[0] + result[1]
         system_1_energy = result[2] + result[3]
 
-        # Matrix format counts each pair twice (full neighbor list)
-        assert system_0_energy == pytest.approx(-1.0, rel=1e-10)
-        assert system_1_energy == pytest.approx(-1.0, rel=1e-10)
+        assert system_0_energy == pytest.approx(-0.5, rel=1e-10)
+        assert system_1_energy == pytest.approx(-0.5, rel=1e-10)
 
     def test_batch_matrix_energy_forces(self, device, batch_two_systems_matrix):
         """Test batch energy and forces with neighbor matrix format."""
