@@ -44,6 +44,13 @@ Available Methods
    - Uses B-spline interpolation for charge assignment
    - Full autograd support
 
+4. **Damped Shifted Force (DSF)** (`dsf`)
+   - Pairwise :math:`O(N)` electrostatic summation
+   - Both potential and forces smoothly vanish at cutoff
+   - Supports geometry-dependent charges (MLIP)
+   - Warp launchers: ``dsf()``, ``dsf_pbc()``, ``dsf_matrix()``, ``dsf_matrix_pbc()``
+   - PyTorch API: ``nvalchemiops.torch.interactions.electrostatics.dsf``
+
 """
 
 # Coulomb - Warp launchers (framework-agnostic)
@@ -56,6 +63,14 @@ from .coulomb import (
     coulomb_energy_forces,
     coulomb_energy_forces_matrix,
     coulomb_energy_matrix,
+)
+
+# DSF - Warp launchers (framework-agnostic)
+from .dsf import (
+    dsf,
+    dsf_matrix,
+    dsf_matrix_pbc,
+    dsf_pbc,
 )
 
 # Ewald summation - PyTorch bindings are deprecated at this location
@@ -102,6 +117,11 @@ from .pme_kernels import (
 )
 
 __all__ = [
+    # DSF - Warp launchers
+    "dsf",
+    "dsf_pbc",
+    "dsf_matrix",
+    "dsf_matrix_pbc",
     # Coulomb - Warp launchers
     "coulomb_energy",
     "coulomb_energy_forces",
