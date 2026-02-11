@@ -48,8 +48,8 @@ except ModuleNotFoundError:
     PMECalculator = None
     CoulombPotential = None
 
-# Import test utilities for crystal structure generation
-from .test_utils import (
+# Crystal structure generators are defined in the shared electrostatics conftest
+from test.interactions.electrostatics.conftest import (
     create_cscl_supercell,
     create_wurtzite_system,
     create_zincblende_system,
