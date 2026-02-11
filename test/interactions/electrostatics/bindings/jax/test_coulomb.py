@@ -37,7 +37,6 @@ autograd (enable_backward=False). Tests that call kernels require GPU.
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import pytest
 
@@ -46,57 +45,7 @@ from nvalchemiops.jax.interactions.electrostatics.coulomb import (
     coulomb_energy_forces,
     coulomb_forces,
 )
-
-# ==============================================================================
-# Device Utilities
-# ==============================================================================
-
-
-def place_on_device(arr: jax.Array, device_type: str) -> jax.Array:
-    """Place a JAX array on the specified device type."""
-    if device_type == "cpu":
-        device = jax.devices("cpu")[0]
-    else:
-        device = jax.devices("gpu")[0]
-    return jax.device_put(arr, device)
-
-
-# ==============================================================================
-# Fixtures
-# ==============================================================================
-
-
-@pytest.fixture()
-def device():
-    """GPU device fixture. Skips when no CUDA device is available."""
-    if len(jax.devices("gpu")) == 0:
-        pytest.skip("No CUDA device available.")
-    return "gpu"
-
-
-@pytest.fixture()
-def simple_pair_system(device):
-    """Two-atom system for basic tests."""
-    positions = place_on_device(
-        jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64), device
-    )
-    charges = place_on_device(jnp.array([1.0, -1.0], dtype=jnp.float64), device)
-    cell = place_on_device(
-        jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        ),
-        device,
-    )
-    neighbor_list = place_on_device(jnp.array([[0], [1]], dtype=jnp.int32), device)
-    neighbor_ptr = place_on_device(jnp.array([0, 1], dtype=jnp.int32), device)
-    neighbor_shifts = place_on_device(jnp.zeros((1, 3), dtype=jnp.int32), device)
-    return positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
-
-
-# ==============================================================================
-# Test Classes
-# ==============================================================================
+from test.interactions.electrostatics.bindings.jax.conftest import place_on_device
 
 
 class TestUndampedCoulombEnergy:
