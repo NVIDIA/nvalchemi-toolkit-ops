@@ -20,6 +20,9 @@ from nvalchemiops.torch.interactions.electrostatics.coulomb import (
     coulomb_energy_forces,
     coulomb_forces,
 )
+from nvalchemiops.torch.interactions.electrostatics.dsf import (
+    dsf_coulomb,
+)
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
     ewald_reciprocal_space,
@@ -50,6 +53,8 @@ __all__ = [
     "coulomb_energy",
     "coulomb_forces",
     "coulomb_energy_forces",
+    # DSF
+    "dsf_coulomb",
     # Ewald
     "ewald_real_space",
     "ewald_reciprocal_space",
