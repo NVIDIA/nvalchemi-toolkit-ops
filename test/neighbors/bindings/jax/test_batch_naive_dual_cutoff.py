@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -118,3 +119,37 @@ class TestBatchedDualCutoffListFormat:
         assert neighbor_ptr2.shape == (17,)
         assert unit_shifts1.shape[0] == neighbor_list1.shape[1]
         assert unit_shifts2.shape[0] == neighbor_list2.shape[1]
+
+
+class TestBatchNaiveDualCutoffJIT:
+    """Smoke tests for batch_naive_neighbor_list_dual_cutoff with jax.jit."""
+
+    def test_jit_no_pbc(self):
+        """Test batched dual cutoff without PBC works with jax.jit."""
+        positions1, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=jnp.float32
+        )
+        positions2, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.5, dtype=jnp.float32
+        )
+        positions = jnp.concatenate([positions1, positions2], axis=0)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([8, 8])
+
+        @jax.jit
+        def jitted_batch_dual(positions, batch_idx, batch_ptr):
+            return batch_naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1=1.0,
+                cutoff2=1.5,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors1=15,
+                max_neighbors2=25,
+            )
+
+        nm1, nn1, nm2, nn2 = jitted_batch_dual(positions, batch_idx, batch_ptr)
+
+        assert nm1.shape == (16, 15)
+        assert nm2.shape == (16, 25)
+        assert nn1.shape == (16,)
+        assert nn2.shape == (16,)

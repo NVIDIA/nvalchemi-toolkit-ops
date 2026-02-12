@@ -318,3 +318,39 @@ class TestBatchNaiveEdgeCases:
         )
         assert nl.shape[0] == 2  # COO
         assert ptr.shape == (5,)  # 4 atoms + 1
+
+
+class TestBatchNaiveJIT:
+    """Smoke tests for batch_naive_neighbor_list with jax.jit."""
+
+    def test_jit_no_pbc(self):
+        """Test batched naive neighbor list without PBC works with jax.jit."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_naive(positions, batch_idx, batch_ptr):
+            return batch_naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=10,
+            )
+
+        neighbor_matrix, num_neighbors = jitted_batch_naive(
+            positions, batch_idx, batch_ptr
+        )
+
+        assert neighbor_matrix.shape == (4, 10)
+        assert num_neighbors.shape == (4,)
+        assert jnp.all(num_neighbors >= 0)

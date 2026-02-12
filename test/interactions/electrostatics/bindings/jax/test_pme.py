@@ -2297,5 +2297,106 @@ class TestFullPMENeighborList:
         assert jnp.all(jnp.isfinite(charge_grads))
 
 
+class TestPMEJIT:
+    """Smoke tests for PME calculations with jax.jit."""
+
+    def test_jit_reciprocal_space(self):
+        """Test pme_reciprocal_space works under jax.jit."""
+        positions = jnp.array([[4.0, 5.0, 5.0], [6.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        @jax.jit
+        def jitted_pme_recip(positions, charges, cell, alpha):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                spline_order=4,
+                compute_forces=False,
+            )
+
+        energies = jitted_pme_recip(positions, charges, cell, alpha)
+
+        assert energies.shape == (2,)
+        assert jnp.all(jnp.isfinite(energies))
+
+    def test_jit_reciprocal_space_with_forces(self):
+        """Test pme_reciprocal_space with forces works under jax.jit."""
+        positions = jnp.array([[4.0, 5.0, 5.0], [6.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        @jax.jit
+        def jitted_pme_recip_forces(positions, charges, cell, alpha):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+                spline_order=4,
+                compute_forces=True,
+            )
+
+        energies, forces = jitted_pme_recip_forces(positions, charges, cell, alpha)
+
+        assert energies.shape == (2,)
+        assert forces.shape == (2, 3)
+        assert jnp.all(jnp.isfinite(energies))
+        assert jnp.all(jnp.isfinite(forces))
+
+    def test_jit_full_pme(self):
+        """Test particle_mesh_ewald works under jax.jit."""
+        positions = jnp.array(
+            [[4.0, 5.0, 5.0], [6.0, 5.0, 5.0], [5.0, 4.0, 5.0], [5.0, 6.0, 5.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        pbc = jnp.array([[True, True, True]])
+
+        # Build neighbor list eagerly (it uses .devices().pop() internally)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc, return_neighbor_list=True
+        )
+
+        @jax.jit
+        def jitted_full_pme(positions, charges, cell, nl, nptr, nshifts):
+            return particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=nshifts,
+                compute_forces=True,
+            )
+
+        energies, forces = jitted_full_pme(
+            positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+        )
+
+        assert energies.shape == (4,)
+        assert forces.shape == (4, 3)
+        assert jnp.all(jnp.isfinite(energies))
+        assert jnp.all(jnp.isfinite(forces))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

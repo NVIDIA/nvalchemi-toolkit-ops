@@ -343,3 +343,46 @@ class TestNaiveEdgeCases:
         assert shifts.shape[1] == 3
         # Should find neighbors across PBC
         assert nl.shape[1] > 0
+
+
+class TestNaiveNeighborListJIT:
+    """Smoke tests for naive_neighbor_list compatibility with jax.jit."""
+
+    def test_jit_no_pbc(self):
+        """Test naive_neighbor_list without PBC works with jax.jit."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
+            dtype=jnp.float32,
+        )
+
+        @jax.jit
+        def jitted_naive(positions):
+            return naive_neighbor_list(positions, cutoff=1.0, max_neighbors=10)
+
+        neighbor_matrix, num_neighbors = jitted_naive(positions)
+
+        assert neighbor_matrix.shape == (3, 10)
+        assert num_neighbors.shape == (3,)
+        assert jnp.all(num_neighbors >= 0)
+
+    def test_jit_with_pbc(self):
+        """Test naive_neighbor_list with PBC works with jax.jit."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        pbc = jnp.array([[True, True, True]])
+
+        @jax.jit
+        def jitted_naive_pbc(positions, cell, pbc):
+            return naive_neighbor_list(
+                positions, cutoff=1.0, cell=cell, pbc=pbc, max_neighbors=10
+            )
+
+        neighbor_matrix, num_neighbors, shifts = jitted_naive_pbc(positions, cell, pbc)
+
+        assert neighbor_matrix.shape == (2, 10)
+        assert num_neighbors.shape == (2,)
+        assert shifts.shape == (2, 10, 3)
+        assert jnp.all(num_neighbors >= 0)

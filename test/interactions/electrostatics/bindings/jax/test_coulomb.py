@@ -37,6 +37,7 @@ autograd (enable_backward=False). Tests that call kernels require GPU.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -1599,6 +1600,107 @@ class TestEmptyInputs:
 
         assert jnp.allclose(energies, jnp.zeros_like(energies))
         assert jnp.allclose(forces, jnp.zeros_like(forces))
+
+
+class TestCoulombJIT:
+    """Smoke tests for Coulomb calculations with jax.jit."""
+
+    def test_jit_energy_neighbor_list(self):
+        """Test coulomb_energy with neighbor list works under jax.jit."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=jnp.float64,
+        )
+        neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        neighbor_shifts = jnp.zeros((2, 3), dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_coulomb_energy(positions, charges, cell, nl, nptr, nshifts):
+            return coulomb_energy(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                cutoff=10.0,
+                alpha=0.0,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=nshifts,
+            )
+
+        energies = jitted_coulomb_energy(
+            positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+        )
+
+        assert energies.shape == (2,)
+        assert jnp.all(jnp.isfinite(energies))
+
+    def test_jit_energy_forces_neighbor_list(self):
+        """Test coulomb_energy_forces with neighbor list works under jax.jit."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=jnp.float64,
+        )
+        neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        neighbor_shifts = jnp.zeros((2, 3), dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_coulomb_ef(positions, charges, cell, nl, nptr, nshifts):
+            return coulomb_energy_forces(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                cutoff=10.0,
+                alpha=0.0,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=nshifts,
+            )
+
+        energies, forces = jitted_coulomb_ef(
+            positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+        )
+
+        assert energies.shape == (2,)
+        assert forces.shape == (2, 3)
+        assert jnp.all(jnp.isfinite(energies))
+        assert jnp.all(jnp.isfinite(forces))
+
+    def test_jit_energy_neighbor_matrix(self):
+        """Test coulomb_energy with neighbor matrix works under jax.jit."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=jnp.float64,
+        )
+        neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
+        neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_coulomb_matrix(positions, charges, cell, nm, nm_shifts):
+            return coulomb_energy(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                cutoff=10.0,
+                alpha=0.0,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nm_shifts,
+                fill_value=2,
+            )
+
+        energies = jitted_coulomb_matrix(
+            positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts
+        )
+
+        assert energies.shape == (2,)
+        assert jnp.all(jnp.isfinite(energies))
 
 
 if __name__ == "__main__":

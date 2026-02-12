@@ -1326,3 +1326,79 @@ class TestEdgeCases:
         assert energies.shape == (2,)
         assert jnp.all(jnp.isfinite(energies))
         assert energies.sum() < 0
+
+
+class TestEwaldJIT:
+    """Smoke tests for Ewald summation compatibility with jax.jit."""
+
+    def test_jit_real_space(self):
+        """Test ewald_real_space works under jax.jit."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        pbc = jnp.array([[True, True, True]])
+
+        # Build neighbor list eagerly (it uses .devices().pop() internally)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc, return_neighbor_list=True
+        )
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        @jax.jit
+        def jitted_real_space(positions, charges, cell, alpha, nl, nptr, nshifts):
+            return ewald_real_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=nshifts,
+            )
+
+        energies = jitted_real_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+        )
+
+        assert energies.shape == (2,)
+        assert jnp.all(jnp.isfinite(energies))
+
+    def test_jit_reciprocal_space(self):
+        """Test ewald_reciprocal_space works under jax.jit."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [3.0, 3.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        # k_vectors must be computed eagerly (dynamic shape)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        @jax.jit
+        def jitted_reciprocal(positions, charges, cell, k_vectors, alpha):
+            return ewald_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                k_vectors=k_vectors,
+                alpha=alpha,
+            )
+
+        energies = jitted_reciprocal(positions, charges, cell, k_vectors, alpha)
+
+        assert energies.shape == (4,)
+        assert jnp.all(jnp.isfinite(energies))

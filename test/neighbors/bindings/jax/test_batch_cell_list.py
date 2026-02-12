@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
 from nvalchemiops.jax.neighbors.batched import batch_cell_list
@@ -153,3 +154,45 @@ class TestBatchCellListEdgeCases:
         )
         if int(jnp.sum(nn)) > 0:
             assert jnp.all(shifts == 0)
+
+
+class TestBatchCellListJIT:
+    """Smoke tests for batch_cell_list compatibility with jax.jit."""
+
+    def test_jit_with_pbc(self):
+        """Test batched cell list with PBC works with jax.jit."""
+        positions = jnp.vstack(
+            [
+                jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32),
+                jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32),
+            ]
+        )
+        cells = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ]
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
+            return batch_cell_list(
+                positions,
+                cutoff=2.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+            )
+
+        nm, nn, shifts = jitted_batch_cell_list(
+            positions, cells, pbcs, batch_idx, batch_ptr
+        )
+
+        assert nm.shape[0] == 4
+        assert nn.shape == (4,)
+        assert shifts.shape[0] == 4
+        assert shifts.shape[2] == 3

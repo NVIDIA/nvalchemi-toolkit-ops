@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -237,3 +238,30 @@ class TestDualCutoffListFormat:
         assert neighbor_shifts2.shape[0] == neighbor_list2.shape[1]
         assert neighbor_shifts1.shape[1] == 3
         assert neighbor_shifts2.shape[1] == 3
+
+
+class TestNaiveDualCutoffJIT:
+    """Smoke tests for naive_neighbor_list_dual_cutoff with jax.jit."""
+
+    def test_jit_no_pbc(self):
+        """Test dual cutoff without PBC works with jax.jit."""
+        positions, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=jnp.float32
+        )
+
+        @jax.jit
+        def jitted_dual(positions):
+            return naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1=1.0,
+                cutoff2=1.5,
+                max_neighbors1=15,
+                max_neighbors2=25,
+            )
+
+        nm1, nn1, nm2, nn2 = jitted_dual(positions)
+
+        assert nm1.shape == (8, 15)
+        assert nm2.shape == (8, 25)
+        assert nn1.shape == (8,)
+        assert nn2.shape == (8,)

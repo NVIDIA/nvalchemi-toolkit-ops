@@ -187,3 +187,27 @@ class TestCellListEdgeCases:
         assert nl.shape[0] == 2
         assert ptr.shape == (3,)
         assert shifts.shape[1] == 3
+
+
+class TestCellListJIT:
+    """Smoke tests for cell_list compatibility with jax.jit."""
+
+    def test_jit_with_pbc(self):
+        """Test cell_list with PBC works with jax.jit."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        pbc = jnp.array([[True, True, True]])
+
+        @jax.jit
+        def jitted_cell_list(positions, cell, pbc):
+            return cell_list(positions, cutoff=1.0, cell=cell, pbc=pbc)
+
+        neighbor_matrix, num_neighbors, shifts = jitted_cell_list(positions, cell, pbc)
+
+        assert neighbor_matrix.shape[0] == 2
+        assert num_neighbors.shape == (2,)
+        assert shifts.shape[0] == 2
+        assert shifts.shape[2] == 3
