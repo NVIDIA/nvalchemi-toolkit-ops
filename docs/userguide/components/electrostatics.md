@@ -141,6 +141,13 @@ and consistency.
 | `batch_idx` | `(N,)` | `int32` | System index for each atom (batched only) |
 | `alpha` | `float` or `(B,)` tensor | `float64` | Ewald splitting parameter |
 
+### Output Data Types
+
+Energies are always computed and returned in `float64` for numerical stability
+during accumulation. Forces, virial, and charge gradients match the input
+precision -- `float32` when positions are `float32`, `float64` when positions
+are `float64`.
+
 ### Neighbor Representations
 
 The electrostatics functions accept neighbors in two formats:
@@ -668,27 +675,94 @@ energy_per_system.scatter_add_(0, batch_idx.long(), energies)
 )
 ```
 
-### Cell Gradients (Stress)
+### Virial / Stress
 
-Likewise, we can compute the stress tensor as the derivative of the energy with
-respect to the lattice vectors:
+Both Ewald and PME provide explicit virial computation via `compute_virial=True`.
+The virial is differentiable by default: when `compute_virial=True` and inputs
+require gradients, stress-based losses automatically back-propagate to model parameters.
+
+**Convention:**
+
+- Real-space: $W_\text{real} = -\frac{1}{2} \sum_{i<j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$,
+  where $\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i$ and $\mathbf{F}_{ij}$ is the force on atom $i$ due to atom $j$.
+- Reciprocal-space: $W_\text{recip}(k) = E(k) \left[\delta_{ab} - \frac{2 k_a k_b}{k^2}\left(1 + \frac{k^2}{4\alpha^2}\right)\right]$
+- Stress: $\sigma = W / V$ where $V = |\det(\mathbf{C})|$
+- The virial convention is validated against finite-difference strain derivatives
+  of the energy ($W_{ab} = -\partial E / \partial \varepsilon_{ab}$) in the test suite.
+
+**Ewald summation with virial:**
 
 ```python
-positions.requires_grad_(True)
-cell.requires_grad_(True)
-energies, forces = ewald_summation(
-    positions, charges, cell, alpha=0.3, k_cutoff=8.0,
+energies, forces, virial = ewald_summation(
+    positions, charges, cell,
     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
     compute_forces=True,
+    compute_virial=True,
 )
 
-total_energy = energies.sum()
-total_energy.backward()
-# now compute the stress tensor with some epsilon
-volume = torch.abs(torch.linalg.det(cell)) + 1e-7
-virials = cell.grad
-stresses = virials / volume
+# Single system: virial shape (1, 3, 3)
+volume = torch.abs(torch.linalg.det(cell))          # scalar
+stress = virial.squeeze(0) / volume                  # (3, 3)
+
+# Batch: virial shape (B, 3, 3)
+volume = torch.abs(torch.linalg.det(cell))           # (B,)
+stress = virial / volume[:, None, None]              # (B, 3, 3)
 ```
+
+**PME with virial:**
+
+```python
+energies, forces, virial = particle_mesh_ewald(
+    positions, charges, cell,
+    neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
+    compute_forces=True,
+    compute_virial=True,
+)
+
+# Single system
+volume = torch.abs(torch.linalg.det(cell))
+stress = virial.squeeze(0) / volume                  # (3, 3)
+
+# Batch
+volume = torch.abs(torch.linalg.det(cell))           # (B,)
+stress = virial / volume[:, None, None]              # (B, 3, 3)
+```
+
+**MLIP training loss example:**
+
+```python
+# Forward pass with explicit outputs
+energies, forces, virial = ewald_summation(
+    positions, charges, cell,
+    neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
+    compute_forces=True,
+    compute_virial=True,
+)
+
+# Compute stress (single system shown; for batch use volume[:, None, None])
+volume = torch.abs(torch.linalg.det(cell))
+pred_stress = virial.squeeze(0) / volume
+
+loss = (
+    w_energy * (energies.sum() - E_target) ** 2
+    + w_forces * (forces - F_target).pow(2).sum()
+    + w_stress * (pred_stress - stress_target).pow(2).sum()
+)
+loss.backward()  # Stress-loss gradients flow automatically with compute_virial=True
+```
+
+:::{note}
+When `compute_virial=True` and inputs track gradients, the virial automatically
+participates in the autograd graph. Stress-based losses back-propagate to model
+parameters without any additional flags.
+:::
+
+:::{tip}
+For quick inference or debugging you can also obtain an approximate stress via
+`cell.requires_grad_(True)` followed by `energy.backward()` and reading
+`cell.grad / volume`. This is first-order only (no higher-order gradients
+through the Warp bridge) and is **not** recommended for MLIP training.
+:::
 
 ## Parameter Estimation
 

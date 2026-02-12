@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,7 +53,7 @@ def main():
     logging.info(json.dumps(config, sort_keys=True, indent=4))
 
     current_year = int(datetime.today().year)
-    starting_year = 2023
+    starting_year = 2025
     python_header_path = Path(__file__).parent.resolve() / Path(
         config["copyright_file"]
     )
@@ -98,7 +98,7 @@ def main():
                 found = True
                 # Check 1st line manually
                 year_good = False
-                for year in range(starting_year, current_year + 1):
+                for year in range(starting_year, current_year + 2):
                     year_line = pyheader[0].format(CURRENT_YEAR=year)
                     if year_line in data[i]:
                         year_good = True

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +73,7 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
+from nvalchemiops.types import get_wp_vec_dtype
 
 __all__ = [
     "coulomb_energy",
@@ -84,6 +85,11 @@ __all__ = [
 # ==============================================================================
 # Internal Custom Ops - Neighbor List Format
 # ==============================================================================
+
+# Output dtype convention:
+#   - Energies: always wp.float64 for numerical stability during accumulation.
+#   - Forces: match input precision via get_wp_vec_dtype(pos.dtype) -- vec3f for
+#     float32 inputs, vec3d for float64.
 
 
 @warp_custom_op(
@@ -158,7 +164,11 @@ def _coulomb_energy_list(
     name="nvalchemiops::_coulomb_energy_forces_list",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", wp.vec3d, lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )
@@ -310,7 +320,11 @@ def _coulomb_energy_matrix(
     name="nvalchemiops::_coulomb_energy_forces_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", wp.vec3d, lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )
@@ -465,7 +479,11 @@ def _batch_coulomb_energy_list(
     name="nvalchemiops::_batch_coulomb_energy_forces_list",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", wp.vec3d, lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )
@@ -623,7 +641,11 @@ def _batch_coulomb_energy_matrix(
     name="nvalchemiops::_batch_coulomb_energy_forces_matrix",
     outputs=[
         OutputSpec("energies", wp.float64, lambda pos, *_: (pos.shape[0],)),
-        OutputSpec("forces", wp.vec3d, lambda pos, *_: (pos.shape[0], 3)),
+        OutputSpec(
+            "forces",
+            lambda pos, *_: get_wp_vec_dtype(pos.dtype),
+            lambda pos, *_: (pos.shape[0], 3),
+        ),
     ],
     grad_arrays=["energies", "forces", "positions", "charges", "cell"],
 )
@@ -965,6 +987,11 @@ def coulomb_energy_forces(
         Per-atom energies.
     forces : torch.Tensor, shape (N, 3)
         Forces on each atom.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces match the input dtype (float32 or float64).
 
     Examples
     --------

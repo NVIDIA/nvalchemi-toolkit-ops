@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -454,8 +454,10 @@ def _ewald_real_space_energy_forces_kernel(
     neighbor_ptr: wp.array(dtype=wp.int32),
     unit_shifts: wp.array(dtype=wp.vec3i),
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy and forces using neighbor list (CSR) format.
 
@@ -484,10 +486,14 @@ def _ewald_real_space_energy_forces_kernel(
         Periodic image shifts for each pair.
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom (matches positions dtype).
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
 
     Notes
     -----
@@ -507,6 +513,10 @@ def _ewald_real_space_energy_forces_kernel(
     force_i_acc = type(pos_i)(
         type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
     )
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     # Iterate over neighbors using CSR pointers
     j_range_start = neighbor_ptr[atom_i]
@@ -544,9 +554,31 @@ def _ewald_real_space_energy_forces_kernel(
             force_i_acc -= force
             wp.atomic_add(atomic_forces, j, force)
 
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
+
     # Write accumulated values once
     wp.atomic_add(pair_energies, atom_i, energy_acc)
     wp.atomic_add(atomic_forces, atom_i, force_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
 
 
 @wp.kernel
@@ -558,8 +590,10 @@ def _ewald_real_space_energy_forces_neighbor_matrix_kernel(
     unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
     mask_value: wp.int32,
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy and forces using neighbor matrix format.
 
@@ -589,10 +623,14 @@ def _ewald_real_space_energy_forces_neighbor_matrix_kernel(
         Value indicating invalid/padded neighbor entries.
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom (matches positions dtype).
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
 
     Notes
     -----
@@ -613,6 +651,10 @@ def _ewald_real_space_energy_forces_neighbor_matrix_kernel(
         type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
     )
     max_neighbors = neighbor_matrix.shape[1]
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     for neighbor_idx in range(max_neighbors):
         j = neighbor_matrix[atom_idx, neighbor_idx]
@@ -645,9 +687,31 @@ def _ewald_real_space_energy_forces_neighbor_matrix_kernel(
             force_i_acc -= force
             wp.atomic_add(atomic_forces, j, force)
 
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
+
     # Write accumulated values once
     wp.atomic_add(pair_energies, atom_idx, energy_acc)
     wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
 
 
 ###########################################################################################
@@ -664,9 +728,11 @@ def _ewald_real_space_energy_forces_charge_grad_kernel(
     neighbor_ptr: wp.array(dtype=wp.int32),
     unit_shifts: wp.array(dtype=wp.vec3i),
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy, forces, AND charge gradients (neighbor list CSR).
 
@@ -694,12 +760,16 @@ def _ewald_real_space_energy_forces_charge_grad_kernel(
         Periodic image shifts for each pair.
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom (matches positions dtype).
     charge_gradients : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients ∂E/∂q per atom.
+        OUTPUT: Accumulated charge gradients dE/dq per atom.
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
 
     Notes
     -----
@@ -720,6 +790,10 @@ def _ewald_real_space_energy_forces_charge_grad_kernel(
         type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
     )
     cg_i_acc = wp.float64(0.0)
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     # Iterate over neighbors using CSR pointers
     j_range_start = neighbor_ptr[atom_i]
@@ -765,11 +839,32 @@ def _ewald_real_space_energy_forces_charge_grad_kernel(
             cg_j = qi * potential
             wp.atomic_add(charge_gradients, j, cg_j)
 
-    # Write accumulated values once
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
 
+    # Write accumulated values once
     wp.atomic_add(pair_energies, atom_i, energy_acc)
     wp.atomic_add(atomic_forces, atom_i, force_i_acc)
     wp.atomic_add(charge_gradients, atom_i, cg_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
 
 
 @wp.kernel
@@ -781,9 +876,11 @@ def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
     unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
     mask_value: wp.int32,
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy, forces, AND charge gradients (neighbor matrix).
 
@@ -812,12 +909,16 @@ def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
         Value indicating invalid/padded neighbor entries.
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom (matches positions dtype).
     charge_gradients : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients ∂E/∂q per atom.
+        OUTPUT: Accumulated charge gradients dE/dq per atom.
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
     """
     atom_idx = wp.tid()
 
@@ -834,6 +935,10 @@ def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
     )
     cg_i_acc = wp.float64(0.0)
     max_neighbors = neighbor_matrix.shape[1]
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     for neighbor_idx in range(max_neighbors):
         j = neighbor_matrix[atom_idx, neighbor_idx]
@@ -872,10 +977,32 @@ def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
             cg_j = qi * potential
             wp.atomic_add(charge_gradients, j, cg_j)
 
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
+
     # Write accumulated values once
     wp.atomic_add(pair_energies, atom_idx, energy_acc)
     wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
     wp.atomic_add(charge_gradients, atom_idx, cg_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
 
 
 ###########################################################################################
@@ -1064,8 +1191,10 @@ def _batch_ewald_real_space_energy_forces_kernel(
     neighbor_ptr: wp.array(dtype=wp.int32),
     unit_shifts: wp.array(dtype=wp.vec3i),
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy and forces for batched systems (neighbor list CSR).
 
@@ -1095,10 +1224,14 @@ def _batch_ewald_real_space_energy_forces_kernel(
         Periodic image shifts for each pair.
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N_total,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom.
+    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
     """
     atom_i = wp.tid()
 
@@ -1115,6 +1248,10 @@ def _batch_ewald_real_space_energy_forces_kernel(
     force_i_acc = type(pos_i)(
         type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
     )
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     # Iterate over neighbors using CSR pointers
     j_range_start = neighbor_ptr[atom_i]
@@ -1153,9 +1290,31 @@ def _batch_ewald_real_space_energy_forces_kernel(
             force_i_acc -= force
             wp.atomic_add(atomic_forces, j, force)
 
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
+
     # Write accumulated values once
     wp.atomic_add(pair_energies, atom_i, energy_acc)
     wp.atomic_add(atomic_forces, atom_i, force_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
 
 
 @wp.kernel
@@ -1168,8 +1327,10 @@ def _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel(
     unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
     mask_value: wp.int32,
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy and forces for batched systems (neighbor matrix).
 
@@ -1199,10 +1360,14 @@ def _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel(
         Value indicating invalid/padded neighbor entries.
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N_total,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom.
+    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
     """
     atom_idx = wp.tid()
 
@@ -1220,6 +1385,10 @@ def _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel(
         type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
     )
     max_neighbors = neighbor_matrix.shape[1]
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     for neighbor_idx in range(max_neighbors):
         j = neighbor_matrix[atom_idx, neighbor_idx]
@@ -1254,9 +1423,31 @@ def _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel(
             force_i_acc -= force
             wp.atomic_add(atomic_forces, j, force)
 
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
+
     # Write accumulated values once
     wp.atomic_add(pair_energies, atom_idx, energy_acc)
     wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
 
 
 ###########################################################################################
@@ -1274,9 +1465,11 @@ def _batch_ewald_real_space_energy_forces_charge_grad_kernel(
     neighbor_ptr: wp.array(dtype=wp.int32),
     unit_shifts: wp.array(dtype=wp.vec3i),
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy, forces, AND charge gradients (batch, CSR).
 
@@ -1306,12 +1499,16 @@ def _batch_ewald_real_space_energy_forces_charge_grad_kernel(
         Periodic image shifts for each pair.
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N_total,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom.
     charge_gradients : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients ∂E/∂q per atom.
+        OUTPUT: Accumulated charge gradients dE/dq per atom.
+    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
     """
     atom_i = wp.tid()
 
@@ -1329,6 +1526,10 @@ def _batch_ewald_real_space_energy_forces_charge_grad_kernel(
         type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
     )
     cg_i_acc = wp.float64(0.0)
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     # Iterate over neighbors using CSR pointers
     j_range_start = neighbor_ptr[atom_i]
@@ -1373,10 +1574,32 @@ def _batch_ewald_real_space_energy_forces_charge_grad_kernel(
             cg_j = qi * potential
             wp.atomic_add(charge_gradients, j, cg_j)
 
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
+
     # Write accumulated values once
     wp.atomic_add(pair_energies, atom_i, energy_acc)
     wp.atomic_add(atomic_forces, atom_i, force_i_acc)
     wp.atomic_add(charge_gradients, atom_i, cg_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
 
 
 @wp.kernel
@@ -1389,9 +1612,11 @@ def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
     unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
     mask_value: wp.int32,
     alpha: wp.array(dtype=Any),
+    compute_virial: bool,
     pair_energies: wp.array(dtype=wp.float64),
     atomic_forces: wp.array(dtype=Any),
     charge_gradients: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
 ):
     """Compute real-space Ewald energy, forces, AND charge gradients for batched systems.
 
@@ -1422,12 +1647,16 @@ def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
         Value indicating invalid/padded neighbor entries.
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
     pair_energies : wp.array, shape (N_total,), dtype=wp.float64
         OUTPUT: Accumulated real-space energy per atom.
     atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Accumulated forces per atom.
     charge_gradients : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients ∂E/∂q per atom.
+        OUTPUT: Accumulated charge gradients dE/dq per atom.
+    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
     """
     atom_idx = wp.tid()
 
@@ -1446,6 +1675,10 @@ def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
     )
     cg_i_acc = wp.float64(0.0)
     max_neighbors = neighbor_matrix.shape[1]
+
+    # Initialize virial accumulator
+    if compute_virial:
+        virial_acc = wp.mat33d()
 
     for neighbor_idx in range(max_neighbors):
         j = neighbor_matrix[atom_idx, neighbor_idx]
@@ -1486,10 +1719,32 @@ def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
             cg_j = qi * potential
             wp.atomic_add(charge_gradients, j, cg_j)
 
+            # Accumulate virial if requested
+            if compute_virial:
+                virial_acc += wp.mat33d(
+                    wp.outer(
+                        wp.vec3d(
+                            wp.float64(separation_vector[0]),
+                            wp.float64(separation_vector[1]),
+                            wp.float64(separation_vector[2]),
+                        ),
+                        wp.vec3d(
+                            wp.float64(force[0]),
+                            wp.float64(force[1]),
+                            wp.float64(force[2]),
+                        ),
+                    )
+                )
+
     # Write accumulated values once
     wp.atomic_add(pair_energies, atom_idx, energy_acc)
     wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
     wp.atomic_add(charge_gradients, atom_idx, cg_i_acc)
+
+    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
+    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
+    if compute_virial:
+        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
 
 
 ###########################################################################################
@@ -1975,6 +2230,199 @@ def _ewald_reciprocal_space_energy_forces_charge_grad_kernel(
     # Charge gradient
     # Self-energy and background corrections applied in higher-level code
     charge_gradients[atom_idx] = local_potential_uncharged
+
+
+###########################################################################################
+#################### Reciprocal-Space Virial Kernels ######################################
+###########################################################################################
+
+
+@wp.kernel
+def _ewald_reciprocal_space_virial_kernel(
+    k_vectors: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    volume: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float64),
+    imag_structure_factors: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
+):
+    """Compute the reciprocal-space virial tensor from precomputed structure factors.
+
+    For each k-vector, the virial contribution is:
+
+    .. math::
+
+        W_{ab}(k) = E(k) \\left[ \\frac{2 k_a k_b}{k^2} \\left(1 + \\frac{k^2}{4\\alpha^2}\\right) - \\delta_{ab} \\right]
+
+    where the per-k energy is :math:`E(k) = \\frac{|S(k)|^2}{2 G(k)}` and
+    :math:`G(k) = \\frac{8\\pi}{V} \\frac{\\exp(-k^2/(4\\alpha^2))}{k^2}`.
+
+    Launch Grid
+    -----------
+    dim = [K]
+
+    Parameters
+    ----------
+    k_vectors : wp.array, shape (K,), dtype=wp.vec3f or wp.vec3d
+        Reciprocal lattice vectors.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    volume : wp.array, shape (1,), dtype=wp.float64
+        Unit cell volume |det(cell)|.
+    real_structure_factors : wp.array, shape (K,), dtype=wp.float64
+        Precomputed S_real(k) = G(k) * sum_i q_i cos(k.r_i).
+    imag_structure_factors : wp.array, shape (K,), dtype=wp.float64
+        Precomputed S_imag(k) = G(k) * sum_i q_i sin(k.r_i).
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor.
+    """
+    k_idx = wp.tid()
+
+    k_vec = k_vectors[k_idx]
+    kx = wp.float64(k_vec[0])
+    ky = wp.float64(k_vec[1])
+    kz = wp.float64(k_vec[2])
+    k_sq = kx * kx + ky * ky + kz * kz
+
+    if k_sq < wp.float64(1e-10):
+        return
+
+    alpha_ = wp.float64(alpha[0])
+    vol = volume[0]
+    s_real = real_structure_factors[k_idx]
+    s_imag = imag_structure_factors[k_idx]
+
+    # |S(k)|^2
+    s_sq = s_real * s_real + s_imag * s_imag
+
+    # Green's function G(k) = (8*pi/V) * exp(-k^2/(4*alpha^2)) / k^2
+    exp_factor = wp.float64(0.25) / (alpha_ * alpha_)
+    green = wp.float64(EIGHTPI) / vol * wp.exp(-k_sq * exp_factor) / k_sq
+
+    # Per-k energy: E(k) = |S|^2 / (2*G)
+    energy_k = wp.float64(0.5) * s_sq / green
+
+    # Virial W = -dE/dε.  d ln G / dε_ab = -δ_ab + 2 k_a k_b / k² (1 + k²/(4α²)),
+    # so W_ab(k) = E(k) * [δ_ab - 2 k_a k_b / k² (1 + k²/(4α²))].
+    k_factor = wp.float64(2.0) * (wp.float64(1.0) + k_sq * exp_factor) / k_sq
+
+    # Build 3x3 virial contribution: W_ab = E_k * (δ_ab - k_factor * k_a * k_b)
+    w00 = energy_k * (wp.float64(1.0) - k_factor * kx * kx)
+    w01 = energy_k * (-k_factor * kx * ky)
+    w02 = energy_k * (-k_factor * kx * kz)
+    w10 = energy_k * (-k_factor * ky * kx)
+    w11 = energy_k * (wp.float64(1.0) - k_factor * ky * ky)
+    w12 = energy_k * (-k_factor * ky * kz)
+    w20 = energy_k * (-k_factor * kz * kx)
+    w21 = energy_k * (-k_factor * kz * ky)
+    w22 = energy_k * (wp.float64(1.0) - k_factor * kz * kz)
+
+    # Cast to virial element type (mat33f or mat33d, matching input precision)
+    # Use type() inline as constructor (Warp resolves at compile time)
+    _virial_ref = virial[0]
+    virial_k = type(_virial_ref)(
+        type(k_vec[0])(w00),
+        type(k_vec[0])(w01),
+        type(k_vec[0])(w02),
+        type(k_vec[0])(w10),
+        type(k_vec[0])(w11),
+        type(k_vec[0])(w12),
+        type(k_vec[0])(w20),
+        type(k_vec[0])(w21),
+        type(k_vec[0])(w22),
+    )
+    wp.atomic_add(virial, 0, virial_k)
+
+
+@wp.kernel
+def _batch_ewald_reciprocal_space_virial_kernel(
+    k_vectors: wp.array2d(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    volume: wp.array(dtype=wp.float64),
+    real_structure_factors: wp.array2d(dtype=wp.float64),
+    imag_structure_factors: wp.array2d(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
+):
+    """Compute the reciprocal-space virial tensor for batched systems.
+
+    Same formula as single-system version, but with per-system k-vectors,
+    structure factors, alpha, and volume.
+
+    Launch Grid
+    -----------
+    dim = [K, B]
+
+    Parameters
+    ----------
+    k_vectors : wp.array2d, shape (B, K), dtype=wp.vec3f or wp.vec3d
+        Per-system reciprocal lattice vectors.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    volume : wp.array, shape (B,), dtype=wp.float64
+        Per-system unit cell volume |det(cell)|.
+    real_structure_factors : wp.array2d, shape (B, K), dtype=wp.float64
+        Per-system S_real(k).
+    imag_structure_factors : wp.array2d, shape (B, K), dtype=wp.float64
+        Per-system S_imag(k).
+    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Per-system accumulated virial tensor.
+    """
+    k_idx, system_id = wp.tid()
+
+    k_vec = k_vectors[system_id, k_idx]
+    kx = wp.float64(k_vec[0])
+    ky = wp.float64(k_vec[1])
+    kz = wp.float64(k_vec[2])
+    k_sq = kx * kx + ky * ky + kz * kz
+
+    if k_sq < wp.float64(1e-10):
+        return
+
+    alpha_ = wp.float64(alpha[system_id])
+    vol = volume[system_id]
+    s_real = real_structure_factors[system_id, k_idx]
+    s_imag = imag_structure_factors[system_id, k_idx]
+
+    # |S(k)|^2
+    s_sq = s_real * s_real + s_imag * s_imag
+
+    # Green's function G(k) = (8*pi/V) * exp(-k^2/(4*alpha^2)) / k^2
+    exp_factor = wp.float64(0.25) / (alpha_ * alpha_)
+    green = wp.float64(EIGHTPI) / vol * wp.exp(-k_sq * exp_factor) / k_sq
+
+    # Per-k energy: E(k) = |S|^2 / (2*G)
+    energy_k = wp.float64(0.5) * s_sq / green
+
+    # Virial W = -dE/dε.  d ln G / dε_ab = -δ_ab + 2 k_a k_b / k² (1 + k²/(4α²)),
+    # so W_ab(k) = E(k) * [δ_ab - 2 k_a k_b / k² (1 + k²/(4α²))].
+    k_factor = wp.float64(2.0) * (wp.float64(1.0) + k_sq * exp_factor) / k_sq
+
+    # Build 3x3 virial contribution: W_ab = E_k * (δ_ab - k_factor * k_a * k_b)
+    w00 = energy_k * (wp.float64(1.0) - k_factor * kx * kx)
+    w01 = energy_k * (-k_factor * kx * ky)
+    w02 = energy_k * (-k_factor * kx * kz)
+    w10 = energy_k * (-k_factor * ky * kx)
+    w11 = energy_k * (wp.float64(1.0) - k_factor * ky * ky)
+    w12 = energy_k * (-k_factor * ky * kz)
+    w20 = energy_k * (-k_factor * kz * kx)
+    w21 = energy_k * (-k_factor * kz * ky)
+    w22 = energy_k * (wp.float64(1.0) - k_factor * kz * kz)
+
+    # Cast to virial element type (mat33f or mat33d, matching input precision)
+    # Use type() inline as constructor (Warp resolves at compile time)
+    _virial_ref = virial[system_id]
+    virial_k = type(_virial_ref)(
+        type(k_vec[0])(w00),
+        type(k_vec[0])(w01),
+        type(k_vec[0])(w02),
+        type(k_vec[0])(w10),
+        type(k_vec[0])(w11),
+        type(k_vec[0])(w12),
+        type(k_vec[0])(w20),
+        type(k_vec[0])(w21),
+        type(k_vec[0])(w22),
+    )
+    wp.atomic_add(virial, system_id, virial_k)
 
 
 ###########################################################################################
@@ -2571,6 +3019,8 @@ def ewald_real_space_energy_forces(
     atomic_forces: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy and forces kernel using CSR neighbor list.
 
@@ -2598,10 +3048,18 @@ def ewald_real_space_energy_forces(
         Warp scalar type (wp.float32 or wp.float64).
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor. If None, a dummy array is created.
     """
     num_atoms = positions.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_kernel_overload[wp_dtype],
@@ -2614,8 +3072,10 @@ def ewald_real_space_energy_forces(
             neighbor_ptr,
             unit_shifts,
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
+            virial,
         ],
         device=device,
     )
@@ -2691,6 +3151,8 @@ def ewald_real_space_energy_forces_matrix(
     atomic_forces: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy and forces kernel using neighbor matrix.
 
@@ -2718,10 +3180,18 @@ def ewald_real_space_energy_forces_matrix(
         Warp scalar type (wp.float32 or wp.float64).
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor. If None, a dummy array is created.
     """
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[wp_dtype],
@@ -2734,8 +3204,10 @@ def ewald_real_space_energy_forces_matrix(
             unit_shifts_matrix,
             wp.int32(mask_value),
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
+            virial,
         ],
         device=device,
     )
@@ -2754,6 +3226,8 @@ def ewald_real_space_energy_forces_charge_grad(
     charge_gradients: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy, forces, and charge gradients kernel (CSR).
 
@@ -2783,10 +3257,18 @@ def ewald_real_space_energy_forces_charge_grad(
         Warp scalar type (wp.float32 or wp.float64).
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor. If None, a dummy array is created.
     """
     num_atoms = positions.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_charge_grad_kernel_overload[wp_dtype],
@@ -2799,9 +3281,11 @@ def ewald_real_space_energy_forces_charge_grad(
             neighbor_ptr,
             unit_shifts,
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
             charge_gradients,
+            virial,
         ],
         device=device,
     )
@@ -2820,6 +3304,8 @@ def ewald_real_space_energy_forces_charge_grad_matrix(
     charge_gradients: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy, forces, and charge gradients kernel (matrix).
 
@@ -2849,10 +3335,18 @@ def ewald_real_space_energy_forces_charge_grad_matrix(
         Warp scalar type (wp.float32 or wp.float64).
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor. If None, a dummy array is created.
     """
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
@@ -2867,9 +3361,11 @@ def ewald_real_space_energy_forces_charge_grad_matrix(
             unit_shifts_matrix,
             wp.int32(mask_value),
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
             charge_gradients,
+            virial,
         ],
         device=device,
     )
@@ -2953,6 +3449,8 @@ def batch_ewald_real_space_energy_forces(
     atomic_forces: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy and forces kernel (CSR).
 
@@ -2982,10 +3480,18 @@ def batch_ewald_real_space_energy_forces(
         Warp scalar type.
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
     num_atoms = positions.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
 
     wp.launch(
         _batch_ewald_real_space_energy_forces_kernel_overload[wp_dtype],
@@ -2999,8 +3505,10 @@ def batch_ewald_real_space_energy_forces(
             neighbor_ptr,
             unit_shifts,
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
+            virial,
         ],
         device=device,
     )
@@ -3081,6 +3589,8 @@ def batch_ewald_real_space_energy_forces_matrix(
     atomic_forces: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy and forces kernel (matrix).
 
@@ -3110,10 +3620,18 @@ def batch_ewald_real_space_energy_forces_matrix(
         Warp scalar type.
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
 
     wp.launch(
         _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[wp_dtype],
@@ -3127,8 +3645,10 @@ def batch_ewald_real_space_energy_forces_matrix(
             unit_shifts_matrix,
             wp.int32(mask_value),
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
+            virial,
         ],
         device=device,
     )
@@ -3148,6 +3668,8 @@ def batch_ewald_real_space_energy_forces_charge_grad(
     charge_gradients: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy, forces, charge gradients kernel (CSR).
 
@@ -3179,10 +3701,18 @@ def batch_ewald_real_space_energy_forces_charge_grad(
         Warp scalar type.
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
     num_atoms = positions.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
 
     wp.launch(
         _batch_ewald_real_space_energy_forces_charge_grad_kernel_overload[wp_dtype],
@@ -3196,9 +3726,11 @@ def batch_ewald_real_space_energy_forces_charge_grad(
             neighbor_ptr,
             unit_shifts,
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
             charge_gradients,
+            virial,
         ],
         device=device,
     )
@@ -3218,6 +3750,8 @@ def batch_ewald_real_space_energy_forces_charge_grad_matrix(
     charge_gradients: wp.array,
     wp_dtype: type,
     device: str | None = None,
+    compute_virial: bool = False,
+    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy, forces, charge gradients kernel (matrix).
 
@@ -3249,10 +3783,18 @@ def batch_ewald_real_space_energy_forces_charge_grad_matrix(
         Warp scalar type.
     device : str, optional
         Warp device.
+    compute_virial : bool, optional
+        Whether to compute the virial tensor. Default False.
+    virial : wp.array, optional
+        OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
         device = str(positions.device)
+
+    if virial is None:
+        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
 
     wp.launch(
         _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
@@ -3268,9 +3810,11 @@ def batch_ewald_real_space_energy_forces_charge_grad_matrix(
             unit_shifts_matrix,
             wp.int32(mask_value),
             alpha,
+            compute_virial,
             pair_energies,
             atomic_forces,
             charge_gradients,
+            virial,
         ],
         device=device,
     )
@@ -3905,6 +4449,7 @@ _ewald_reciprocal_space_energy_kernel_compute_energy_overload = {}
 _ewald_reciprocal_space_energy_forces_kernel_overload = {}
 _ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload = {}
 _ewald_subtract_self_energy_kernel_overload = {}
+_ewald_reciprocal_space_virial_kernel_overload = {}
 
 # Reciprocal-space batch kernels
 _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload = {}
@@ -3912,6 +4457,7 @@ _batch_ewald_reciprocal_space_energy_kernel_compute_energy_overload = {}
 _batch_ewald_reciprocal_space_energy_forces_kernel_overload = {}
 _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload = {}
 _batch_ewald_subtract_self_energy_kernel_overload = {}
+_batch_ewald_reciprocal_space_virial_kernel_overload = {}
 
 for t, v, m in zip(_T, _V, _M):
     # ==================== Real-space single-system kernels ====================
@@ -3936,12 +4482,14 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=v),  # positions
             wp.array(dtype=t),  # charges
             wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # idx_i
             wp.array(dtype=wp.int32),  # idx_j
+            wp.array(dtype=wp.int32),  # neighbor_ptr
             wp.array(dtype=wp.vec3i),  # unit_shifts
             wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
             wp.array(dtype=wp.float64),  # pair_energies
             wp.array(dtype=v),  # atomic_forces (matches positions dtype)
+            wp.array(dtype=m),  # virial
         ],
     )
 
@@ -3969,8 +4517,10 @@ for t, v, m in zip(_T, _V, _M):
             wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
             wp.int32,  # mask_value
             wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
             wp.array(dtype=wp.float64),  # pair_energies
             wp.array(dtype=v),  # atomic_forces
+            wp.array(dtype=m),  # virial
         ],
     )
 
@@ -3982,13 +4532,15 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=v),  # positions
             wp.array(dtype=t),  # charges
             wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # idx_i
             wp.array(dtype=wp.int32),  # idx_j
+            wp.array(dtype=wp.int32),  # neighbor_ptr
             wp.array(dtype=wp.vec3i),  # unit_shifts
             wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
             wp.array(dtype=wp.float64),  # pair_energies
             wp.array(dtype=v),  # atomic_forces
             wp.array(dtype=wp.float64),  # charge_gradients
+            wp.array(dtype=m),  # virial
         ],
     )
 
@@ -4003,9 +4555,11 @@ for t, v, m in zip(_T, _V, _M):
                 wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
                 wp.int32,  # mask_value
                 wp.array(dtype=t),  # alpha
+                wp.bool,  # compute_virial
                 wp.array(dtype=wp.float64),  # pair_energies
                 wp.array(dtype=v),  # atomic_forces
                 wp.array(dtype=wp.float64),  # charge_gradients
+                wp.array(dtype=m),  # virial
             ],
         )
     )
@@ -4034,12 +4588,14 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=t),  # charges
             wp.array(dtype=m),  # cell
             wp.array(dtype=wp.int32),  # batch_id
-            wp.array(dtype=wp.int32),  # idx_i
             wp.array(dtype=wp.int32),  # idx_j
+            wp.array(dtype=wp.int32),  # neighbor_ptr
             wp.array(dtype=wp.vec3i),  # unit_shifts
             wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
             wp.array(dtype=wp.float64),  # pair_energies
             wp.array(dtype=v),  # atomic_forces
+            wp.array(dtype=m),  # virial
         ],
     )
 
@@ -4070,8 +4626,10 @@ for t, v, m in zip(_T, _V, _M):
                 wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
                 wp.int32,  # mask_value
                 wp.array(dtype=t),  # alpha
+                wp.bool,  # compute_virial
                 wp.array(dtype=wp.float64),  # pair_energies
                 wp.array(dtype=v),  # atomic_forces
+                wp.array(dtype=m),  # virial
             ],
         )
     )
@@ -4085,13 +4643,15 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=t),  # charges
             wp.array(dtype=m),  # cell
             wp.array(dtype=wp.int32),  # batch_id
-            wp.array(dtype=wp.int32),  # idx_i
             wp.array(dtype=wp.int32),  # idx_j
+            wp.array(dtype=wp.int32),  # neighbor_ptr
             wp.array(dtype=wp.vec3i),  # unit_shifts
             wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
             wp.array(dtype=wp.float64),  # pair_energies
             wp.array(dtype=v),  # atomic_forces
             wp.array(dtype=wp.float64),  # charge_gradients
+            wp.array(dtype=m),  # virial
         ],
     )
 
@@ -4108,9 +4668,11 @@ for t, v, m in zip(_T, _V, _M):
             wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
             wp.int32,  # mask_value
             wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
             wp.array(dtype=wp.float64),  # pair_energies
             wp.array(dtype=v),  # atomic_forces
             wp.array(dtype=wp.float64),  # charge_gradients
+            wp.array(dtype=m),  # virial
         ],
     )
 
@@ -4183,6 +4745,18 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=wp.float64),  # total_charge
             wp.array(dtype=wp.float64),  # energy_in
             wp.array(dtype=wp.float64),  # energy_out
+        ],
+    )
+
+    _ewald_reciprocal_space_virial_kernel_overload[t] = wp.overload(
+        _ewald_reciprocal_space_virial_kernel,
+        [
+            wp.array(dtype=v),  # k_vectors
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=wp.float64),  # volume
+            wp.array(dtype=wp.float64),  # real_structure_factors
+            wp.array(dtype=wp.float64),  # imag_structure_factors
+            wp.array(dtype=m),  # virial
         ],
     )
 
@@ -4265,5 +4839,17 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=wp.float64),  # total_charges
             wp.array(dtype=wp.float64),  # energy_in
             wp.array(dtype=wp.float64),  # energy_out
+        ],
+    )
+
+    _batch_ewald_reciprocal_space_virial_kernel_overload[t] = wp.overload(
+        _batch_ewald_reciprocal_space_virial_kernel,
+        [
+            wp.array2d(dtype=v),  # k_vectors (B, K)
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=wp.float64),  # volume
+            wp.array2d(dtype=wp.float64),  # real_structure_factors
+            wp.array2d(dtype=wp.float64),  # imag_structure_factors
+            wp.array(dtype=m),  # virial
         ],
     )

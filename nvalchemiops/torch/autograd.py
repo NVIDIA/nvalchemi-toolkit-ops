@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,6 +89,49 @@ def _resolve_warp_dtype(dtype, tensor: torch.Tensor):
 
     # Return the dtype as-is if it's concrete
     return dtype
+
+
+def _resolve_output_dtype(dtype_spec, *args):
+    """Resolve an OutputSpec dtype, which may be a callable or concrete type.
+
+    Warp dtypes (e.g. ``wp.float64``) are *type* objects and therefore
+    ``callable``.  We distinguish user-provided resolver functions (lambdas,
+    regular functions) from Warp types by checking ``isinstance(dtype_spec, type)``.
+
+    Parameters
+    ----------
+    dtype_spec : Any
+        Concrete Warp dtype **or** a callable ``(*forward_args) -> wp_dtype``.
+    *args
+        Forward-pass positional arguments, forwarded to the callable.
+
+    Returns
+    -------
+    wp.dtype
+        Resolved concrete Warp dtype.
+    """
+    if callable(dtype_spec) and not isinstance(dtype_spec, type):
+        return dtype_spec(*args)
+    return dtype_spec
+
+
+# Warp dtype -> PyTorch dtype mapping (scalar dtype underlying vec/mat types)
+_WP_TO_TORCH: dict[type, torch.dtype] = {
+    wp.float16: torch.float16,
+    wp.float32: torch.float32,
+    wp.float64: torch.float64,
+    wp.vec3h: torch.float16,
+    wp.vec3f: torch.float32,
+    wp.vec3d: torch.float64,
+    wp.mat33h: torch.float16,
+    wp.mat33f: torch.float32,
+    wp.mat33d: torch.float64,
+}
+
+
+def _wp_dtype_to_torch(wp_dtype) -> torch.dtype:
+    """Map a Warp scalar/vec/mat dtype to its PyTorch scalar dtype."""
+    return _WP_TO_TORCH.get(wp_dtype, torch.float64)
 
 
 # =============================================================================
@@ -198,6 +241,7 @@ def warp_custom_op(
         "idx_i",
         "idx_j",
         "unit_shifts",
+        "compute_virial",
     }
 
     def decorator(func: Callable) -> Callable:
@@ -237,9 +281,14 @@ def warp_custom_op(
                     shape = spec.shape(*args)
                 else:
                     shape = spec.shape
-                fake_outputs.append(
-                    torch.zeros(shape, device=device, dtype=spec.torch_dtype)
-                )
+                # When dtype is a callable resolver, derive torch_dtype from
+                # the resolved Warp dtype instead of using the static default.
+                if callable(spec.dtype) and not isinstance(spec.dtype, type):
+                    resolved_wp = _resolve_output_dtype(spec.dtype, *args)
+                    tdtype = _wp_dtype_to_torch(resolved_wp)
+                else:
+                    tdtype = spec.torch_dtype
+                fake_outputs.append(torch.zeros(shape, device=device, dtype=tdtype))
 
             if len(fake_outputs) == 1:
                 return fake_outputs[0]
@@ -470,7 +519,13 @@ def retrieve_for_backward(
     >>> tape.backward()
     """
     tape = output._warp_tape
-    arrays = {name: getattr(output, f"_wp_{name}") for name in array_names}
+    # Some optional outputs (e.g., virial in forward-only mode) may not be attached.
+    # Keep retrieval tolerant so backward can skip non-attached arrays.
+    arrays = {
+        name: getattr(output, f"_wp_{name}")
+        for name in array_names
+        if hasattr(output, f"_wp_{name}")
+    }
     return tape, arrays
 
 
@@ -657,8 +712,8 @@ def standard_backward(
         if grad_output is not None and output_name in arrays:
             output_array = arrays[output_name]
 
-            # Resolve dtype - handle typing.Any or wp.array types with Any
-            actual_dtype = _resolve_warp_dtype(dtype, grad_output)
+            # Use the warp array's actual dtype (always matches the gradient tensor).
+            actual_dtype = output_array.dtype
 
             wp_grad = wp.from_torch(grad_output.contiguous(), dtype=actual_dtype)
             wp.copy(output_array.grad, wp_grad)

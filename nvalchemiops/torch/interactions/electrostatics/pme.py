@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,9 @@ This module provides a unified GPU-accelerated API for Particle Mesh Ewald that
 handles both single-system and batched calculations transparently. PME achieves
 :math:`O(N \\log N)` scaling compared to :math:`O(N^2)` for direct summation, making it efficient
 for large systems.
+
+The output dtype convention follows ewald.py: energies in float64, forces/virial
+match input precision.
 
 API STRUCTURE
 =============
@@ -717,8 +720,9 @@ def _pme_energy_corrections(
 ) -> torch.Tensor:
     """Apply self-energy and background corrections to PME energies.
 
-    Uses unified prefactors. For energy-only calculations,
-    the caller should multiply by 0.5 at the end.
+    Applies per-atom corrections: E_i = q_i * phi_i - self - background.
+    The 1/2 pair-counting factor is already included in the Green's function
+    (G = 2*pi/(V*k^2), not 4*pi/(V*k^2)), so no extra 0.5 is needed.
 
     Supports both float32 and float64 dtypes via kernel overloads.
 
@@ -1350,6 +1354,136 @@ def pme_energy_corrections_with_charge_grad(
 ###########################################################################################
 
 
+def _compute_pme_reciprocal_virial(
+    mesh_fft_raw: torch.Tensor,
+    convolved_mesh: torch.Tensor,
+    k_vectors: torch.Tensor,
+    k_squared: torch.Tensor,
+    alpha: torch.Tensor,
+    mesh_dimensions: tuple[int, int, int],
+    is_batch: bool,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Compute PME reciprocal-space virial tensor in k-space.
+
+    Uses the exact spectral pair from the pipeline (mesh_fft_raw before
+    deconvolution, and convolved_mesh after Green's function multiplication)
+    to compute the per-k energy density directly via Parseval's theorem.
+
+    The virial per k-point is W_ab(k) = E_k * sigma_ab(k) where:
+    - E_k = prefactor * weight(k) * Re(mesh_fft_raw(k) * convolved_mesh(k)*)
+    - sigma_ab(k) = delta_ab - 2*k_a*k_b/k^2 * (1 + k^2/(4*alpha^2))
+    (sign reflects W = -dE/dε convention)
+
+    Parameters
+    ----------
+    mesh_fft_raw : torch.Tensor
+        Raw rfftn output before B-spline deconvolution.
+        Shape (nx, ny, nz//2+1) or (B, nx, ny, nz//2+1), complex.
+    convolved_mesh : torch.Tensor
+        Deconvolved mesh FFT multiplied by Green's function: (mesh_fft/B^2)*G.
+        Shape matching mesh_fft_raw.
+    k_vectors : torch.Tensor
+        k-vectors on the mesh. Shape (..., nx, ny, nz//2+1, 3).
+    k_squared : torch.Tensor
+        |k|^2. Shape (..., nx, ny, nz//2+1).
+    alpha : torch.Tensor
+        Ewald splitting parameter.
+    mesh_dimensions : tuple
+        (nx, ny, nz).
+    is_batch : bool
+        Whether this is a batched calculation.
+    device : torch.device
+        Computation device.
+    dtype : torch.dtype
+        Output dtype.
+
+    Returns
+    -------
+    virial : torch.Tensor, shape (B, 3, 3) or (1, 3, 3)
+        Per-system virial tensor.
+    """
+    mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
+
+    # Per-k energy density from exact pipeline spectral pair.
+    # Re(mesh_fft_raw * convolved_mesh*) = |mesh_fft_raw|^2 * G / B^2
+    #
+    # Explicit complex/real dtype mapping is needed because `dtype` is a
+    # real-valued dtype (float32 or float64) but the FFT mesh data is complex.
+    # PyTorch has no implicit real-to-complex dtype promotion, so we map
+    # float32 -> complex64 and float64 -> complex128 explicitly.
+    complex_dtype = torch.complex64 if dtype == torch.float32 else torch.complex128
+    acc_dtype = dtype  # real accumulation dtype matches input precision
+    fft_raw_cast = mesh_fft_raw.to(complex_dtype)
+    conv_cast = convolved_mesh.to(complex_dtype)
+    energy_density = (fft_raw_cast * conv_cast.conj()).real
+
+    # Weight for rfft symmetry: 2 for interior k_z, 1 for boundary
+    weight = torch.full_like(energy_density, 2.0)
+    weight[..., 0] = 1.0  # k_z = 0
+    if mesh_nz % 2 == 0:
+        weight[..., -1] = 1.0  # k_z = nz//2 (Nyquist)
+
+    # Weighted energy density
+    weighted_energy = weight * energy_density
+
+    # Virial W = -dE/dε, so sigma_ab = delta_ab - 2*k_a*k_b/k^2 * (1 + k^2/(4*alpha^2))
+    k_sq_acc = k_squared.to(acc_dtype)
+    alpha_acc = alpha.to(acc_dtype)
+
+    # Handle alpha broadcasting: alpha may be (B,) for batch
+    if is_batch and alpha_acc.dim() == 1:
+        alpha_view = alpha_acc.view(-1, 1, 1, 1)
+    else:
+        alpha_view = alpha_acc.view(-1) if alpha_acc.dim() == 0 else alpha_acc
+
+    exp_factor = 0.25 / (alpha_view**2)
+
+    # Avoid division by zero at k=0
+    safe_k_sq = k_sq_acc.clamp(min=1e-30)
+    k_factor = 2.0 * (1.0 + k_sq_acc * exp_factor) / safe_k_sq
+
+    # Zero out k=0 contribution (no virial from k=0)
+    k_mask = k_sq_acc > 1e-10
+
+    # Vectorized virial computation using einsum
+    # virial_ab = sum_k weighted_energy * (delta_ab - k_factor * k_a * k_b) * k_mask
+    # = delta_ab * sum_k (weighted_energy * k_mask) - sum_k (weighted_energy * k_mask * k_factor) * k_a * k_b
+    k_vecs_acc = k_vectors.to(acc_dtype)  # (..., nx, ny, nz//2+1, 3)
+    masked_energy = weighted_energy * k_mask  # (..., nx, ny, nz//2+1)
+    masked_energy_kf = masked_energy * k_factor  # (..., nx, ny, nz//2+1)
+
+    # Sum dimensions depend on batch vs single
+    if is_batch:
+        sum_dims = (1, 2, 3)  # sum over (nx, ny, nz//2+1)
+    else:
+        sum_dims = (0, 1, 2)  # sum over (nx, ny, nz//2+1)
+
+    # Trace term: delta_ab * sum_k masked_energy
+    trace_term = masked_energy.sum(dim=sum_dims)  # scalar or (B,)
+
+    # kk term: sum_k masked_energy_kf * k_a * k_b
+    # k_vecs_acc has shape (..., nx, ny, nz//2+1, 3)
+    # masked_energy_kf has shape (..., nx, ny, nz//2+1)
+    # Use einsum for vectorized outer product + reduction
+    if is_batch:
+        # k_vecs: (B, nx, ny, nz_half, 3), masked_energy_kf: (B, nx, ny, nz_half)
+        kk_term = torch.einsum(
+            "b...i,b...j,b...->bij", k_vecs_acc, k_vecs_acc, masked_energy_kf
+        )  # (B, 3, 3)
+        eye = torch.eye(3, device=device, dtype=acc_dtype)
+        virial = eye * trace_term[:, None, None] - kk_term  # (B, 3, 3)
+    else:
+        kk_term = torch.einsum(
+            "...i,...j,...->ij", k_vecs_acc, k_vecs_acc, masked_energy_kf
+        )  # (3, 3)
+        eye = torch.eye(3, device=device, dtype=acc_dtype)
+        virial = (eye * trace_term - kk_term).unsqueeze(0)  # (1, 3, 3)
+
+    return virial.to(dtype)
+
+
 def _pme_reciprocal_space_impl(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1360,9 +1494,10 @@ def _pme_reciprocal_space_impl(
     batch_idx: torch.Tensor | None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
     k_vectors: torch.Tensor | None = None,
     k_squared: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
     """Internal implementation of PME reciprocal space calculation.
 
     Uses unified spline functions from nvalchemiops.spline for charge assignment
@@ -1389,7 +1524,13 @@ def _pme_reciprocal_space_impl(
             if compute_charge_gradients
             else None
         )
-        return energies, forces, charge_grads
+        num_systems = cell.shape[0] if is_batch else 1
+        virial = (
+            torch.zeros(num_systems, 3, 3, device=device, dtype=input_dtype)
+            if compute_virial
+            else None
+        )
+        return energies, forces, charge_grads, virial
 
     mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
 
@@ -1413,7 +1554,8 @@ def _pme_reciprocal_space_impl(
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
 
     # Step 3: Generate k-space grid and compute Green's function + structure factor
-    # Green's function now includes volume normalization: G(k) = 4*pi * exp(-k^2/(2*alpha^2)) / (V * k^2)
+    # Green's function: G(k) = 2*pi * exp(-k^2/(4*alpha^2)) / (V * k^2)
+    # (includes 1/2 pair-counting factor; see pme_kernels.py)
     # Use precomputed k_vectors/k_squared if provided, otherwise generate them
     if k_vectors is None or k_squared is None:
         k_vectors, k_squared = generate_k_vectors_pme(
@@ -1428,6 +1570,10 @@ def _pme_reciprocal_space_impl(
         spline_order,
         batch_idx=batch_idx,
     )
+
+    # Save reference to raw FFT before deconvolution (needed for virial).
+    # No clone needed: the reassignment below creates a new tensor.
+    mesh_fft_raw = mesh_fft if compute_virial else None
 
     # Step 4: Apply B-spline deconvolution and convolve with Green's function
     mesh_fft = mesh_fft / structure_factor_sq
@@ -1462,7 +1608,24 @@ def _pme_reciprocal_space_impl(
             raw_energies, charges, cell, alpha, batch_idx
         )
 
-    # Step 8: Compute forces if needed
+    # Step 8: Compute virial before forces to allow early release of mesh_fft_raw
+    # (virial needs mesh_fft_raw; forces only need convolved_mesh)
+    virial = None
+    if compute_virial:
+        virial = _compute_pme_reciprocal_virial(
+            mesh_fft_raw=mesh_fft_raw,
+            convolved_mesh=convolved_mesh,
+            k_vectors=k_vectors,
+            k_squared=k_squared,
+            alpha=alpha,
+            mesh_dimensions=mesh_dimensions,
+            is_batch=is_batch,
+            device=device,
+            dtype=input_dtype,
+        )
+        del mesh_fft_raw  # Free before force field meshes are allocated
+
+    # Step 9: Compute forces if needed
     forces = None
     if compute_forces:
         # Compute electric field by taking gradient in Fourier space
@@ -1491,7 +1654,7 @@ def _pme_reciprocal_space_impl(
         # Compute forces: F = 2 * q * E / V
         forces = 2.0 * interpolated_field
 
-    return reciprocal_energies, forces, charge_grads
+    return reciprocal_energies, forces, charge_grads, virial
 
 
 def pme_reciprocal_space(
@@ -1507,11 +1670,8 @@ def pme_reciprocal_space(
     k_squared: torch.Tensor | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
-) -> (
-    torch.Tensor
-    | tuple[torch.Tensor, torch.Tensor]
-    | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-):
+    compute_virial: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Compute PME reciprocal-space energy and optionally forces and/or charge gradients.
 
     Performs the FFT-based reciprocal-space calculation using the Particle Mesh
@@ -1578,6 +1738,9 @@ def pme_reciprocal_space(
     compute_charge_gradients : bool, default=False
         Whether to compute analytical charge gradients ∂E/∂q_i. Useful for
         computing charge Hessians in ML potential training.
+    compute_virial : bool, default=False
+        Whether to compute the virial tensor W = -dE/d(epsilon).
+        Stress = virial / volume.
 
     Returns
     -------
@@ -1587,13 +1750,18 @@ def pme_reciprocal_space(
         Reciprocal-space forces. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
         Charge gradients ∂E_recip/∂q_i. Only returned if compute_charge_gradients=True.
+    virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor. Only returned if compute_virial=True. Always last in tuple.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces and virial match the input dtype (float32 or float64).
 
     Return Patterns
     ---------------
-    - ``compute_forces=False, compute_charge_gradients=False``: energies
-    - ``compute_forces=True, compute_charge_gradients=False``: (energies, forces)
-    - ``compute_forces=False, compute_charge_gradients=True``: (energies, charge_gradients)
-    - ``compute_forces=True, compute_charge_gradients=True``: (energies, forces, charge_gradients)
+    Enabled flags are appended in order: energies, [forces], [charge_gradients], [virial].
+    A single output is returned unwrapped; multiple outputs as a tuple.
 
     Raises
     ------
@@ -1656,7 +1824,7 @@ def pme_reciprocal_space(
             int(torch.ceil(length / mesh_spacing).item()) for length in cell_lengths
         )
 
-    energies, forces, charge_grads = _pme_reciprocal_space_impl(
+    energies, forces, charge_grads, virial = _pme_reciprocal_space_impl(
         positions,
         charges,
         cell,
@@ -1666,19 +1834,29 @@ def pme_reciprocal_space(
         batch_idx,
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
         k_vectors=k_vectors,
         k_squared=k_squared,
     )
 
     # Build return tuple based on flags
-    if compute_forces and compute_charge_gradients:
-        return energies, forces, charge_grads
-    elif compute_forces:
-        return energies, forces
-    elif compute_charge_gradients:
-        return energies, charge_grads
-    else:
-        return energies
+    match (compute_forces, compute_charge_gradients, compute_virial):
+        case (True, True, True):
+            return energies, forces, charge_grads, virial
+        case (True, True, False):
+            return energies, forces, charge_grads
+        case (True, False, True):
+            return energies, forces, virial
+        case (True, False, False):
+            return energies, forces
+        case (False, True, True):
+            return energies, charge_grads, virial
+        case (False, True, False):
+            return energies, charge_grads
+        case (False, False, True):
+            return energies, virial
+        case _:
+            return energies
 
 
 ###########################################################################################
@@ -1705,12 +1883,9 @@ def particle_mesh_ewald(
     mask_value: int | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
     accuracy: float = 1e-6,
-) -> (
-    torch.Tensor
-    | tuple[torch.Tensor, torch.Tensor]
-    | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-):
+) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
     Computes total Coulomb energy using the PME method, which achieves :math:`O(N \\log N)`
@@ -1791,6 +1966,9 @@ def particle_mesh_ewald(
     compute_charge_gradients : bool, default=False
         Whether to compute analytical charge gradients ∂E/∂q_i. Useful for
         training ML potentials that require second derivatives (charge Hessians).
+    compute_virial : bool, default=False
+        Whether to compute the virial tensor W = -dE/d(epsilon).
+        Stress = virial / volume.
     accuracy : float, default=1e-6
         Target relative accuracy for automatic parameter estimation (α, mesh dims).
         Only used when alpha or mesh_dimensions is None.
@@ -1804,13 +1982,18 @@ def particle_mesh_ewald(
         Forces on each atom. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
         Charge gradients ∂E/∂q_i. Only returned if compute_charge_gradients=True.
+    virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor. Only returned if compute_virial=True. Always last in tuple.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces and virial match the input dtype (float32 or float64).
 
     Return Patterns
     ---------------
-    - ``compute_forces=False, compute_charge_gradients=False``: energies
-    - ``compute_forces=True, compute_charge_gradients=False``: (energies, forces)
-    - ``compute_forces=False, compute_charge_gradients=True``: (energies, charge_gradients)
-    - ``compute_forces=True, compute_charge_gradients=True``: (energies, forces, charge_gradients)
+    Enabled flags are appended in order: energies, [forces], [charge_gradients], [virial].
+    A single output is returned unwrapped; multiple outputs as a tuple.
 
     Raises
     ------
@@ -1971,6 +2154,7 @@ def particle_mesh_ewald(
         batch_idx=batch_idx,
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
     )
 
     # Compute reciprocal-space contribution
@@ -1984,30 +2168,26 @@ def particle_mesh_ewald(
         batch_idx=batch_idx,
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
         k_vectors=k_vectors,
         k_squared=k_squared,
     )
 
-    # Combine results based on flags
-    if compute_forces and compute_charge_gradients:
-        # rs = (energies, forces, charge_grads), rec = (energies, forces, charge_grads)
-        total_energies = rs[0] + rec[0]
-        total_forces = rs[1] + rec[1]
-        total_charge_grads = rs[2] + rec[2]
-        return total_energies, total_forces, total_charge_grads
-    elif compute_forces:
-        # rs = (energies, forces), rec = (energies, forces)
-        total_energies = rs[0] + rec[0]
-        total_forces = rs[1] + rec[1]
-        return total_energies, total_forces
-    elif compute_charge_gradients:
-        # rs = (energies, charge_grads), rec = (energies, charge_grads)
-        total_energies = rs[0] + rec[0]
-        total_charge_grads = rs[1] + rec[1]
-        return total_energies, total_charge_grads
-    else:
-        result = rs + rec
-        return result
+    # Normalize return tuples for easy combination
+    # Both rs and rec return: energies, [forces], [charge_grads], [virial]
+    # where virial is always last if present
+    rs_tuple = rs if isinstance(rs, tuple) else (rs,)
+    rec_tuple = rec if isinstance(rec, tuple) else (rec,)
+
+    # The number of outputs should match between rs and rec
+    # Combine element-wise
+    results = []
+    for r, s in zip(rs_tuple, rec_tuple):
+        results.append(r + s)
+
+    if len(results) == 1:
+        return results[0]
+    return tuple(results)
 
 
 __all__ = [

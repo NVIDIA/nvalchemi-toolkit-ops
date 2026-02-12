@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,8 +43,8 @@ from typing import Literal
 import torch
 import warp as wp
 
-# Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent.parent))
+# Add repo root to path for imports (4 levels up from this script)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
 import yaml
 
@@ -291,6 +291,7 @@ def run_nvalchemiops_ewald(
     system_data: dict,
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
+    compute_virial: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Run Ewald summation using nvalchemiops backend."""
     positions = system_data["positions"]
@@ -318,6 +319,7 @@ def run_nvalchemiops_ewald(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
         elif component == "reciprocal":
             return ewald_reciprocal_space(
@@ -327,6 +329,7 @@ def run_nvalchemiops_ewald(
                 k_vectors=k_vectors,
                 alpha=alpha,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
         else:  # full
             return ewald_summation(
@@ -340,6 +343,7 @@ def run_nvalchemiops_ewald(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
     else:
         # Batch system
@@ -354,6 +358,7 @@ def run_nvalchemiops_ewald(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
         elif component == "reciprocal":
             return ewald_reciprocal_space(
@@ -364,6 +369,7 @@ def run_nvalchemiops_ewald(
                 alpha=alpha,
                 batch_idx=batch_idx,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
         else:  # full
             return ewald_summation(
@@ -378,6 +384,7 @@ def run_nvalchemiops_ewald(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
 
 
@@ -385,6 +392,7 @@ def run_nvalchemiops_pme(
     system_data: dict,
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
+    compute_virial: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Run PME using nvalchemiops backend."""
     positions = system_data["positions"]
@@ -414,6 +422,7 @@ def run_nvalchemiops_pme(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
         elif component == "reciprocal":
             return pme_reciprocal_space(
@@ -424,6 +433,7 @@ def run_nvalchemiops_pme(
                 mesh_dimensions=mesh_dimensions,
                 spline_order=spline_order,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
                 k_vectors=k_vectors_pme,
                 k_squared=k_squared_pme,
             )
@@ -439,6 +449,7 @@ def run_nvalchemiops_pme(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
                 k_vectors=k_vectors_pme,
                 k_squared=k_squared_pme,
             )
@@ -456,6 +467,7 @@ def run_nvalchemiops_pme(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
             )
         elif component == "reciprocal":
             return pme_reciprocal_space(
@@ -467,6 +479,7 @@ def run_nvalchemiops_pme(
                 spline_order=spline_order,
                 batch_idx=batch_idx,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
                 k_vectors=k_vectors_pme,
                 k_squared=k_squared_pme,
             )
@@ -483,6 +496,7 @@ def run_nvalchemiops_pme(
                 neighbor_ptr=neighbor_ptr,
                 neighbor_shifts=neighbor_shifts,
                 compute_forces=compute_forces,
+                compute_virial=compute_virial,
                 k_vectors=k_vectors_pme,
                 k_squared=k_squared_pme,
             )
@@ -533,8 +547,9 @@ def prepare_torchpme_neighbors(
 def run_torchpme_ewald(
     system_data: dict,
     compute_forces: bool,
+    compute_virial: bool = False,
     calculator: EwaldCalculator | None = None,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
+) -> tuple[torch.Tensor, ...]:
     """Run Ewald summation using torchpme backend."""
     if not TORCHPME_AVAILABLE:
         raise ImportError("torchpme not available")
@@ -563,34 +578,42 @@ def run_torchpme_ewald(
     charges_expanded = charges.unsqueeze(1)
     cell_2d = cell.squeeze(0)
 
-    energy = calculator.forward(
+    if not compute_forces and not compute_virial:
+        energy = calculator.forward(
+            charges_expanded,
+            cell_2d,
+            positions,
+            neighbor_indices,
+            neighbor_distances,
+        )
+        return energy, None
+
+    # Compute forces and/or virial via autograd
+    positions_grad = positions.clone().detach().requires_grad_(True)
+    cell_grad = (
+        cell_2d.clone().detach().requires_grad_(True) if compute_virial else cell_2d
+    )
+    potentials_grad = calculator.forward(
         charges_expanded,
-        cell_2d,
-        positions,
+        cell_grad,
+        positions_grad,
         neighbor_indices,
         neighbor_distances,
     )
-
-    if not compute_forces:
-        return energy, None
-
-    # Compute forces via autograd
-    positions_grad = positions.clone().requires_grad_(True)
-    potentials_grad = calculator.forward(
-        charges_expanded, cell_2d, positions_grad, neighbor_indices, neighbor_distances
-    )
     energy_grad = (potentials_grad * charges_expanded).sum()
     energy_grad.backward()
-    forces = -positions_grad.grad
+    forces = -positions_grad.grad if compute_forces else None
+    virial = cell_grad.grad if compute_virial else None
 
-    return energy, forces
+    return energy_grad, forces, virial
 
 
 def run_torchpme_pme(
     system_data: dict,
     compute_forces: bool,
+    compute_virial: bool = False,
     calculator: PMECalculator | None = None,
-) -> tuple[torch.Tensor, torch.Tensor | None]:
+) -> tuple[torch.Tensor, ...]:
     """Run PME using torchpme backend."""
     if not TORCHPME_AVAILABLE:
         raise ImportError("torchpme not available")
@@ -621,26 +644,35 @@ def run_torchpme_pme(
 
     charges_expanded = charges.unsqueeze(1)
     cell_2d = cell.squeeze(0)
-    energy = calculator.forward(
+
+    if not compute_forces and not compute_virial:
+        energy = calculator.forward(
+            charges_expanded,
+            cell_2d,
+            positions,
+            neighbor_indices,
+            neighbor_distances,
+        )
+        return energy, None
+
+    # Compute forces and/or virial via autograd
+    positions_grad = positions.clone().detach().requires_grad_(True)
+    cell_grad = (
+        cell_2d.clone().detach().requires_grad_(True) if compute_virial else cell_2d
+    )
+    potentials_grad = calculator.forward(
         charges_expanded,
-        cell_2d,
-        positions,
+        cell_grad,
+        positions_grad,
         neighbor_indices,
         neighbor_distances,
     )
-    if not compute_forces:
-        return energy, None
-
-    # Compute forces via autograd
-    positions_grad = positions.clone().requires_grad_(True)
-    potentials_grad = calculator.forward(
-        charges_expanded, cell_2d, positions_grad, neighbor_indices, neighbor_distances
-    )
     energy_grad = (potentials_grad * charges_expanded).sum()
     energy_grad.backward()
-    forces = -positions_grad.grad
+    forces = -positions_grad.grad if compute_forces else None
+    virial = cell_grad.grad if compute_virial else None
 
-    return energy, forces
+    return energy_grad, forces, virial
 
 
 # ==============================================================================
@@ -654,11 +686,14 @@ def run_benchmark(
     system_data: dict,
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
+    compute_virial: bool,
     timer: BenchmarkTimer,
 ) -> dict:
     """Run a single benchmark configuration."""
     total_atoms = system_data["total_atoms"]
     batch_size = system_data.get("batch_size", 1)
+
+    effective_virial = compute_virial
 
     try:
         # Define benchmark function based on method and backend
@@ -667,7 +702,10 @@ def run_benchmark(
 
                 def bench_fn():
                     return run_nvalchemiops_ewald(
-                        system_data, component, compute_forces
+                        system_data,
+                        component,
+                        compute_forces,
+                        effective_virial,
                     )
             else:  # pme
 
@@ -676,6 +714,7 @@ def run_benchmark(
                         system_data,
                         component,
                         compute_forces,
+                        effective_virial,
                     )
         else:  # torchpme
             if system_data.get("batch_idx") is not None:
@@ -686,6 +725,7 @@ def run_benchmark(
                     "backend": backend,
                     "component": component,
                     "compute_forces": compute_forces,
+                    "compute_virial": effective_virial,
                     "median_time_ms": float("inf"),
                     "peak_memory_mb": None,
                     "success": False,
@@ -696,13 +736,16 @@ def run_benchmark(
             if method == "ewald":
 
                 def bench_fn():
-                    return run_torchpme_ewald(system_data, compute_forces)
+                    return run_torchpme_ewald(
+                        system_data, compute_forces, effective_virial
+                    )
             else:  # pme
 
                 def bench_fn():
                     return run_torchpme_pme(
                         system_data,
                         compute_forces,
+                        effective_virial,
                     )
 
         # Run benchmark
@@ -717,6 +760,7 @@ def run_benchmark(
                 "backend": backend,
                 "component": component,
                 "compute_forces": compute_forces,
+                "compute_virial": effective_virial,
                 "median_time_ms": float("inf"),
                 "peak_memory_mb": timing_results.get("peak_memory_mb"),
                 "success": False,
@@ -731,6 +775,7 @@ def run_benchmark(
             "backend": backend,
             "component": component,
             "compute_forces": compute_forces,
+            "compute_virial": effective_virial,
             "median_time_ms": float(timing_results["median"]),
             "peak_memory_mb": timing_results.get("peak_memory_mb"),
             "success": True,
@@ -745,6 +790,7 @@ def run_benchmark(
             "backend": backend,
             "component": component,
             "compute_forces": compute_forces,
+            "compute_virial": effective_virial,
             "median_time_ms": float("inf"),
             "peak_memory_mb": None,
             "success": False,
@@ -845,6 +891,7 @@ def main():
 
     components = config.get("components", ["full"])
     compute_forces = config.get("compute_forces", True)
+    compute_virial = config.get("compute_virial", False)
 
     # Print configuration
     print("=" * 70)
@@ -857,6 +904,7 @@ def main():
     print(f"Backends: {backends}")
     print(f"Components: {components}")
     print(f"Compute forces: {compute_forces}")
+    print(f"Compute virial: {compute_virial}")
     print(f"Warmup iterations: {warmup}")
     print(f"Timing iterations: {timing}")
     print(f"Output directory: {output_dir}")
@@ -901,6 +949,7 @@ def main():
                                 system_data,
                                 component,
                                 compute_forces,
+                                compute_virial,
                                 timer,
                             )
                             result["supercell_size"] = size
@@ -963,6 +1012,7 @@ def main():
                                 system_data,
                                 component,
                                 compute_forces,
+                                compute_virial,
                                 timer,
                             )
                             result["supercell_size"] = base_size
@@ -1004,8 +1054,18 @@ def main():
                         output_dir
                         / f"electrostatics_benchmark_{method}_{backend}_{gpu_sku}.csv"
                     )
+                    # Collect all fieldnames across all results
+                    all_fieldnames = []
+                    seen = set()
+                    for r in method_results:
+                        for k in r.keys():
+                            if k not in seen:
+                                all_fieldnames.append(k)
+                                seen.add(k)
                     with open(output_file, "w", newline="") as f:
-                        writer = csv.DictWriter(f, fieldnames=method_results[0].keys())
+                        writer = csv.DictWriter(
+                            f, fieldnames=all_fieldnames, extrasaction="ignore"
+                        )
                         writer.writeheader()
                         writer.writerows(method_results)
                     print(f"\n✓ Results saved to: {output_file}")

@@ -13,20 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pytest configuration, fixtures, and crystal structure utilities for electrostatics tests.
+"""
+Crystal Structure Generation Utilities for Electrostatics Tests
+===============================================================
 
-This module provides:
-- Pytest configuration hooks and markers
-- Device fixtures for CPU/GPU testing
-- Crystal structure generators that return numpy arrays, usable by all
-  binding layers (warp, torch, jax)
+This module provides functions to generate common crystal structures
+for testing electrostatic calculations. Structures are returned as
+dictionaries with positions, cell, and charges that can be easily
+converted to torch tensors.
 
-Supported crystal structures:
+Supported structures:
 - CsCl (BCC-like ionic crystal)
 - Wurtzite (hexagonal ZnS)
 - Zincblende (cubic ZnS)
-- NaCl (rock salt)
-- Simple cubic with alternating charges
 """
 
 from __future__ import annotations
@@ -34,78 +33,9 @@ from __future__ import annotations
 from typing import NamedTuple
 
 import numpy as np
-import pytest
-import warp as wp
+import torch
 
-# ---------------------------------------------------------------------------
-# Pytest hooks
-# ---------------------------------------------------------------------------
-
-
-def pytest_configure(config):
-    """Configure pytest for electrostatics tests."""
-    config.addinivalue_line("markers", "slow: marks tests as slow (performance tests)")
-    config.addinivalue_line("markers", "gpu: marks tests that require GPU")
-    config.addinivalue_line("markers", "warp: marks tests that require Warp")
-
-
-def pytest_collection_modifyitems(config, items):
-    """Modify test collection to add markers based on test names."""
-    for item in items:
-        if "cuda" in item.name.lower() or "gpu" in item.name.lower():
-            item.add_marker(pytest.mark.gpu)
-
-        if "performance" in item.name.lower() or "stress" in item.name.lower():
-            item.add_marker(pytest.mark.slow)
-
-
-# ---------------------------------------------------------------------------
-# Device / warp fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def cuda_available():
-    """Check if CUDA is available."""
-    return wp.is_cuda_available()
-
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_warp():
-    """Initialize Warp if available."""
-    wp.init()
-
-    if wp.is_cuda_available():
-        wp.set_device("cuda:0")
-
-    yield
-
-
-@pytest.fixture(params=["cpu", "cuda:0"], ids=["cpu", "gpu"])
-def device(request):
-    """Fixture providing both CPU and GPU devices.
-
-    GPU tests are skipped if CUDA is not available.
-
-    Returns
-    -------
-    str
-        Device name ("cpu" or "cuda:0")
-
-    Notes
-    -----
-    This fixture can be used for both warp and PyTorch tests.
-    For PyTorch tensors, convert "cuda:0" to "cuda" when needed.
-    """
-    device_name = request.param
-    if device_name == "cuda:0" and not wp.is_cuda_available():
-        pytest.skip("CUDA not available")
-    return device_name
-
-
-# ---------------------------------------------------------------------------
-# Crystal structure data container
-# ---------------------------------------------------------------------------
+from nvalchemiops.torch.neighbors import cell_list
 
 
 class CrystalSystem(NamedTuple):
@@ -129,13 +59,9 @@ class CrystalSystem(NamedTuple):
     symbols: list[str]
 
 
-# ---------------------------------------------------------------------------
-# Crystal structure generators
-# ---------------------------------------------------------------------------
-
-
 def create_cscl_supercell(size: int) -> CrystalSystem:
-    """Create CsCl supercell of given size.
+    """
+    Create CsCl supercell of given size.
 
     CsCl has a BCC-like structure with:
     - Cs at corners (0, 0, 0)
@@ -144,7 +70,7 @@ def create_cscl_supercell(size: int) -> CrystalSystem:
     Parameters
     ----------
     size : int
-        Linear supercell size (total atoms = 2 * size^3)
+        Linear supercell size (total atoms = 2 * size³)
 
     Returns
     -------
@@ -153,8 +79,8 @@ def create_cscl_supercell(size: int) -> CrystalSystem:
 
     Notes
     -----
-    Base CsCl unit cell has 2 atoms with a = 4.14 Angstrom.
-    A size=n supercell has 2n^3 atoms.
+    Base CsCl unit cell has 2 atoms with a = 4.14 Å.
+    A size=n supercell has 2n³ atoms.
     """
     a = 4.14  # Lattice constant in Angstroms
 
@@ -199,16 +125,17 @@ def create_cscl_supercell(size: int) -> CrystalSystem:
 
 
 def create_wurtzite_system(size: int) -> CrystalSystem:
-    """Create Wurtzite supercell of given size.
+    """
+    Create Wurtzite supercell of given size.
 
     Wurtzite (ZnS) has a hexagonal structure with 4 atoms per unit cell:
     - Zn at (0, 0, 0) and (1/3, 2/3, 1/2)
-    - S at (0, 0, u) and (1/3, 2/3, 1/2 + u) where u ~ 3/8
+    - S at (0, 0, u) and (1/3, 2/3, 1/2 + u) where u ≈ 3/8
 
     Parameters
     ----------
     size : int
-        Linear supercell size (total atoms = 4 * size^3)
+        Linear supercell size (total atoms = 4 * size³)
 
     Returns
     -------
@@ -217,7 +144,7 @@ def create_wurtzite_system(size: int) -> CrystalSystem:
 
     Notes
     -----
-    Uses lattice parameters a = 3.21 Angstrom, c = 5.21 Angstrom (typical for ZnS).
+    Uses lattice parameters a = 3.21 Å, c = 5.21 Å (typical for ZnS).
     """
     a = 3.21  # Lattice constant a in Angstroms
     c = 5.21  # Lattice constant c in Angstroms
@@ -276,7 +203,8 @@ def create_wurtzite_system(size: int) -> CrystalSystem:
 
 
 def create_zincblende_system(size: int) -> CrystalSystem:
-    """Create Zincblende supercell of given size.
+    """
+    Create Zincblende supercell of given size.
 
     Zincblende (ZnS) has an FCC-like cubic structure with 2 atoms per
     primitive cell (8 atoms per conventional cubic cell):
@@ -290,7 +218,7 @@ def create_zincblende_system(size: int) -> CrystalSystem:
     Parameters
     ----------
     size : int
-        Linear supercell size (total atoms = 2 * size^3)
+        Linear supercell size (total atoms = 2 * size³)
 
     Returns
     -------
@@ -299,7 +227,7 @@ def create_zincblende_system(size: int) -> CrystalSystem:
 
     Notes
     -----
-    Uses conventional cubic cell with a = 5.41 Angstrom (typical for ZnS zincblende).
+    Uses conventional cubic cell with a = 5.41 Å (typical for ZnS zincblende).
     Each conventional cell contains 8 atoms (4 Zn + 4 S).
 
     We use the primitive FCC cell with 2 atoms for efficiency.
@@ -356,7 +284,8 @@ def create_zincblende_system(size: int) -> CrystalSystem:
 
 
 def create_nacl_system(size: int) -> CrystalSystem:
-    """Create NaCl (rock salt) supercell of given size.
+    """
+    Create NaCl (rock salt) supercell of given size.
 
     NaCl has an FCC-like structure with:
     - Na at FCC positions
@@ -365,7 +294,7 @@ def create_nacl_system(size: int) -> CrystalSystem:
     Parameters
     ----------
     size : int
-        Linear supercell size (total atoms = 2 * size^3 for primitive cell)
+        Linear supercell size (total atoms = 2 * size³ for primitive cell)
 
     Returns
     -------
@@ -374,7 +303,7 @@ def create_nacl_system(size: int) -> CrystalSystem:
 
     Notes
     -----
-    Uses conventional cubic cell with a = 5.64 Angstrom.
+    Uses conventional cubic cell with a = 5.64 Å.
     We use the primitive FCC cell with 2 atoms (1 Na + 1 Cl).
     """
     # Conventional cubic lattice constant
@@ -430,12 +359,13 @@ def create_nacl_system(size: int) -> CrystalSystem:
 def create_simple_cubic_system(
     size: int, lattice_constant: float = 3.0, charge: float = 1.0
 ) -> CrystalSystem:
-    """Create simple cubic lattice with alternating charges.
+    """
+    Create simple cubic lattice with alternating charges.
 
     Parameters
     ----------
     size : int
-        Linear supercell size (total atoms = size^3)
+        Linear supercell size (total atoms = size³)
     lattice_constant : float, default=3.0
         Lattice constant in Angstroms.
     charge : float, default=1.0
@@ -475,78 +405,195 @@ def create_simple_cubic_system(
     )
 
 
-# ---------------------------------------------------------------------------
-# Crystal structure fixtures
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Virial Test Utilities
+# =============================================================================
+
+VIRIAL_DTYPE = torch.float64  # Need double precision for FD virial tests
 
 
-@pytest.fixture(
-    params=["cscl", "wurtzite", "zincblende"],
-    ids=["cscl", "wurtzite", "zincblende"],
-)
-def crystal_system_fn(request):
-    """Fixture providing crystal structure generator functions.
-
-    Returns a callable that takes a ``size`` parameter and returns a
-    `CrystalSystem` NamedTuple with numpy arrays.
+def make_virial_cscl_system(
+    size: int = 2,
+    dtype: torch.dtype | None = None,
+    device: torch.device | None = None,
+):
+    """Create a CsCl test system for virial tests.
 
     Parameters
     ----------
-    request : pytest.FixtureRequest
-        Pytest fixture request object with crystal type parameter.
+    size : int
+        Supercell linear size.
+    dtype : torch.dtype, optional
+        Tensor dtype. Defaults to ``VIRIAL_DTYPE`` (float64).
+    device : torch.device, optional
+        Device. Defaults to CPU.
 
     Returns
     -------
-    callable
-        Crystal structure generator function that accepts a ``size`` int.
-
-    Notes
-    -----
-    Parametrized over the three main crystal types used in Ewald/PME tests.
-    Tests using this fixture will run once per crystal type.  The returned
-    function produces numpy arrays; each test is responsible for converting
-    to its framework (torch, jax, etc.).
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        (positions, charges, cell) where cell has shape (1, 3, 3).
     """
-    generators = {
-        "cscl": create_cscl_supercell,
-        "wurtzite": create_wurtzite_system,
-        "zincblende": create_zincblende_system,
-    }
-    return generators[request.param]
+    if dtype is None:
+        dtype = VIRIAL_DTYPE
+    if device is None:
+        device = torch.device("cpu")
+    crystal = create_cscl_supercell(size)
+    positions = torch.tensor(crystal.positions, dtype=dtype, device=device)
+    charges = torch.tensor(crystal.charges, dtype=dtype, device=device)
+    cell = torch.tensor(crystal.cell, dtype=dtype, device=device).unsqueeze(0)
+    return positions, charges, cell
 
 
-@pytest.fixture()
-def crystal_generators():
-    """Fixture providing all crystal structure generator functions as a dict.
+def get_virial_neighbor_data(positions, cell, cutoff=6.0):
+    """Compute neighbor list for virial test systems.
 
     Returns
     -------
-    dict[str, callable]
-        Mapping from crystal type name to generator function.
-
-    Notes
-    -----
-    Available crystal types:
-
-    - ``"cscl"``: CsCl supercell (BCC-like structure)
-    - ``"wurtzite"``: Wurtzite structure (hexagonal ZnS)
-    - ``"zincblende"``: Zincblende structure (cubic ZnS)
-    - ``"nacl"``: NaCl (rocksalt) structure
-    - ``"simple_cubic"``: Simple cubic lattice with customizable parameters
-
-    Each generator returns numpy arrays; the test is responsible for
-    framework conversion.
-
-    Examples
-    --------
-    >>> def test_example(crystal_generators):
-    ...     system = crystal_generators["cscl"](size=2)
-    ...     positions = system.positions  # numpy array
+    tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        (neighbor_list, neighbor_ptr, unit_shifts).
     """
-    return {
-        "cscl": create_cscl_supercell,
-        "wurtzite": create_wurtzite_system,
-        "zincblende": create_zincblende_system,
-        "nacl": create_nacl_system,
-        "simple_cubic": create_simple_cubic_system,
-    }
+    pbc = torch.tensor([True, True, True], dtype=torch.bool, device=positions.device)
+    neighbor_list, neighbor_ptr, unit_shifts = cell_list(
+        positions,
+        cutoff,
+        cell.squeeze(0),
+        pbc,
+        return_neighbor_list=True,
+    )
+    return neighbor_list, neighbor_ptr, unit_shifts
+
+
+def make_virial_batch_cscl_system(size: int = 1, device: torch.device | None = None):
+    """Create a 2-system batch from identical CsCl supercells.
+
+    Returns
+    -------
+    tuple
+        (positions, charges, cell, alpha, batch_idx,
+         pos_single, q_single, cell_single, alpha_single, n_atoms)
+    """
+    if device is None:
+        device = torch.device("cpu")
+    crystal = create_cscl_supercell(size)
+    n_atoms = len(crystal.charges)
+
+    pos_single = torch.tensor(crystal.positions, dtype=VIRIAL_DTYPE, device=device)
+    q_single = torch.tensor(crystal.charges, dtype=VIRIAL_DTYPE, device=device)
+    cell_single = torch.tensor(
+        crystal.cell, dtype=VIRIAL_DTYPE, device=device
+    ).unsqueeze(0)
+    alpha_single = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+
+    positions = torch.cat([pos_single, pos_single], dim=0)
+    charges = torch.cat([q_single, q_single], dim=0)
+    cell_batch = torch.cat([cell_single, cell_single], dim=0)
+    alpha = torch.tensor([0.3, 0.3], dtype=VIRIAL_DTYPE, device=device)
+    batch_idx = torch.cat(
+        [
+            torch.zeros(n_atoms, dtype=torch.int32, device=device),
+            torch.ones(n_atoms, dtype=torch.int32, device=device),
+        ]
+    )
+
+    return (
+        positions,
+        charges,
+        cell_batch,
+        alpha,
+        batch_idx,
+        pos_single,
+        q_single,
+        cell_single,
+        alpha_single,
+        n_atoms,
+    )
+
+
+def make_virial_crystal_system(system_fn, size=1, device: torch.device | None = None):
+    """Create crystal system from a factory function for virial tests.
+
+    Parameters
+    ----------
+    system_fn : callable
+        One of ``create_cscl_supercell``, ``create_wurtzite_system``, etc.
+    """
+    if device is None:
+        device = torch.device("cpu")
+    crystal = system_fn(size)
+    positions = torch.tensor(crystal.positions, dtype=VIRIAL_DTYPE, device=device)
+    charges = torch.tensor(crystal.charges, dtype=VIRIAL_DTYPE, device=device)
+    cell = torch.tensor(crystal.cell, dtype=VIRIAL_DTYPE, device=device).unsqueeze(0)
+    return positions, charges, cell
+
+
+def make_non_neutral_system(device: torch.device):
+    """Create a non-neutral 2-atom system (Q_total = +0.5) in a cubic cell."""
+    cell = torch.tensor(
+        [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+        dtype=VIRIAL_DTYPE,
+        device=device,
+    )
+    positions = torch.tensor(
+        [[2.5, 5.0, 5.0], [7.5, 5.0, 5.0]],
+        dtype=VIRIAL_DTYPE,
+        device=device,
+    )
+    charges = torch.tensor([1.0, -0.5], dtype=VIRIAL_DTYPE, device=device)
+    return positions, charges, cell
+
+
+def apply_strain(positions, cell, epsilon, device):
+    """Apply infinitesimal strain: x' = (I + eps) @ x, cell' = (I + eps) @ cell."""
+    I_plus_eps = torch.eye(3, dtype=VIRIAL_DTYPE, device=device) + epsilon
+    new_positions = positions @ I_plus_eps.T
+    new_cell = cell @ I_plus_eps.T
+    return new_positions, new_cell
+
+
+def fd_virial_component(energy_fn, positions, cell, a, b, device, h=1e-5):
+    """Finite-difference virial for component (a, b).
+
+    virial_ab = -dE/d(epsilon_ab) ≈ -[E(+h) - E(-h)] / (2h)
+    """
+    eps_plus = torch.zeros(3, 3, dtype=VIRIAL_DTYPE, device=device)
+    eps_plus[a, b] = h
+    pos_p, cell_p = apply_strain(positions, cell, eps_plus, device)
+    E_plus = energy_fn(pos_p, cell_p)
+
+    eps_minus = torch.zeros(3, 3, dtype=VIRIAL_DTYPE, device=device)
+    eps_minus[a, b] = -h
+    pos_m, cell_m = apply_strain(positions, cell, eps_minus, device)
+    E_minus = energy_fn(pos_m, cell_m)
+
+    return -(E_plus - E_minus) / (2.0 * h)
+
+
+def fd_virial_full(energy_fn, positions, cell, device, h=1e-5):
+    """Compute full 3x3 virial tensor by finite differences."""
+    virial = torch.zeros(3, 3, dtype=VIRIAL_DTYPE, device=device)
+    for a in range(3):
+        for b in range(3):
+            virial[a, b] = fd_virial_component(
+                energy_fn, positions, cell, a, b, device, h
+            )
+    return virial
+
+
+# Convenience exports
+__all__ = [
+    "CrystalSystem",
+    "create_cscl_supercell",
+    "create_wurtzite_system",
+    "create_zincblende_system",
+    "create_nacl_system",
+    "create_simple_cubic_system",
+    "VIRIAL_DTYPE",
+    "make_virial_cscl_system",
+    "get_virial_neighbor_data",
+    "make_virial_batch_cscl_system",
+    "make_virial_crystal_system",
+    "make_non_neutral_system",
+    "apply_strain",
+    "fd_virial_component",
+    "fd_virial_full",
+]
