@@ -2543,24 +2543,36 @@ def ewald_real_space(
 
     """
     is_batch = batch_idx is not None
-    dispatch_batch = is_batch
 
-    # If virial is requested, we need a force-capable kernel (virial is accumulated
-    # alongside forces in the same kernel pass).
+    # The virial tensor is computed as the outer product of separation vectors and
+    # pair forces (W += r_ij ⊗ F_ij), which is accumulated inside the force kernel.
+    # Therefore, even when only virial is requested (compute_forces=False,
+    # compute_virial=True), we must dispatch a force-capable kernel.
     need_force_kernel = compute_forces or compute_virial
 
-    # Helper to build the return tuple from raw outputs
+    # Helper to build the return tuple from raw outputs using match dispatch.
     def _build_result(energies, forces=None, charge_grads=None, virial=None):
-        result = (energies,)
-        if compute_forces and forces is not None:
-            result = result + (forces,)
-        if compute_charge_gradients and charge_grads is not None:
-            result = result + (charge_grads,)
-        if compute_virial and virial is not None:
-            result = result + (virial,)
-        if len(result) == 1:
-            return result[0]
-        return result
+        match (
+            compute_forces and forces is not None,
+            compute_charge_gradients and charge_grads is not None,
+            compute_virial and virial is not None,
+        ):
+            case (True, True, True):
+                return energies, forces, charge_grads, virial
+            case (True, True, False):
+                return energies, forces, charge_grads
+            case (True, False, True):
+                return energies, forces, virial
+            case (True, False, False):
+                return energies, forces
+            case (False, True, True):
+                return energies, charge_grads, virial
+            case (False, True, False):
+                return energies, charge_grads
+            case (False, False, True):
+                return energies, virial
+            case _:
+                return energies
 
     if compute_charge_gradients:
         if neighbor_list is not None:
@@ -2568,7 +2580,7 @@ def ewald_real_space(
                 raise ValueError(
                     "neighbor_ptr is required when using neighbor_list format"
                 )
-            if dispatch_batch:
+            if is_batch:
                 energies, forces, charge_grads, virial = (
                     _batch_ewald_real_space_energy_forces_charge_grad(
                         positions,
@@ -2596,7 +2608,7 @@ def ewald_real_space(
                     )
                 )
         elif neighbor_matrix is not None:
-            if dispatch_batch:
+            if is_batch:
                 energies, forces, charge_grads, virial = (
                     _batch_ewald_real_space_energy_forces_charge_grad_matrix(
                         positions,
@@ -2632,7 +2644,7 @@ def ewald_real_space(
     if neighbor_list is not None:
         if neighbor_ptr is None:
             raise ValueError("neighbor_ptr is required when using neighbor_list format")
-        if dispatch_batch:
+        if is_batch:
             if need_force_kernel:
                 energies, forces, virial = _batch_ewald_real_space_energy_forces(
                     positions,
@@ -2683,7 +2695,7 @@ def ewald_real_space(
                 )
                 return _build_result(energies)
     elif neighbor_matrix is not None:
-        if dispatch_batch:
+        if is_batch:
             if need_force_kernel:
                 energies, forces, virial = _batch_ewald_real_space_energy_forces_matrix(
                     positions,
@@ -2787,30 +2799,40 @@ def ewald_reciprocal_space(
         Virial tensor (if compute_virial=True). Always last in the tuple.
     """
     is_batch = batch_idx is not None
-    dispatch_batch = is_batch
 
     # Normalize k-vector rank based on dispatch mode.
     # Batch kernels expect (B, K, 3), single kernels expect (K, 3).
-    if dispatch_batch and k_vectors.dim() == 2:
+    if is_batch and k_vectors.dim() == 2:
         k_vectors = k_vectors.unsqueeze(0)
-    elif not dispatch_batch and k_vectors.dim() == 3 and k_vectors.shape[0] == 1:
+    elif not is_batch and k_vectors.dim() == 3 and k_vectors.shape[0] == 1:
         k_vectors = k_vectors.squeeze(0)
 
-    # Helper to build the return tuple from raw outputs
+    # Helper to build the return tuple from raw outputs using match dispatch.
     def _build_result(energies, forces=None, charge_grads=None, virial=None):
-        result = (energies,)
-        if compute_forces and forces is not None:
-            result = result + (forces,)
-        if compute_charge_gradients and charge_grads is not None:
-            result = result + (charge_grads,)
-        if compute_virial and virial is not None:
-            result = result + (virial,)
-        if len(result) == 1:
-            return result[0]
-        return result
+        match (
+            compute_forces and forces is not None,
+            compute_charge_gradients and charge_grads is not None,
+            compute_virial and virial is not None,
+        ):
+            case (True, True, True):
+                return energies, forces, charge_grads, virial
+            case (True, True, False):
+                return energies, forces, charge_grads
+            case (True, False, True):
+                return energies, forces, virial
+            case (True, False, False):
+                return energies, forces
+            case (False, True, True):
+                return energies, charge_grads, virial
+            case (False, True, False):
+                return energies, charge_grads
+            case (False, False, True):
+                return energies, virial
+            case _:
+                return energies
 
     if compute_charge_gradients:
-        if dispatch_batch:
+        if is_batch:
             energies, forces, charge_grads, virial = (
                 _batch_ewald_reciprocal_space_energy_forces_charge_grad(
                     positions,
@@ -2837,7 +2859,7 @@ def ewald_reciprocal_space(
         return _build_result(energies, forces, charge_grads, virial)
 
     # No charge gradients
-    if dispatch_batch:
+    if is_batch:
         if compute_forces:
             energies, forces, virial = _batch_ewald_reciprocal_space_energy_forces(
                 positions,

@@ -1828,17 +1828,23 @@ def pme_reciprocal_space(
     )
 
     # Build return tuple based on flags
-    results = [energies]
-    if compute_forces:
-        results.append(forces)
-    if compute_charge_gradients:
-        results.append(charge_grads)
-    if compute_virial:
-        results.append(virial)
-
-    if len(results) == 1:
-        return results[0]
-    return tuple(results)
+    match (compute_forces, compute_charge_gradients, compute_virial):
+        case (True, True, True):
+            return energies, forces, charge_grads, virial
+        case (True, True, False):
+            return energies, forces, charge_grads
+        case (True, False, True):
+            return energies, forces, virial
+        case (True, False, False):
+            return energies, forces
+        case (False, True, True):
+            return energies, charge_grads, virial
+        case (False, True, False):
+            return energies, charge_grads
+        case (False, False, True):
+            return energies, virial
+        case _:
+            return energies
 
 
 ###########################################################################################
