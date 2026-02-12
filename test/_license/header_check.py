@@ -53,7 +53,7 @@ def main():
     logging.info(json.dumps(config, sort_keys=True, indent=4))
 
     current_year = int(datetime.today().year)
-    starting_year = 2023
+    starting_year = 2025
     python_header_path = Path(__file__).parent.resolve() / Path(
         config["copyright_file"]
     )
