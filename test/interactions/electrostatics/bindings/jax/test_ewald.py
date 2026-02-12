@@ -157,7 +157,7 @@ def create_simple_system(device, dtype=jnp.float64, num_atoms=4, cell_size=10.0)
 
 
 def compute_torchpme_reciprocal(positions_np, charges_np, cell_np, k_cutoff, alpha):
-    """Compute reciprocal energy using torchpme.
+    """Compute reference reciprocal energy using torchpme.
 
     Parameters
     ----------
@@ -177,13 +177,24 @@ def compute_torchpme_reciprocal(positions_np, charges_np, cell_np, k_cutoff, alp
     np.ndarray
         Reciprocal space energy per atom
     """
-    device = torch.device("cuda:0")
-    positions_torch = torch.tensor(positions_np, dtype=torch.float64, device=device)
-    charges_torch = torch.tensor(charges_np, dtype=torch.float64, device=device)
-    cell_torch = torch.tensor(cell_np, dtype=torch.float64, device=device)
 
-    calc = EwaldCalculator(CoulombPotential(), alpha=alpha, k_cutoff=k_cutoff)
-    energy_recip = calc.reciprocal_energy(positions_torch, charges_torch, cell_torch[0])
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.float64
+    positions_torch = torch.tensor(positions_np, dtype=dtype, device=device)
+    charges_torch = torch.tensor(charges_np, dtype=dtype, device=device)
+    cell_torch = torch.tensor(cell_np, dtype=dtype, device=device)
+
+    lr_wavelength = 2 * torch.pi / k_cutoff
+    smearing = 1.0 / (2.0**0.5 * alpha)
+    potential = CoulombPotential(smearing=smearing).to(device=device, dtype=dtype)
+    calc = EwaldCalculator(
+        potential=potential, lr_wavelength=lr_wavelength, full_neighbor_list=True
+    ).to(device=device, dtype=dtype)
+
+    charges_col = charges_torch.unsqueeze(1)
+    # cell_torch is (3, 3) — pass directly (not cell_torch[0] which would be row 0)
+    potentials = calc._compute_kspace(charges_col, cell_torch, positions_torch)
+    energy_recip = (charges_col * potentials).flatten()
 
     return energy_recip.cpu().numpy()
 
@@ -191,7 +202,7 @@ def compute_torchpme_reciprocal(positions_np, charges_np, cell_np, k_cutoff, alp
 def compute_torchpme_real_space(
     charges_np, neighbor_indices, neighbor_distances, alpha, k_cutoff
 ):
-    """Compute real-space energy using torchpme.
+    """Compute reference real-space energy using torchpme.
 
     Parameters
     ----------
@@ -204,26 +215,41 @@ def compute_torchpme_real_space(
     alpha : float
         Ewald splitting parameter
     k_cutoff : float
-        K-space cutoff (unused but kept for API compatibility)
+        K-space cutoff
 
     Returns
     -------
     np.ndarray
         Real space energy per atom
     """
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    charges_torch = torch.tensor(charges_np, dtype=torch.float64, device=device)
+    dtype = torch.float64
+    charges_torch = torch.tensor(charges_np, dtype=dtype, device=device)
     neighbor_indices_torch = torch.tensor(
         neighbor_indices, dtype=torch.long, device=device
     )
     neighbor_distances_torch = torch.tensor(
-        neighbor_distances, dtype=torch.float64, device=device
+        neighbor_distances, dtype=dtype, device=device
     )
 
-    calc = EwaldCalculator(CoulombPotential(), alpha=alpha, k_cutoff=k_cutoff)
-    energy_real = calc.real_space_energy(
-        charges_torch, neighbor_indices_torch, neighbor_distances_torch
+    lr_wavelength = 2 * torch.pi / k_cutoff
+    smearing = 1.0 / (2.0**0.5 * alpha)
+    potential = CoulombPotential(smearing=smearing).to(device=device, dtype=dtype)
+    calc = EwaldCalculator(
+        potential=potential, lr_wavelength=lr_wavelength, full_neighbor_list=True
+    ).to(device=device, dtype=dtype)
+
+    # torchpme expects neighbor_indices as (num_pairs, 2), but our JAX neighbor list
+    # is in COO format (2, num_pairs), so transpose if needed
+    if neighbor_indices_torch.shape[0] == 2 and neighbor_indices_torch.ndim == 2:
+        neighbor_indices_torch = neighbor_indices_torch.T
+
+    charges_col = charges_torch.unsqueeze(1)
+    potentials = calc._compute_rspace(
+        charges_col, neighbor_indices_torch, neighbor_distances_torch
     )
+    energy_real = (charges_col * potentials).flatten()
 
     return energy_real.cpu().numpy()
 
