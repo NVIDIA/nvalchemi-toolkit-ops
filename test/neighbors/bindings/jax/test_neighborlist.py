@@ -22,10 +22,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# Enable float64 support in JAX for accurate dtype testing
-jax.config.update("jax_enable_x64", True)
-
-from nvalchemiops.jax.neighbors import (  # noqa: E402
+from nvalchemiops.jax.neighbors import (
     batch_naive_neighbor_list_dual_cutoff,
     cell_list,
     naive_neighbor_list,
@@ -33,43 +30,9 @@ from nvalchemiops.jax.neighbors import (  # noqa: E402
     neighbor_list,
 )
 
-# ==============================================================================
-# Device Utilities
-# ==============================================================================
+from .conftest import create_batch_idx_and_ptr_jax, requires_gpu
 
-
-def get_available_devices() -> list[str]:
-    """Get available JAX devices (CPU and GPU if available)."""
-    devices = ["cpu"]
-    try:
-        if jax.devices("gpu"):
-            devices.append("gpu")
-    except RuntimeError:
-        pass
-    return devices
-
-
-def place_on_device(arr: jax.Array, device: str) -> jax.Array:
-    """Place a JAX array on the specified device type."""
-    if device == "cpu":
-        jax_device = jax.devices("cpu")[0]
-    else:
-        jax_device = jax.devices("gpu")[0]
-    return jax.device_put(arr, jax_device)
-
-
-# ==============================================================================
-# Fixtures
-# ==============================================================================
-
-
-@pytest.fixture(params=get_available_devices())
-def device(request):
-    """Parametrized fixture for testing on CPU and GPU."""
-    if request.param == "gpu" and len(jax.devices("gpu")) == 0:
-        pytest.skip("No CUDA device available.")
-    return request.param
-
+pytestmark = requires_gpu
 
 # ==============================================================================
 # Helpers
@@ -89,25 +52,10 @@ def create_random_system_jax(
     cell = (jnp.eye(3, dtype=dtype) * cell_size).reshape(1, 3, 3)
     pbc = jnp.array([[True, True, True]])
     return (
-        place_on_device(positions, device),
-        place_on_device(cell, device),
-        place_on_device(pbc, device),
+        positions,
+        cell,
+        pbc,
     )
-
-
-def create_batch_idx_and_ptr_jax(
-    atoms_per_system: list[int],
-    device: str = "cpu",
-):
-    """Create batch_idx and batch_ptr arrays for JAX."""
-    total_atoms = sum(atoms_per_system)
-    batch_idx = jnp.zeros(total_atoms, dtype=jnp.int32)
-    start = 0
-    for i, n in enumerate(atoms_per_system):
-        batch_idx = batch_idx.at[start : start + n].set(i)
-        start += n
-    batch_ptr = jnp.array([0] + list(np.cumsum(atoms_per_system)), dtype=jnp.int32)
-    return place_on_device(batch_idx, device), place_on_device(batch_ptr, device)
 
 
 def assert_neighbor_matrix_equal_jax(result1, result2):
@@ -163,7 +111,6 @@ class TestNeighborListAutoSelection:
 
         key = jax.random.PRNGKey(42)
         positions = jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * box_size
-        positions = place_on_device(positions, device)
         cutoff = 2.0
 
         result = neighbor_list(positions, cutoff, return_neighbor_list=True)
@@ -178,9 +125,7 @@ class TestNeighborListAutoSelection:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_auto_select_naive_with_pbc(self, dtype, device):
         """Auto-select naive for small systems with PBC → 3-tuple."""
-        positions, cell, pbc = create_random_system_jax(
-            100, 10.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(100, 10.0, dtype=dtype)
         cutoff = 2.0
 
         result = neighbor_list(
@@ -205,11 +150,10 @@ class TestNeighborListAutoSelection:
         """
         key = jax.random.PRNGKey(0)
         positions = jax.random.normal(key, (5000, 3), dtype=dtype) * 50.0
-        positions = place_on_device(positions, device)
 
-        # Provide cell/pbc on the same device to avoid device mismatch
-        cell = place_on_device(jnp.eye(3, dtype=dtype).reshape(1, 3, 3), device)
-        pbc = place_on_device(jnp.array([[False, False, False]]), device)
+        # Provide cell/pbc
+        cell = jnp.eye(3, dtype=dtype).reshape(1, 3, 3)
+        pbc = jnp.array([[False, False, False]])
         cutoff = 2.0
 
         result = neighbor_list(
@@ -227,9 +171,7 @@ class TestNeighborListAutoSelection:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_auto_select_naive_dual_cutoff(self, dtype, device):
         """Auto-select naive_dual_cutoff when cutoff2 is provided → 6-tuple with PBC."""
-        positions, cell, pbc = create_random_system_jax(
-            100, 10.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(100, 10.0, dtype=dtype)
         cutoff1 = 2.5
         cutoff2 = 3.5
 
@@ -257,10 +199,10 @@ class TestNeighborListAutoSelection:
     def test_auto_select_batch_naive(self, dtype, device):
         """Auto-select batch_naive when batch_idx is provided for small system."""
         positions1, cell1, pbc1 = create_random_system_jax(
-            50, 10.0, dtype=dtype, device=device, seed=42
+            50, 10.0, dtype=dtype, seed=42
         )
         positions2, cell2, pbc2 = create_random_system_jax(
-            30, 10.0, dtype=dtype, device=device, seed=43
+            30, 10.0, dtype=dtype, seed=43
         )
         cutoff = 2.0
 
@@ -268,13 +210,13 @@ class TestNeighborListAutoSelection:
         cell = jnp.stack([cell1.squeeze(0), cell2.squeeze(0)], axis=0)
         pbc = jnp.stack([pbc1.squeeze(0), pbc2.squeeze(0)], axis=0)
 
-        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([50, 30], device=device)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([50, 30])
 
         result = neighbor_list(
-            place_on_device(positions, device),
+            positions,
             cutoff,
-            cell=place_on_device(cell, device),
-            pbc=place_on_device(pbc, device),
+            cell=cell,
+            pbc=pbc,
             batch_idx=batch_idx,
             batch_ptr=batch_ptr,
             return_neighbor_list=True,
@@ -291,26 +233,26 @@ class TestNeighborListAutoSelection:
     def test_auto_select_batch_naive_dual_cutoff(self, dtype, device):
         """Auto-select batch_naive_dual_cutoff when both cutoff2 and batch_idx are provided."""
         positions1, cell1, pbc1 = create_random_system_jax(
-            50, 10.0, dtype=dtype, device=device, seed=42
+            50, 10.0, dtype=dtype, seed=42
         )
         positions2, cell2, pbc2 = create_random_system_jax(
-            30, 10.0, dtype=dtype, device=device, seed=43
+            30, 10.0, dtype=dtype, seed=43
         )
 
         positions = jnp.concatenate([positions1, positions2], axis=0)
         cell = jnp.stack([cell1.squeeze(0), cell2.squeeze(0)], axis=0)
         pbc = jnp.stack([pbc1.squeeze(0), pbc2.squeeze(0)], axis=0)
 
-        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([50, 30], device=device)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([50, 30])
 
         cutoff1 = 2.5
         cutoff2 = 3.5
 
         result = neighbor_list(
-            place_on_device(positions, device),
+            positions,
             cutoff1,
-            cell=place_on_device(cell, device),
-            pbc=place_on_device(pbc, device),
+            cell=cell,
+            pbc=pbc,
             batch_idx=batch_idx,
             batch_ptr=batch_ptr,
             cutoff2=cutoff2,
@@ -340,9 +282,7 @@ class TestNeighborListExplicitMethod:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_explicit_naive(self, dtype, device):
         """Test explicit naive method matches direct naive_neighbor_list call."""
-        positions, cell, pbc = create_random_system_jax(
-            100, 10.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(100, 10.0, dtype=dtype)
         cutoff = 2.0
 
         wrapper_result = neighbor_list(
@@ -364,9 +304,7 @@ class TestNeighborListExplicitMethod:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_explicit_cell_list(self, dtype, device):
         """Test explicit cell_list method matches direct cell_list call."""
-        positions, cell, pbc = create_random_system_jax(
-            500, 20.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(500, 20.0, dtype=dtype)
         cutoff = 2.0
 
         wrapper_result = neighbor_list(
@@ -397,9 +335,7 @@ class TestNeighborListDualCutoff:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_naive_dual_cutoff(self, dtype, device):
         """Test explicit naive dual cutoff matches direct call."""
-        positions, cell, pbc = create_random_system_jax(
-            100, 10.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(100, 10.0, dtype=dtype)
         cutoff1 = 2.5
         cutoff2 = 3.5
 
@@ -434,20 +370,17 @@ class TestNeighborListDualCutoff:
     def test_batch_naive_dual_cutoff(self, dtype, device):
         """Test batch naive dual cutoff matches direct call."""
         positions1, cell1, pbc1 = create_random_system_jax(
-            50, 10.0, dtype=dtype, device=device, seed=42
+            50, 10.0, dtype=dtype, seed=42
         )
         positions2, cell2, pbc2 = create_random_system_jax(
-            30, 10.0, dtype=dtype, device=device, seed=43
+            30, 10.0, dtype=dtype, seed=43
         )
 
         positions = jnp.concatenate([positions1, positions2], axis=0)
         cell = jnp.stack([cell1.squeeze(0), cell2.squeeze(0)], axis=0)
         pbc = jnp.stack([pbc1.squeeze(0), pbc2.squeeze(0)], axis=0)
 
-        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([50, 30], device=device)
-        positions = place_on_device(positions, device)
-        cell = place_on_device(cell, device)
-        pbc = place_on_device(pbc, device)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([50, 30])
 
         cutoff1 = 2.5
         cutoff2 = 3.5
@@ -497,9 +430,7 @@ class TestNeighborListReturnFormats:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_return_neighbor_matrix(self, dtype, device):
         """Test returning neighbor matrix (default) has correct shapes."""
-        positions, cell, pbc = create_random_system_jax(
-            100, 10.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(100, 10.0, dtype=dtype)
         cutoff = 5.0
 
         result = neighbor_list(
@@ -522,9 +453,7 @@ class TestNeighborListReturnFormats:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_return_neighbor_list_coo(self, dtype, device):
         """Test returning neighbor list in COO format has correct shapes."""
-        positions, cell, pbc = create_random_system_jax(
-            100, 10.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(100, 10.0, dtype=dtype)
         cutoff = 5.0
 
         result = neighbor_list(
@@ -556,9 +485,7 @@ class TestNeighborListHalfFill:
     @pytest.mark.parametrize("half_fill", [False, True])
     def test_half_fill_parameter(self, dtype, device, half_fill):
         """Test that half_fill parameter is forwarded correctly."""
-        positions, cell, pbc = create_random_system_jax(
-            50, 10.0, dtype=dtype, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(50, 10.0, dtype=dtype)
         cutoff = 5.0
 
         result = neighbor_list(
@@ -596,7 +523,6 @@ class TestNeighborListNoPBC:
         """Test naive without PBC returns 2-tuple (no shifts)."""
         key = jax.random.PRNGKey(42)
         positions = jax.random.normal(key, (100, 3), dtype=dtype) * 5.0
-        positions = place_on_device(positions, device)
         cutoff = 3.0
 
         result = neighbor_list(
@@ -650,11 +576,9 @@ class TestNeighborListInvalidMethod:
 class TestNeighborListKwargs:
     """Test kwargs passing to underlying methods."""
 
-    def test_kwargs_max_neighbors_naive(self, device):
+    def test_kwargs_max_neighbors_naive(self):
         """Test passing max_neighbors kwarg to naive method shapes the matrix."""
-        positions, cell, pbc = create_random_system_jax(
-            50, 10.0, dtype=jnp.float32, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(50, 10.0, dtype=jnp.float32)
         cutoff = 5.0
 
         result = neighbor_list(
@@ -670,11 +594,9 @@ class TestNeighborListKwargs:
         neighbor_matrix, _, _ = result
         assert neighbor_matrix.shape[1] == 20
 
-    def test_kwargs_max_neighbors_dual_cutoff(self, device):
+    def test_kwargs_max_neighbors_dual_cutoff(self):
         """Test passing max_neighbors1 and max_neighbors2 to dual cutoff."""
-        positions, cell, pbc = create_random_system_jax(
-            50, 10.0, dtype=jnp.float32, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(50, 10.0, dtype=jnp.float32)
         cutoff1 = 2.5
         cutoff2 = 3.5
 
@@ -694,11 +616,9 @@ class TestNeighborListKwargs:
         assert nm1.shape[1] == 15
         assert nm2.shape[1] == 25
 
-    def test_kwargs_forwarded_with_auto_selection(self, device):
+    def test_kwargs_forwarded_with_auto_selection(self):
         """Test that kwargs are forwarded correctly with auto method selection."""
-        positions, cell, pbc = create_random_system_jax(
-            50, 10.0, dtype=jnp.float32, device=device
-        )
+        positions, cell, pbc = create_random_system_jax(50, 10.0, dtype=jnp.float32)
         cutoff = 5.0
 
         result = neighbor_list(
@@ -722,10 +642,9 @@ class TestNeighborListKwargs:
 class TestNeighborListEdgeCases:
     """Test edge cases."""
 
-    def test_single_atom(self, device):
+    def test_single_atom(self):
         """Test with single atom system (no neighbors expected)."""
         positions = jnp.array([[1.0, 2.0, 3.0]], dtype=jnp.float32)
-        positions = place_on_device(positions, device)
         cutoff = 2.0
 
         result = neighbor_list(
