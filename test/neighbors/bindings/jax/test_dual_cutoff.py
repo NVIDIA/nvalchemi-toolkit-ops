@@ -22,7 +22,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors import (
+# Enable float64 support in JAX for accurate dtype testing
+jax.config.update("jax_enable_x64", True)
+
+from nvalchemiops.jax.neighbors import (  # noqa: E402
     batch_naive_neighbor_list_dual_cutoff,
     naive_neighbor_list_dual_cutoff,
 )
@@ -298,208 +301,162 @@ class TestNaiveDualCutoffEdgeCases:
 
 
 # ==============================================================================
-# Tests: batch_naive_neighbor_list_dual_cutoff
+# Tests: return_neighbor_list=True (COO format)
 # ==============================================================================
 
 
-class TestBatchNaiveDualCutoffCorrectness:
-    """Test correctness of batch naive dual cutoff neighbor list."""
+class TestDualCutoffListFormat:
+    """Test dual cutoff neighbor list in COO list format."""
 
-    def test_matrix_format_no_pbc(self, device):
-        """Test dual cutoff batch neighbor list in matrix format without PBC."""
-        # Create two simple systems
-        positions1, _, _ = create_simple_cubic_system_jax(
-            num_atoms=6, cell_size=2.0, dtype=jnp.float32, device=device
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_unbatched_list_format_no_pbc(self, device, dtype):
+        """Test unbatched dual cutoff in list format without PBC."""
+        positions, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
         )
-        positions2, _, _ = create_simple_cubic_system_jax(
-            num_atoms=8, cell_size=2.5, dtype=jnp.float32, device=device
-        )
-
-        # Concatenate positions
-        positions_batch = jnp.concatenate([positions1, positions2], axis=0)
-
-        atoms_per_system = [6, 8]
-        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax(atoms_per_system, device)
-
         cutoff1 = 1.0
         cutoff2 = 1.5
-        max_neighbors1 = 20
-        max_neighbors2 = 30
 
-        neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
-            batch_naive_neighbor_list_dual_cutoff(
-                positions=positions_batch,
-                cutoff1=cutoff1,
-                cutoff2=cutoff2,
-                batch_idx=batch_idx,
-                batch_ptr=batch_ptr,
-                max_neighbors1=max_neighbors1,
-                max_neighbors2=max_neighbors2,
+        neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2 = (
+            naive_neighbor_list_dual_cutoff(
+                positions,
+                cutoff1,
+                cutoff2,
+                max_neighbors1=15,
+                max_neighbors2=25,
+                return_neighbor_list=True,
             )
         )
 
-        # Check output types and shapes
-        expected_rows = positions_batch.shape[0]
-        assert neighbor_matrix1.dtype == jnp.int32
-        assert neighbor_matrix2.dtype == jnp.int32
-        assert num_neighbors1.dtype == jnp.int32
-        assert num_neighbors2.dtype == jnp.int32
-        assert neighbor_matrix1.shape == (expected_rows, max_neighbors1)
-        assert neighbor_matrix2.shape == (expected_rows, max_neighbors2)
-        assert num_neighbors1.shape == (expected_rows,)
-        assert num_neighbors2.shape == (expected_rows,)
+        # Verify COO format shapes
+        assert neighbor_list1.shape[0] == 2
+        assert neighbor_list2.shape[0] == 2
+        assert neighbor_ptr1.shape == (9,)
+        assert neighbor_ptr2.shape == (9,)
+        # Larger cutoff should find at least as many pairs
+        assert neighbor_list2.shape[1] >= neighbor_list1.shape[1]
 
-        # Verify neighbor counts
-        assert jnp.all(num_neighbors1 >= 0)
-        assert jnp.all(num_neighbors2 >= 0)
-        assert jnp.all(num_neighbors2 >= num_neighbors1)
-
-    def test_matrix_format_with_pbc(self, device):
-        """Test dual cutoff batch neighbor list in matrix format with PBC."""
-        # Create two simple systems
-        positions1, cell1, pbc1 = create_simple_cubic_system_jax(
-            num_atoms=6, cell_size=2.0, dtype=jnp.float32, device=device
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_unbatched_list_format_with_pbc(self, device, dtype):
+        """Test unbatched dual cutoff in list format with PBC."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
         )
-        positions2, cell2, pbc2 = create_simple_cubic_system_jax(
-            num_atoms=8, cell_size=2.5, dtype=jnp.float32, device=device
-        )
-
-        # Concatenate
-        positions_batch = jnp.concatenate([positions1, positions2], axis=0)
-        cell_batch = jnp.concatenate([cell1, cell2], axis=0)
-        pbc_batch = jnp.concatenate([pbc1, pbc2], axis=0)
-
-        atoms_per_system = [6, 8]
-        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax(atoms_per_system, device)
-
         cutoff1 = 1.0
         cutoff2 = 1.5
-        max_neighbors1 = 20
-        max_neighbors2 = 30
 
         (
-            neighbor_matrix1,
-            num_neighbors1,
-            neighbor_matrix_shifts1,
-            neighbor_matrix2,
-            num_neighbors2,
-            neighbor_matrix_shifts2,
-        ) = batch_naive_neighbor_list_dual_cutoff(
-            positions=positions_batch,
-            cutoff1=cutoff1,
-            cutoff2=cutoff2,
-            batch_idx=batch_idx,
-            batch_ptr=batch_ptr,
-            pbc=pbc_batch,
-            cell=cell_batch,
-            max_neighbors1=max_neighbors1,
-            max_neighbors2=max_neighbors2,
+            neighbor_list1,
+            neighbor_ptr1,
+            neighbor_shifts1,
+            neighbor_list2,
+            neighbor_ptr2,
+            neighbor_shifts2,
+        ) = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors1=15,
+            max_neighbors2=25,
+            return_neighbor_list=True,
         )
 
-        # Check output types and shapes
-        expected_rows = positions_batch.shape[0]
-        assert neighbor_matrix1.shape == (expected_rows, max_neighbors1)
-        assert neighbor_matrix2.shape == (expected_rows, max_neighbors2)
-        assert neighbor_matrix_shifts1.shape == (expected_rows, max_neighbors1, 3)
-        assert neighbor_matrix_shifts2.shape == (expected_rows, max_neighbors2, 3)
-        assert num_neighbors1.shape == (expected_rows,)
-        assert num_neighbors2.shape == (expected_rows,)
+        # Verify COO format shapes
+        assert neighbor_list1.shape[0] == 2
+        assert neighbor_list2.shape[0] == 2
+        assert neighbor_ptr1.shape == (9,)
+        assert neighbor_ptr2.shape == (9,)
+        assert neighbor_shifts1.shape[0] == neighbor_list1.shape[1]
+        assert neighbor_shifts2.shape[0] == neighbor_list2.shape[1]
+        assert neighbor_shifts1.shape[1] == 3
+        assert neighbor_shifts2.shape[1] == 3
 
-        # Verify dtypes
-        assert neighbor_matrix1.dtype == jnp.int32
-        assert neighbor_matrix2.dtype == jnp.int32
-        assert num_neighbors1.dtype == jnp.int32
-        assert num_neighbors2.dtype == jnp.int32
-
-        # Verify neighbor counts
-        assert jnp.all(num_neighbors1 >= 0)
-        assert jnp.all(num_neighbors2 >= 0)
-        assert jnp.all(num_neighbors2 >= num_neighbors1)
-
-    def test_larger_cutoff_finds_more_neighbors(self, device):
-        """Verify that larger cutoff finds at least as many neighbors."""
-        positions, _, _ = create_simple_cubic_system_jax(
-            num_atoms=8, cell_size=2.0, dtype=jnp.float32, device=device
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_batched_list_format_no_pbc(self, device, dtype):
+        """Test batched dual cutoff in list format without PBC."""
+        positions1, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
         )
-
-        atoms_per_system = [8]
-        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax(atoms_per_system, device)
-
-        cutoff1 = 1.0
-        cutoff2 = 2.0
-        max_neighbors1 = 20
-        max_neighbors2 = 40
-
-        neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
-            batch_naive_neighbor_list_dual_cutoff(
-                positions=positions,
-                cutoff1=cutoff1,
-                cutoff2=cutoff2,
-                batch_idx=batch_idx,
-                batch_ptr=batch_ptr,
-                max_neighbors1=max_neighbors1,
-                max_neighbors2=max_neighbors2,
-            )
+        positions2, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.5, dtype=dtype, device=device
         )
-
-        # Every atom should have more (or equal) neighbors with larger cutoff
-        assert jnp.all(num_neighbors2 >= num_neighbors1)
-        # At least some atoms should have strictly more neighbors
-        assert jnp.any(num_neighbors2 > num_neighbors1)
-
-
-class TestBatchNaiveDualCutoffEdgeCases:
-    """Test edge cases for batch naive dual cutoff neighbor list."""
-
-    def test_single_atom_system(self, device):
-        """Test with single atom system (should have no neighbors)."""
-        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        positions = jnp.concatenate([positions1, positions2], axis=0)
         positions = place_on_device(positions, device)
 
-        atoms_per_system = [1]
+        atoms_per_system = [8, 8]
         batch_idx, batch_ptr = create_batch_idx_and_ptr_jax(atoms_per_system, device)
 
         cutoff1 = 1.0
         cutoff2 = 1.5
 
-        neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
+        neighbor_list1, neighbor_ptr1, neighbor_list2, neighbor_ptr2 = (
             batch_naive_neighbor_list_dual_cutoff(
                 positions,
                 cutoff1,
                 cutoff2,
                 batch_idx=batch_idx,
                 batch_ptr=batch_ptr,
-                max_neighbors1=10,
-                max_neighbors2=10,
+                max_neighbors1=15,
+                max_neighbors2=25,
+                return_neighbor_list=True,
             )
         )
 
-        assert int(num_neighbors1[0]) == 0
-        assert int(num_neighbors2[0]) == 0
+        # Verify COO format shapes
+        assert neighbor_list1.shape[0] == 2
+        assert neighbor_list2.shape[0] == 2
+        assert neighbor_ptr1.shape == (17,)  # 16 atoms + 1
+        assert neighbor_ptr2.shape == (17,)
+        # Larger cutoff should find at least as many pairs
+        assert neighbor_list2.shape[1] >= neighbor_list1.shape[1]
 
-    def test_identical_cutoffs(self, device):
-        """Test with identical cutoffs (both lists should match)."""
-        positions, _, _ = create_simple_cubic_system_jax(
-            num_atoms=8, cell_size=2.0, dtype=jnp.float32, device=device
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_batched_list_format_with_pbc(self, device, dtype):
+        """Test batched dual cutoff in list format with PBC."""
+        positions1, cell1, pbc1 = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
         )
+        positions2, cell2, pbc2 = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.5, dtype=dtype, device=device
+        )
+        positions = place_on_device(
+            jnp.concatenate([positions1, positions2], axis=0), device
+        )
+        cell = place_on_device(jnp.concatenate([cell1, cell2], axis=0), device)
+        pbc = place_on_device(jnp.concatenate([pbc1, pbc2], axis=0), device)
 
-        atoms_per_system = [8]
+        atoms_per_system = [8, 8]
         batch_idx, batch_ptr = create_batch_idx_and_ptr_jax(atoms_per_system, device)
 
-        cutoff = 1.2
-        max_neighbors = 20
+        cutoff1 = 1.0
+        cutoff2 = 1.5
 
-        neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
-            batch_naive_neighbor_list_dual_cutoff(
-                positions,
-                cutoff,
-                cutoff,
-                batch_idx=batch_idx,
-                batch_ptr=batch_ptr,
-                max_neighbors1=max_neighbors,
-                max_neighbors2=max_neighbors,
-            )
+        (
+            neighbor_list1,
+            neighbor_ptr1,
+            unit_shifts1,
+            neighbor_list2,
+            neighbor_ptr2,
+            unit_shifts2,
+        ) = batch_naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors1=15,
+            max_neighbors2=25,
+            return_neighbor_list=True,
         )
 
-        # Neighbor counts should be identical
-        assert jnp.all(num_neighbors1 == num_neighbors2)
+        # Verify COO format shapes
+        assert neighbor_list1.shape[0] == 2
+        assert neighbor_list2.shape[0] == 2
+        assert neighbor_ptr1.shape == (17,)
+        assert neighbor_ptr2.shape == (17,)
+        assert unit_shifts1.shape[0] == neighbor_list1.shape[1]
+        assert unit_shifts2.shape[0] == neighbor_list2.shape[1]

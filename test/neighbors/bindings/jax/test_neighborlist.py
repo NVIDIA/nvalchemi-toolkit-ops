@@ -22,7 +22,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors import (
+# Enable float64 support in JAX for accurate dtype testing
+jax.config.update("jax_enable_x64", True)
+
+from nvalchemiops.jax.neighbors import (  # noqa: E402
     batch_naive_neighbor_list_dual_cutoff,
     cell_list,
     naive_neighbor_list,

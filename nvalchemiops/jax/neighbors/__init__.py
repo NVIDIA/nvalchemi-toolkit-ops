@@ -68,7 +68,7 @@ def neighbor_list(
     fill_value: int | None = None,
     return_neighbor_list: bool = False,
     method: str | None = None,
-    **kwargs,
+    **kwargs: dict,
 ):
     """Compute neighbor list using the appropriate method based on the provided parameters.
 
@@ -272,6 +272,9 @@ def neighbor_list(
                 **kwargs,
             )
         case "cell_list":
+            # NOTE: JAX cell_list does not yet support half_fill/fill_value
+            # (unlike Torch). These parameters are silently ignored here.
+            # See JAX_FINAL.md for tracking.
             return cell_list(
                 positions,
                 cutoff,
@@ -294,6 +297,9 @@ def neighbor_list(
                 **kwargs,
             )
         case "batch_cell_list":
+            # NOTE: JAX batch_cell_list does not yet support half_fill/fill_value
+            # (unlike Torch). These parameters are silently ignored here.
+            # See JAX_FINAL.md for tracking.
             return batch_cell_list(
                 positions,
                 cutoff,
