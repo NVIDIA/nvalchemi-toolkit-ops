@@ -678,7 +678,12 @@ def pme_reciprocal_space(
     )
 
     # Step 4: Apply B-spline deconvolution and convolve with Green's function
-    mesh_fft = mesh_fft.astype(input_dtype) / structure_factor_sq
+    # Upcast to the complex equivalent of input_dtype to preserve imaginary part.
+    # spline_spread returns float32 → rfftn produces complex64.
+    # When input positions are float64, we need complex128, not float64
+    # (casting complex to real silently drops the imaginary component).
+    complex_dtype = jnp.complex64 if input_dtype == jnp.float32 else jnp.complex128
+    mesh_fft = mesh_fft.astype(complex_dtype) / structure_factor_sq
     convolved_mesh = mesh_fft * green_function
 
     # Step 5: Inverse FFT to get potential mesh
