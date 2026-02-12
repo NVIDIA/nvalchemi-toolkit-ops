@@ -141,6 +141,13 @@ and consistency.
 | `batch_idx` | `(N,)` | `int32` | System index for each atom (batched only) |
 | `alpha` | `float` or `(B,)` tensor | `float64` | Ewald splitting parameter |
 
+### Output Data Types
+
+Energies are always computed and returned in `float64` for numerical stability
+during accumulation. Forces, virial, and charge gradients match the input
+precision -- `float32` when positions are `float32`, `float64` when positions
+are `float64`.
+
 ### Neighbor Representations
 
 The electrostatics functions accept neighbors in two formats:

@@ -30,6 +30,9 @@ handles both single-system and batched calculations transparently. PME achieves
 :math:`O(N \\log N)` scaling compared to :math:`O(N^2)` for direct summation, making it efficient
 for large systems.
 
+The output dtype convention follows ewald.py: energies in float64, forces/virial
+match input precision.
+
 API STRUCTURE
 =============
 
@@ -1750,6 +1753,11 @@ def pme_reciprocal_space(
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
 
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces and virial match the input dtype (float32 or float64).
+
     Return Patterns
     ---------------
     Enabled flags are appended in order: energies, [forces], [charge_gradients], [virial].
@@ -1976,6 +1984,11 @@ def particle_mesh_ewald(
         Charge gradients ∂E/∂q_i. Only returned if compute_charge_gradients=True.
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces and virial match the input dtype (float32 or float64).
 
     Return Patterns
     ---------------

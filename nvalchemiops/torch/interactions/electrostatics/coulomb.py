@@ -86,6 +86,11 @@ __all__ = [
 # Internal Custom Ops - Neighbor List Format
 # ==============================================================================
 
+# Output dtype convention:
+#   - Energies: always wp.float64 for numerical stability during accumulation.
+#   - Forces: match input precision via get_wp_vec_dtype(pos.dtype) -- vec3f for
+#     float32 inputs, vec3d for float64.
+
 
 @warp_custom_op(
     name="nvalchemiops::_coulomb_energy_list",
@@ -982,6 +987,11 @@ def coulomb_energy_forces(
         Per-atom energies.
     forces : torch.Tensor, shape (N, 3)
         Forces on each atom.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces match the input dtype (float32 or float64).
 
     Examples
     --------

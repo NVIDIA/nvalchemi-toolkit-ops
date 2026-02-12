@@ -190,6 +190,14 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
 ########################### Real-Space Internal Custom Ops ################################
 ###########################################################################################
 
+# Output dtype convention:
+#   - Energies: always wp.float64 for numerical stability during accumulation.
+#   - Forces: match input precision via get_wp_vec_dtype(pos.dtype) -- vec3f for
+#     float32 inputs, vec3d for float64.  This was changed from the previous
+#     hardcoded wp.vec3d to fix a dtype mismatch when positions are float32.
+#   - Virial: match input precision via get_wp_mat_dtype(pos.dtype) -- mat33f for
+#     float32 inputs, mat33d for float64.
+
 
 @warp_custom_op(
     name="alchemiops::_ewald_real_space_energy",
@@ -2541,6 +2549,11 @@ def ewald_real_space(
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor (if compute_virial=True). Always last in the tuple.
 
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces and virial match the input dtype (float32 or float64).
+
     """
     is_batch = batch_idx is not None
 
@@ -2797,6 +2810,11 @@ def ewald_reciprocal_space(
         Charge gradients (if compute_charge_gradients=True).
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor (if compute_virial=True). Always last in the tuple.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces and virial match the input dtype (float32 or float64).
     """
     is_batch = batch_idx is not None
 
@@ -2972,6 +2990,11 @@ def ewald_summation(
         Forces (if compute_forces=True).
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor (if compute_virial=True). Always last in the tuple.
+
+    Note
+    ----
+    Energies are always float64 for numerical stability during accumulation.
+    Forces and virial match the input dtype (float32 or float64).
     """
     device = positions.device
     dtype = positions.dtype
