@@ -98,7 +98,7 @@ def main():
                 found = True
                 # Check 1st line manually
                 year_good = False
-                for year in range(starting_year, current_year + 1):
+                for year in range(starting_year, current_year + 2):
                     year_line = pyheader[0].format(CURRENT_YEAR=year)
                     if year_line in data[i]:
                         year_good = True
