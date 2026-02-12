@@ -323,12 +323,9 @@ def _dftd3_nm_impl(
     else:
         num_systems = 1
 
-    # Infer JAX device from positions array
-    jax_device = positions.devices().pop()
-
     # Create batch indices if not provided
     if batch_idx is None:
-        batch_idx = jax.device_put(jnp.zeros(num_atoms, dtype=jnp.int32), jax_device)
+        batch_idx = jnp.zeros(num_atoms, dtype=jnp.int32)
 
     # Ensure arrays have correct dtypes for kernels (float32 for now)
     positions_f32 = positions.astype(jnp.float32)
@@ -360,15 +357,13 @@ def _dftd3_nm_impl(
             neighbor_matrix_shifts_i32,
             neighbor_matrix_i32,
             batch_idx_i32,
-            jnp.int32(fill_value),
+            int(fill_value),
             launch_dims=(num_atoms, max_neighbors),
         )
     else:
         periodic = False
         # Create zero shifts array (not used but need correct shape for kernel)
-        cartesian_shifts = jax.device_put(
-            jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.float32), jax_device
-        )
+        cartesian_shifts = jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.float32)
 
     # Pass 1: Compute coordination numbers
     # cn_kernel_nm returns a tuple with 1 output (coord_num)
@@ -380,8 +375,8 @@ def _dftd3_nm_impl(
         neighbor_matrix_i32,
         cartesian_shifts,
         covalent_radii_f32,
-        jnp.float32(k1),
-        jnp.int32(fill_value),
+        float(k1),
+        int(fill_value),
         periodic,
     )
 
@@ -409,15 +404,15 @@ def _dftd3_nm_impl(
         r4r2_f32,
         c6_reference_f32,
         coord_num_ref_f32,
-        jnp.float32(k3),
-        jnp.float32(a1),
-        jnp.float32(a2),
-        jnp.float32(s6),
-        jnp.float32(s8),
-        jnp.float32(s5_smoothing_on),
-        jnp.float32(s5_smoothing_off),
-        jnp.float32(inv_w),
-        jnp.int32(fill_value),
+        float(k3),
+        float(a1),
+        float(a2),
+        float(s6),
+        float(s8),
+        float(s5_smoothing_on),
+        float(s5_smoothing_off),
+        float(inv_w),
+        int(fill_value),
         periodic,
         batch_idx_i32,
         compute_virial,
@@ -446,8 +441,8 @@ def _dftd3_nm_impl(
         cartesian_shifts,
         covalent_radii_f32,
         dE_dCN,
-        jnp.float32(k1),
-        jnp.int32(fill_value),
+        float(k1),
+        int(fill_value),
         periodic,
         batch_idx_i32,
         compute_virial,
@@ -517,12 +512,9 @@ def _dftd3_nl_impl(
     else:
         num_systems = 1
 
-    # Infer JAX device from positions array
-    jax_device = positions.devices().pop()
-
     # Create batch indices if not provided
     if batch_idx is None:
-        batch_idx = jax.device_put(jnp.zeros(num_atoms, dtype=jnp.int32), jax_device)
+        batch_idx = jnp.zeros(num_atoms, dtype=jnp.int32)
 
     # Ensure arrays have correct dtypes for kernels (float32 for now)
     positions_f32 = positions.astype(jnp.float32)
@@ -557,9 +549,7 @@ def _dftd3_nl_impl(
     else:
         periodic = False
         # Create zero shifts array (not used but need correct shape for kernel)
-        cartesian_shifts = jax.device_put(
-            jnp.zeros((num_edges, 3), dtype=jnp.float32), jax_device
-        )
+        cartesian_shifts = jnp.zeros((num_edges, 3), dtype=jnp.float32)
 
     # Pass 1: Compute coordination numbers
     # cn_kernel_nl returns a tuple with 1 output (coord_num)
@@ -572,7 +562,7 @@ def _dftd3_nl_impl(
         neighbor_ptr_i32,
         cartesian_shifts,
         covalent_radii_f32,
-        jnp.float32(k1),
+        float(k1),
         periodic,
     )
 
@@ -600,14 +590,14 @@ def _dftd3_nl_impl(
         r4r2_f32,
         c6_reference_f32,
         coord_num_ref_f32,
-        jnp.float32(k3),
-        jnp.float32(a1),
-        jnp.float32(a2),
-        jnp.float32(s6),
-        jnp.float32(s8),
-        jnp.float32(s5_smoothing_on),
-        jnp.float32(s5_smoothing_off),
-        jnp.float32(inv_w),
+        float(k3),
+        float(a1),
+        float(a2),
+        float(s6),
+        float(s8),
+        float(s5_smoothing_on),
+        float(s5_smoothing_off),
+        float(inv_w),
         periodic,
         batch_idx_i32,
         compute_virial,
@@ -637,7 +627,7 @@ def _dftd3_nl_impl(
         cartesian_shifts,
         covalent_radii_f32,
         dE_dCN,
-        jnp.float32(k1),
+        float(k1),
         periodic,
         batch_idx_i32,
         compute_virial,

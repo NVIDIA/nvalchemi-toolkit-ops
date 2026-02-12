@@ -63,6 +63,11 @@ def get_warp_device_from_array(arr: jax.Array) -> str:
     str
         The corresponding Warp device string.
 
+    Notes
+    -----
+    Warp JAX bindings only support CUDA devices. This function always returns
+    "cuda" without querying the array device to maintain jax.jit compatibility.
+
     Examples
     --------
     >>> import jax.numpy as jnp
@@ -70,8 +75,7 @@ def get_warp_device_from_array(arr: jax.Array) -> str:
     >>> arr = jnp.zeros(10)
     >>> device = get_warp_device_from_array(arr)
     """
-    jax_device = arr.devices().pop()
-    return get_warp_device(jax_device)
+    return "cuda"
 
 
 def get_wp_dtype(dtype: jnp.dtype):

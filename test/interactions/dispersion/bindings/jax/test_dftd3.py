@@ -829,3 +829,132 @@ class TestRegression:
         # Check coordination numbers are small
         assert jnp.all(coord_num > 0)
         assert jnp.all(coord_num < 1.0)
+
+
+# ==============================================================================
+# JAX JIT Compatibility Tests
+# ==============================================================================
+
+
+class TestDFT_D3JIT:
+    """Smoke tests for DFT-D3 compatibility with jax.jit."""
+
+    def test_jit_neighbor_matrix(self, h2_system, functional_params, d3_params, device):
+        """Test H2 with neighbor matrix format works with jax.jit."""
+        # Prepare inputs and place on device
+        positions = place_on_device(
+            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
+        )
+        numbers = place_on_device(
+            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
+        )
+        neighbor_matrix = place_on_device(
+            jnp.array(h2_system["nbmat"], dtype=jnp.int32), device
+        )
+
+        # Place d3_params on device
+        rcov = place_on_device(d3_params.rcov, device)
+        r4r2 = place_on_device(d3_params.r4r2, device)
+        c6ab = place_on_device(d3_params.c6ab, device)
+        cn_ref = place_on_device(d3_params.cn_ref, device)
+
+        # Define jitted function with array parameters as arguments
+        # Scalar parameters must be static literals for Warp FFI compatibility
+        @jax.jit
+        def jitted_dftd3(positions, numbers, neighbor_matrix, rcov, r4r2, c6ab, cn_ref):
+            # Construct D3Parameters inside jitted function
+            d3_params_jit = D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
+            return dftd3(
+                positions,
+                numbers,
+                a1=0.4,  # Static literal for FFI compatibility
+                a2=4.0,
+                s8=0.8,
+                k1=16.0,
+                k3=-4.0,
+                s6=1.0,
+                neighbor_matrix=neighbor_matrix,
+                d3_params=d3_params_jit,
+            )
+
+        # Call jitted function
+        result = jitted_dftd3(
+            positions, numbers, neighbor_matrix, rcov, r4r2, c6ab, cn_ref
+        )
+
+        energy, forces, coord_num = result[0], result[1], result[2]
+
+        # Check output shapes
+        assert energy.shape == (1,)
+        assert forces.shape == (2, 3)
+        assert coord_num.shape == (2,)
+
+        # Check outputs are finite
+        assert jnp.all(jnp.isfinite(energy))
+        assert jnp.all(jnp.isfinite(forces))
+        assert jnp.all(jnp.isfinite(coord_num))
+
+        # Dispersion should be attractive (negative)
+        assert energy[0] < 0.0
+
+    def test_jit_neighbor_list(self, h2_system, functional_params, d3_params, device):
+        """Test H2 with neighbor list format works with jax.jit."""
+        # Prepare inputs and place on device
+        positions = place_on_device(
+            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
+        )
+        numbers = place_on_device(
+            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
+        )
+
+        # Build neighbor list: atom 0 -> 1, atom 1 -> 0
+        neighbor_list = place_on_device(
+            jnp.array([[0, 1], [1, 0]], dtype=jnp.int32), device
+        )
+        neighbor_ptr = place_on_device(jnp.array([0, 1, 2], dtype=jnp.int32), device)
+
+        # Place d3_params on device
+        rcov = place_on_device(d3_params.rcov, device)
+        r4r2 = place_on_device(d3_params.r4r2, device)
+        c6ab = place_on_device(d3_params.c6ab, device)
+        cn_ref = place_on_device(d3_params.cn_ref, device)
+
+        # Define jitted function with array parameters as arguments
+        # Scalar parameters must be static literals for Warp FFI compatibility
+        @jax.jit
+        def jitted_dftd3(positions, numbers, nl, nptr, rcov, r4r2, c6ab, cn_ref):
+            # Construct D3Parameters inside jitted function
+            d3_params_jit = D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
+            return dftd3(
+                positions,
+                numbers,
+                a1=0.4,  # Static literal for FFI compatibility
+                a2=4.0,
+                s8=0.8,
+                k1=16.0,
+                k3=-4.0,
+                s6=1.0,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                d3_params=d3_params_jit,
+            )
+
+        # Call jitted function
+        result = jitted_dftd3(
+            positions, numbers, neighbor_list, neighbor_ptr, rcov, r4r2, c6ab, cn_ref
+        )
+
+        energy, forces, coord_num = result[0], result[1], result[2]
+
+        # Check output shapes
+        assert energy.shape == (1,)
+        assert forces.shape == (2, 3)
+        assert coord_num.shape == (2,)
+
+        # Check outputs are finite
+        assert jnp.all(jnp.isfinite(energy))
+        assert jnp.all(jnp.isfinite(forces))
+        assert jnp.all(jnp.isfinite(coord_num))
+
+        # Dispersion should be attractive (negative)
+        assert energy[0] < 0.0
