@@ -1405,9 +1405,13 @@ def _compute_pme_reciprocal_virial(
 
     # Per-k energy density from exact pipeline spectral pair.
     # Re(mesh_fft_raw * convolved_mesh*) = |mesh_fft_raw|^2 * G / B^2
-    # Match complex dtype to input precision
+    #
+    # Explicit complex/real dtype mapping is needed because `dtype` is a
+    # real-valued dtype (float32 or float64) but the FFT mesh data is complex.
+    # PyTorch has no implicit real-to-complex dtype promotion, so we map
+    # float32 -> complex64 and float64 -> complex128 explicitly.
     complex_dtype = torch.complex64 if dtype == torch.float32 else torch.complex128
-    acc_dtype = torch.float32 if dtype == torch.float32 else torch.float64
+    acc_dtype = dtype  # real accumulation dtype matches input precision
     fft_raw_cast = mesh_fft_raw.to(complex_dtype)
     conv_cast = convolved_mesh.to(complex_dtype)
     energy_density = (fft_raw_cast * conv_cast.conj()).real
