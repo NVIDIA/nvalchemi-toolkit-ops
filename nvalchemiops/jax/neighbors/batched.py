@@ -183,6 +183,9 @@ def batch_naive_neighbor_list(
 
     if cell is not None:
         cell = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
+        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+        if cell.dtype != positions.dtype:
+            cell = cell.astype(positions.dtype)
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
 
@@ -558,6 +561,10 @@ def batch_build_cell_list(
     cell_atom_list_wp = wp.from_dlpack(cell_atom_list, dtype=wp.int32)
 
     if cell is not None:
+        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+        if cell.dtype != positions.dtype:
+            cell = cell.astype(positions.dtype)
+            wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
         cell_wp = wp.from_dlpack(cell, dtype=wp_mat_dtype)
     else:
         cell_wp = None
@@ -712,7 +719,6 @@ def batch_query_cell_list(
 
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
-    wp_mat_dtype = get_wp_mat_dtype(cell.dtype) if cell is not None else None
 
     # Convert to warp arrays
     positions_wp = wp.from_dlpack(positions, dtype=wp_vec_dtype)
@@ -727,6 +733,10 @@ def batch_query_cell_list(
     atom_periodic_shifts_wp = wp.from_dlpack(atom_periodic_shifts, dtype=wp.vec3i)
 
     if cell is not None:
+        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+        if cell.dtype != positions.dtype:
+            cell = cell.astype(positions.dtype)
+        wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
         cell_wp = wp.from_dlpack(cell, dtype=wp_mat_dtype)
     else:
         cell_wp = None

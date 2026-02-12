@@ -180,6 +180,9 @@ def naive_neighbor_list(
 
     if cell is not None:
         cell = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
+        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+        if cell.dtype != positions.dtype:
+            cell = cell.astype(positions.dtype)
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
 
@@ -509,6 +512,9 @@ def build_cell_list(
         cell = cell[jnp.newaxis, :, :]
     if pbc.ndim == 1:
         pbc = pbc[jnp.newaxis, :]
+    # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+    if cell.dtype != positions.dtype:
+        cell = cell.astype(positions.dtype)
 
     jax_device = positions.devices().pop()
 
@@ -667,6 +673,10 @@ def query_cell_list(
     """
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(cutoff)
+
+    # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+    if cell.dtype != positions.dtype:
+        cell = cell.astype(positions.dtype)
 
     jax_device = positions.devices().pop()
 

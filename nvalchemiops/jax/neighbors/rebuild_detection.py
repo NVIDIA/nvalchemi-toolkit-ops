@@ -99,6 +99,9 @@ def cell_list_needs_rebuild(
     # Get warp data types
     wp_dtype = get_wp_dtype(current_positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(current_positions.dtype)
+    # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+    if cell.dtype != current_positions.dtype:
+        cell = cell.astype(current_positions.dtype)
     wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
 
     # Convert JAX arrays to Warp via dlpack
