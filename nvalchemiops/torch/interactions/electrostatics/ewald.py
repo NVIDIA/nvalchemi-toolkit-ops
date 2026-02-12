@@ -119,115 +119,6 @@ __all__ = [
     "ewald_summation",
 ]
 
-# Mathematical constants
-PI = math.pi
-EIGHTPI = 8.0 * PI
-
-
-def _ewald_reciprocal_virial_torch(
-    k_vectors: torch.Tensor,
-    alpha: torch.Tensor,
-    cell: torch.Tensor,
-    real_sf: torch.Tensor,
-    imag_sf: torch.Tensor,
-    input_dtype: torch.dtype,
-) -> torch.Tensor:
-    """Compute reciprocal-space Ewald virial using PyTorch tensor ops.
-
-    Replaces the Warp virial kernel with efficient torch.einsum reduction,
-    eliminating atomic contention for large batches.
-
-    For each k-vector, the virial contribution is:
-        W_ab(k) = E(k) * [delta_ab - k_factor * k_a * k_b]
-    where:
-        E(k) = 0.5 * |S(k)|^2 / G(k)
-        G(k) = (8*pi/V) * exp(-k^2/(4*alpha^2)) / k^2
-        k_factor = 2 * (1 + k^2/(4*alpha^2)) / k^2
-
-    Note: real_sf and imag_sf are the "modified" structure factors that
-    include the Green's function weighting: S_mod = G(k) * S(k).
-
-    Parameters
-    ----------
-    k_vectors : torch.Tensor
-        Single: (K, 3), Batch: (B, K, 3)
-    alpha : torch.Tensor
-        Single: (1,), Batch: (B,)
-    cell : torch.Tensor
-        Single: (1, 3, 3), Batch: (B, 3, 3)
-    real_sf : torch.Tensor
-        Single: (K,), Batch: (B, K)
-    imag_sf : torch.Tensor
-        Single: (K,), Batch: (B, K)
-    input_dtype : torch.dtype
-        Target dtype for the output virial.
-
-    Returns
-    -------
-    virial : torch.Tensor
-        Single: (1, 3, 3), Batch: (B, 3, 3)
-    """
-    is_batch = k_vectors.dim() == 3
-    device = k_vectors.device
-
-    # Work in float64 for precision
-    k_vecs = k_vectors.to(torch.float64)
-    rsf = real_sf.to(torch.float64)
-    isf = imag_sf.to(torch.float64)
-
-    if is_batch:
-        # Batch case: k_vecs (B, K, 3), alpha (B,), cell (B, 3, 3)
-        k_sq = (k_vecs**2).sum(dim=-1)  # (B, K)
-        s_sq = rsf**2 + isf**2  # (B, K)
-
-        alpha_f64 = alpha.to(torch.float64)
-        exp_factor = 0.25 / (alpha_f64[:, None] ** 2)  # (B, 1)
-
-        # Volume per system
-        volume = torch.abs(torch.det(cell.to(torch.float64)))  # (B,)
-
-        # Green's function: G(k) = (8*pi/V) * exp(-k^2/(4*alpha^2)) / k^2
-        green = (
-            EIGHTPI / volume[:, None] * torch.exp(-k_sq * exp_factor) / k_sq
-        )  # (B, K)
-
-        # Per-k energy: E(k) = 0.5 * |S_mod|^2 / G(k)
-        energy_k = 0.5 * s_sq / green  # (B, K)
-
-        # k_factor = 2 * (1 + k^2 * exp_factor) / k^2
-        k_factor = 2.0 * (1.0 + k_sq * exp_factor) / k_sq  # (B, K)
-
-        # virial_ab = sum_k E_k * (delta_ab - k_factor * k_a * k_b)
-        # = delta_ab * sum_k E_k - sum_k (E_k * k_factor) * k_a * k_b
-        kk_term = torch.einsum(
-            "bki,bkj,bk->bij", k_vecs, k_vecs, energy_k * k_factor
-        )  # (B, 3, 3)
-        trace_term = energy_k.sum(dim=1)  # (B,)
-        eye = torch.eye(3, device=device, dtype=torch.float64)
-        virial = eye * trace_term[:, None, None] - kk_term  # (B, 3, 3)
-    else:
-        # Single system: k_vecs (K, 3), alpha (1,), cell (1, 3, 3)
-        k_sq = (k_vecs**2).sum(dim=-1)  # (K,)
-        s_sq = rsf**2 + isf**2  # (K,)
-
-        alpha_val = alpha[0].to(torch.float64)
-        exp_factor = 0.25 / (alpha_val**2)
-
-        volume = torch.abs(torch.det(cell[0].to(torch.float64)))
-
-        green = EIGHTPI / volume * torch.exp(-k_sq * exp_factor) / k_sq  # (K,)
-        energy_k = 0.5 * s_sq / green  # (K,)
-        k_factor = 2.0 * (1.0 + k_sq * exp_factor) / k_sq  # (K,)
-
-        kk_term = torch.einsum(
-            "ki,kj,k->ij", k_vecs, k_vecs, energy_k * k_factor
-        )  # (3, 3)
-        trace_term = energy_k.sum()
-        eye = torch.eye(3, device=device, dtype=torch.float64)
-        virial = (eye * trace_term - kk_term).unsqueeze(0)  # (1, 3, 3)
-
-    return virial.to(input_dtype)
-
 
 ###########################################################################################
 ########################### Helper Functions ##############################################
@@ -1558,9 +1449,9 @@ def _ewald_reciprocal_space_energy(
             outputs=[wp_energies],
             device=device,
         )
-        if compute_virial and virial_grad:
+        if compute_virial:
             virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
-            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=True)
+            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
             volume = torch.abs(torch.det(cell[0].to(torch.float64))).view(1)
             wp_volume = warp_from_torch(volume, wp.float64)
             wp.launch(
@@ -1576,14 +1467,8 @@ def _ewald_reciprocal_space_energy(
                 ],
                 device=device,
             )
-
-    # Compute virial from existing structure factors (no extra kernel launch)
-    if compute_virial and not virial_grad:
-        virial = _ewald_reciprocal_virial_torch(
-            k_vectors, alpha, cell, real_sf, imag_sf, input_dtype
-        )
-    elif not compute_virial:
-        virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
+        else:
+            virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -1730,9 +1615,9 @@ def _ewald_reciprocal_space_energy_forces(
             outputs=[wp_energies],
             device=device,
         )
-        if compute_virial and virial_grad:
+        if compute_virial:
             virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
-            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=True)
+            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
             volume = torch.abs(torch.det(cell[0].to(torch.float64))).view(1)
             wp_volume = warp_from_torch(volume, wp.float64)
             wp.launch(
@@ -1748,14 +1633,8 @@ def _ewald_reciprocal_space_energy_forces(
                 ],
                 device=device,
             )
-
-    # Compute virial from existing structure factors (no extra kernel launch)
-    if compute_virial and not virial_grad:
-        virial = _ewald_reciprocal_virial_torch(
-            k_vectors, alpha, cell, real_sf, imag_sf, input_dtype
-        )
-    elif not compute_virial:
-        virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
+        else:
+            virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -1914,9 +1793,9 @@ def _ewald_reciprocal_space_energy_forces_charge_grad(
             outputs=[wp_energies],
             device=device,
         )
-        if compute_virial and virial_grad:
+        if compute_virial:
             virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
-            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=True)
+            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
             volume = torch.abs(torch.det(cell[0].to(torch.float64))).view(1)
             wp_volume = warp_from_torch(volume, wp.float64)
             wp.launch(
@@ -1932,20 +1811,14 @@ def _ewald_reciprocal_space_energy_forces_charge_grad(
                 ],
                 device=device,
             )
+        else:
+            virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
 
     # Apply self-energy and background corrections to charge gradients
     alpha_val = alpha[0].item()
-    self_energy_grad = 2.0 * alpha_val / math.sqrt(PI) * charges
-    background_grad = PI / (alpha_val * alpha_val) * total_charge[0]
+    self_energy_grad = 2.0 * alpha_val / math.sqrt(math.pi) * charges
+    background_grad = math.pi / (alpha_val * alpha_val) * total_charge[0]
     charge_grads = charge_grads - self_energy_grad - background_grad
-
-    # Compute virial from existing structure factors (no extra kernel launch)
-    if compute_virial and not virial_grad:
-        virial = _ewald_reciprocal_virial_torch(
-            k_vectors, alpha, cell, real_sf, imag_sf, input_dtype
-        )
-    elif not compute_virial:
-        virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -2125,11 +1998,11 @@ def _batch_ewald_reciprocal_space_energy(
             outputs=[wp_energies],
             device=device,
         )
-        if compute_virial and virial_grad:
+        if compute_virial:
             virial = torch.zeros(
                 num_systems, 3, 3, device=positions.device, dtype=input_dtype
             )
-            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=True)
+            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
             volume = torch.abs(torch.det(cell.to(torch.float64)))
             wp_volume = warp_from_torch(volume, wp.float64)
             wp.launch(
@@ -2145,16 +2018,10 @@ def _batch_ewald_reciprocal_space_energy(
                 ],
                 device=device,
             )
-
-    # Compute virial from existing structure factors (no extra kernel launch)
-    if compute_virial and not virial_grad:
-        virial = _ewald_reciprocal_virial_torch(
-            k_vectors, alpha, cell, real_sf, imag_sf, input_dtype
-        )
-    elif not compute_virial:
-        virial = torch.zeros(
-            num_systems, 3, 3, device=positions.device, dtype=input_dtype
-        )
+        else:
+            virial = torch.zeros(
+                num_systems, 3, 3, device=positions.device, dtype=input_dtype
+            )
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -2335,11 +2202,11 @@ def _batch_ewald_reciprocal_space_energy_forces(
             outputs=[wp_energies],
             device=device,
         )
-        if compute_virial and virial_grad:
+        if compute_virial:
             virial = torch.zeros(
                 num_systems, 3, 3, device=positions.device, dtype=input_dtype
             )
-            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=True)
+            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
             volume = torch.abs(torch.det(cell.to(torch.float64)))
             wp_volume = warp_from_torch(volume, wp.float64)
             wp.launch(
@@ -2355,16 +2222,10 @@ def _batch_ewald_reciprocal_space_energy_forces(
                 ],
                 device=device,
             )
-
-    # Compute virial from existing structure factors (no extra kernel launch)
-    if compute_virial and not virial_grad:
-        virial = _ewald_reciprocal_virial_torch(
-            k_vectors, alpha, cell, real_sf, imag_sf, input_dtype
-        )
-    elif not compute_virial:
-        virial = torch.zeros(
-            num_systems, 3, 3, device=positions.device, dtype=input_dtype
-        )
+        else:
+            virial = torch.zeros(
+                num_systems, 3, 3, device=positions.device, dtype=input_dtype
+            )
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -2558,11 +2419,11 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad(
             outputs=[wp_energies],
             device=device,
         )
-        if compute_virial and virial_grad:
+        if compute_virial:
             virial = torch.zeros(
                 num_systems, 3, 3, device=positions.device, dtype=input_dtype
             )
-            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=True)
+            wp_virial = warp_from_torch(virial, wp_mat, requires_grad=virial_grad)
             volume = torch.abs(torch.det(cell.to(torch.float64)))
             wp_volume = warp_from_torch(volume, wp.float64)
             wp.launch(
@@ -2578,24 +2439,20 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad(
                 ],
                 device=device,
             )
+        else:
+            virial = torch.zeros(
+                num_systems, 3, 3, device=positions.device, dtype=input_dtype
+            )
 
     # Apply self-energy and background corrections to charge gradients
     alpha_per_atom = alpha[batch_idx]
     total_charge_per_atom = total_charge_batch[batch_idx]
 
-    self_energy_grad = 2.0 / math.sqrt(PI) * alpha_per_atom * charges
-    background_grad = PI / (alpha_per_atom * alpha_per_atom) * total_charge_per_atom
+    self_energy_grad = 2.0 / math.sqrt(math.pi) * alpha_per_atom * charges
+    background_grad = (
+        math.pi / (alpha_per_atom * alpha_per_atom) * total_charge_per_atom
+    )
     charge_grads = charge_grads - self_energy_grad - background_grad
-
-    # Compute virial from existing structure factors (no extra kernel launch)
-    if compute_virial and not virial_grad:
-        virial = _ewald_reciprocal_virial_torch(
-            k_vectors, alpha, cell, real_sf, imag_sf, input_dtype
-        )
-    elif not compute_virial:
-        virial = torch.zeros(
-            num_systems, 3, 3, device=positions.device, dtype=input_dtype
-        )
 
     if needs_grad_flag:
         backward_kw = dict(
