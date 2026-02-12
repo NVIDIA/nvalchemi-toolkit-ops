@@ -37,8 +37,6 @@ autograd (enable_backward=False). Tests that call kernels require GPU.
 
 from __future__ import annotations
 
-import math
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -190,11 +188,11 @@ def calculate_pme_reciprocal_energy_torchpme(
     if dtype is None:
         dtype = torch.float64
 
-    device = torch.device("cuda:0")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # torchpme uses smearing sigma where Gaussian is exp(-r^2/(2*sigma^2))
     # Standard Ewald uses exp(-alpha^2 * r^2), so sigma = 1/(sqrt(2)*alpha)
-    smearing = 1.0 / (math.sqrt(2.0) * alpha)
+    smearing = 1.0 / (2.0**0.5 * alpha)
     potential = CoulombPotential(smearing=smearing).to(device=device, dtype=dtype)
 
     positions_torch = torch.tensor(positions_np, dtype=dtype, device=device)
