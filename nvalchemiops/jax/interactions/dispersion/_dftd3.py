@@ -137,14 +137,6 @@ cn_forces_contrib_nl = jax_kernel(
 __all__ = [
     "D3Parameters",
     "dftd3",
-    "compute_cartesian_shifts_nm",
-    "compute_cartesian_shifts_nl",
-    "cn_kernel_nm",
-    "cn_kernel_nl",
-    "direct_forces_kernel_nm",
-    "direct_forces_kernel_nl",
-    "cn_forces_contrib_nm",
-    "cn_forces_contrib_nl",
 ]
 
 

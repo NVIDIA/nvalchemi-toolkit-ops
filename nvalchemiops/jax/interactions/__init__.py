@@ -19,3 +19,7 @@ This module provides JAX bindings for molecular interaction calculations.
 """
 
 from __future__ import annotations
+
+from nvalchemiops.jax.interactions import dispersion, electrostatics
+
+__all__ = ["electrostatics", "dispersion"]
