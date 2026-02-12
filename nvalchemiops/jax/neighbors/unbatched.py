@@ -151,6 +151,33 @@ def naive_neighbor_list(
         - With PBC, matrix format: ``(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)``
         - With PBC, list format: ``(neighbor_list, neighbor_ptr, neighbor_list_shifts)``
 
+        **Components returned:**
+
+        - **neighbor_data** (array): Neighbor indices, format depends on ``return_neighbor_list``:
+
+            * If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix``
+              with shape (total_atoms, max_neighbors), dtype int32. Each row i contains
+              indices of atom i's neighbors.
+            * If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
+              (2, num_pairs), dtype int32, in COO format [source_atoms, target_atoms].
+
+        - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
+          format depends on ``return_neighbor_list``:
+
+            * If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (total_atoms,), dtype int32.
+              Count of neighbors found for each atom. Always returned.
+            * If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (total_atoms + 1,), dtype int32.
+              CSR-style pointer arrays where ``neighbor_ptr_data[i]`` to ``neighbor_ptr_data[i+1]`` gives the range of
+              neighbors for atom i in the flattened neighbor list.
+
+        - **neighbor_shift_data** (array, optional): Periodic shift vectors, only when ``pbc`` is provided:
+          format depends on ``return_neighbor_list``:
+
+            * If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix_shifts`` with
+              shape (total_atoms, max_neighbors, 3), dtype int32.
+            * If ``return_neighbor_list=True``: Returns ``unit_shifts`` with shape
+              (num_pairs, 3), dtype int32.
+
     Examples
     --------
     Basic usage without periodic boundary conditions:
@@ -171,6 +198,13 @@ def naive_neighbor_list(
     >>> neighbor_matrix, num_neighbors, shifts = naive_neighbor_list(
     ...     positions, cutoff, max_neighbors=max_neighbors, pbc=pbc, cell=cell
     ... )
+
+    Return as neighbor list instead of matrix:
+
+    >>> neighbor_list, neighbor_ptr = naive_neighbor_list(
+    ...     positions, cutoff, max_neighbors=max_neighbors, return_neighbor_list=True
+    ... )
+    >>> source_atoms, target_atoms = neighbor_list[0], neighbor_list[1]
 
     See Also
     --------
@@ -1028,8 +1062,12 @@ def query_cell_list(
         Periodic boundary condition flags.
     cells_per_dimension : jax.Array, shape (3,), dtype=int32
         Number of cells in each dimension.
+    atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32
+        Periodic boundary crossings for each atom (output from ``build_cell_list``).
     atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32
         3D cell coordinates for each atom.
+    atoms_per_cell_count : jax.Array, shape (max_total_cells,), dtype=int32
+        Number of atoms in each cell (output from ``build_cell_list``).
     cell_atom_start_indices : jax.Array, shape (max_total_cells,), dtype=int32
         Starting index in cell_atom_list for each cell.
     cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32
@@ -1049,6 +1087,8 @@ def query_cell_list(
         Neighbor matrix with neighbor atom indices.
     num_neighbors : jax.Array, shape (total_atoms,), dtype=int32
         Number of neighbors found for each atom.
+    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32
+        Periodic shift vectors for each neighbor relationship.
 
     See Also
     --------
@@ -1178,16 +1218,20 @@ def cell_list(
     Returns
     -------
     neighbor_data : jax.Array
-        Neighbor information. If return_neighbor_list=False, returns neighbor_matrix
-        with shape (total_atoms, max_neighbors) and dtype int32. If True, returns
-        neighbor_list with shape (2, num_pairs) and dtype int32.
-    neighbor_ptr_or_count : jax.Array
-        Additional neighbor information. If return_neighbor_list=False, returns
-        num_neighbors with shape (total_atoms,). If True, returns neighbor_ptr
-        with shape (total_atoms + 1,).
-    cell_data : jax.Array, optional
-        Cell list construction info tuple (cells_per_dimension, atom_to_cell_mapping,
-        atoms_per_cell_count, cell_atom_start_indices, cell_atom_list).
+        If ``return_neighbor_list=False`` (default): ``neighbor_matrix`` with shape
+        (total_atoms, max_neighbors), dtype int32.
+        If ``return_neighbor_list=True``: ``neighbor_list`` with shape
+        (2, num_pairs), dtype int32, in COO format.
+    neighbor_count : jax.Array
+        If ``return_neighbor_list=False``: ``num_neighbors`` with shape
+        (total_atoms,), dtype int32.
+        If ``return_neighbor_list=True``: ``neighbor_ptr`` with shape
+        (total_atoms + 1,), dtype int32.
+    shift_data : jax.Array
+        If ``return_neighbor_list=False``: ``neighbor_matrix_shifts`` with shape
+        (total_atoms, max_neighbors, 3), dtype int32.
+        If ``return_neighbor_list=True``: ``neighbor_list_shifts`` with shape
+        (num_pairs, 3), dtype int32.
 
     See Also
     --------

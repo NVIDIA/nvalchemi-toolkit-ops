@@ -702,6 +702,8 @@ def dftd3(
        ``"rcov"``, ``"r4r2"``, ``"c6ab"``, and ``"cn_ref"``.
        Individual parameters can override dictionary values if both are provided.
 
+    See ``examples/interactions/utils.py`` for parameter generation utilities.
+
     Parameters
     ----------
     positions : jax.Array
@@ -756,8 +758,9 @@ def dftd3(
         Convention: cell[s, i, :] is i-th lattice vector for system s.
         If None, non-periodic calculation. Default: None
     neighbor_matrix : jax.Array | None, optional
-        Neighbor indices [num_atoms, max_neighbors] as int32. See PyTorch version docstring
-        for details on the format. Mutually exclusive with neighbor_list. Default: None
+        Neighbor indices [num_atoms, max_neighbors] as int32. Each row i contains
+        indices of atom i's neighbors, padded with ``fill_value`` for unused slots.
+        Mutually exclusive with ``neighbor_list``. Default: None
     neighbor_matrix_shifts : jax.Array or None, optional
         Integer unit cell shifts [num_atoms, max_neighbors, 3] as int32 for PBC with
         neighbor_matrix format. If None, non-periodic calculation. Mutually exclusive
@@ -778,8 +781,8 @@ def dftd3(
     compute_virial : bool, optional
         If True, compute and return virial tensor. Default: False
     num_systems : int, optional
-        Number of systems in batch. If none provided, inferred from cell
-        or from batch_idx. Default: None
+        Number of systems in batch. If None, inferred from ``cell``
+        or from ``batch_idx`` (introduces device synchronization overhead). Default: None
     device : str or None, optional
         Warp device string (e.g., 'cuda:0', 'cpu'). If None, inferred from
         positions array placement. Default: None

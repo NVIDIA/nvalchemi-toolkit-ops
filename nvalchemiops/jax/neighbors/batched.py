@@ -794,17 +794,17 @@ def estimate_batch_cell_list_sizes(
 
     Parameters
     ----------
-    positions : jax.Array, shape (total_atoms, 3)
+    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64
         Atomic coordinates.
-    batch_ptr : jax.Array, shape (num_systems + 1,), optional
+    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional
         Cumulative atom counts.
-    batch_idx : jax.Array, shape (total_atoms,), optional
+    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional
         Batch indices for each atom.
-    cell : jax.Array, shape (num_systems, 3, 3), optional
+    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional
         Cell matrices for each system.
     cutoff : float, optional
         Cutoff distance. Default is 5.0.
-    pbc : jax.Array, shape (num_systems, 3), optional
+    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional
         PBC flags.
     buffer_factor : float, optional
         Buffer multiplier. Default is 1.5.
@@ -884,15 +884,15 @@ def batch_build_cell_list(
 
     Parameters
     ----------
-    positions : jax.Array, shape (total_atoms, 3)
+    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64
         Atomic coordinates.
-    batch_idx : jax.Array, shape (total_atoms,), optional
+    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional
         Batch indices.
-    batch_ptr : jax.Array, shape (num_systems + 1,), optional
+    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional
         Cumulative atom counts.
-    cell : jax.Array, shape (num_systems, 3, 3), optional
+    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional
         Cell matrices.
-    pbc : jax.Array, shape (num_systems, 3), optional
+    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional
         PBC flags.
     cutoff : float, optional
         Cutoff distance. Default is 5.0.
@@ -901,22 +901,22 @@ def batch_build_cell_list(
 
     Returns
     -------
-    cells_per_dimension : jax.Array
-        Cells per dimension.
-    atom_periodic_shifts : jax.Array
-        Periodic shifts.
-    atom_to_cell_mapping : jax.Array
-        Cell mappings.
-    atoms_per_cell_count : jax.Array
-        Atoms per cell.
-    cell_atom_start_indices : jax.Array
-        Start indices.
-    cell_atom_list : jax.Array
-        Cell atom list.
-    neighbor_search_radius : jax.Array
-        Search radius.
-    cell_origin : jax.Array
-        Cell origin.
+    cells_per_dimension : jax.Array, shape (num_systems, 3), dtype=int32
+        Number of cells in x, y, z directions for each system.
+    atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32
+        Periodic boundary crossings for each atom.
+    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32
+        3D cell coordinates for each atom.
+    atoms_per_cell_count : jax.Array, shape (max_total_cells,), dtype=int32
+        Number of atoms in each cell.
+    cell_atom_start_indices : jax.Array, shape (max_total_cells,), dtype=int32
+        Starting index in ``cell_atom_list`` for each cell.
+    cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32
+        Flattened list of atom indices organized by cell.
+    neighbor_search_radius : jax.Array, shape (num_systems, 3), dtype=int32
+        Search radius in neighboring cells for each system.
+    cell_origin : jax.Array, shape (3,), dtype same as positions
+        Cell origin point (currently zeros).
     """
     jax_device = positions.devices().pop()
 
@@ -1058,44 +1058,44 @@ def batch_query_cell_list(
 
     Parameters
     ----------
-    positions : jax.Array, shape (total_atoms, 3)
+    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64
         Atomic coordinates.
-    batch_idx : jax.Array, shape (total_atoms,), optional
+    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional
         Batch indices.
-    batch_ptr : jax.Array, shape (num_systems + 1,), optional
+    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional
         Cumulative atom counts.
     cutoff : float, optional
         Cutoff distance.
-    cell : jax.Array, shape (num_systems, 3, 3), optional
+    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional
         Cell matrices.
-    pbc : jax.Array, shape (num_systems, 3), optional
+    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional
         PBC flags.
-    cells_per_dimension : jax.Array, optional
+    cells_per_dimension : jax.Array, shape (num_systems, 3), dtype=int32, optional
         Cells per dimension.
-    atom_periodic_shifts : jax.Array, optional
-        Periodic shifts for each atom (output from batch_build_cell_list).
-    atom_to_cell_mapping : jax.Array, optional
+    atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional
+        Periodic shifts for each atom (output from ``batch_build_cell_list``).
+    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32, optional
         Cell mappings.
-    cell_atom_start_indices : jax.Array, optional
+    cell_atom_start_indices : jax.Array, shape (max_total_cells,), dtype=int32, optional
         Start indices.
-    cell_atom_list : jax.Array, optional
+    cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32, optional
         Cell atom list.
-    neighbor_search_radius : jax.Array, optional
+    neighbor_search_radius : jax.Array, shape (num_systems, 3), dtype=int32, optional
         Search radius.
     max_neighbors : int, optional
         Maximum neighbors per atom.
-    neighbor_matrix : jax.Array, optional
+    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32, optional
         Pre-allocated neighbor matrix.
-    num_neighbors : jax.Array, optional
+    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32, optional
         Pre-allocated neighbors count array.
 
     Returns
     -------
-    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors)
+    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32
         Neighbor matrix.
-    num_neighbors : jax.Array, shape (total_atoms,)
+    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32
         Neighbors count.
-    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3)
+    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32
         Periodic shifts for each neighbor relationship.
     """
     if max_neighbors is None:
@@ -1235,33 +1235,40 @@ def batch_cell_list(
 
     Parameters
     ----------
-    positions : jax.Array, shape (total_atoms, 3)
+    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64
         Atomic coordinates.
-    batch_idx : jax.Array, shape (total_atoms,), optional
-        Batch indices.
-    batch_ptr : jax.Array, shape (num_systems + 1,), optional
-        Cumulative atom counts.
-    cutoff : float, optional
-        Cutoff distance. Default is 5.0.
-    cell : jax.Array, shape (num_systems, 3, 3), optional
-        Cell matrices.
-    pbc : jax.Array, shape (num_systems, 3), optional
-        PBC flags.
+    cutoff : float
+        Cutoff distance for neighbor detection.
+    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional
+        Cell matrices defining lattice vectors. Default is identity matrix.
+    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional
+        Periodic boundary condition flags. Default is all True.
+    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional
+        Batch indices for each atom.
+    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional
+        Cumulative atom counts defining system boundaries.
     max_neighbors : int, optional
-        Maximum neighbors per atom.
+        Maximum number of neighbors per atom. If None, will be estimated.
     max_total_cells : int, optional
-        Maximum cells to allocate.
+        Maximum number of cells to allocate. If None, will be estimated.
     return_neighbor_list : bool, optional
-        If True, return COO neighbor list format. Default is False.
+        If True, convert result to COO neighbor list format. Default is False.
 
     Returns
     -------
     neighbor_data : jax.Array
-        Neighbor information.
-    neighbor_ptr_or_count : jax.Array
-        Neighbor pointer or count.
-    cell_data : tuple, optional
-        Cell list construction info.
+        If ``return_neighbor_list=False`` (default): ``neighbor_matrix`` with shape
+        (total_atoms, max_neighbors), dtype int32.
+        If ``return_neighbor_list=True``: ``neighbor_list`` with shape
+        (2, num_pairs), dtype int32, in COO format.
+    neighbor_count : jax.Array
+        If ``return_neighbor_list=False``: ``num_neighbors`` with shape
+        (total_atoms,), dtype int32.
+        If ``return_neighbor_list=True``: ``neighbor_ptr`` with shape
+        (total_atoms + 1,), dtype int32.
+    shift_data : jax.Array
+        ``neighbor_matrix_shifts`` with shape (total_atoms, max_neighbors, 3), dtype int32.
+        Periodic shift vectors for each neighbor relationship.
 
     See Also
     --------
