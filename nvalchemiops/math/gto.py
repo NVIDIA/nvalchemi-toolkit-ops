@@ -133,6 +133,10 @@ SQRT_4PI = wp.constant(wp.float64(math.sqrt(4.0 * math.pi)))  # sqrt(4*pi)
 # Small value for numerical stability
 EPSILON = wp.constant(wp.float64(1e-30))
 
+# Vector type aliases
+vec5d = wp.types.vector(length=5, dtype=wp.float64)
+vec9d = wp.types.vector(length=9, dtype=wp.float64)
+
 
 @wp.func
 def rsqrt(x: wp.float64) -> wp.float64:
@@ -264,9 +268,7 @@ def gto_density_l1(r: wp.vec3d, sigma: wp.float64) -> wp.vec3d:
 
 
 @wp.func
-def gto_density_l2(r: wp.vec3d, sigma: wp.float64) -> wp.vec(
-    length=5, dtype=wp.float64
-):
+def gto_density_l2(r: wp.vec3d, sigma: wp.float64) -> vec5d:
     r"""Compute GTO density for L=2 (quadrupole/d-orbital).
 
     Returns the five L=2 components:
@@ -281,7 +283,7 @@ def gto_density_l2(r: wp.vec3d, sigma: wp.float64) -> wp.vec(
 
     Returns
     -------
-    wp.vec(5)
+    vec5d
         The five L=2 GTO density values.
     """
     r2 = wp.dot(r, r)
@@ -292,13 +294,12 @@ def gto_density_l2(r: wp.vec3d, sigma: wp.float64) -> wp.vec(
     y_l2 = eval_spherical_harmonics_l2(r)
 
     prefactor = norm * gauss
-    return wp.vec(
+    return vec5d(
         prefactor * y_l2[0],
         prefactor * y_l2[1],
         prefactor * y_l2[2],
         prefactor * y_l2[3],
         prefactor * y_l2[4],
-        dtype=wp.float64,
     )
 
 
@@ -407,9 +408,7 @@ def gto_fourier_l1_imag(k: wp.vec3d, sigma: wp.float64) -> wp.vec3d:
 
 
 @wp.func
-def gto_fourier_l2_real(k: wp.vec3d, sigma: wp.float64) -> wp.vec(
-    length=5, dtype=wp.float64
-):
+def gto_fourier_l2_real(k: wp.vec3d, sigma: wp.float64) -> vec5d:
     r"""Compute real part of Fourier transform of L=2 GTO.
 
     .. math::
@@ -430,7 +429,7 @@ def gto_fourier_l2_real(k: wp.vec3d, sigma: wp.float64) -> wp.vec(
 
     Returns
     -------
-    wp.vec(5)
+    vec5d
         Real parts of the five L=2 Fourier coefficients.
     """
     k2 = wp.dot(k, k)
@@ -443,13 +442,12 @@ def gto_fourier_l2_real(k: wp.vec3d, sigma: wp.float64) -> wp.vec(
     # Coefficient: (-1/4) * sqrt(4*pi) * Y * exp(...)
     prefactor = wp.float64(-0.25) * SQRT_4PI * gauss
 
-    return wp.vec(
+    return vec5d(
         prefactor * y_l2[0],
         prefactor * y_l2[1],
         prefactor * y_l2[2],
         prefactor * y_l2[3],
         prefactor * y_l2[4],
-        dtype=wp.float64,
     )
 
 
@@ -535,9 +533,7 @@ def gto_self_overlap(L: int, sigma: wp.float64) -> wp.float64:
 
 
 @wp.func
-def gto_density_all(r: wp.vec3d, sigma: wp.float64) -> wp.vec(
-    length=9, dtype=wp.float64
-):
+def gto_density_all(r: wp.vec3d, sigma: wp.float64) -> vec9d:
     r"""Compute GTO density for all L=0,1,2 components.
 
     Returns all 9 components (1 + 3 + 5) in order:
@@ -552,7 +548,7 @@ def gto_density_all(r: wp.vec3d, sigma: wp.float64) -> wp.vec(
 
     Returns
     -------
-    wp.vec(9)
+    vec9d
         All 9 GTO density values.
     """
     r2 = wp.dot(r, r)
@@ -568,7 +564,7 @@ def gto_density_all(r: wp.vec3d, sigma: wp.float64) -> wp.vec(
     x, y, z = r[0], r[1], r[2]
     x2, y2, z2 = x * x, y * y, z * z
 
-    return wp.vec(
+    return vec9d(
         # L=0
         prefactor * Y00_COEFF,
         # L=1
@@ -581,7 +577,6 @@ def gto_density_all(r: wp.vec3d, sigma: wp.float64) -> wp.vec(
         prefactor * Y2_0_COEFF * (wp.float64(3.0) * z2 - r2_safe) * r2_inv,
         prefactor * Y2_P1_COEFF * x * z * r2_inv,
         prefactor * Y2_P2_COEFF * (x2 - y2) * r2_inv,
-        dtype=wp.float64,
     )
 
 
