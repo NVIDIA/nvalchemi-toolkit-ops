@@ -543,6 +543,127 @@ def pme_energy_corrections_with_charge_grad(
         return corrected_out, charge_grad_out
 
 
+def _compute_pme_reciprocal_virial(
+    mesh_fft_raw: jnp.ndarray,
+    convolved_mesh: jnp.ndarray,
+    k_vectors: jnp.ndarray,
+    k_squared: jnp.ndarray,
+    alpha: jnp.ndarray,
+    mesh_dimensions: tuple[int, int, int],
+    is_batch: bool,
+) -> jnp.ndarray:
+    """Compute PME reciprocal-space virial tensor in k-space.
+
+    Uses the exact spectral pair from the pipeline (mesh_fft_raw before
+    deconvolution, and convolved_mesh after Green's function multiplication)
+    to compute the per-k energy density directly via Parseval's theorem.
+
+    The virial per k-point is W_ab(k) = E_k * sigma_ab(k) where:
+    - E_k = prefactor * weight(k) * Re(mesh_fft_raw(k) * convolved_mesh(k)*)
+    - sigma_ab(k) = delta_ab - 2*k_a*k_b/k^2 * (1 + k^2/(4*alpha^2))
+    (sign reflects W = -dE/dε convention)
+
+    Parameters
+    ----------
+    mesh_fft_raw : jax.Array
+        Raw rfftn output before B-spline deconvolution.
+        Shape (nx, ny, nz//2+1) or (B, nx, ny, nz//2+1), complex.
+    convolved_mesh : jax.Array
+        Deconvolved mesh FFT multiplied by Green's function: (mesh_fft/B^2)*G.
+        Shape matching mesh_fft_raw.
+    k_vectors : jax.Array
+        k-vectors on the mesh. Shape (..., nx, ny, nz//2+1, 3).
+    k_squared : jax.Array
+        |k|^2. Shape (..., nx, ny, nz//2+1).
+    alpha : jax.Array
+        Ewald splitting parameter.
+    mesh_dimensions : tuple
+        (nx, ny, nz).
+    is_batch : bool
+        Whether this is a batched calculation.
+
+    Returns
+    -------
+    virial : jax.Array, shape (B, 3, 3) or (1, 3, 3)
+        Per-system virial tensor.
+    """
+    mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
+
+    # Determine accumulation dtype from k_squared (float32 or float64)
+    acc_dtype = _normalize_dtype(k_squared.dtype)
+    complex_dtype = jnp.complex64 if acc_dtype == jnp.float32 else jnp.complex128
+
+    # Per-k energy density from exact pipeline spectral pair.
+    # Re(mesh_fft_raw * convolved_mesh*) = |mesh_fft_raw|^2 * G / B^2
+    fft_raw_cast = mesh_fft_raw.astype(complex_dtype)
+    conv_cast = convolved_mesh.astype(complex_dtype)
+    energy_density = (fft_raw_cast * jnp.conj(conv_cast)).real
+
+    # Weight for rfft symmetry: 2 for interior k_z, 1 for boundary
+    weight = jnp.full_like(energy_density, 2.0)
+    weight = weight.at[..., 0].set(1.0)  # k_z = 0
+    if mesh_nz % 2 == 0:
+        weight = weight.at[..., -1].set(1.0)  # k_z = nz//2 (Nyquist)
+
+    # Weighted energy density
+    weighted_energy = weight * energy_density
+
+    # Virial W = -dE/dε, so sigma_ab = delta_ab - 2*k_a*k_b/k^2 * (1 + k^2/(4*alpha^2))
+    k_sq_acc = k_squared.astype(acc_dtype)
+    alpha_acc = alpha.astype(acc_dtype)
+
+    # Handle alpha broadcasting: alpha may be (B,) for batch
+    if is_batch and alpha_acc.ndim == 1:
+        alpha_view = alpha_acc.reshape(-1, 1, 1, 1)
+    else:
+        alpha_view = alpha_acc.reshape(-1) if alpha_acc.ndim == 0 else alpha_acc
+
+    exp_factor = 0.25 / (alpha_view**2)
+
+    # Avoid division by zero at k=0
+    safe_k_sq = jnp.maximum(k_sq_acc, 1e-30)
+    k_factor = 2.0 * (1.0 + k_sq_acc * exp_factor) / safe_k_sq
+
+    # Zero out k=0 contribution (no virial from k=0)
+    k_mask = k_sq_acc > 1e-10
+
+    # Vectorized virial computation using einsum
+    # virial_ab = sum_k weighted_energy * (delta_ab - k_factor * k_a * k_b) * k_mask
+    # = delta_ab * sum_k (weighted_energy * k_mask) - sum_k (weighted_energy * k_mask * k_factor) * k_a * k_b
+    k_vecs_acc = k_vectors.astype(acc_dtype)  # (..., nx, ny, nz//2+1, 3)
+    masked_energy = weighted_energy * k_mask  # (..., nx, ny, nz//2+1)
+    masked_energy_kf = masked_energy * k_factor  # (..., nx, ny, nz//2+1)
+
+    # Sum dimensions depend on batch vs single
+    if is_batch:
+        sum_dims = (1, 2, 3)  # sum over (nx, ny, nz//2+1)
+    else:
+        sum_dims = (0, 1, 2)  # sum over (nx, ny, nz//2+1)
+
+    # Trace term: delta_ab * sum_k masked_energy
+    trace_term = masked_energy.sum(axis=sum_dims)  # scalar or (B,)
+
+    # kk term: sum_k masked_energy_kf * k_a * k_b
+    # k_vecs_acc has shape (..., nx, ny, nz//2+1, 3)
+    # masked_energy_kf has shape (..., nx, ny, nz//2+1)
+    # Use einsum for vectorized outer product + reduction
+    if is_batch:
+        # k_vecs: (B, nx, ny, nz_half, 3), masked_energy_kf: (B, nx, ny, nz_half)
+        kk_term = jnp.einsum(
+            "b...i,b...j,b...->bij", k_vecs_acc, k_vecs_acc, masked_energy_kf
+        )  # (B, 3, 3)
+        eye = jnp.eye(3, dtype=acc_dtype)
+        virial = eye * trace_term[:, jnp.newaxis, jnp.newaxis] - kk_term  # (B, 3, 3)
+    else:
+        kk_term = jnp.einsum(
+            "...i,...j,...->ij", k_vecs_acc, k_vecs_acc, masked_energy_kf
+        )  # (3, 3)
+        eye = jnp.eye(3, dtype=acc_dtype)
+        virial = (eye * trace_term - kk_term)[jnp.newaxis, :, :]  # (1, 3, 3)
+
+    return virial.astype(acc_dtype)
+
+
 def pme_reciprocal_space(
     positions: jnp.ndarray,
     charges: jnp.ndarray,
@@ -556,10 +677,12 @@ def pme_reciprocal_space(
     k_squared: jnp.ndarray | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
 ) -> (
     jnp.ndarray
     | tuple[jnp.ndarray, jnp.ndarray]
     | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
 ):
     """Compute PME reciprocal-space contribution.
 
@@ -604,6 +727,9 @@ def pme_reciprocal_space(
         If True, compute forces via Fourier gradient.
     compute_charge_gradients : bool, default=False
         If True, compute charge gradients dE/dq.
+    compute_virial : bool, default=False
+        If True, compute the virial tensor W = -dE/d(epsilon).
+        Stress = virial / volume.
 
     Returns
     -------
@@ -613,33 +739,54 @@ def pme_reciprocal_space(
         Per-atom forces (only if compute_forces=True).
     charge_gradients : jax.Array, shape (N,), optional
         Per-atom charge gradients (only if compute_charge_gradients=True).
+    virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor (only if compute_virial=True). Always last in the return tuple.
 
     Notes
     -----
     - Output is always float32 for energy/forces (spline kernels use float32)
     - For float64 pipelines, FFT/convolution use float64 but spline output is float32
     - Automatically determines mesh_dimensions if not provided
+    - Virial is computed in k-space and uses the same dtype as k_squared
     """
     num_atoms = positions.shape[0]
     input_dtype = _normalize_dtype(positions.dtype)
     is_batch = batch_idx is not None
     fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
 
+    # Ensure cell is correct shape for num_systems calculation
+    if cell.ndim == 2:
+        num_systems = 1
+    else:
+        num_systems = cell.shape[0]
+
     # Handle empty systems
     if num_atoms == 0:
         energies = jnp.zeros(num_atoms, dtype=jnp.float32)
-        if compute_forces and compute_charge_gradients:
-            forces = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
-            charge_grads = jnp.zeros(num_atoms, dtype=jnp.float32)
-            return energies, forces, charge_grads
-        elif compute_forces:
-            forces = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
-            return energies, forces
-        elif compute_charge_gradients:
-            charge_grads = jnp.zeros(num_atoms, dtype=jnp.float32)
-            return energies, charge_grads
-        else:
-            return energies
+        forces = (
+            jnp.zeros((num_atoms, 3), dtype=jnp.float32) if compute_forces else None
+        )
+        charge_grads = (
+            jnp.zeros(num_atoms, dtype=jnp.float32)
+            if compute_charge_gradients
+            else None
+        )
+        virial = (
+            jnp.zeros((num_systems, 3, 3), dtype=input_dtype)
+            if compute_virial
+            else None
+        )
+        # Build return tuple based on flags
+        result = [energies]
+        if compute_forces:
+            result.append(forces)
+        if compute_charge_gradients:
+            result.append(charge_grads)
+        if compute_virial:
+            result.append(virial)
+        if len(result) == 1:
+            return result[0]
+        return tuple(result)
 
     # Determine mesh dimensions
     if mesh_dimensions is None:
@@ -677,6 +824,10 @@ def pme_reciprocal_space(
         batch_idx,
     )
 
+    # Save reference to raw FFT before deconvolution (needed for virial).
+    # No clone needed: the reassignment below creates a new tensor.
+    mesh_fft_raw = mesh_fft if compute_virial else None
+
     # Step 4: Apply B-spline deconvolution and convolve with Green's function
     # Upcast to the complex equivalent of input_dtype to preserve imaginary part.
     # spline_spread returns float32 → rfftn produces complex64.
@@ -686,7 +837,22 @@ def pme_reciprocal_space(
     mesh_fft = mesh_fft.astype(complex_dtype) / structure_factor_sq
     convolved_mesh = mesh_fft * green_function
 
-    # Step 5: Inverse FFT to get potential mesh
+    # Step 5: Compute virial before forces to allow early release of mesh_fft_raw
+    # (virial needs mesh_fft_raw; forces only need convolved_mesh)
+    virial = None
+    if compute_virial:
+        virial = _compute_pme_reciprocal_virial(
+            mesh_fft_raw=mesh_fft_raw,
+            convolved_mesh=convolved_mesh,
+            k_vectors=k_vectors,
+            k_squared=k_squared,
+            alpha=alpha,
+            mesh_dimensions=mesh_dimensions,
+            is_batch=is_batch,
+        )
+        del mesh_fft_raw  # Free before force field meshes are allocated
+
+    # Step 6: Inverse FFT to get potential mesh
     potential_mesh = jnp.fft.irfftn(
         convolved_mesh, s=mesh_dimensions, axes=fft_dims, norm="forward"
     )
@@ -738,13 +904,22 @@ def pme_reciprocal_space(
         # Compute forces: F = 2 * q * E
         forces = 2.0 * interpolated_field
 
-    # Return results based on flags
-    if compute_forces and compute_charge_gradients:
+    # Build return tuple based on flags
+    # Order: energies, [forces], [charge_grads], [virial] (virial always last)
+    if compute_forces and compute_charge_gradients and compute_virial:
+        return energies, forces, charge_grads, virial
+    elif compute_forces and compute_charge_gradients:
         return energies, forces, charge_grads
+    elif compute_forces and compute_virial:
+        return energies, forces, virial
+    elif compute_charge_gradients and compute_virial:
+        return energies, charge_grads, virial
     elif compute_forces:
         return energies, forces
     elif compute_charge_gradients:
         return energies, charge_grads
+    elif compute_virial:
+        return energies, virial
     else:
         return energies
 
@@ -768,11 +943,13 @@ def particle_mesh_ewald(
     mask_value: int | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
     accuracy: float = 1e-6,
 ) -> (
     jnp.ndarray
     | tuple[jnp.ndarray, jnp.ndarray]
     | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
 ):
     """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
@@ -830,6 +1007,9 @@ def particle_mesh_ewald(
         If True, compute per-atom forces.
     compute_charge_gradients : bool, default=False
         If True, compute per-atom charge gradients dE/dq.
+    compute_virial : bool, default=False
+        If True, compute the virial tensor W = -dE/d(epsilon).
+        Stress = virial / volume.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
 
@@ -841,6 +1021,8 @@ def particle_mesh_ewald(
         Per-atom forces (only if compute_forces=True).
     charge_gradients : jax.Array, shape (N,), optional
         Per-atom charge gradients (only if compute_charge_gradients=True).
+    virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor (only if compute_virial=True). Always last in the return tuple.
 
     Notes
     -----
@@ -928,6 +1110,7 @@ def particle_mesh_ewald(
         batch_idx=batch_idx,
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
     )
 
     # Compute reciprocal-space contribution
@@ -941,27 +1124,21 @@ def particle_mesh_ewald(
         batch_idx=batch_idx,
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
         k_vectors=k_vectors,
         k_squared=k_squared,
     )
 
-    # Combine results based on flags
-    if compute_forces and compute_charge_gradients:
-        # rs = (energies, forces, charge_grads), rec = (energies, forces, charge_grads)
-        total_energies = rs[0] + rec[0]
-        total_forces = rs[1] + rec[1]
-        total_charge_grads = rs[2] + rec[2]
-        return total_energies, total_forces, total_charge_grads
-    elif compute_forces:
-        # rs = (energies, forces), rec = (energies, forces)
-        total_energies = rs[0] + rec[0]
-        total_forces = rs[1] + rec[1]
-        return total_energies, total_forces
-    elif compute_charge_gradients:
-        # rs = (energies, charge_grads), rec = (energies, charge_grads)
-        total_energies = rs[0] + rec[0]
-        total_charge_grads = rs[1] + rec[1]
-        return total_energies, total_charge_grads
-    else:
-        # rs = energies, rec = energies
-        return rs + rec
+    # Normalize return tuples for easy combination
+    # Both rs and rec return: energies, [forces], [charge_grads], [virial]
+    # where virial is always last if present
+    rs_tuple = rs if isinstance(rs, tuple) else (rs,)
+    rec_tuple = rec if isinstance(rec, tuple) else (rec,)
+
+    # The number of outputs should match between rs and rec
+    # Combine element-wise
+    results = tuple(r + s for r, s in zip(rs_tuple, rec_tuple))
+
+    if len(results) == 1:
+        return results[0]
+    return results
