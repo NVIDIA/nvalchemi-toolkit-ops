@@ -149,14 +149,14 @@ _jax_ewald_real_space_energy_list = _make_jax_kernels(
 
 _jax_ewald_real_space_energy_forces_list = _make_jax_kernels(
     _ewald_real_space_energy_forces_kernel_overload,
-    2,
-    ["pair_energies", "atomic_forces"],
+    3,
+    ["pair_energies", "atomic_forces", "virial"],
 )
 
 _jax_ewald_real_space_energy_forces_charge_grad_list = _make_jax_kernels(
     _ewald_real_space_energy_forces_charge_grad_kernel_overload,
-    3,
-    ["pair_energies", "atomic_forces", "charge_gradients"],
+    4,
+    ["pair_energies", "atomic_forces", "charge_gradients", "virial"],
 )
 
 _jax_batch_ewald_real_space_energy_list = _make_jax_kernels(
@@ -165,14 +165,14 @@ _jax_batch_ewald_real_space_energy_list = _make_jax_kernels(
 
 _jax_batch_ewald_real_space_energy_forces_list = _make_jax_kernels(
     _batch_ewald_real_space_energy_forces_kernel_overload,
-    2,
-    ["pair_energies", "atomic_forces"],
+    3,
+    ["pair_energies", "atomic_forces", "virial"],
 )
 
 _jax_batch_ewald_real_space_energy_forces_charge_grad_list = _make_jax_kernels(
     _batch_ewald_real_space_energy_forces_charge_grad_kernel_overload,
-    3,
-    ["pair_energies", "atomic_forces", "charge_gradients"],
+    4,
+    ["pair_energies", "atomic_forces", "charge_gradients", "virial"],
 )
 
 # --- Neighbor Matrix Format ---
@@ -183,14 +183,14 @@ _jax_ewald_real_space_energy_matrix = _make_jax_kernels(
 
 _jax_ewald_real_space_energy_forces_matrix = _make_jax_kernels(
     _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload,
-    2,
-    ["pair_energies", "atomic_forces"],
+    3,
+    ["pair_energies", "atomic_forces", "virial"],
 )
 
 _jax_ewald_real_space_energy_forces_charge_grad_matrix = _make_jax_kernels(
     _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload,
-    3,
-    ["pair_energies", "atomic_forces", "charge_gradients"],
+    4,
+    ["pair_energies", "atomic_forces", "charge_gradients", "virial"],
 )
 
 _jax_batch_ewald_real_space_energy_matrix = _make_jax_kernels(
@@ -199,14 +199,14 @@ _jax_batch_ewald_real_space_energy_matrix = _make_jax_kernels(
 
 _jax_batch_ewald_real_space_energy_forces_matrix = _make_jax_kernels(
     _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload,
-    2,
-    ["pair_energies", "atomic_forces"],
+    3,
+    ["pair_energies", "atomic_forces", "virial"],
 )
 
 _jax_batch_ewald_real_space_energy_forces_charge_grad_matrix = _make_jax_kernels(
     _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload,
-    3,
-    ["pair_energies", "atomic_forces", "charge_gradients"],
+    4,
+    ["pair_energies", "atomic_forces", "charge_gradients", "virial"],
 )
 
 # ==============================================================================
@@ -481,7 +481,9 @@ def ewald_real_space(
             if compute_charge_gradients:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
                 charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
-                (energies, forces, charge_grads) = (
+                num_systems_batch = int(batch_idx.max()) + 1
+                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                (energies, forces, charge_grads, _virial) = (
                     _jax_batch_ewald_real_space_energy_forces_charge_grad_list[dtype](
                         positions_cast,
                         charges_cast,
@@ -491,28 +493,34 @@ def ewald_real_space(
                         neighbor_ptr_i32,
                         neighbor_shifts_i32,
                         alpha_arr,
+                        False,  # compute_virial
                         energies,
                         forces,
                         charge_grads,
+                        virial,
                         launch_dims=(num_atoms,),
                     )
                 )
             elif compute_forces:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
-                (energies, forces) = _jax_batch_ewald_real_space_energy_forces_list[
-                    dtype
-                ](
-                    positions_cast,
-                    charges_cast,
-                    cell_cast,
-                    batch_idx_i32,
-                    idx_j,
-                    neighbor_ptr_i32,
-                    neighbor_shifts_i32,
-                    alpha_arr,
-                    energies,
-                    forces,
-                    launch_dims=(num_atoms,),
+                num_systems_batch = int(batch_idx.max()) + 1
+                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                (energies, forces, _virial) = (
+                    _jax_batch_ewald_real_space_energy_forces_list[dtype](
+                        positions_cast,
+                        charges_cast,
+                        cell_cast,
+                        batch_idx_i32,
+                        idx_j,
+                        neighbor_ptr_i32,
+                        neighbor_shifts_i32,
+                        alpha_arr,
+                        False,  # compute_virial
+                        energies,
+                        forces,
+                        virial,
+                        launch_dims=(num_atoms,),
+                    )
                 )
             else:
                 (energies,) = _jax_batch_ewald_real_space_energy_list[dtype](
@@ -531,7 +539,8 @@ def ewald_real_space(
             if compute_charge_gradients:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
                 charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
-                (energies, forces, charge_grads) = (
+                virial = jnp.zeros((1, 3, 3), dtype=dtype)
+                (energies, forces, charge_grads, _virial) = (
                     _jax_ewald_real_space_energy_forces_charge_grad_list[dtype](
                         positions_cast,
                         charges_cast,
@@ -540,15 +549,20 @@ def ewald_real_space(
                         neighbor_ptr_i32,
                         neighbor_shifts_i32,
                         alpha_arr,
+                        False,  # compute_virial
                         energies,
                         forces,
                         charge_grads,
+                        virial,
                         launch_dims=(num_atoms,),
                     )
                 )
             elif compute_forces:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
-                (energies, forces) = _jax_ewald_real_space_energy_forces_list[dtype](
+                virial = jnp.zeros((1, 3, 3), dtype=dtype)
+                (energies, forces, _virial) = _jax_ewald_real_space_energy_forces_list[
+                    dtype
+                ](
                     positions_cast,
                     charges_cast,
                     cell_cast,
@@ -556,8 +570,10 @@ def ewald_real_space(
                     neighbor_ptr_i32,
                     neighbor_shifts_i32,
                     alpha_arr,
+                    False,  # compute_virial
                     energies,
                     forces,
+                    virial,
                     launch_dims=(num_atoms,),
                 )
             else:
@@ -586,7 +602,9 @@ def ewald_real_space(
             if compute_charge_gradients:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
                 charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
-                (energies, forces, charge_grads) = (
+                num_systems_batch = int(batch_idx.max()) + 1
+                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                (energies, forces, charge_grads, _virial) = (
                     _jax_batch_ewald_real_space_energy_forces_charge_grad_matrix[dtype](
                         positions_cast,
                         charges_cast,
@@ -596,28 +614,34 @@ def ewald_real_space(
                         neighbor_matrix_shifts_i32,
                         wp.int32(mask_value),
                         alpha_arr,
+                        False,  # compute_virial
                         energies,
                         forces,
                         charge_grads,
+                        virial,
                         launch_dims=(num_atoms,),
                     )
                 )
             elif compute_forces:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
-                (energies, forces) = _jax_batch_ewald_real_space_energy_forces_matrix[
-                    dtype
-                ](
-                    positions_cast,
-                    charges_cast,
-                    cell_cast,
-                    batch_idx_i32,
-                    neighbor_matrix_i32,
-                    neighbor_matrix_shifts_i32,
-                    wp.int32(mask_value),
-                    alpha_arr,
-                    energies,
-                    forces,
-                    launch_dims=(num_atoms,),
+                num_systems_batch = int(batch_idx.max()) + 1
+                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                (energies, forces, _virial) = (
+                    _jax_batch_ewald_real_space_energy_forces_matrix[dtype](
+                        positions_cast,
+                        charges_cast,
+                        cell_cast,
+                        batch_idx_i32,
+                        neighbor_matrix_i32,
+                        neighbor_matrix_shifts_i32,
+                        wp.int32(mask_value),
+                        alpha_arr,
+                        False,  # compute_virial
+                        energies,
+                        forces,
+                        virial,
+                        launch_dims=(num_atoms,),
+                    )
                 )
             else:
                 (energies,) = _jax_batch_ewald_real_space_energy_matrix[dtype](
@@ -636,7 +660,8 @@ def ewald_real_space(
             if compute_charge_gradients:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
                 charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
-                (energies, forces, charge_grads) = (
+                virial = jnp.zeros((1, 3, 3), dtype=dtype)
+                (energies, forces, charge_grads, _virial) = (
                     _jax_ewald_real_space_energy_forces_charge_grad_matrix[dtype](
                         positions_cast,
                         charges_cast,
@@ -645,25 +670,32 @@ def ewald_real_space(
                         neighbor_matrix_shifts_i32,
                         wp.int32(mask_value),
                         alpha_arr,
+                        False,  # compute_virial
                         energies,
                         forces,
                         charge_grads,
+                        virial,
                         launch_dims=(num_atoms,),
                     )
                 )
             elif compute_forces:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
-                (energies, forces) = _jax_ewald_real_space_energy_forces_matrix[dtype](
-                    positions_cast,
-                    charges_cast,
-                    cell_cast,
-                    neighbor_matrix_i32,
-                    neighbor_matrix_shifts_i32,
-                    wp.int32(mask_value),
-                    alpha_arr,
-                    energies,
-                    forces,
-                    launch_dims=(num_atoms,),
+                virial = jnp.zeros((1, 3, 3), dtype=dtype)
+                (energies, forces, _virial) = (
+                    _jax_ewald_real_space_energy_forces_matrix[dtype](
+                        positions_cast,
+                        charges_cast,
+                        cell_cast,
+                        neighbor_matrix_i32,
+                        neighbor_matrix_shifts_i32,
+                        wp.int32(mask_value),
+                        alpha_arr,
+                        False,  # compute_virial
+                        energies,
+                        forces,
+                        virial,
+                        launch_dims=(num_atoms,),
+                    )
                 )
             else:
                 (energies,) = _jax_ewald_real_space_energy_matrix[dtype](
