@@ -651,10 +651,10 @@ def _unit_shift_to_cartesian(
     cell_mat: Any,
 ) -> Any:
     """Convert integer unit cell shift to Cartesian coordinates."""
-    unit_shift_float = wp.vec(
-        cell_mat[0].dtype(unit_shift[0]),
-        cell_mat[0].dtype(unit_shift[1]),
-        cell_mat[0].dtype(unit_shift[2]),
+    unit_shift_float = type(cell_mat[0])(
+        type(cell_mat[0, 0])(unit_shift[0]),
+        type(cell_mat[0, 0])(unit_shift[1]),
+        type(cell_mat[0, 0])(unit_shift[2]),
     )
     return unit_shift_float * cell_mat
 
