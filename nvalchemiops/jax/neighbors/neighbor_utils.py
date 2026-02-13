@@ -23,14 +23,12 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
+from warp.jax_experimental import jax_kernel
 
-from nvalchemiops.jax.types import get_wp_dtype, jax_to_warp
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
+    _compute_naive_num_shifts_overload,
     estimate_max_neighbors,
-)
-from nvalchemiops.neighbors.neighbor_utils import (
-    compute_naive_num_shifts as wp_compute_naive_num_shifts,
 )
 
 __all__ = [
@@ -41,6 +39,31 @@ __all__ = [
     "estimate_max_neighbors",
     "NeighborOverflowError",
 ]
+
+# ==============================================================================
+# JAX Kernel Wrappers
+# ==============================================================================
+
+# Wrap the original kernel overloads with jax_kernel
+# jax_kernel handles the bool-to-int conversion internally
+_jax_compute_naive_num_shifts_f32 = jax_kernel(
+    _compute_naive_num_shifts_overload[wp.float32],
+    num_outputs=2,
+    in_out_argnames=["num_shifts", "shift_range"],
+    enable_backward=False,
+)
+
+_jax_compute_naive_num_shifts_f64 = jax_kernel(
+    _compute_naive_num_shifts_overload[wp.float64],
+    num_outputs=2,
+    in_out_argnames=["num_shifts", "shift_range"],
+    enable_backward=False,
+)
+
+
+# ==============================================================================
+# Public API
+# ==============================================================================
 
 
 def compute_naive_num_shifts(
@@ -73,42 +96,54 @@ def compute_naive_num_shifts(
 
     See Also
     --------
-    nvalchemiops.neighbors.neighbor_utils.compute_naive_num_shifts : Core warp launcher
+    nvalchemiops.neighbors.neighbor_utils._compute_naive_num_shifts : Warp kernel
+
+    Notes
+    -----
+    This function must be called outside ``jax.jit`` scope. The returned
+    ``total_shifts`` is a Python int needed for determining allocation sizes,
+    which cannot be traced. This is an inherent limitation: array shapes must
+    be known at trace time in JAX.
     """
     num_systems = cell.shape[0]
 
-    # Allocate on JAX device
-    num_shifts = jnp.empty(num_systems, dtype=jnp.int32)
-    shift_range = jnp.empty((num_systems, 3), dtype=jnp.int32)
+    # Allocate outputs as JAX arrays
+    num_shifts = jnp.zeros(num_systems, dtype=jnp.int32)
+    shift_range = jnp.zeros((num_systems, 3), dtype=jnp.int32)
 
-    wp_dtype = get_wp_dtype(cell.dtype)
+    # Ensure pbc is bool dtype (jax_kernel handles bool arrays directly)
+    pbc_bool = pbc.astype(jnp.bool_)
 
-    # warp-jax is CUDA-only
-    device_str = "cuda"
+    # Select the appropriate kernel based on input dtype
+    if cell.dtype == jnp.float64:
+        cell_f64 = cell.astype(jnp.float64)
+        num_shifts, shift_range = _jax_compute_naive_num_shifts_f64(
+            cell_f64,
+            float(cutoff),
+            pbc_bool,
+            num_shifts,
+            shift_range,
+            launch_dims=(num_systems,),
+        )
+    else:
+        # Default to float32 for float32, float16, and other types
+        cell_f32 = cell.astype(jnp.float32)
+        num_shifts, shift_range = _jax_compute_naive_num_shifts_f32(
+            cell_f32,
+            float(cutoff),
+            pbc_bool,
+            num_shifts,
+            shift_range,
+            launch_dims=(num_systems,),
+        )
 
-    # Convert JAX arrays to Warp via dlpack (zero-copy)
-    wp_cell = wp.from_dlpack(cell.astype(jnp.float32), dtype=wp.mat33f)
-    # Note: DLPack doesn't support bool, so we use jax_to_warp
-    wp_pbc = jax_to_warp(pbc.astype(jnp.bool_), dtype=wp.bool)
-    wp_num_shifts = wp.from_dlpack(num_shifts, dtype=wp.int32)
-    wp_shift_range = wp.from_dlpack(shift_range, dtype=wp.vec3i)
-
-    wp_compute_naive_num_shifts(
-        cell=wp_cell,
-        cutoff=cutoff,
-        pbc=wp_pbc,
-        num_shifts=wp_num_shifts,
-        shift_range=wp_shift_range,
-        wp_dtype=wp_dtype,
-        device=device_str,
-    )
-
-    # Synchronize after kernel launch
-    wp.synchronize_device(device_str)
-
-    # Compute cumulative sum for shift offsets
+    # Compute cumulative sum for shift offsets (pure JAX, jit-compatible)
     shift_offset = jnp.zeros(num_systems + 1, dtype=jnp.int32)
     shift_offset = shift_offset.at[1:].set(jnp.cumsum(num_shifts))
+
+    # NOTE: total_shifts_value requires int() extraction - this is needed for
+    # array allocation and must be concrete. The caller needs to handle this.
+    # This means compute_naive_num_shifts must be called outside jax.jit.
     total_shifts_value = int(shift_offset[-1])
 
     return shift_range, shift_offset, total_shifts_value
@@ -171,12 +206,20 @@ def get_neighbor_list_from_neighbor_matrix(
             return neighbor_list, neighbor_ptr
 
     # Validate that the neighbor matrix is large enough
+    # Note: This check only works outside jax.jit scope; inside jit it's skipped
+    # because max_found would be a tracer and int() conversion fails.
     max_found = jnp.max(num_neighbors)
-    if max_found > neighbor_matrix.shape[1]:
-        raise NeighborOverflowError(
-            neighbor_matrix.shape[1],
-            int(max_found),
-        )
+    try:
+        if int(max_found) > neighbor_matrix.shape[1]:
+            raise NeighborOverflowError(
+                neighbor_matrix.shape[1],
+                int(max_found),
+            )
+    except (
+        jax.errors.ConcretizationTypeError,
+        jax.errors.TracerIntegerConversionError,
+    ):
+        pass  # Skip validation during jax.jit tracing
 
     # Create mask and extract neighbor pairs
     mask = neighbor_matrix != fill_value
@@ -250,7 +293,16 @@ def prepare_batch_idx_ptr(
         )
 
     elif batch_ptr is None:
-        num_systems = int(jnp.max(batch_idx)) + 1
+        try:
+            num_systems = int(jnp.max(batch_idx)) + 1
+        except (
+            jax.errors.ConcretizationTypeError,
+            jax.errors.TracerIntegerConversionError,
+        ):
+            raise ValueError(
+                "Cannot infer num_systems from batch_idx inside jax.jit. "
+                "Please provide batch_ptr explicitly when using jax.jit."
+            ) from None
         # Use bincount to compute atoms per system
         num_atoms_per_system = jnp.bincount(
             batch_idx, minlength=num_systems, length=num_systems

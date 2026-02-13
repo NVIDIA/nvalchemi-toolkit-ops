@@ -20,20 +20,15 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
+from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
 )
-from nvalchemiops.jax.types import (
-    get_warp_device_from_array,
-    get_wp_dtype,
-    get_wp_mat_dtype,
-    get_wp_vec_dtype,
-)
 from nvalchemiops.neighbors.naive import (
-    naive_neighbor_matrix,
-    naive_neighbor_matrix_pbc,
+    _fill_naive_neighbor_matrix_overload,
+    _fill_naive_neighbor_matrix_pbc_overload,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     _expand_naive_shifts,
@@ -41,6 +36,46 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 
 __all__ = ["naive_neighbor_list"]
+
+# ==============================================================================
+# JAX Kernel Wrappers
+# ==============================================================================
+
+# No-PBC naive neighbor matrix kernel wrappers
+_jax_fill_naive_f32 = jax_kernel(
+    _fill_naive_neighbor_matrix_overload[wp.float32],
+    num_outputs=2,
+    in_out_argnames=["neighbor_matrix", "num_neighbors"],
+    enable_backward=False,
+)
+_jax_fill_naive_f64 = jax_kernel(
+    _fill_naive_neighbor_matrix_overload[wp.float64],
+    num_outputs=2,
+    in_out_argnames=["neighbor_matrix", "num_neighbors"],
+    enable_backward=False,
+)
+
+# PBC naive neighbor matrix kernel wrappers
+_jax_fill_naive_pbc_f32 = jax_kernel(
+    _fill_naive_neighbor_matrix_pbc_overload[wp.float32],
+    num_outputs=3,
+    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    enable_backward=False,
+)
+_jax_fill_naive_pbc_f64 = jax_kernel(
+    _fill_naive_neighbor_matrix_pbc_overload[wp.float64],
+    num_outputs=3,
+    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    enable_backward=False,
+)
+
+# Expand shifts kernel wrapper (no overloads — single kernel)
+_jax_expand_naive_shifts = jax_kernel(
+    _expand_naive_shifts,
+    num_outputs=2,
+    in_out_argnames=["shifts", "shift_system_idx"],
+    enable_backward=False,
+)
 
 
 def naive_neighbor_list(
@@ -264,73 +299,54 @@ def naive_neighbor_list(
             else:
                 return neighbor_matrix, num_neighbors
 
-    # Get device and dtype info
-    device_str = get_warp_device_from_array(positions)
+    # Select kernel based on dtype
+    if positions.dtype == jnp.float64:
+        _jax_fill = _jax_fill_naive_f64
+        _jax_fill_pbc = _jax_fill_naive_pbc_f64
+    else:
+        _jax_fill = _jax_fill_naive_f32
+        _jax_fill_pbc = _jax_fill_naive_pbc_f32
+        positions = positions.astype(jnp.float32)
 
-    wp_dtype = get_wp_dtype(positions.dtype)
-    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
-    wp_mat_dtype = get_wp_mat_dtype(cell.dtype) if cell is not None else None
-
-    # Convert JAX arrays to Warp via dlpack (zero-copy)
-    positions_wp = wp.from_dlpack(positions, dtype=wp_vec_dtype)
-    neighbor_matrix_wp = wp.from_dlpack(neighbor_matrix, dtype=wp.int32)
-    num_neighbors_wp = wp.from_dlpack(num_neighbors, dtype=wp.int32)
+    total_atoms = positions.shape[0]
 
     if pbc is None:
         # No PBC case
-        naive_neighbor_matrix(
-            positions=positions_wp,
-            cutoff=cutoff,
-            neighbor_matrix=neighbor_matrix_wp,
-            num_neighbors=num_neighbors_wp,
-            wp_dtype=wp_dtype,
-            device=device_str,
-            half_fill=half_fill,
+        neighbor_matrix, num_neighbors = _jax_fill(
+            positions,
+            float(cutoff * cutoff),
+            neighbor_matrix,
+            num_neighbors,
+            half_fill,
+            launch_dims=(total_atoms,),
         )
     else:
-        # PBC case - expand shifts and call kernel
-        shifts = jnp.empty((total_shifts, 3), dtype=jnp.int32)
-        shift_system_idx = jnp.empty((total_shifts,), dtype=jnp.int32)
-        shifts_wp = wp.from_dlpack(shifts, dtype=wp.vec3i)
-        shift_system_idx_wp = wp.from_dlpack(shift_system_idx, dtype=wp.int32)
-        shift_range_per_dimension_wp = wp.from_dlpack(
-            shift_range_per_dimension, dtype=wp.vec3i
-        )
-        shift_offset_wp = wp.from_dlpack(shift_offset, dtype=wp.int32)
+        # PBC case - expand shifts first
+        shifts = jnp.zeros((total_shifts, 3), dtype=jnp.int32)
+        shift_system_idx = jnp.zeros(total_shifts, dtype=jnp.int32)
 
-        wp_device_obj = wp.get_device(device_str)
-        wp.launch(
-            kernel=_expand_naive_shifts,
-            dim=1,
-            inputs=[
-                shift_range_per_dimension_wp,
-                shift_offset_wp,
-                shifts_wp,
-                shift_system_idx_wp,
-            ],
-            device=wp_device_obj,
+        shifts, shift_system_idx = _jax_expand_naive_shifts(
+            shift_range_per_dimension,
+            shift_offset,
+            shifts,
+            shift_system_idx,
+            launch_dims=(1,),  # single system
         )
 
-        cell_wp = wp.from_dlpack(cell, dtype=wp_mat_dtype)
-        neighbor_matrix_shifts_wp = wp.from_dlpack(
-            neighbor_matrix_shifts, dtype=wp.vec3i
-        )
+        if cell.dtype != positions.dtype:
+            cell = cell.astype(positions.dtype)
 
-        naive_neighbor_matrix_pbc(
-            positions=positions_wp,
-            cutoff=cutoff,
-            cell=cell_wp,
-            shifts=shifts_wp,
-            neighbor_matrix=neighbor_matrix_wp,
-            neighbor_matrix_shifts=neighbor_matrix_shifts_wp,
-            num_neighbors=num_neighbors_wp,
-            wp_dtype=wp_dtype,
-            device=device_str,
-            half_fill=half_fill,
+        neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _jax_fill_pbc(
+            positions,
+            float(cutoff * cutoff),
+            cell,
+            shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            half_fill,
+            launch_dims=(total_shifts, total_atoms),
         )
-
-    # Synchronize device
-    wp.synchronize_device(device_str)
 
     if return_neighbor_list:
         if pbc is not None:

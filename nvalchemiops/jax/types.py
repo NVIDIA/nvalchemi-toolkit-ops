@@ -221,6 +221,13 @@ def jax_to_warp(
     - For boolean arrays, this converts via numpy (not zero-copy)
     - The returned Warp array shares memory with the JAX array (except for bool)
 
+    .. warning::
+
+        This function is **not compatible with** ``jax.jit`` **tracing**. It calls
+        ``wp.from_dlpack()`` which requires concrete array data, but JAX replaces
+        arrays with abstract tracers during ``jax.jit`` compilation. Use
+        ``warp.jax_experimental.jax_kernel`` instead for jit-compatible code paths.
+
     Examples
     --------
     >>> import jax.numpy as jnp
