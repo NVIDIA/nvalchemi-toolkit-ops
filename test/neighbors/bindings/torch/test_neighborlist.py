@@ -51,7 +51,7 @@ class TestNeighborListAutoSelection:
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
     def test_auto_select_naive_small_system(self, dtype, device):
-        """Auto-select naive for small systems (< 5000 atoms)."""
+        """Auto-select naive for small systems (< 2000 atoms)."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
 
@@ -101,12 +101,12 @@ class TestNeighborListAutoSelection:
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
     def test_auto_select_cell_list_large_system(self, dtype, device):
-        """Auto-select cell_list for large systems (>= 5000 atoms)."""
+        """Auto-select cell_list for large systems (>= 2000 avg atoms per system)."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
 
-        # Large system: 5000 atoms
-        positions = torch.randn(5000, 3, dtype=dtype, device=device) * 50.0
+        # Large system: 2000 atoms
+        positions = torch.randn(2000, 3, dtype=dtype, device=device) * 50.0
         cutoff = 2.0
 
         # Call wrapper with no method specified
@@ -119,7 +119,7 @@ class TestNeighborListAutoSelection:
         )  # With PBC (auto-created), so includes neighbor_ptr and shifts
         neighbor_list_result, neighbor_ptr, shifts = result
         assert neighbor_list_result.shape[0] == 2  # COO format
-        assert neighbor_ptr.shape[0] == 5001
+        assert neighbor_ptr.shape[0] == 2001
         assert neighbor_ptr[0] == 0
         assert shifts.shape[1] == 3  # 3D shifts
 
@@ -220,8 +220,8 @@ class TestNeighborListAutoSelection:
     def test_auto_select_batch_cell_list(self, dtype, device):
         """Auto-select batch_cell_list when batch_idx is provided for large system."""
 
-        # Create batch with total >= 5000 atoms
-        positions1 = torch.randn(3000, 3, dtype=dtype, device=device) * 50.0
+        # Create batch with avg >= 2000 atoms per system
+        positions1 = torch.randn(2500, 3, dtype=dtype, device=device) * 50.0
         positions2 = torch.randn(2500, 3, dtype=dtype, device=device) * 50.0
 
         positions = torch.cat([positions1, positions2], dim=0).to(device=device)
@@ -231,11 +231,11 @@ class TestNeighborListAutoSelection:
         pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
         batch_idx = torch.cat(
             [
-                torch.zeros(3000, dtype=torch.int32, device=device),
+                torch.zeros(2500, dtype=torch.int32, device=device),
                 torch.ones(2500, dtype=torch.int32, device=device),
             ]
         ).to(device=device)
-        batch_ptr = torch.tensor([0, 3000, 5500], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2500, 5000], dtype=torch.int32, device=device)
         cutoff = 2.0
 
         # Call wrapper with batch_idx but no method specified
@@ -253,7 +253,7 @@ class TestNeighborListAutoSelection:
         assert len(result) == 3
         nlist, neighbor_ptr, _ = result
         assert nlist.shape[0] == 2
-        assert neighbor_ptr.shape[0] == 5501
+        assert neighbor_ptr.shape[0] == 5001
         assert neighbor_ptr[0] == 0
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])

@@ -237,14 +237,32 @@ def neighbor_list(
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
     """
+    if cell is not None and pbc is None:
+        raise ValueError(
+            "`pbc` is required when `cell` is provided. "
+            "Pass a boolean tensor of shape (3,) or (num_systems, 3), "
+            "e.g. pbc=torch.tensor([True, True, True])."
+        )
+
     if method is None:
         total_atoms = positions.shape[0]
+
+        # Compute average atoms per system for method selection.
+        num_systems = 1
+        if cell is not None and cell.ndim == 3:
+            # cell shape is (num_systems, 3, 3) -- no GPU sync needed
+            num_systems = cell.shape[0]
+        elif batch_idx is not None:
+            # NOTE: reading batch_idx[-1] triggers a GPU-to-CPU sync
+            num_systems = int(batch_idx[-1]) + 1
+        avg_atoms = total_atoms // num_systems
+
         if cutoff2 is not None:
             method = "naive_dual_cutoff"
 
-        elif total_atoms >= 5000:
+        elif avg_atoms >= 2000:
             method = "cell_list"
-            if cell is None or pbc is None:
+            if cell is None:
                 cell = torch.eye(
                     3, dtype=positions.dtype, device=positions.device
                 ).reshape(1, 3, 3)
@@ -272,6 +290,13 @@ def neighbor_list(
                 **kwargs,
             )
         case "cell_list":
+            if cell is None:
+                cell = torch.eye(
+                    3, dtype=positions.dtype, device=positions.device
+                ).reshape(1, 3, 3)
+                pbc = torch.tensor(
+                    [False, False, False], dtype=torch.bool, device=positions.device
+                )
             return cell_list(
                 positions,
                 cutoff,
@@ -296,6 +321,13 @@ def neighbor_list(
                 **kwargs,
             )
         case "batch_cell_list":
+            if cell is None:
+                cell = torch.eye(
+                    3, dtype=positions.dtype, device=positions.device
+                ).reshape(1, 3, 3)
+                pbc = torch.tensor(
+                    [False, False, False], dtype=torch.bool, device=positions.device
+                )
             return batch_cell_list(
                 positions,
                 cutoff,
