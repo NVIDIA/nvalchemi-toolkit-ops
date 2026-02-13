@@ -215,10 +215,10 @@ class TestDtypeSupport:
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_pme_reciprocal_dtype_returns_correct_type(self, device, dtype):
-        """Test that pme_reciprocal_space returns arrays with expected dtype.
+        """Test that pme_reciprocal_space returns arrays matching input dtype.
 
-        Note: JAX PME always uses float32 B-spline interpolation internally,
-        so output dtype is always float32 regardless of input dtype.
+        Spline kernels now preserve input dtype (float32 or float64), so PME
+        output dtype matches the input positions dtype.
         """
         positions, charges, cell = create_dipole_system(dtype=dtype)
 
@@ -233,10 +233,7 @@ class TestDtypeSupport:
             compute_forces=False,
         )
         assert jnp.all(jnp.isfinite(energies))
-        # JAX PME always returns float32 due to B-spline kernel
-        assert energies.dtype == jnp.float32, (
-            f"Expected float32 output, got {energies.dtype}"
-        )
+        assert energies.dtype == dtype, f"Expected {dtype} output, got {energies.dtype}"
 
         # Test with forces
         energies, forces = pme_reciprocal_space(
@@ -250,19 +247,15 @@ class TestDtypeSupport:
         )
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
-        assert energies.dtype == jnp.float32, (
-            f"Expected float32 output, got {energies.dtype}"
-        )
-        assert forces.dtype == jnp.float32, (
-            f"Expected float32 output, got {forces.dtype}"
-        )
+        assert energies.dtype == dtype, f"Expected {dtype} output, got {energies.dtype}"
+        assert forces.dtype == dtype, f"Expected {dtype} output, got {forces.dtype}"
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_pme_batch_dtype_returns_correct_type(self, device, dtype):
-        """Test that batch PME returns arrays with expected dtype.
+        """Test that batch PME returns arrays matching input dtype.
 
-        Note: JAX PME always uses float32 B-spline interpolation internally,
-        so output dtype is always float32 regardless of input dtype.
+        Spline kernels now preserve input dtype (float32 or float64), so PME
+        output dtype matches the input positions dtype.
         """
         pos1, chg1, cell1 = create_dipole_system(dtype=dtype)
         pos2, chg2, cell2 = create_dipole_system(dtype=dtype, separation=3.0)
@@ -284,9 +277,7 @@ class TestDtypeSupport:
             compute_forces=False,
         )
         assert jnp.all(jnp.isfinite(energies))
-        assert energies.dtype == jnp.float32, (
-            f"Expected float32 output, got {energies.dtype}"
-        )
+        assert energies.dtype == dtype, f"Expected {dtype} output, got {energies.dtype}"
 
         # Test with forces
         energies, forces = pme_reciprocal_space(
@@ -301,12 +292,8 @@ class TestDtypeSupport:
         )
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
-        assert energies.dtype == jnp.float32, (
-            f"Expected float32 output, got {energies.dtype}"
-        )
-        assert forces.dtype == jnp.float32, (
-            f"Expected float32 output, got {forces.dtype}"
-        )
+        assert energies.dtype == dtype, f"Expected {dtype} output, got {energies.dtype}"
+        assert forces.dtype == dtype, f"Expected {dtype} output, got {forces.dtype}"
 
     def test_float32_vs_float64_consistency(self, device):
         """Test that float32 and float64 produce consistent results."""

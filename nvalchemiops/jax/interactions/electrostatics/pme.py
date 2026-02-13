@@ -744,8 +744,8 @@ def pme_reciprocal_space(
 
     Notes
     -----
-    - Output is always float32 for energy/forces (spline kernels use float32)
-    - For float64 pipelines, FFT/convolution use float64 but spline output is float32
+    - Output dtype for energy/forces matches the input positions dtype
+    - FFT/convolution and spline operations all respect the input dtype
     - Automatically determines mesh_dimensions if not provided
     - Virial is computed in k-space and uses the same dtype as k_squared
     """
@@ -762,12 +762,12 @@ def pme_reciprocal_space(
 
     # Handle empty systems
     if num_atoms == 0:
-        energies = jnp.zeros(num_atoms, dtype=jnp.float32)
+        energies = jnp.zeros(num_atoms, dtype=input_dtype)
         forces = (
-            jnp.zeros((num_atoms, 3), dtype=jnp.float32) if compute_forces else None
+            jnp.zeros((num_atoms, 3), dtype=input_dtype) if compute_forces else None
         )
         charge_grads = (
-            jnp.zeros(num_atoms, dtype=jnp.float32)
+            jnp.zeros(num_atoms, dtype=input_dtype)
             if compute_charge_gradients
             else None
         )
@@ -830,8 +830,8 @@ def pme_reciprocal_space(
 
     # Step 4: Apply B-spline deconvolution and convolve with Green's function
     # Upcast to the complex equivalent of input_dtype to preserve imaginary part.
-    # spline_spread returns float32 → rfftn produces complex64.
-    # When input positions are float64, we need complex128, not float64
+    # spline_spread now returns the same dtype as input positions.
+    # rfftn then produces complex64 (float32 input) or complex128 (float64 input).
     # (casting complex to real silently drops the imaginary component).
     complex_dtype = jnp.complex64 if input_dtype == jnp.float32 else jnp.complex128
     mesh_fft = mesh_fft.astype(complex_dtype) / structure_factor_sq
@@ -857,8 +857,7 @@ def pme_reciprocal_space(
         convolved_mesh, s=mesh_dimensions, axes=fft_dims, norm="forward"
     )
 
-    # Step 6: Interpolate potential to atomic positions
-    # Note: spline_gather returns float32
+    # Step 6: Interpolate potential to atomic positions (dtype matches positions)
     raw_energies = spline_gather(
         positions,
         potential_mesh,
@@ -890,8 +889,7 @@ def pme_reciprocal_space(
 
         electric_field_mesh = jnp.stack([Ex, Ey, Ez], axis=-1)
 
-        # Interpolate electric field to atomic positions
-        # Note: spline_gather_vec3 returns float32
+        # Interpolate electric field to atomic positions (dtype matches positions)
         interpolated_field = spline_gather_vec3(
             positions,
             charges,
