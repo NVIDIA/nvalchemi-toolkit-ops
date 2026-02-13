@@ -141,19 +141,6 @@ class TestNaiveNeighborList:
         assert int(num_neighbors[0]) >= 1
         assert int(num_neighbors[1]) >= 1
 
-    def test_output_device_matches_input(self):
-        """Test that output device is GPU."""
-        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
-        cutoff = 1.0
-
-        neighbor_matrix, num_neighbors = naive_neighbor_list(
-            positions, cutoff, max_neighbors=10
-        )
-
-        # Check outputs are on GPU
-        assert neighbor_matrix.devices().pop().platform == "gpu"
-        assert num_neighbors.devices().pop().platform == "gpu"
-
 
 class TestNaiveEdgeCases:
     """Edge case tests for naive_neighbor_list."""

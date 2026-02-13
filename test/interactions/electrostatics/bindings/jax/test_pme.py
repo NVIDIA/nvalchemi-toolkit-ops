@@ -42,6 +42,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from nvalchemiops.jax.interactions.electrostatics.ewald import ewald_real_space
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_pme,
 )
@@ -50,7 +51,10 @@ from nvalchemiops.jax.interactions.electrostatics.pme import (
     pme_reciprocal_space,
 )
 from nvalchemiops.jax.neighbors import cell_list
-from test.interactions.electrostatics.bindings.jax.conftest import place_on_device
+from test.interactions.electrostatics.bindings.jax.conftest import (
+    fd_virial_full_jax,
+    make_virial_cscl_system_jax,
+)
 from test.interactions.electrostatics.conftest import (
     create_cscl_supercell,
     create_wurtzite_system,
@@ -73,13 +77,11 @@ except ModuleNotFoundError:
 # ==============================================================================
 
 
-def create_dipole_system(device, dtype=jnp.float64, separation=2.0, cell_size=10.0):
+def create_dipole_system(dtype=jnp.float64, separation=2.0, cell_size=10.0):
     """Create a simple dipole system with JAX arrays on GPU.
 
     Parameters
     ----------
-    device : str
-        Device type ("gpu")
     dtype : jnp.dtype
         Data type for arrays
     separation : float
@@ -93,34 +95,26 @@ def create_dipole_system(device, dtype=jnp.float64, separation=2.0, cell_size=10
         (positions, charges, cell)
     """
     center = cell_size / 2
-    positions = place_on_device(
-        jnp.array(
-            [
-                [center - separation / 2, center, center],
-                [center + separation / 2, center, center],
-            ],
-            dtype=dtype,
-        ),
-        device,
+    positions = jnp.array(
+        [
+            [center - separation / 2, center, center],
+            [center + separation / 2, center, center],
+        ],
+        dtype=dtype,
     )
-    charges = place_on_device(jnp.array([1.0, -1.0], dtype=dtype), device)
-    cell = place_on_device(
-        jnp.array(
-            [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
-            dtype=dtype,
-        ),
-        device,
+    charges = jnp.array([1.0, -1.0], dtype=dtype)
+    cell = jnp.array(
+        [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
+        dtype=dtype,
     )
     return positions, charges, cell
 
 
-def create_simple_system(device, dtype=jnp.float64, num_atoms=4, cell_size=10.0):
+def create_simple_system(dtype=jnp.float64, num_atoms=4, cell_size=10.0):
     """Create a simple test system with random positions and neutral charges.
 
     Parameters
     ----------
-    device : str
-        Device type ("gpu")
     dtype : jnp.dtype
         Data type for arrays
     num_atoms : int
@@ -134,10 +128,9 @@ def create_simple_system(device, dtype=jnp.float64, num_atoms=4, cell_size=10.0)
         (positions, charges, cell)
     """
     key = jax.random.PRNGKey(42)
-    positions = place_on_device(
+    positions = (
         jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * cell_size * 0.8
-        + cell_size * 0.1,
-        device,
+        + cell_size * 0.1
     )
 
     # Create random charges and make neutral
@@ -145,14 +138,11 @@ def create_simple_system(device, dtype=jnp.float64, num_atoms=4, cell_size=10.0)
     charges_raw = jax.random.normal(key2, (num_atoms,), dtype=dtype)
     # Make last charge neutralize the system
     charges_raw = charges_raw.at[-1].set(-charges_raw[:-1].sum())
-    charges = place_on_device(charges_raw, device)
+    charges = charges_raw
 
-    cell = place_on_device(
-        jnp.array(
-            [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
-            dtype=dtype,
-        ),
-        device,
+    cell = jnp.array(
+        [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
+        dtype=dtype,
     )
 
     return positions, charges, cell
@@ -233,7 +223,7 @@ class TestDtypeSupport:
         Note: JAX PME always uses float32 B-spline interpolation internally,
         so output dtype is always float32 regardless of input dtype.
         """
-        positions, charges, cell = create_dipole_system(device, dtype=dtype)
+        positions, charges, cell = create_dipole_system(dtype=dtype)
 
         # Test energy-only
         energies = pme_reciprocal_space(
@@ -277,13 +267,13 @@ class TestDtypeSupport:
         Note: JAX PME always uses float32 B-spline interpolation internally,
         so output dtype is always float32 regardless of input dtype.
         """
-        pos1, chg1, cell1 = create_dipole_system(device, dtype=dtype)
-        pos2, chg2, cell2 = create_dipole_system(device, dtype=dtype, separation=3.0)
+        pos1, chg1, cell1 = create_dipole_system(dtype=dtype)
+        pos2, chg2, cell2 = create_dipole_system(dtype=dtype, separation=3.0)
 
         positions = jnp.concatenate([pos1, pos2], axis=0)
         charges = jnp.concatenate([chg1, chg2], axis=0)
         cells = jnp.concatenate([cell1, cell2], axis=0)
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         # Test energy-only
         energies = pme_reciprocal_space(
@@ -323,9 +313,7 @@ class TestDtypeSupport:
 
     def test_float32_vs_float64_consistency(self, device):
         """Test that float32 and float64 produce consistent results."""
-        positions_f64, charges_f64, cell_f64 = create_dipole_system(
-            device, dtype=jnp.float64
-        )
+        positions_f64, charges_f64, cell_f64 = create_dipole_system(dtype=jnp.float64)
 
         positions_f32 = positions_f64.astype(jnp.float32)
         charges_f32 = charges_f64.astype(jnp.float32)
@@ -366,7 +354,7 @@ class TestPMEReciprocalSpaceAPI:
 
     def test_output_shape_energy_only(self, device):
         """Test output shape when compute_forces=False."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         result = pme_reciprocal_space(
             positions=positions,
@@ -381,7 +369,7 @@ class TestPMEReciprocalSpaceAPI:
 
     def test_output_shape_energy_forces(self, device):
         """Test output shape when compute_forces=True."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -398,32 +386,21 @@ class TestPMEReciprocalSpaceAPI:
     def test_batch_output_shape(self, device):
         """Test output shape for batched calculation."""
         # Two systems with 3 and 4 atoms
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [1.0, 1.0, 1.0],
-                    [3.0, 1.0, 1.0],
-                    [5.0, 1.0, 1.0],
-                    [1.0, 5.0, 5.0],
-                    [3.0, 5.0, 5.0],
-                    [5.0, 5.0, 5.0],
-                    [7.0, 5.0, 5.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [1.0, 1.0, 1.0],
+                [3.0, 1.0, 1.0],
+                [5.0, 1.0, 1.0],
+                [1.0, 5.0, 5.0],
+                [3.0, 5.0, 5.0],
+                [5.0, 5.0, 5.0],
+                [7.0, 5.0, 5.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 0.0, 0.5, -0.5, 0.5, -0.5], dtype=jnp.float64),
-            device,
-        )
-        batch_idx = place_on_device(
-            jnp.array([0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32), device
-        )
-        cells = place_on_device(
-            jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * 2, axis=0),
-            device,
-        )
+        charges = jnp.array([1.0, -1.0, 0.0, 0.5, -0.5, 0.5, -0.5], dtype=jnp.float64)
+        batch_idx = jnp.array([0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32)
+        cells = jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * 2, axis=0)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -440,11 +417,9 @@ class TestPMEReciprocalSpaceAPI:
 
     def test_empty_system(self, device):
         """Test handling of empty system."""
-        positions = place_on_device(jnp.zeros((0, 3), dtype=jnp.float64), device)
-        charges = place_on_device(jnp.zeros(0, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0, device
-        )
+        positions = jnp.zeros((0, 3), dtype=jnp.float64)
+        charges = jnp.zeros(0, dtype=jnp.float64)
+        cell = jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -461,7 +436,7 @@ class TestPMEReciprocalSpaceAPI:
     @pytest.mark.parametrize("spline_order", [2, 3, 4])
     def test_different_spline_orders(self, spline_order, device):
         """Test that different spline orders produce valid results."""
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -491,7 +466,7 @@ class TestPMEConservationLaws:
 
     def test_momentum_conservation(self, device):
         """Test that net force is zero for neutral system."""
-        positions, charges, cell = create_simple_system(device, num_atoms=6)
+        positions, charges, cell = create_simple_system(num_atoms=6)
 
         _, forces = pme_reciprocal_space(
             positions=positions,
@@ -516,7 +491,7 @@ class TestPMEConservationLaws:
         discretization artifacts from B-spline interpolation. PME
         translation invariance improves with finer meshes.
         """
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
 
         energy1 = pme_reciprocal_space(
             positions=positions,
@@ -548,7 +523,7 @@ class TestPMEConservationLaws:
 
     def test_opposite_charges_opposite_forces(self, device):
         """Test that opposite charges in same field get opposite forces."""
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
 
         _, forces = pme_reciprocal_space(
             positions=positions,
@@ -579,7 +554,7 @@ class TestPMEConvergence:
         Uses larger mesh sizes to ensure meaningful differences in float32
         output from B-spline interpolation.
         """
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
 
         mesh_sizes = [8, 16, 32, 64]
         energies = []
@@ -620,7 +595,7 @@ class TestPMECorrectnessTorchPME:
     @pytest.mark.parametrize("mesh_spacing", [0.3, 0.5])
     def test_reciprocal_energy_matches_torchpme(self, device, alpha, mesh_spacing):
         """Test that reciprocal energy matches torchpme."""
-        positions, charges, cell = create_dipole_system(device, dtype=jnp.float64)
+        positions, charges, cell = create_dipole_system(dtype=jnp.float64)
 
         # Convert to numpy for mesh dim computation
         cell_np = np.array(cell[0])
@@ -666,13 +641,9 @@ class TestPMECorrectnessTorchPME:
         }
         system = system_fns[system_fn](size)
 
-        positions = place_on_device(
-            jnp.array(system.positions, dtype=jnp.float64), device
-        )
-        charges = place_on_device(jnp.array(system.charges, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(system.cell[np.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(system.positions, dtype=jnp.float64)
+        charges = jnp.array(system.charges, dtype=jnp.float64)
+        cell = jnp.array(system.cell[np.newaxis, :, :], dtype=jnp.float64)
 
         mesh_spacing = 0.5
         cell_lengths = np.linalg.norm(system.cell, axis=1)
@@ -714,7 +685,7 @@ class TestPMEBatchConsistency:
 
     def test_batch_single_system_matches(self, device):
         """Test batch with size 1 matches single-system."""
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
 
         # Single-system
         energy_single, forces_single = pme_reciprocal_space(
@@ -727,9 +698,7 @@ class TestPMEBatchConsistency:
         )
 
         # Batch with size 1
-        batch_idx = place_on_device(
-            jnp.zeros(positions.shape[0], dtype=jnp.int32), device
-        )
+        batch_idx = jnp.zeros(positions.shape[0], dtype=jnp.int32)
         energy_batch, forces_batch = pme_reciprocal_space(
             positions=positions,
             charges=charges,
@@ -756,7 +725,7 @@ class TestPMEBatchConsistency:
         systems = []
         for i in range(num_systems):
             pos, chg, cell = create_simple_system(
-                device, dtype, num_atoms=4 + i, cell_size=8.0 + i
+                dtype=dtype, num_atoms=4 + i, cell_size=8.0 + i
             )
             systems.append((pos, chg, cell))
 
@@ -781,12 +750,9 @@ class TestPMEBatchConsistency:
         cells_batch = jnp.concatenate([s[2] for s in systems], axis=0)
 
         atoms_per_system = [s[0].shape[0] for s in systems]
-        batch_idx = place_on_device(
-            jnp.repeat(
-                jnp.arange(num_systems, dtype=jnp.int32),
-                jnp.array(atoms_per_system),
-            ),
-            device,
+        batch_idx = jnp.repeat(
+            jnp.arange(num_systems, dtype=jnp.int32),
+            jnp.array(atoms_per_system),
         )
 
         energies_batch, forces_batch = pme_reciprocal_space(
@@ -825,16 +791,12 @@ class TestPMEBatchConsistency:
         dtype = jnp.float64
 
         # Two systems with different cell sizes
-        pos1 = place_on_device(
-            jnp.array([[2.5, 2.5, 2.5], [3.5, 3.5, 3.5]], dtype=dtype), device
-        )
-        chg1 = place_on_device(jnp.array([1.0, -1.0], dtype=dtype), device)
+        pos1 = jnp.array([[2.5, 2.5, 2.5], [3.5, 3.5, 3.5]], dtype=dtype)
+        chg1 = jnp.array([1.0, -1.0], dtype=dtype)
         cell1 = jnp.eye(3, dtype=dtype) * 6.0
 
-        pos2 = place_on_device(
-            jnp.array([[4.0, 4.0, 4.0], [6.0, 6.0, 6.0]], dtype=dtype), device
-        )
-        chg2 = place_on_device(jnp.array([0.5, -0.5], dtype=dtype), device)
+        pos2 = jnp.array([[4.0, 4.0, 4.0], [6.0, 6.0, 6.0]], dtype=dtype)
+        chg2 = jnp.array([0.5, -0.5], dtype=dtype)
         cell2 = jnp.eye(3, dtype=dtype) * 10.0
 
         # Single-system calculations
@@ -859,7 +821,7 @@ class TestPMEBatchConsistency:
         positions_batch = jnp.concatenate([pos1, pos2], axis=0)
         charges_batch = jnp.concatenate([chg1, chg2], axis=0)
         cells_batch = jnp.stack([cell1, cell2], axis=0)
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         e_batch, f_batch = pme_reciprocal_space(
             positions=positions_batch,
@@ -888,28 +850,20 @@ class TestPMEBatchConsistency:
         for idx, n_atoms in enumerate(atoms_per_system):
             key = jax.random.PRNGKey(idx + 100)
             pos = jax.random.uniform(key, (n_atoms, 3), dtype=jnp.float64) * 8.0
-            pos = place_on_device(pos, device)
 
             key2 = jax.random.PRNGKey(idx + 200)
             chg = jax.random.normal(key2, (n_atoms,), dtype=jnp.float64)
             chg = chg.at[-1].set(-chg[:-1].sum())  # Neutralize
-            chg = place_on_device(chg, device)
 
             positions_list.append(pos)
             charges_list.append(chg)
 
         positions = jnp.concatenate(positions_list, axis=0)
         charges = jnp.concatenate(charges_list, axis=0)
-        cells = place_on_device(
-            jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * num_systems, axis=0),
-            device,
-        )
-        batch_idx = place_on_device(
-            jnp.repeat(
-                jnp.arange(num_systems, dtype=jnp.int32),
-                jnp.array(atoms_per_system),
-            ),
-            device,
+        cells = jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * num_systems, axis=0)
+        batch_idx = jnp.repeat(
+            jnp.arange(num_systems, dtype=jnp.int32),
+            jnp.array(atoms_per_system),
         )
 
         _, forces = pme_reciprocal_space(
@@ -952,12 +906,12 @@ class TestPMEBatchConsistency:
         system1 = system_fns[system_fn](1)
         system2 = system_fns[system_fn](2)
 
-        pos1 = place_on_device(jnp.array(system1.positions, dtype=dtype), device)
-        chg1 = place_on_device(jnp.array(system1.charges, dtype=dtype), device)
+        pos1 = jnp.array(system1.positions, dtype=dtype)
+        chg1 = jnp.array(system1.charges, dtype=dtype)
         cell1 = jnp.array(system1.cell, dtype=dtype)
 
-        pos2 = place_on_device(jnp.array(system2.positions, dtype=dtype), device)
-        chg2 = place_on_device(jnp.array(system2.charges, dtype=dtype), device)
+        pos2 = jnp.array(system2.positions, dtype=dtype)
+        chg2 = jnp.array(system2.charges, dtype=dtype)
         cell2 = jnp.array(system2.cell, dtype=dtype)
 
         mesh_dims = (16, 16, 16)
@@ -986,9 +940,7 @@ class TestPMEBatchConsistency:
         positions_batch = jnp.concatenate([pos1, pos2], axis=0)
         charges_batch = jnp.concatenate([chg1, chg2], axis=0)
         cells_batch = jnp.stack([cell1, cell2], axis=0)
-        batch_idx = place_on_device(
-            jnp.array([0] * n1 + [1] * n2, dtype=jnp.int32), device
-        )
+        batch_idx = jnp.array([0] * n1 + [1] * n2, dtype=jnp.int32)
 
         _, forces_batch = pme_reciprocal_space(
             positions=positions_batch,
@@ -1025,7 +977,7 @@ class TestExplicitChargeGradients:
 
     def test_reciprocal_charge_gradients_shape(self, device):
         """Test reciprocal-space charge gradients have correct shape."""
-        positions, charges, cell = create_simple_system(device, num_atoms=4)
+        positions, charges, cell = create_simple_system(num_atoms=4)
 
         energies, charge_grads = pme_reciprocal_space(
             positions=positions,
@@ -1042,7 +994,7 @@ class TestExplicitChargeGradients:
 
     def test_reciprocal_charge_gradients_finite(self, device):
         """Test reciprocal-space charge gradients are finite and non-zero."""
-        positions, charges, cell = create_simple_system(device, num_atoms=4)
+        positions, charges, cell = create_simple_system(num_atoms=4)
 
         energies, charge_grads = pme_reciprocal_space(
             positions=positions,
@@ -1060,7 +1012,7 @@ class TestExplicitChargeGradients:
 
     def test_reciprocal_charge_grad_with_forces(self, device):
         """Test charge gradients when compute_forces=True for pme_reciprocal_space."""
-        positions, charges, cell = create_simple_system(device, num_atoms=4)
+        positions, charges, cell = create_simple_system(num_atoms=4)
 
         energies, forces, charge_grads = pme_reciprocal_space(
             positions=positions,
@@ -1081,26 +1033,18 @@ class TestExplicitChargeGradients:
 
     def test_batch_reciprocal_charge_grad(self, device):
         """Test charge gradients for batch pme_reciprocal_space."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [1.0, 2.0, 3.0],
-                    [4.0, 5.0, 6.0],
-                    [1.0, 2.0, 3.0],
-                    [4.0, 5.0, 6.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64), device
-        )
-        cell = place_on_device(
-            jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * 2, axis=0),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
+        cell = jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * 2, axis=0)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         energies, charge_grads = pme_reciprocal_space(
             positions=positions,
@@ -1120,12 +1064,12 @@ class TestExplicitChargeGradients:
 
     def test_full_pme_charge_grad_shapes(self, device):
         """Test charge gradients for particle_mesh_ewald with forces."""
-        positions, charges, cell = create_simple_system(device, num_atoms=4)
+        positions, charges, cell = create_simple_system(num_atoms=4)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies, forces, charge_grads = particle_mesh_ewald(
@@ -1134,9 +1078,8 @@ class TestExplicitChargeGradients:
             cell=cell,
             alpha=0.3,
             mesh_dimensions=(16, 16, 16),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
             compute_charge_gradients=True,
         )
@@ -1150,12 +1093,12 @@ class TestExplicitChargeGradients:
 
     def test_full_pme_charge_grad_no_forces(self, device):
         """Test charge gradients for particle_mesh_ewald without forces."""
-        positions, charges, cell = create_simple_system(device, num_atoms=4)
+        positions, charges, cell = create_simple_system(num_atoms=4)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies, charge_grads = particle_mesh_ewald(
@@ -1164,9 +1107,8 @@ class TestExplicitChargeGradients:
             cell=cell,
             alpha=0.3,
             mesh_dimensions=(16, 16, 16),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=False,
             compute_charge_gradients=True,
         )
@@ -1187,12 +1129,12 @@ class TestParticleMeshEwald:
 
     def test_full_pme_output_shape(self, device):
         """Test output shape of full PME calculation."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies, forces = particle_mesh_ewald(
@@ -1201,9 +1143,8 @@ class TestParticleMeshEwald:
             cell=cell,
             alpha=0.3,
             mesh_dimensions=(16, 16, 16),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
         )
 
@@ -1214,12 +1155,12 @@ class TestParticleMeshEwald:
 
     def test_full_pme_energy_only(self, device):
         """Test full PME energy-only output."""
-        positions, charges, cell = create_simple_system(device, num_atoms=4)
+        positions, charges, cell = create_simple_system(num_atoms=4)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies = particle_mesh_ewald(
@@ -1228,9 +1169,8 @@ class TestParticleMeshEwald:
             cell=cell,
             alpha=0.3,
             mesh_dimensions=(16, 16, 16),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=False,
         )
 
@@ -1239,12 +1179,12 @@ class TestParticleMeshEwald:
 
     def test_full_pme_auto_estimate_alpha(self, device):
         """Test full PME with automatic alpha estimation."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         # Call without alpha - should auto-estimate
@@ -1253,9 +1193,8 @@ class TestParticleMeshEwald:
             charges=charges,
             cell=cell,
             alpha=None,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
         )
 
@@ -1266,12 +1205,12 @@ class TestParticleMeshEwald:
 
     def test_full_pme_mesh_spacing(self, device):
         """Test full PME with mesh_spacing parameter."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies, forces = particle_mesh_ewald(
@@ -1280,9 +1219,8 @@ class TestParticleMeshEwald:
             cell=cell,
             alpha=0.3,
             mesh_spacing=0.5,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
         )
 
@@ -1302,18 +1240,12 @@ class TestNonCubicCells:
 
     def test_orthorhombic_cell(self, device):
         """Test PME with orthorhombic cell."""
-        cell = place_on_device(
-            jnp.array(
-                [[[8.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 12.0]]],
-                dtype=jnp.float64,
-            ),
-            device,
+        cell = jnp.array(
+            [[[8.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 12.0]]],
+            dtype=jnp.float64,
         )
-        positions = place_on_device(
-            jnp.array([[2.0, 5.0, 6.0], [6.0, 5.0, 6.0]], dtype=jnp.float64),
-            device,
-        )
-        charges = place_on_device(jnp.array([1.0, -1.0], dtype=jnp.float64), device)
+        positions = jnp.array([[2.0, 5.0, 6.0], [6.0, 5.0, 6.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1332,18 +1264,12 @@ class TestNonCubicCells:
 
     def test_triclinic_cell(self, device):
         """Test PME with triclinic cell."""
-        cell = place_on_device(
-            jnp.array(
-                [[[10.0, 0.0, 0.0], [2.0, 10.0, 0.0], [1.0, 1.0, 10.0]]],
-                dtype=jnp.float64,
-            ),
-            device,
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [2.0, 10.0, 0.0], [1.0, 1.0, 10.0]]],
+            dtype=jnp.float64,
         )
-        positions = place_on_device(
-            jnp.array([[2.0, 5.0, 5.0], [7.0, 5.0, 5.0]], dtype=jnp.float64),
-            device,
-        )
-        charges = place_on_device(jnp.array([1.0, -1.0], dtype=jnp.float64), device)
+        positions = jnp.array([[2.0, 5.0, 5.0], [7.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1361,13 +1287,9 @@ class TestNonCubicCells:
         """Test PME with wurtzite (hexagonal) cell."""
         crystal = create_wurtzite_system(size=2)
 
-        positions = place_on_device(
-            jnp.array(crystal.positions, dtype=jnp.float64), device
-        )
-        charges = place_on_device(jnp.array(crystal.charges, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(crystal.positions, dtype=jnp.float64)
+        charges = jnp.array(crystal.charges, dtype=jnp.float64)
+        cell = jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1392,7 +1314,7 @@ class TestPrecomputedKVectors:
 
     def test_precomputed_kvectors(self, device):
         """Test that precomputed k-vectors give same results."""
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
         mesh_dims = (16, 16, 16)
 
         # Without precomputed k-vectors
@@ -1432,13 +1354,9 @@ class TestSingleAtomSystem:
 
     def test_single_atom_pme(self, device):
         """Test PME with single atom."""
-        positions = place_on_device(
-            jnp.array([[5.0, 5.0, 5.0]], dtype=jnp.float64), device
-        )
-        charges = place_on_device(jnp.array([1.0], dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0, device
-        )
+        positions = jnp.array([[5.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0], dtype=jnp.float64)
+        cell = jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1465,14 +1383,9 @@ class TestZeroCharges:
 
     def test_zero_charges_zero_energy(self, device):
         """Test that zero charges give zero energy."""
-        positions = place_on_device(
-            jnp.array([[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]], dtype=jnp.float64),
-            device,
-        )
-        charges = place_on_device(jnp.array([0.0, 0.0], dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0, device
-        )
+        positions = jnp.array([[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([0.0, 0.0], dtype=jnp.float64)
+        cell = jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1497,7 +1410,7 @@ class TestAlphaSensitivity:
 
     def test_alpha_affects_energy(self, device):
         """Test that different alpha values affect energy."""
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
 
         energies_low_alpha = pme_reciprocal_space(
             positions=positions,
@@ -1531,13 +1444,13 @@ class TestBatchWithDifferentAlpha:
 
     def test_batch_per_system_alpha(self, device):
         """Test batch with different alpha per system."""
-        pos1, chg1, cell1 = create_dipole_system(device)
-        pos2, chg2, cell2 = create_dipole_system(device, separation=3.0)
+        pos1, chg1, cell1 = create_dipole_system()
+        pos2, chg2, cell2 = create_dipole_system(separation=3.0)
 
         positions = jnp.concatenate([pos1, pos2], axis=0)
         charges = jnp.concatenate([chg1, chg2], axis=0)
         cells = jnp.concatenate([cell1, cell2], axis=0)
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         # Different alpha per system
         alphas = jnp.array([0.2, 0.5])
@@ -1576,9 +1489,7 @@ class TestPMEForcesNumericalGradient:
         interpolation used internally by the PME kernel.
         """
         # Use a well-separated dipole with stronger charges for bigger forces
-        positions, charges, cell = create_dipole_system(
-            device, separation=3.0, cell_size=12.0
-        )
+        positions, charges, cell = create_dipole_system(separation=3.0, cell_size=12.0)
         # Scale charges up so forces are not tiny
         charges = charges * 3.0
 
@@ -1614,9 +1525,7 @@ class TestPMEForcesNumericalGradient:
                 pos_plus = positions_np.copy()
                 pos_plus[atom_idx, coord_idx] += h
                 e_plus = pme_reciprocal_space(
-                    positions=place_on_device(
-                        jnp.array(pos_plus, dtype=jnp.float64), device
-                    ),
+                    positions=jnp.array(pos_plus, dtype=jnp.float64),
                     charges=charges,
                     cell=cell,
                     alpha=alpha_val,
@@ -1628,9 +1537,7 @@ class TestPMEForcesNumericalGradient:
                 pos_minus = positions_np.copy()
                 pos_minus[atom_idx, coord_idx] -= h
                 e_minus = pme_reciprocal_space(
-                    positions=place_on_device(
-                        jnp.array(pos_minus, dtype=jnp.float64), device
-                    ),
+                    positions=jnp.array(pos_minus, dtype=jnp.float64),
                     charges=charges,
                     cell=cell,
                     alpha=alpha_val,
@@ -1669,7 +1576,7 @@ class TestSplineOrders:
     @pytest.mark.parametrize("spline_order", [2, 3, 4, 5, 6])
     def test_spline_order_valid_results(self, device, spline_order):
         """Test that different spline orders give valid results."""
-        positions, charges, cell = create_dipole_system(device)
+        positions, charges, cell = create_dipole_system()
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1698,7 +1605,7 @@ class TestPMEMeshSpacing:
 
     def test_mesh_spacing_path(self, device):
         """Test mesh_spacing path for dimension computation."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         # Use mesh_spacing instead of mesh_dimensions
         energies = pme_reciprocal_space(
@@ -1727,15 +1634,15 @@ class TestPrepareAlphaPME:
 
     def test_scalar_alpha_0d_array(self, device):
         """Test 0-dimensional alpha array expansion."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         # 0-dimensional JAX array (scalar array)
         alpha = jnp.array(0.3)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies = particle_mesh_ewald(
@@ -1744,9 +1651,8 @@ class TestPrepareAlphaPME:
             cell=cell,
             alpha=alpha,  # 0-dim array
             mesh_dimensions=(16, 16, 16),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=False,
         )
 
@@ -1754,15 +1660,15 @@ class TestPrepareAlphaPME:
 
     def test_alpha_wrong_size_raises_error(self, device):
         """Test alpha array with wrong number of elements raises ValueError."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         # Alpha array with wrong size (2 values for 1 system)
         alpha = jnp.array([0.3, 0.5])
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         with pytest.raises(ValueError):
@@ -1772,9 +1678,8 @@ class TestPrepareAlphaPME:
                 cell=cell,
                 alpha=alpha,  # Wrong size: 2 values for 1 system
                 mesh_dimensions=(16, 16, 16),
-                neighbor_list=neighbor_list,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=False,
             )
 
@@ -1786,12 +1691,12 @@ class TestPrepareAlphaPME:
         _prepare_alpha_array (used by ewald_real_space) raises TypeError.
         We accept either error type here.
         """
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         with pytest.raises((TypeError, AttributeError)):
@@ -1801,9 +1706,8 @@ class TestPrepareAlphaPME:
                 cell=cell,
                 alpha="invalid",  # String is not valid
                 mesh_dimensions=(16, 16, 16),
-                neighbor_list=neighbor_list,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=False,
             )
 
@@ -1824,7 +1728,7 @@ class TestPMEMeshDimensionErrors:
 
     def test_no_mesh_dimensions_or_spacing_falls_back_to_estimation(self, device):
         """Test that pme_reciprocal_space estimates mesh when both are None."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         # Neither mesh_dimensions nor mesh_spacing provided
         # JAX version gracefully falls back to estimate_pme_mesh_dimensions
@@ -1843,7 +1747,7 @@ class TestPMEMeshDimensionErrors:
 
     def test_mesh_spacing_path_in_reciprocal_space(self, device):
         """Test mesh_spacing path for dimension computation in pme_reciprocal_space."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         energies = pme_reciprocal_space(
             positions=positions,
@@ -1873,12 +1777,12 @@ class TestParticleMeshEwaldAutoEstimation:
 
     def test_accuracy_based_mesh_estimation(self, device):
         """Test accuracy-based mesh dimension estimation."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         # Provide alpha but no mesh_dimensions or mesh_spacing
@@ -1890,9 +1794,8 @@ class TestParticleMeshEwaldAutoEstimation:
             alpha=0.3,
             mesh_dimensions=None,
             mesh_spacing=None,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
             accuracy=1e-4,
         )
@@ -1904,12 +1807,12 @@ class TestParticleMeshEwaldAutoEstimation:
 
     def test_auto_mesh_from_alpha_estimation(self, device):
         """Test mesh_dimensions auto-derived when alpha is auto-estimated."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        positions, charges, cell = create_simple_system(num_atoms=5)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         # alpha=None triggers estimate_pme_parameters which sets alpha AND mesh_dimensions
@@ -1920,9 +1823,8 @@ class TestParticleMeshEwaldAutoEstimation:
             alpha=None,  # Triggers auto-estimation
             mesh_dimensions=None,  # Will be set from params
             mesh_spacing=None,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
         )
 
@@ -1942,10 +1844,8 @@ class TestBatchPMEShapePaths:
 
     def test_batch_reciprocal_space_single_system(self, device):
         """Test batch reciprocal space with single system."""
-        positions, charges, cell = create_simple_system(device, num_atoms=5)
-        batch_idx = place_on_device(
-            jnp.zeros(5, dtype=jnp.int32), device
-        )  # All same batch
+        positions, charges, cell = create_simple_system(num_atoms=5)
+        batch_idx = jnp.zeros(5, dtype=jnp.int32)  # All same batch
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1971,26 +1871,19 @@ class TestBatchPMEShapePaths:
         dtype = jnp.float64
 
         # System 1: 3 atoms
-        pos1 = place_on_device(
-            jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 3.0, 2.0]], dtype=dtype),
-            device,
+        pos1 = jnp.array(
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 3.0, 2.0]], dtype=dtype
         )
-        chg1 = place_on_device(jnp.array([1.0, -0.5, -0.5], dtype=dtype), device)
+        chg1 = jnp.array([1.0, -0.5, -0.5], dtype=dtype)
 
         # System 2: 2 atoms
-        pos2 = place_on_device(
-            jnp.array([[2.0, 3.0, 4.0], [5.0, 6.0, 7.0]], dtype=dtype),
-            device,
-        )
-        chg2 = place_on_device(jnp.array([0.5, -0.5], dtype=dtype), device)
+        pos2 = jnp.array([[2.0, 3.0, 4.0], [5.0, 6.0, 7.0]], dtype=dtype)
+        chg2 = jnp.array([0.5, -0.5], dtype=dtype)
 
         positions = jnp.concatenate([pos1, pos2], axis=0)
         charges = jnp.concatenate([chg1, chg2], axis=0)
-        cells = place_on_device(
-            jnp.stack([jnp.eye(3, dtype=dtype) * 10.0] * 2, axis=0),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 0, 1, 1], dtype=jnp.int32), device)
+        cells = jnp.stack([jnp.eye(3, dtype=dtype) * 10.0] * 2, axis=0)
+        batch_idx = jnp.array([0, 0, 0, 1, 1], dtype=jnp.int32)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -2050,7 +1943,7 @@ class TestPMEChargeGradients:
         Compares dE/dq_i (explicit) against central finite differences:
             dE/dq_i ≈ [E(q_i + h) - E(q_i - h)] / (2h)
         """
-        positions, charges, cell = create_simple_system(device, num_atoms=4)
+        positions, charges, cell = create_simple_system(num_atoms=4)
 
         # Get explicit charge gradients
         energies, charge_grads = pme_reciprocal_space(
@@ -2074,7 +1967,7 @@ class TestPMEChargeGradients:
             chg_plus[i] += h
             e_plus = pme_reciprocal_space(
                 positions=positions,
-                charges=place_on_device(jnp.array(chg_plus, dtype=jnp.float64), device),
+                charges=jnp.array(chg_plus, dtype=jnp.float64),
                 cell=cell,
                 alpha=jnp.array([0.3]),
                 mesh_dimensions=(16, 16, 16),
@@ -2086,9 +1979,7 @@ class TestPMEChargeGradients:
             chg_minus[i] -= h
             e_minus = pme_reciprocal_space(
                 positions=positions,
-                charges=place_on_device(
-                    jnp.array(chg_minus, dtype=jnp.float64), device
-                ),
+                charges=jnp.array(chg_minus, dtype=jnp.float64),
                 cell=cell,
                 alpha=jnp.array([0.3]),
                 mesh_dimensions=(16, 16, 16),
@@ -2115,26 +2006,18 @@ class TestPMEChargeGradients:
 
     def test_batch_charge_grad_matches_finite_difference(self, device):
         """Test batch charge gradients match finite difference estimate."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [1.0, 2.0, 3.0],
-                    [4.0, 5.0, 6.0],
-                    [1.0, 2.0, 3.0],
-                    [4.0, 5.0, 6.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+                [1.0, 2.0, 3.0],
+                [4.0, 5.0, 6.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64), device
-        )
-        cell = place_on_device(
-            jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * 2, axis=0),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
+        cell = jnp.stack([jnp.eye(3, dtype=jnp.float64) * 10.0] * 2, axis=0)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         # Get explicit charge gradients
         energies, charge_grads = pme_reciprocal_space(
@@ -2158,7 +2041,7 @@ class TestPMEChargeGradients:
             chg_plus[i] += h
             e_plus = pme_reciprocal_space(
                 positions=positions,
-                charges=place_on_device(jnp.array(chg_plus, dtype=jnp.float64), device),
+                charges=jnp.array(chg_plus, dtype=jnp.float64),
                 cell=cell,
                 alpha=jnp.array([0.3, 0.3]),
                 mesh_dimensions=(16, 16, 16),
@@ -2170,9 +2053,7 @@ class TestPMEChargeGradients:
             chg_minus[i] -= h
             e_minus = pme_reciprocal_space(
                 positions=positions,
-                charges=place_on_device(
-                    jnp.array(chg_minus, dtype=jnp.float64), device
-                ),
+                charges=jnp.array(chg_minus, dtype=jnp.float64),
                 cell=cell,
                 alpha=jnp.array([0.3, 0.3]),
                 mesh_dimensions=(16, 16, 16),
@@ -2204,8 +2085,8 @@ class TestPMEChargeGradients:
 class TestFullPMENeighborList:
     """Test full PME with explicit neighbor list (COO) format.
 
-    Verifies that particle_mesh_ewald correctly uses neighbor_list
-    (COO format) for the real-space component on crystal systems,
+    Verifies that particle_mesh_ewald correctly uses neighbor_matrix
+    (dense format) for the real-space component on crystal systems,
     complementing the simpler tests in TestParticleMeshEwald.
     """
 
@@ -2213,18 +2094,14 @@ class TestFullPMENeighborList:
         """Test full PME with neighbor list on a crystal system."""
         crystal = create_cscl_supercell(1)
 
-        positions = place_on_device(
-            jnp.array(crystal.positions, dtype=jnp.float64), device
-        )
-        charges = place_on_device(jnp.array(crystal.charges, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(crystal.positions, dtype=jnp.float64)
+        charges = jnp.array(crystal.charges, dtype=jnp.float64)
+        cell = jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies, forces = particle_mesh_ewald(
@@ -2233,9 +2110,8 @@ class TestFullPMENeighborList:
             cell=cell,
             alpha=0.3,
             mesh_dimensions=(16, 16, 16),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
         )
 
@@ -2261,18 +2137,14 @@ class TestFullPMENeighborList:
         }
         crystal = system_fns[system_fn](1)
 
-        positions = place_on_device(
-            jnp.array(crystal.positions, dtype=jnp.float64), device
-        )
-        charges = place_on_device(jnp.array(crystal.charges, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(crystal.positions, dtype=jnp.float64)
+        charges = jnp.array(crystal.charges, dtype=jnp.float64)
+        cell = jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         energies, forces, charge_grads = particle_mesh_ewald(
@@ -2281,9 +2153,8 @@ class TestFullPMENeighborList:
             cell=cell,
             alpha=0.3,
             mesh_dimensions=(16, 16, 16),
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
             compute_charge_gradients=True,
         )
@@ -2370,32 +2241,440 @@ class TestPMEJIT:
         pbc = jnp.array([[True, True, True]])
 
         # Build neighbor list eagerly (it uses .devices().pop() internally)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff=5.0, cell=cell, pbc=pbc, return_neighbor_list=True
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
         )
 
         @jax.jit
-        def jitted_full_pme(positions, charges, cell, nl, nptr, nshifts):
+        def jitted_full_pme(positions, charges, cell, nm, nms):
             return particle_mesh_ewald(
                 positions=positions,
                 charges=charges,
                 cell=cell,
                 alpha=0.3,
                 mesh_dimensions=(16, 16, 16),
-                neighbor_list=nl,
-                neighbor_ptr=nptr,
-                neighbor_shifts=nshifts,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
                 compute_forces=True,
             )
 
         energies, forces = jitted_full_pme(
-            positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+            positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts
         )
 
         assert energies.shape == (4,)
         assert forces.shape == (4, 3)
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
+
+
+###########################################################################################
+########################### PME Virial Tests ##############################################
+###########################################################################################
+
+
+class TestPMEReciprocalVirial:
+    """Test PME reciprocal-space virial against FD and basic properties."""
+
+    def test_pme_reciprocal_virial_shape(self, device):
+        """PME reciprocal virial has shape (1, 3, 3)."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=(16, 16, 16),
+            compute_forces=True,
+            compute_virial=True,
+        )
+        # Result should be (energies, forces, virial)
+        assert len(result) == 3
+        energies, forces, virial = result
+        assert virial.shape == (1, 3, 3)
+
+    def test_pme_reciprocal_virial_finite_nonzero(self, device):
+        """PME reciprocal virial is finite and non-zero for ionic crystal."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=(16, 16, 16),
+            compute_forces=True,
+            compute_virial=True,
+        )
+        virial = result[2]
+        assert jnp.all(jnp.isfinite(virial))
+        assert jnp.any(jnp.abs(virial) > 1e-10)
+
+    def test_pme_reciprocal_virial_fd(self, device):
+        """PME reciprocal virial matches FD strain derivative.
+
+        Note: JAX PME B-spline interpolation always outputs float32, which
+        limits FD derivative precision. We compare diagonal elements with
+        looser tolerance. Off-diagonal FD elements may have spurious noise
+        from float32 subtraction of nearly-equal values.
+        """
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+        mesh_dims = (16, 16, 16)
+
+        def energy_fn(pos, c):
+            return pme_reciprocal_space(
+                pos,
+                charges,
+                c,
+                alpha,
+                mesh_dimensions=mesh_dims,
+                compute_forces=False,
+            ).sum()
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)  # (3, 3)
+        fd_virial = fd_virial_full_jax(energy_fn, positions, cell, h=1e-5)
+
+        # Compare diagonal elements (most reliable for float32 output)
+        explicit_diag = jnp.diag(explicit_virial)
+        fd_diag = jnp.diag(fd_virial)
+        assert jnp.allclose(explicit_diag, fd_diag, atol=5e-2, rtol=5e-2), (
+            f"PME reciprocal virial diagonal does not match FD\n"
+            f"explicit diag: {explicit_diag}\nFD diag: {fd_diag}"
+        )
+
+    def test_pme_reciprocal_virial_symmetry(self, device):
+        """PME reciprocal virial is symmetric for cubic system."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=(16, 16, 16),
+            compute_forces=True,
+            compute_virial=True,
+        )
+        virial = result[2].squeeze(0)  # (3, 3)
+        assert jnp.allclose(virial, virial.T, atol=1e-6, rtol=1e-6), (
+            f"PME reciprocal virial is not symmetric:\n{virial}"
+        )
+
+    def test_pme_reciprocal_virial_without_forces(self, device):
+        """PME reciprocal with compute_forces=False + compute_virial=True."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=(16, 16, 16),
+            compute_forces=False,
+            compute_virial=True,
+        )
+        # Result should be (energies, virial)
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        energies, virial = result
+        assert virial.shape == (1, 3, 3)
+        assert jnp.all(jnp.isfinite(virial))
+
+
+class TestPMEReciprocalVirialBatch:
+    """Batch PME virial matches single-system PME virial."""
+
+    def test_batch_pme_reciprocal_virial_shape(self, device):
+        """Batch PME reciprocal virial has shape (B, 3, 3)."""
+        # Create two identical systems as a batch
+        positions_s, charges_s, cell_s = make_virial_cscl_system_jax(size=1)
+        n = positions_s.shape[0]
+
+        positions = jnp.concatenate([positions_s, positions_s], axis=0)
+        charges = jnp.concatenate([charges_s, charges_s], axis=0)
+        cells = jnp.concatenate([cell_s, cell_s], axis=0)
+        batch_idx = jnp.array([0] * n + [1] * n, dtype=jnp.int32)
+        alpha = jnp.array([0.3, 0.3], dtype=jnp.float64)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cells,
+            alpha,
+            mesh_dimensions=(8, 8, 8),
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (2, 3, 3)
+
+    def test_batch_pme_reciprocal_virial_matches_single(self, device):
+        """Batch PME reciprocal virial[i] matches single-system virial."""
+        positions_s, charges_s, cell_s = make_virial_cscl_system_jax(size=1)
+        n = positions_s.shape[0]
+
+        # Single-system virial
+        single_result = pme_reciprocal_space(
+            positions_s,
+            charges_s,
+            cell_s,
+            jnp.array([0.3], dtype=jnp.float64),
+            mesh_dimensions=(8, 8, 8),
+            compute_forces=True,
+            compute_virial=True,
+        )
+        single_virial = single_result[2]  # (1, 3, 3)
+
+        # Batch virial (two identical systems)
+        positions = jnp.concatenate([positions_s, positions_s], axis=0)
+        charges = jnp.concatenate([charges_s, charges_s], axis=0)
+        cells = jnp.concatenate([cell_s, cell_s], axis=0)
+        batch_idx = jnp.array([0] * n + [1] * n, dtype=jnp.int32)
+
+        batch_result = pme_reciprocal_space(
+            positions,
+            charges,
+            cells,
+            jnp.array([0.3, 0.3], dtype=jnp.float64),
+            mesh_dimensions=(8, 8, 8),
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        batch_virial = batch_result[2]  # (2, 3, 3)
+
+        assert jnp.allclose(batch_virial[0:1], single_virial, atol=1e-5, rtol=1e-5), (
+            f"Batch PME virial[0] != single virial\n"
+            f"batch[0]:\n{batch_virial[0]}\nsingle:\n{single_virial[0]}"
+        )
+        assert jnp.allclose(batch_virial[1:2], single_virial, atol=1e-5, rtol=1e-5), (
+            f"Batch PME virial[1] != single virial\n"
+            f"batch[1]:\n{batch_virial[1]}\nsingle:\n{single_virial[0]}"
+        )
+
+    def test_batch_pme_reciprocal_virial_fd(self, device):
+        """Batch PME reciprocal virial per-system matches single-system FD.
+
+        Note: Compares diagonal elements only due to float32 B-spline limitations.
+        """
+        positions_s, charges_s, cell_s = make_virial_cscl_system_jax(size=1)
+        n = positions_s.shape[0]
+        mesh_dims = (8, 8, 8)
+        alpha_s = jnp.array([0.3], dtype=jnp.float64)
+
+        # FD virial for single system
+        def energy_fn(pos, c):
+            return pme_reciprocal_space(
+                pos,
+                charges_s,
+                c,
+                alpha_s,
+                mesh_dimensions=mesh_dims,
+                compute_forces=False,
+            ).sum()
+
+        fd_virial = fd_virial_full_jax(energy_fn, positions_s, cell_s, h=1e-5)
+
+        # Batch virial
+        positions = jnp.concatenate([positions_s, positions_s], axis=0)
+        charges = jnp.concatenate([charges_s, charges_s], axis=0)
+        cells = jnp.concatenate([cell_s, cell_s], axis=0)
+        batch_idx = jnp.array([0] * n + [1] * n, dtype=jnp.int32)
+
+        batch_result = pme_reciprocal_space(
+            positions,
+            charges,
+            cells,
+            jnp.array([0.3, 0.3], dtype=jnp.float64),
+            mesh_dimensions=mesh_dims,
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        batch_virial = batch_result[2]
+
+        # Compare diagonal elements
+        fd_diag = jnp.diag(fd_virial)
+        batch0_diag = jnp.diag(batch_virial[0])
+        batch1_diag = jnp.diag(batch_virial[1])
+
+        assert jnp.allclose(batch0_diag, fd_diag, atol=5e-2, rtol=5e-2), (
+            "Batch PME system 0 diagonal does not match single-system FD"
+        )
+        assert jnp.allclose(batch1_diag, fd_diag, atol=5e-2, rtol=5e-2), (
+            "Batch PME system 1 diagonal does not match single-system FD"
+        )
+
+
+class TestFullPMEVirial:
+    """Test full particle_mesh_ewald (real + reciprocal) virial."""
+
+    def test_full_pme_virial_shape(self, device):
+        """Full PME virial has shape (1, 3, 3)."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = 0.3
+        cutoff = 6.0
+        pbc = jnp.array([[True, True, True]])
+        nm, _, nms = cell_list(positions, cutoff, cell, pbc)
+
+        result = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        # Should be (energies, forces, virial)
+        assert len(result) == 3
+        energies, forces, virial = result
+        assert virial.shape == (1, 3, 3)
+        assert jnp.all(jnp.isfinite(virial))
+
+    def test_full_pme_virial_fd(self, device):
+        """Full PME virial matches FD strain derivative.
+
+        Note: Compares diagonal elements only due to float32 B-spline limitations.
+        """
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = 0.3
+        cutoff = 6.0
+        mesh_dims = (16, 16, 16)
+        pbc = jnp.array([[True, True, True]])
+
+        def energy_fn(pos, c):
+            nm_new, _, nms_new = cell_list(pos, cutoff, c, pbc)
+            return particle_mesh_ewald(
+                pos,
+                charges,
+                c,
+                alpha=alpha,
+                mesh_dimensions=mesh_dims,
+                neighbor_matrix=nm_new,
+                neighbor_matrix_shifts=nms_new,
+                compute_forces=False,
+            ).sum()
+
+        nm, _, nms = cell_list(positions, cutoff, cell, pbc)
+        result = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=mesh_dims,
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        explicit_virial = result[2].squeeze(0)
+        fd_virial = fd_virial_full_jax(energy_fn, positions, cell, h=1e-5)
+
+        # Compare diagonal elements (most reliable for float32 output)
+        explicit_diag = jnp.diag(explicit_virial)
+        fd_diag = jnp.diag(fd_virial)
+        assert jnp.allclose(explicit_diag, fd_diag, atol=5e-2, rtol=5e-2), (
+            f"Full PME virial diagonal does not match FD\n"
+            f"explicit diag: {explicit_diag}\nFD diag: {fd_diag}"
+        )
+
+    def test_full_pme_virial_sum_of_components(self, device):
+        """Full PME virial = real-space virial + reciprocal virial."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha_arr = jnp.array([0.3], dtype=jnp.float64)
+        cutoff = 6.0
+        mesh_dims = (16, 16, 16)
+        pbc = jnp.array([[True, True, True]])
+        nm, _, nms = cell_list(positions, cutoff, cell, pbc)
+
+        # Real-space virial
+        rs_result = ewald_real_space(
+            positions,
+            charges,
+            cell,
+            alpha_arr,
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        real_virial = rs_result[2]
+
+        # Reciprocal-space virial
+        rec_result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha_arr,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        recip_virial = rec_result[2]
+
+        # Total virial
+        total_result = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        total_virial = total_result[2]
+
+        assert jnp.allclose(
+            total_virial, real_virial + recip_virial, atol=1e-6, rtol=1e-6
+        ), (
+            f"Full PME virial != real + reciprocal virial\n"
+            f"total:\n{total_virial}\nreal+recip:\n{real_virial + recip_virial}"
+        )
+
+    def test_full_pme_virial_without_forces(self, device):
+        """particle_mesh_ewald with compute_forces=False + compute_virial=True."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
+        alpha = 0.3
+        cutoff = 6.0
+        pbc = jnp.array([[True, True, True]])
+        nm, _, nms = cell_list(positions, cutoff, cell, pbc)
+
+        result = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            compute_forces=False,
+            compute_virial=True,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        energies, virial = result
+        assert virial.shape == (1, 3, 3)
 
 
 if __name__ == "__main__":

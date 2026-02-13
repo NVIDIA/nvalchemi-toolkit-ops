@@ -27,38 +27,19 @@ import jax.numpy as jnp
 import pytest
 
 
-def place_on_device(arr: jax.Array, device_type: str) -> jax.Array:
-    """
-    Place a JAX array on the specified device type.
-
-    Parameters
-    ----------
-    arr : jax.Array
-        The array to place on the device.
-    device_type : str
-        Device type, either "cpu" or "gpu".
-
-    Returns
-    -------
-    jax.Array
-        Array placed on the specified device.
-    """
-    if device_type == "cpu":
-        device = jax.devices("cpu")[0]
-    else:
-        device = jax.devices("gpu")[0]
-    return jax.device_put(arr, device)
-
-
 @pytest.fixture()
 def device():
     """
-    GPU device fixture. Skips when no CUDA device is available.
+    GPU device fixture. Skips tests when no CUDA device is available.
+
+    This fixture serves as a test skip gate. Tests that depend on this fixture
+    will be skipped if no GPU is available. The return value is kept for
+    backward compatibility but should not be used for array placement.
 
     Returns
     -------
     str
-        Device type string "gpu".
+        Device type string "gpu" (for backward compatibility).
     """
     try:
         if len(jax.devices("gpu")) == 0:
@@ -69,41 +50,36 @@ def device():
 
 
 @pytest.fixture()
-def simple_pair_system(device):
+def simple_pair_system(device):  # noqa: ARG001
     """
-    Two-atom system for basic tests.
+    Two-atom system for basic tests using neighbor_matrix (dense) format.
 
     Parameters
     ----------
-    device : str
-        Device type from the device fixture.
+    device : fixture
+        Device fixture dependency for GPU availability gating.
+        The parameter is not used directly but ensures tests skip on CPU-only systems.
 
     Returns
     -------
     tuple
-        (positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts)
+        (positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts)
         - positions: [2, 3] float64 array
         - charges: [2] float64 array
         - cell: [1, 3, 3] float64 array
-        - neighbor_list: [2, 1] int32 array
-        - neighbor_ptr: [2] int32 array
-        - neighbor_shifts: [1, 3] int32 array
+        - neighbor_matrix: [2, 1] int32 array (dense neighbor indices)
+        - neighbor_matrix_shifts: [2, 1, 3] int32 array (periodic shift vectors)
     """
-    positions = place_on_device(
-        jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64), device
+    positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
+    charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+    cell = jnp.array(
+        [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+        dtype=jnp.float64,
     )
-    charges = place_on_device(jnp.array([1.0, -1.0], dtype=jnp.float64), device)
-    cell = place_on_device(
-        jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        ),
-        device,
-    )
-    neighbor_list = place_on_device(jnp.array([[0], [1]], dtype=jnp.int32), device)
-    neighbor_ptr = place_on_device(jnp.array([0, 1], dtype=jnp.int32), device)
-    neighbor_shifts = place_on_device(jnp.zeros((1, 3), dtype=jnp.int32), device)
-    return positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+    # Dense neighbor_matrix: atom 0 -> neighbor [1], atom 1 -> neighbor [0]
+    neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
+    neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
+    return positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts
 
 
 # ==============================================================================
@@ -111,30 +87,26 @@ def simple_pair_system(device):
 # ==============================================================================
 
 
-def make_virial_cscl_system_jax(size: int = 2, device: str = "gpu"):
+def make_virial_cscl_system_jax(size: int = 2):
     """Create a CsCl test system for virial tests (JAX version).
 
     Parameters
     ----------
     size : int, default=2
         Supercell size.
-    device : str, default="gpu"
-        Device type to place arrays on.
 
     Returns
     -------
     tuple
-        (positions, charges, cell) as JAX arrays on the specified device.
+        (positions, charges, cell) as JAX arrays.
     """
     # Import here to avoid circular imports at module level
     from test.interactions.electrostatics.conftest import create_cscl_supercell
 
     crystal = create_cscl_supercell(size)
-    positions = place_on_device(jnp.array(crystal.positions, dtype=jnp.float64), device)
-    charges = place_on_device(jnp.array(crystal.charges, dtype=jnp.float64), device)
-    cell = place_on_device(
-        jnp.array(crystal.cell, dtype=jnp.float64)[jnp.newaxis, :, :], device
-    )
+    positions = jnp.array(crystal.positions, dtype=jnp.float64)
+    charges = jnp.array(crystal.charges, dtype=jnp.float64)
+    cell = jnp.array(crystal.cell, dtype=jnp.float64)[jnp.newaxis, :, :]
     return positions, charges, cell
 
 

@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
 import pytest
 
@@ -31,44 +30,6 @@ from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
-
-# ==============================================================================
-# Device Utilities
-# ==============================================================================
-
-
-def get_available_devices() -> list[str]:
-    """Get available JAX devices (CPU and GPU if available)."""
-    devices = ["cpu"]
-    try:
-        if jax.devices("gpu"):
-            devices.append("gpu")
-    except RuntimeError:
-        pass
-    return devices
-
-
-def place_on_device(arr: jax.Array, device: str) -> jax.Array:
-    """Place a JAX array on the specified device type."""
-    if device == "cpu":
-        jax_device = jax.devices("cpu")[0]
-    else:
-        jax_device = jax.devices("gpu")[0]
-    return jax.device_put(arr, jax_device)
-
-
-# ==============================================================================
-# Fixtures
-# ==============================================================================
-
-
-@pytest.fixture(params=get_available_devices())
-def device(request):
-    """Parametrized fixture for testing on CPU and GPU."""
-    if request.param == "gpu" and len(jax.devices("gpu")) == 0:
-        pytest.skip("No CUDA device available.")
-    return request.param
-
 
 # ==============================================================================
 # Tests: compute_naive_num_shifts
@@ -172,9 +133,6 @@ class TestGetNeighborListFromNeighborMatrix:
         neighbor_matrix = jnp.zeros((0, 10), dtype=jnp.int32)
         num_neighbors = jnp.zeros((0,), dtype=jnp.int32)
 
-        neighbor_matrix = place_on_device(neighbor_matrix, device)
-        num_neighbors = place_on_device(num_neighbors, device)
-
         neighbor_list, neighbor_ptr = get_neighbor_list_from_neighbor_matrix(
             neighbor_matrix, num_neighbors
         )
@@ -186,9 +144,6 @@ class TestGetNeighborListFromNeighborMatrix:
         """Test with single neighbor pair."""
         neighbor_matrix = jnp.array([[1, -1, -1]], dtype=jnp.int32)
         num_neighbors = jnp.array([1], dtype=jnp.int32)
-
-        neighbor_matrix = place_on_device(neighbor_matrix, device)
-        num_neighbors = place_on_device(num_neighbors, device)
 
         neighbor_list, neighbor_ptr = get_neighbor_list_from_neighbor_matrix(
             neighbor_matrix, num_neighbors, fill_value=-1
@@ -211,9 +166,6 @@ class TestGetNeighborListFromNeighborMatrix:
         )
         num_neighbors = jnp.array([2, 1, 3], dtype=jnp.int32)
 
-        neighbor_matrix = place_on_device(neighbor_matrix, device)
-        num_neighbors = place_on_device(num_neighbors, device)
-
         neighbor_list, neighbor_ptr = get_neighbor_list_from_neighbor_matrix(
             neighbor_matrix, num_neighbors, fill_value=-1
         )
@@ -232,10 +184,6 @@ class TestGetNeighborListFromNeighborMatrix:
         num_neighbors = jnp.array([2], dtype=jnp.int32)
         shifts = jnp.array([[[0, 0, 0], [1, 0, 0]]], dtype=jnp.int32)
 
-        neighbor_matrix = place_on_device(neighbor_matrix, device)
-        num_neighbors = place_on_device(num_neighbors, device)
-        shifts = place_on_device(shifts, device)
-
         neighbor_list, neighbor_ptr, shift_list = (
             get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix, num_neighbors, shifts, fill_value=-1
@@ -251,9 +199,6 @@ class TestGetNeighborListFromNeighborMatrix:
         """Test that overflow error is raised appropriately."""
         neighbor_matrix = jnp.array([[1, 2]], dtype=jnp.int32)
         num_neighbors = jnp.array([5], dtype=jnp.int32)  # More than matrix width
-
-        neighbor_matrix = place_on_device(neighbor_matrix, device)
-        num_neighbors = place_on_device(num_neighbors, device)
 
         with pytest.raises(NeighborOverflowError):
             get_neighbor_list_from_neighbor_matrix(

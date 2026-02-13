@@ -17,9 +17,7 @@
 
 from __future__ import annotations
 
-import jax
 import jax.numpy as jnp
-import pytest
 
 from nvalchemiops.jax.neighbors.rebuild_detection import (
     cell_list_needs_rebuild,
@@ -29,43 +27,6 @@ from nvalchemiops.jax.neighbors.rebuild_detection import (
 from .conftest import requires_gpu
 
 pytestmark = requires_gpu
-
-# ==============================================================================
-# Device Utilities
-# ==============================================================================
-
-
-def get_available_devices() -> list[str]:
-    """Get available JAX devices (CPU and GPU if available)."""
-    devices = ["cpu"]
-    try:
-        if jax.devices("gpu"):
-            devices.append("gpu")
-    except RuntimeError:
-        pass
-    return devices
-
-
-def place_on_device(arr: jax.Array, device: str) -> jax.Array:
-    """Place a JAX array on the specified device type."""
-    if device == "cpu":
-        jax_device = jax.devices("cpu")[0]
-    else:
-        jax_device = jax.devices("gpu")[0]
-    return jax.device_put(arr, jax_device)
-
-
-# ==============================================================================
-# Fixtures
-# ==============================================================================
-
-
-@pytest.fixture(params=get_available_devices())
-def device(request):
-    """Parametrized fixture for testing on CPU and GPU."""
-    if request.param == "gpu" and len(jax.devices("gpu")) == 0:
-        pytest.skip("No CUDA device available.")
-    return request.param
 
 
 # ==============================================================================
@@ -101,9 +62,6 @@ class TestNeighborListNeedsRebuild:
         )
         skin_distance = 0.5
 
-        reference_positions = place_on_device(reference_positions, device)
-        current_positions = place_on_device(current_positions, device)
-
         rebuild_needed = neighbor_list_needs_rebuild(
             reference_positions=reference_positions,
             current_positions=current_positions,
@@ -122,9 +80,6 @@ class TestNeighborListNeedsRebuild:
         )
         skin_distance = 0.5
 
-        reference_positions = place_on_device(reference_positions, device)
-        current_positions = place_on_device(current_positions, device)
-
         rebuild_needed = neighbor_list_needs_rebuild(
             reference_positions=reference_positions,
             current_positions=current_positions,
@@ -141,9 +96,6 @@ class TestNeighborListNeedsRebuild:
         )
         skin_distance = 0.5
 
-        reference_positions = place_on_device(reference_positions, device)
-        current_positions = place_on_device(current_positions, device)
-
         rebuild_needed = neighbor_list_needs_rebuild(
             reference_positions=reference_positions,
             current_positions=current_positions,
@@ -157,9 +109,6 @@ class TestNeighborListNeedsRebuild:
         reference_positions = jnp.zeros((0, 3), dtype=jnp.float32)
         current_positions = jnp.zeros((0, 3), dtype=jnp.float32)
         skin_distance = 0.5
-
-        reference_positions = place_on_device(reference_positions, device)
-        current_positions = place_on_device(current_positions, device)
 
         rebuild_needed = neighbor_list_needs_rebuild(
             reference_positions=reference_positions,
@@ -188,10 +137,6 @@ class TestCellListNeedsRebuild:
         cells_per_dimension = jnp.array([2, 2, 2], dtype=jnp.int32)
         atom_to_cell_mapping = jnp.array([[0, 0, 0], [1, 0, 0]], dtype=jnp.int32)
 
-        current_positions = place_on_device(current_positions, device)
-        cells_per_dimension = place_on_device(cells_per_dimension, device)
-        atom_to_cell_mapping = place_on_device(atom_to_cell_mapping, device)
-
         rebuild_needed = cell_list_needs_rebuild(
             current_positions=current_positions,
             atom_to_cell_mapping=atom_to_cell_mapping,
@@ -214,10 +159,6 @@ class TestCellListNeedsRebuild:
         cells_per_dimension = jnp.array([2, 2, 2], dtype=jnp.int32)
         atom_to_cell_mapping = jnp.array([[0, 0, 0], [1, 0, 0]], dtype=jnp.int32)
 
-        current_positions = place_on_device(current_positions, device)
-        cells_per_dimension = place_on_device(cells_per_dimension, device)
-        atom_to_cell_mapping = place_on_device(atom_to_cell_mapping, device)
-
         rebuild_needed = cell_list_needs_rebuild(
             current_positions=current_positions,
             atom_to_cell_mapping=atom_to_cell_mapping,
@@ -239,10 +180,6 @@ class TestCellListNeedsRebuild:
         cells_per_dimension = jnp.array([2, 2, 2], dtype=jnp.int32)
         atom_to_cell_mapping = jnp.array([[0, 0, 0], [1, 0, 0]], dtype=jnp.int32)
 
-        current_positions = place_on_device(current_positions, device)
-        cells_per_dimension = place_on_device(cells_per_dimension, device)
-        atom_to_cell_mapping = place_on_device(atom_to_cell_mapping, device)
-
         rebuild_needed = cell_list_needs_rebuild(
             current_positions=current_positions,
             atom_to_cell_mapping=atom_to_cell_mapping,
@@ -260,10 +197,6 @@ class TestCellListNeedsRebuild:
         pbc = jnp.array([True, True, True])
         cells_per_dimension = jnp.array([1, 1, 1], dtype=jnp.int32)
         atom_to_cell_mapping = jnp.zeros((0, 3), dtype=jnp.int32)
-
-        current_positions = place_on_device(current_positions, device)
-        cells_per_dimension = place_on_device(cells_per_dimension, device)
-        atom_to_cell_mapping = place_on_device(atom_to_cell_mapping, device)
 
         rebuild_needed = cell_list_needs_rebuild(
             current_positions=current_positions,

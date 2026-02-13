@@ -50,7 +50,6 @@ from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
 from nvalchemiops.jax.neighbors import cell_list
-from test.interactions.electrostatics.bindings.jax.conftest import place_on_device
 from test.interactions.electrostatics.conftest import (
     create_cscl_supercell,
     create_wurtzite_system,
@@ -73,13 +72,11 @@ except ModuleNotFoundError:
 # ==============================================================================
 
 
-def create_dipole_system(device, dtype=jnp.float64, separation=6.0, cell_size=10.0):
+def create_dipole_system(dtype=jnp.float64, separation=6.0, cell_size=10.0):
     """Create a simple dipole system with JAX arrays on GPU.
 
     Parameters
     ----------
-    device : str
-        Device type ("gpu")
     dtype : jnp.dtype
         Data type for arrays
     separation : float
@@ -90,37 +87,37 @@ def create_dipole_system(device, dtype=jnp.float64, separation=6.0, cell_size=10
     Returns
     -------
     tuple
-        (positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts)
+        (positions, charges, cell, neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
     """
-    positions = place_on_device(
-        jnp.array([[0.0, 0.0, 0.0], [separation, 0.0, 0.0]], dtype=dtype), device
-    )
-    charges = place_on_device(jnp.array([1.0, -1.0], dtype=dtype), device)
-    cell = place_on_device(
-        jnp.array(
-            [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
-            dtype=dtype,
-        ),
-        device,
+    positions = jnp.array([[0.0, 0.0, 0.0], [separation, 0.0, 0.0]], dtype=dtype)
+    charges = jnp.array([1.0, -1.0], dtype=dtype)
+    cell = jnp.array(
+        [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
+        dtype=dtype,
     )
 
     # Build neighbor list using cell_list
     cutoff = separation * 1.5
-    pbc = place_on_device(jnp.array([[True, True, True]]), device)
-    neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-        positions, cutoff, cell, pbc, return_neighbor_list=True
+    pbc = jnp.array([[True, True, True]])
+    neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+        positions, cutoff, cell, pbc
     )
 
-    return positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
+    return (
+        positions,
+        charges,
+        cell,
+        neighbor_matrix,
+        num_neighbors,
+        neighbor_matrix_shifts,
+    )
 
 
-def create_simple_system(device, dtype=jnp.float64, num_atoms=4, cell_size=10.0):
+def create_simple_system(dtype=jnp.float64, num_atoms=4, cell_size=10.0):
     """Create a simple test system with random positions and neutral charges.
 
     Parameters
     ----------
-    device : str
-        Device type ("gpu")
     dtype : jnp.dtype
         Data type for arrays
     num_atoms : int
@@ -134,23 +131,16 @@ def create_simple_system(device, dtype=jnp.float64, num_atoms=4, cell_size=10.0)
         (positions, charges, cell)
     """
     key = jax.random.PRNGKey(42)
-    positions = place_on_device(
-        jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * cell_size * 0.8,
-        device,
-    )
+    positions = jax.random.uniform(key, (num_atoms, 3), dtype=dtype) * cell_size * 0.8
 
     # Create alternating charges for neutrality
     charges = jnp.array([1.0, -1.0] * (num_atoms // 2), dtype=dtype)
     if num_atoms % 2 == 1:
         charges = jnp.concatenate([charges, jnp.array([0.0], dtype=dtype)])
-    charges = place_on_device(charges, device)
 
-    cell = place_on_device(
-        jnp.array(
-            [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
-            dtype=dtype,
-        ),
-        device,
+    cell = jnp.array(
+        [[[cell_size, 0.0, 0.0], [0.0, cell_size, 0.0], [0.0, 0.0, cell_size]]],
+        dtype=dtype,
     )
 
     return positions, charges, cell
@@ -265,9 +255,14 @@ class TestDtypeSupport:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_real_space_dtype_returns_correct_type(self, device, dtype):
         """Test ewald_real_space with float32 and float64."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device, dtype=dtype)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system(dtype=dtype)
 
         alpha = jnp.array([0.3], dtype=dtype)
 
@@ -276,9 +271,8 @@ class TestDtypeSupport:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
         # Energy is always float64
@@ -288,7 +282,7 @@ class TestDtypeSupport:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_reciprocal_space_dtype_returns_correct_type(self, device, dtype):
         """Test ewald_reciprocal_space with float32 and float64."""
-        positions, charges, cell = create_simple_system(device, dtype=dtype)
+        positions, charges, cell = create_simple_system(dtype=dtype)
 
         alpha = jnp.array([0.3], dtype=dtype)
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0).astype(dtype)
@@ -307,9 +301,14 @@ class TestDtypeSupport:
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_ewald_summation_dtype_returns_correct_type(self, device, dtype):
         """Test ewald_summation with float32 and float64."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device, dtype=dtype)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system(dtype=dtype)
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -320,9 +319,8 @@ class TestDtypeSupport:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
         assert energies.dtype == jnp.float64
@@ -330,8 +328,8 @@ class TestDtypeSupport:
 
     def test_float32_vs_float64_consistency(self, device):
         """Test that float32 and float64 produce consistent results."""
-        positions_f64, charges_f64, cell_f64, nl_f64, ptr_f64, shifts_f64 = (
-            create_dipole_system(device, dtype=jnp.float64)
+        positions_f64, charges_f64, cell_f64, nm_f64, nn_f64, nms_f64 = (
+            create_dipole_system(dtype=jnp.float64)
         )
 
         positions_f32 = positions_f64.astype(jnp.float32)
@@ -345,9 +343,8 @@ class TestDtypeSupport:
             charges=charges_f64,
             cell=cell_f64,
             alpha=alpha,
-            neighbor_list=nl_f64,
-            neighbor_ptr=ptr_f64,
-            neighbor_shifts=shifts_f64,
+            neighbor_matrix=nm_f64,
+            neighbor_matrix_shifts=nms_f64,
         )
 
         energies_f32 = ewald_real_space(
@@ -355,9 +352,8 @@ class TestDtypeSupport:
             charges=charges_f32,
             cell=cell_f32,
             alpha=alpha,
-            neighbor_list=nl_f64,
-            neighbor_ptr=ptr_f64,
-            neighbor_shifts=shifts_f64,
+            neighbor_matrix=nm_f64,
+            neighbor_matrix_shifts=nms_f64,
         )
 
         # Both are float64 but f32 may have slightly different values
@@ -366,31 +362,25 @@ class TestDtypeSupport:
     def test_batch_dtype_returns_correct_type(self, device):
         """Test batched calculations return correct dtype."""
         # Create 2 batches of 2 atoms each
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float32,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float32), device
-        )
-        cell = place_on_device(
-            jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]),
-            device,
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]
         ).astype(jnp.float32)
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = jnp.array([0.3, 0.3], dtype=jnp.float32)
@@ -400,9 +390,8 @@ class TestDtypeSupport:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
         )
 
@@ -415,9 +404,14 @@ class TestEwaldRealSpaceAPI:
 
     def test_single_system_energy_only(self, device):
         """Test real-space energy for a single system."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         alpha = 0.3
 
@@ -426,9 +420,8 @@ class TestEwaldRealSpaceAPI:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
         assert energies.shape == (2,)
@@ -438,9 +431,14 @@ class TestEwaldRealSpaceAPI:
 
     def test_single_system_with_forces(self, device):
         """Test real-space energy and forces."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         alpha = 0.3
 
@@ -449,9 +447,8 @@ class TestEwaldRealSpaceAPI:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
         )
 
@@ -468,31 +465,23 @@ class TestEwaldRealSpaceAPI:
     def test_batch_system_energy_only(self, device):
         """Test batched real-space energy."""
         # 2 batches of 2 atoms each
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64), device
-        )
-        cell = place_on_device(
-            jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = jnp.array([0.3, 0.3])
@@ -502,9 +491,8 @@ class TestEwaldRealSpaceAPI:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
         )
 
@@ -513,31 +501,23 @@ class TestEwaldRealSpaceAPI:
 
     def test_batch_system_with_forces(self, device):
         """Test batched real-space energy and forces."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64), device
-        )
-        cell = place_on_device(
-            jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = jnp.array([0.3, 0.3])
@@ -547,9 +527,8 @@ class TestEwaldRealSpaceAPI:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
             compute_forces=True,
         )
@@ -565,7 +544,7 @@ class TestEwaldReciprocalSpaceAPI:
 
     def test_single_system_energy_only(self, device):
         """Test reciprocal-space energy for a single system."""
-        positions, charges, cell = create_simple_system(device)
+        positions, charges, cell = create_simple_system()
 
         alpha = 0.3
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -583,7 +562,7 @@ class TestEwaldReciprocalSpaceAPI:
 
     def test_single_system_with_forces(self, device):
         """Test reciprocal-space energy and forces."""
-        positions, charges, cell = create_simple_system(device)
+        positions, charges, cell = create_simple_system()
 
         alpha = 0.3
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -604,31 +583,23 @@ class TestEwaldReciprocalSpaceAPI:
 
     def test_batch_system_energy_only(self, device):
         """Test batched reciprocal-space energy."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64), device
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ]
         )
-        cell = place_on_device(
-            jnp.array(
-                [
-                    [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
-                    [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
-                ]
-            ),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         alpha = jnp.array([0.3, 0.3])
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -647,31 +618,23 @@ class TestEwaldReciprocalSpaceAPI:
 
     def test_batch_system_with_forces(self, device):
         """Test batched reciprocal-space energy and forces."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64), device
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ]
         )
-        cell = place_on_device(
-            jnp.array(
-                [
-                    [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
-                    [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
-                ]
-            ),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         alpha = jnp.array([0.3, 0.3])
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -697,9 +660,14 @@ class TestEwaldSummationAPI:
 
     def test_single_system_energy_only(self, device):
         """Test full Ewald summation for a single system."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -710,9 +678,8 @@ class TestEwaldSummationAPI:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
         assert energies.shape == (2,)
@@ -722,31 +689,23 @@ class TestEwaldSummationAPI:
 
     def test_batch_system_energy_only(self, device):
         """Test batched full Ewald summation."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64), device
-        )
-        cell = place_on_device(
-            jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = 0.3
@@ -758,9 +717,8 @@ class TestEwaldSummationAPI:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
         )
 
@@ -769,31 +727,23 @@ class TestEwaldSummationAPI:
 
     def test_batch_system_with_forces(self, device):
         """Test batched full Ewald summation with forces."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64), device
-        )
-        cell = place_on_device(
-            jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = 0.3
@@ -805,9 +755,8 @@ class TestEwaldSummationAPI:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
             compute_forces=True,
         )
@@ -819,31 +768,23 @@ class TestEwaldSummationAPI:
 
     def test_per_system_alpha(self, device):
         """Test batched Ewald with different alpha per system."""
-        positions = place_on_device(
-            jnp.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                    [0.0, 0.0, 0.0],
-                    [3.0, 0.0, 0.0],
-                ],
-                dtype=jnp.float64,
-            ),
-            device,
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
         )
-        charges = place_on_device(
-            jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64), device
-        )
-        cell = place_on_device(
-            jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]),
-            device,
-        )
-        batch_idx = place_on_device(jnp.array([0, 0, 1, 1], dtype=jnp.int32), device)
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         # Different alpha for each system
@@ -856,9 +797,8 @@ class TestEwaldSummationAPI:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
         )
 
@@ -887,17 +827,15 @@ class TestRealSpaceCorrectness:
         cell_np = crystal.cell
 
         # Convert to JAX
-        positions = place_on_device(jnp.array(positions_np, dtype=jnp.float64), device)
-        charges = place_on_device(jnp.array(charges_np, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(positions_np, dtype=jnp.float64)
+        charges = jnp.array(charges_np, dtype=jnp.float64)
+        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
 
         # Build neighbor list
         cutoff = 10.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         # Compute with JAX
@@ -906,33 +844,36 @@ class TestRealSpaceCorrectness:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
         # Convert to numpy for torchpme
         positions_host = np.array(positions)
         charges_host = np.array(charges)
-        neighbor_list_host = np.array(neighbor_list)
-        neighbor_shifts_host = np.array(neighbor_shifts)
+        nm_host = np.array(neighbor_matrix)
+        ns_host = np.array(neighbor_matrix_shifts)
 
-        # Compute pair distances for torchpme
-        idx_i = neighbor_list_host[0]
-        idx_j = neighbor_list_host[1]
-        shifts = neighbor_shifts_host
-
-        # Compute distances including periodic shifts
+        # Build COO pairs from dense matrix for torchpme comparison
         cell_host = np.array(cell[0])
-        pos_i = positions_host[idx_i]
-        pos_j = positions_host[idx_j]
-        shift_vecs = shifts @ cell_host
-        deltas = pos_j - pos_i + shift_vecs
-        distances = np.linalg.norm(deltas, axis=1)
+        num_atoms = positions_host.shape[0]
+        idx_i_list, idx_j_list, dist_list = [], [], []
+        for i in range(nm_host.shape[0]):
+            for k in range(nm_host.shape[1]):
+                j = nm_host[i, k]
+                if j >= num_atoms:  # padding (fill_value = num_atoms)
+                    continue
+                idx_i_list.append(i)
+                idx_j_list.append(j)
+                shift_vec = ns_host[i, k] @ cell_host
+                delta = positions_host[j] - positions_host[i] + shift_vec
+                dist_list.append(np.linalg.norm(delta))
+        neighbor_indices = np.array([idx_i_list, idx_j_list])
+        distances = np.array(dist_list)
 
         # Compute with torchpme
         energies_torchpme = compute_torchpme_real_space(
-            charges_host, neighbor_list_host, distances, alpha, k_cutoff=8.0
+            charges_host, neighbor_indices, distances, alpha, k_cutoff=8.0
         )
 
         # Compare
@@ -951,17 +892,15 @@ class TestRealSpaceCorrectness:
         cell_np = crystal.cell
 
         # Convert to JAX
-        positions = place_on_device(jnp.array(positions_np, dtype=jnp.float64), device)
-        charges = place_on_device(jnp.array(charges_np, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(positions_np, dtype=jnp.float64)
+        charges = jnp.array(charges_np, dtype=jnp.float64)
+        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
 
         # Build neighbor list
         cutoff = 10.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = 0.3
@@ -972,9 +911,8 @@ class TestRealSpaceCorrectness:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
         )
 
@@ -1002,11 +940,9 @@ class TestReciprocalSpaceCorrectness:
         cell_np = crystal.cell
 
         # Convert to JAX
-        positions = place_on_device(jnp.array(positions_np, dtype=jnp.float64), device)
-        charges = place_on_device(jnp.array(charges_np, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(positions_np, dtype=jnp.float64)
+        charges = jnp.array(charges_np, dtype=jnp.float64)
+        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -1042,11 +978,9 @@ class TestReciprocalSpaceCorrectness:
         cell_np = crystal.cell
 
         # Convert to JAX
-        positions = place_on_device(jnp.array(positions_np, dtype=jnp.float64), device)
-        charges = place_on_device(jnp.array(charges_np, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(positions_np, dtype=jnp.float64)
+        charges = jnp.array(charges_np, dtype=jnp.float64)
+        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -1072,9 +1006,14 @@ class TestExplicitChargeGradients:
 
     def test_real_space_charge_gradients_shape(self, device):
         """Test real-space charge gradients have correct shape."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         alpha = 0.3
 
@@ -1083,9 +1022,8 @@ class TestExplicitChargeGradients:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_charge_gradients=True,
         )
 
@@ -1094,7 +1032,7 @@ class TestExplicitChargeGradients:
 
     def test_reciprocal_charge_gradients_shape(self, device):
         """Test reciprocal-space charge gradients have correct shape."""
-        positions, charges, cell = create_simple_system(device)
+        positions, charges, cell = create_simple_system()
 
         alpha = 0.3
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -1113,9 +1051,14 @@ class TestExplicitChargeGradients:
 
     def test_real_space_charge_gradients_finite(self, device):
         """Test real-space charge gradients are finite and non-zero."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         alpha = 0.3
 
@@ -1124,9 +1067,8 @@ class TestExplicitChargeGradients:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_charge_gradients=True,
         )
 
@@ -1136,7 +1078,7 @@ class TestExplicitChargeGradients:
 
     def test_reciprocal_charge_gradients_finite(self, device):
         """Test reciprocal-space charge gradients are finite and non-zero."""
-        positions, charges, cell = create_simple_system(device)
+        positions, charges, cell = create_simple_system()
 
         alpha = 0.3
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -1160,9 +1102,14 @@ class TestPhysicalProperties:
 
     def test_opposite_charges_attract(self, device):
         """Test that opposite charges produce negative energy."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -1173,18 +1120,22 @@ class TestPhysicalProperties:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
         assert energies.sum() < 0
 
     def test_energy_charge_scaling(self, device):
         """Test that doubling charges quadruples energy."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -1196,9 +1147,8 @@ class TestPhysicalProperties:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         ).sum()
 
         # Energy with q = 2
@@ -1209,9 +1159,8 @@ class TestPhysicalProperties:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         ).sum()
 
         # E(2q) = 4 * E(q)
@@ -1219,9 +1168,14 @@ class TestPhysicalProperties:
 
     def test_translation_invariance(self, device):
         """Test that translating all atoms doesn't change energy."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device, cell_size=20.0)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system(cell_size=20.0)
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -1233,9 +1187,8 @@ class TestPhysicalProperties:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         ).sum()
 
         # Translate all atoms by (1, 1, 1)
@@ -1243,9 +1196,9 @@ class TestPhysicalProperties:
 
         # Rebuild neighbor list for shifted positions
         cutoff = 10.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        nl_shifted, ptr_shifted, shifts_shifted = cell_list(
-            positions_shifted, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        nm_shifted, nn_shifted, nms_shifted = cell_list(
+            positions_shifted, cutoff, cell, pbc
         )
 
         energy2 = ewald_summation(
@@ -1254,9 +1207,8 @@ class TestPhysicalProperties:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=nl_shifted,
-            neighbor_ptr=ptr_shifted,
-            neighbor_shifts=shifts_shifted,
+            neighbor_matrix=nm_shifted,
+            neighbor_matrix_shifts=nms_shifted,
         ).sum()
 
         # Energy should be the same
@@ -1275,17 +1227,15 @@ class TestEdgeCases:
         cell_np = crystal.cell
 
         # Convert to JAX
-        positions = place_on_device(jnp.array(positions_np, dtype=jnp.float64), device)
-        charges = place_on_device(jnp.array(charges_np, dtype=jnp.float64), device)
-        cell = place_on_device(
-            jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64), device
-        )
+        positions = jnp.array(positions_np, dtype=jnp.float64)
+        charges = jnp.array(charges_np, dtype=jnp.float64)
+        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
 
         # Build neighbor list
         cutoff = 10.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = 0.3
@@ -1297,18 +1247,22 @@ class TestEdgeCases:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
         )
 
         assert jnp.all(jnp.isfinite(energies))
 
     def test_auto_parameters(self, device):
         """Test Ewald summation with automatic parameter estimation."""
-        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
-            create_dipole_system(device)
-        )
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
 
         # Use auto-estimated alpha and k_cutoff
         energies = ewald_summation(
@@ -1317,9 +1271,8 @@ class TestEdgeCases:
             cell=cell,
             alpha=None,
             k_cutoff=None,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             accuracy=1e-6,
         )
 
@@ -1342,21 +1295,20 @@ class TestEwaldJIT:
         pbc = jnp.array([[True, True, True]])
 
         # Build neighbor list eagerly (it uses .devices().pop() internally)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff=5.0, cell=cell, pbc=pbc, return_neighbor_list=True
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
         )
         alpha = jnp.array([0.3], dtype=jnp.float64)
 
         @jax.jit
-        def jitted_real_space(positions, charges, cell, alpha, nl, nptr, nshifts):
+        def jitted_real_space(positions, charges, cell, alpha, nm, nms):
             return ewald_real_space(
                 positions=positions,
                 charges=charges,
                 cell=cell,
                 alpha=alpha,
-                neighbor_list=nl,
-                neighbor_ptr=nptr,
-                neighbor_shifts=nshifts,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
             )
 
         energies = jitted_real_space(
@@ -1364,9 +1316,8 @@ class TestEwaldJIT:
             charges,
             cell,
             alpha,
-            neighbor_list,
-            neighbor_ptr,
-            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
         )
 
         assert energies.shape == (2,)
@@ -1418,13 +1369,13 @@ class TestEwaldRealSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
         cutoff = 6.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1434,9 +1385,8 @@ class TestEwaldRealSpaceVirial:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
             compute_virial=True,
         )
@@ -1452,13 +1402,13 @@ class TestEwaldRealSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
         cutoff = 6.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1468,9 +1418,8 @@ class TestEwaldRealSpaceVirial:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
             compute_virial=True,
         )
@@ -1484,13 +1433,13 @@ class TestEwaldRealSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
         cutoff = 6.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1500,9 +1449,8 @@ class TestEwaldRealSpaceVirial:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
             compute_virial=True,
         )
@@ -1519,39 +1467,37 @@ class TestEwaldRealSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list for original positions
         cutoff = 6.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+        pbc = jnp.array([[True, True, True]])
 
         alpha_arr = jnp.array([0.3], dtype=jnp.float64)
 
         # Define energy function that rebuilds neighbor list for each strained geometry
         def energy_fn(pos, c):
-            nl, nptr, ns = cell_list(pos, cutoff, c, pbc, return_neighbor_list=True)
+            nm, nn, nms = cell_list(pos, cutoff, c, pbc)
             return ewald_real_space(
                 pos,
                 charges,
                 c,
                 alpha_arr,
-                neighbor_list=nl,
-                neighbor_ptr=nptr,
-                neighbor_shifts=ns,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
             ).sum()
 
         # Compute explicit virial
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
         result = ewald_real_space(
             positions=positions,
             charges=charges,
             cell=cell,
             alpha=alpha_arr,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=True,
             compute_virial=True,
         )
@@ -1569,13 +1515,13 @@ class TestEwaldRealSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
         cutoff = 6.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1585,9 +1531,8 @@ class TestEwaldRealSpaceVirial:
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=False,
             compute_virial=True,
         )
@@ -1608,7 +1553,7 @@ class TestEwaldReciprocalSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -1633,7 +1578,7 @@ class TestEwaldReciprocalSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -1659,7 +1604,7 @@ class TestEwaldReciprocalSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
 
@@ -1698,7 +1643,7 @@ class TestEwaldReciprocalSpaceVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
@@ -1728,31 +1673,30 @@ class TestEwaldTotalVirial:
             make_virial_cscl_system_jax,
         )
 
-        positions, charges, cell = make_virial_cscl_system_jax(size=1, device=device)
+        positions, charges, cell = make_virial_cscl_system_jax(size=1)
 
         cutoff = 6.0
-        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+        pbc = jnp.array([[True, True, True]])
 
         alpha = 0.3
         k_cutoff = 8.0
 
         # Define energy function for total Ewald summation
         def energy_fn(pos, c):
-            nl, nptr, ns = cell_list(pos, cutoff, c, pbc, return_neighbor_list=True)
+            nm, nn, nms = cell_list(pos, cutoff, c, pbc)
             return ewald_summation(
                 pos,
                 charges,
                 c,
                 alpha=alpha,
                 k_cutoff=k_cutoff,
-                neighbor_list=nl,
-                neighbor_ptr=nptr,
-                neighbor_shifts=ns,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
             ).sum()
 
         # Compute explicit virial
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff, cell, pbc, return_neighbor_list=True
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
         )
         result = ewald_summation(
             positions=positions,
@@ -1760,9 +1704,8 @@ class TestEwaldTotalVirial:
             cell=cell,
             alpha=alpha,
             k_cutoff=k_cutoff,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_virial=True,
         )
         explicit_virial = result[-1].squeeze(0)
@@ -1788,23 +1731,20 @@ class TestEwaldVirialJIT:
         pbc = jnp.array([[True, True, True]])
 
         # Build neighbor list eagerly
-        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
-            positions, cutoff=5.0, cell=cell, pbc=pbc, return_neighbor_list=True
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
         )
         alpha = jnp.array([0.3], dtype=jnp.float64)
 
         @jax.jit
-        def jitted_real_space_virial(
-            positions, charges, cell, alpha, nl, nptr, nshifts
-        ):
+        def jitted_real_space_virial(positions, charges, cell, alpha, nm, nms):
             return ewald_real_space(
                 positions=positions,
                 charges=charges,
                 cell=cell,
                 alpha=alpha,
-                neighbor_list=nl,
-                neighbor_ptr=nptr,
-                neighbor_shifts=nshifts,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
                 compute_forces=True,
                 compute_virial=True,
             )
@@ -1814,9 +1754,8 @@ class TestEwaldVirialJIT:
             charges,
             cell,
             alpha,
-            neighbor_list,
-            neighbor_ptr,
-            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
         )
 
         assert len(result) == 3
