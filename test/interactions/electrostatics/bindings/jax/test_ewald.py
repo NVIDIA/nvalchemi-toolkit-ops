@@ -1402,3 +1402,458 @@ class TestEwaldJIT:
 
         assert energies.shape == (4,)
         assert jnp.all(jnp.isfinite(energies))
+
+
+# ==============================================================================
+# Virial Test Classes
+# ==============================================================================
+
+
+class TestEwaldRealSpaceVirial:
+    """Tests for real-space virial computation."""
+
+    def test_virial_shape(self, device):
+        """Test that virial has correct shape (1, 3, 3) for single system."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        # Build neighbor list
+        cutoff = 6.0
+        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff, cell, pbc, return_neighbor_list=True
+        )
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True,
+            compute_virial=True,
+        )
+
+        # Result should be (energies, forces, virial)
+        assert len(result) == 3
+        energies, forces, virial = result
+        assert virial.shape == (1, 3, 3)
+
+    def test_virial_dtype(self, device):
+        """Test that virial dtype matches input dtype."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        # Build neighbor list
+        cutoff = 6.0
+        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff, cell, pbc, return_neighbor_list=True
+        )
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True,
+            compute_virial=True,
+        )
+
+        energies, forces, virial = result
+        assert virial.dtype == jnp.float64
+
+    def test_virial_nonzero(self, device):
+        """Test that virial has non-zero elements."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        # Build neighbor list
+        cutoff = 6.0
+        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff, cell, pbc, return_neighbor_list=True
+        )
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True,
+            compute_virial=True,
+        )
+
+        energies, forces, virial = result
+        assert jnp.all(jnp.isfinite(virial))
+        # For ionic crystal, virial should be non-zero
+        assert jnp.any(jnp.abs(virial) > 1e-10)
+
+    def test_virial_fd(self, device):
+        """Test virial matches finite difference approximation."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            fd_virial_full_jax,
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        # Build neighbor list for original positions
+        cutoff = 6.0
+        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+
+        alpha_arr = jnp.array([0.3], dtype=jnp.float64)
+
+        # Define energy function that rebuilds neighbor list for each strained geometry
+        def energy_fn(pos, c):
+            nl, nptr, ns = cell_list(pos, cutoff, c, pbc, return_neighbor_list=True)
+            return ewald_real_space(
+                pos,
+                charges,
+                c,
+                alpha_arr,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+            ).sum()
+
+        # Compute explicit virial
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff, cell, pbc, return_neighbor_list=True
+        )
+        result = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha_arr,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        explicit_virial = result[-1].squeeze(0)
+
+        # Compute FD virial
+        fd_virial = fd_virial_full_jax(energy_fn, positions, cell, h=1e-5)
+
+        # Compare with loose tolerance for FD
+        assert jnp.allclose(explicit_virial, fd_virial, atol=1e-2, rtol=1e-2)
+
+    def test_virial_without_forces(self, device):
+        """Test that compute_virial=True, compute_forces=False works."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        # Build neighbor list
+        cutoff = 6.0
+        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff, cell, pbc, return_neighbor_list=True
+        )
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=False,
+            compute_virial=True,
+        )
+
+        # Result should be (energies, virial) since compute_forces=False
+        assert len(result) == 2
+        energies, virial = result
+        assert virial.shape == (1, 3, 3)
+        assert jnp.all(jnp.isfinite(virial))
+
+
+class TestEwaldReciprocalSpaceVirial:
+    """Tests for reciprocal-space virial computation."""
+
+    def test_virial_shape(self, device):
+        """Test that virial has correct shape (1, 3, 3) for single system."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        result = ewald_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            k_vectors=k_vectors,
+            alpha=alpha,
+            compute_virial=True,
+        )
+
+        # Result should be (energies, virial)
+        assert len(result) == 2
+        energies, virial = result
+        assert virial.shape == (1, 3, 3)
+
+    def test_virial_nonzero(self, device):
+        """Test that virial has non-zero elements."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        result = ewald_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            k_vectors=k_vectors,
+            alpha=alpha,
+            compute_virial=True,
+        )
+
+        energies, virial = result
+        assert jnp.all(jnp.isfinite(virial))
+        # For ionic crystal, virial should be non-zero
+        assert jnp.any(jnp.abs(virial) > 1e-10)
+
+    def test_virial_fd(self, device):
+        """Test virial matches finite difference approximation."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            fd_virial_full_jax,
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        # Define energy function that generates k_vectors from cell
+        def energy_fn(pos, c):
+            k_vecs = generate_k_vectors_ewald_summation(c, k_cutoff=8.0)
+            return ewald_reciprocal_space(
+                pos,
+                charges,
+                c,
+                k_vecs,
+                alpha,
+            ).sum()
+
+        # Compute explicit virial
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+        result = ewald_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            k_vectors=k_vectors,
+            alpha=alpha,
+            compute_virial=True,
+        )
+        explicit_virial = result[-1].squeeze(0)
+
+        # Compute FD virial
+        fd_virial = fd_virial_full_jax(energy_fn, positions, cell, h=1e-5)
+
+        # Compare with loose tolerance for FD
+        assert jnp.allclose(explicit_virial, fd_virial, atol=1e-2, rtol=1e-2)
+
+    def test_virial_symmetry(self, device):
+        """Test that virial is approximately symmetric."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=2, device=device)
+
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        result = ewald_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            k_vectors=k_vectors,
+            alpha=alpha,
+            compute_virial=True,
+        )
+
+        energies, virial = result
+        virial_squeezed = virial.squeeze(0)
+        # Check approximate symmetry
+        assert jnp.allclose(virial_squeezed, virial_squeezed.T, rtol=1e-5, atol=1e-10)
+
+
+class TestEwaldTotalVirial:
+    """Tests for combined real+reciprocal virial computation."""
+
+    def test_combined_virial_fd(self, device):
+        """Test combined virial matches finite difference of total energy."""
+        from test.interactions.electrostatics.bindings.jax.conftest import (
+            fd_virial_full_jax,
+            make_virial_cscl_system_jax,
+        )
+
+        positions, charges, cell = make_virial_cscl_system_jax(size=1, device=device)
+
+        cutoff = 6.0
+        pbc = place_on_device(jnp.array([[True, True, True]]), device)
+
+        alpha = 0.3
+        k_cutoff = 8.0
+
+        # Define energy function for total Ewald summation
+        def energy_fn(pos, c):
+            nl, nptr, ns = cell_list(pos, cutoff, c, pbc, return_neighbor_list=True)
+            return ewald_summation(
+                pos,
+                charges,
+                c,
+                alpha=alpha,
+                k_cutoff=k_cutoff,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+            ).sum()
+
+        # Compute explicit virial
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff, cell, pbc, return_neighbor_list=True
+        )
+        result = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            k_cutoff=k_cutoff,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_virial=True,
+        )
+        explicit_virial = result[-1].squeeze(0)
+
+        # Compute FD virial
+        fd_virial = fd_virial_full_jax(energy_fn, positions, cell, h=1e-5)
+
+        # Compare with loose tolerance for FD
+        assert jnp.allclose(explicit_virial, fd_virial, atol=1e-2, rtol=1e-2)
+
+
+class TestEwaldVirialJIT:
+    """Tests for virial computation under jax.jit."""
+
+    def test_jit_real_space_virial(self):
+        """Test that ewald_real_space with compute_virial works under jax.jit."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        pbc = jnp.array([[True, True, True]])
+
+        # Build neighbor list eagerly
+        neighbor_list, neighbor_ptr, neighbor_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc, return_neighbor_list=True
+        )
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        @jax.jit
+        def jitted_real_space_virial(
+            positions, charges, cell, alpha, nl, nptr, nshifts
+        ):
+            return ewald_real_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=nshifts,
+                compute_forces=True,
+                compute_virial=True,
+            )
+
+        result = jitted_real_space_virial(
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+        )
+
+        assert len(result) == 3
+        energies, forces, virial = result
+        assert virial.shape == (1, 3, 3)
+        assert jnp.all(jnp.isfinite(virial))
+
+    def test_jit_reciprocal_virial(self):
+        """Test that ewald_reciprocal_space with compute_virial works under jax.jit."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [3.0, 3.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        # k_vectors must be computed eagerly (dynamic shape)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        @jax.jit
+        def jitted_reciprocal_virial(positions, charges, cell, k_vectors, alpha):
+            return ewald_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                k_vectors=k_vectors,
+                alpha=alpha,
+                compute_virial=True,
+            )
+
+        result = jitted_reciprocal_virial(positions, charges, cell, k_vectors, alpha)
+
+        assert len(result) == 2
+        energies, virial = result
+        assert virial.shape == (1, 3, 3)
+        assert jnp.all(jnp.isfinite(virial))
