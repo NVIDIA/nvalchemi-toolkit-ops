@@ -18,6 +18,9 @@ release.
   due to differences in functionalities this may not always be possible.
 - Thin PyTorch bindings in `nvalchemiops.torch.*` that wrap the Warp kernels.
 - Deprecation warnings for old import paths to guide migration.
+- JAX bindings in `nvalchemiops.jax.*` that wrap the Warp kernels, providing
+  support for neighbor lists, DFT-D3 dispersion, electrostatics (Coulomb, Ewald,
+  PME), and splines with `jax.jit` compatibility.
 
 ## 0.2.0 - 2025-12-19
 
