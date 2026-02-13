@@ -111,102 +111,93 @@ from nvalchemiops.math.spline import _bspline_spread_kernel_overload as wp_sprea
 from nvalchemiops.math.spline import _bspline_weight_kernel_overload as wp_weight
 
 # ==============================================================================
-# JAX Kernel Wrappers (jax_kernel around Warp kernel overloads)
+# Helper Functions for Dtype-Dispatched Kernel Creation
+# ==============================================================================
+
+
+def _make_spline_jax_kernels(
+    wp_overload_dict: dict,
+    num_outputs: int,
+    in_out_argnames: list[str],
+) -> dict:
+    """Create dtype-dispatched JAX kernel wrappers from Warp overloads.
+
+    Parameters
+    ----------
+    wp_overload_dict : dict
+        Warp kernel overload dictionary keyed by wp.float32/wp.float64.
+    num_outputs : int
+        Number of output arrays returned by the kernel.
+    in_out_argnames : list of str
+        Names of in-place output arguments.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping jnp.float32/jnp.float64 to jax_kernel instances.
+    """
+    _JAX_TO_WP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
+    return {
+        jax_dtype: jax_kernel(
+            wp_overload_dict[wp_dtype],
+            num_outputs=num_outputs,
+            in_out_argnames=in_out_argnames,
+            enable_backward=False,
+        )
+        for jax_dtype, wp_dtype in _JAX_TO_WP.items()
+    }
+
+
+def _normalize_dtype(dtype):
+    """Normalize JAX dtype for kernel dictionary lookup.
+
+    Parameters
+    ----------
+    dtype : dtype-like
+        Input dtype from a JAX array.
+
+    Returns
+    -------
+    jnp.float32 or jnp.float64
+        Normalized JAX dtype for kernel lookup.
+    """
+    if dtype == jnp.float32 or str(dtype) == "float32":
+        return jnp.float32
+    elif dtype == jnp.float64 or str(dtype) == "float64":
+        return jnp.float64
+    else:
+        raise ValueError(f"Unsupported dtype for spline operations: {dtype}")
+
+
+# ==============================================================================
+# JAX Kernel Wrappers (dtype-dispatched jax_kernel around Warp overloads)
 # ==============================================================================
 
 # --- Unbatched Kernels ---
 
-weight_kernel = jax_kernel(
-    wp_weight[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["weights"],
-    enable_backward=False,
-)
-
-spread_kernel = jax_kernel(
-    wp_spread[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["mesh"],
-    enable_backward=False,
-)
-
-gather_kernel = jax_kernel(
-    wp_gather[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["output"],
-    enable_backward=False,
-)
-
-gather_vec3_kernel = jax_kernel(
-    wp_gather_vec3[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["output"],
-    enable_backward=False,
-)
-
-gather_gradient_kernel = jax_kernel(
-    wp_gather_gradient[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["forces"],
-    enable_backward=False,
-)
-
-spread_channels_kernel = jax_kernel(
-    wp_spread_channels[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["mesh"],
-    enable_backward=False,
-)
-
-gather_channels_kernel = jax_kernel(
-    wp_gather_channels[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["output"],
-    enable_backward=False,
-)
+_weight_kernels = _make_spline_jax_kernels(wp_weight, 1, ["weights"])
+_spread_kernels = _make_spline_jax_kernels(wp_spread, 1, ["mesh"])
+_gather_kernels = _make_spline_jax_kernels(wp_gather, 1, ["output"])
+_gather_vec3_kernels = _make_spline_jax_kernels(wp_gather_vec3, 1, ["output"])
+_gather_gradient_kernels = _make_spline_jax_kernels(wp_gather_gradient, 1, ["forces"])
+_spread_channels_kernels = _make_spline_jax_kernels(wp_spread_channels, 1, ["mesh"])
+_gather_channels_kernels = _make_spline_jax_kernels(wp_gather_channels, 1, ["output"])
 
 # --- Batched Kernels ---
 
-batch_spread_kernel = jax_kernel(
-    wp_batch_spread[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["mesh"],
-    enable_backward=False,
+_batch_spread_kernels = _make_spline_jax_kernels(wp_batch_spread, 1, ["mesh"])
+_batch_gather_kernels = _make_spline_jax_kernels(wp_batch_gather, 1, ["output"])
+_batch_gather_vec3_kernels = _make_spline_jax_kernels(
+    wp_batch_gather_vec3, 1, ["output"]
 )
-
-batch_gather_kernel = jax_kernel(
-    wp_batch_gather[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["output"],
-    enable_backward=False,
+_batch_gather_gradient_kernels = _make_spline_jax_kernels(
+    wp_batch_gather_gradient, 1, ["forces"]
 )
-
-batch_gather_vec3_kernel = jax_kernel(
-    wp_batch_gather_vec3[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["output"],
-    enable_backward=False,
+_batch_spread_channels_kernels = _make_spline_jax_kernels(
+    wp_batch_spread_channels, 1, ["mesh"]
 )
-
-batch_gather_gradient_kernel = jax_kernel(
-    wp_batch_gather_gradient[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["forces"],
-    enable_backward=False,
-)
-
-batch_spread_channels_kernel = jax_kernel(
-    wp_batch_spread_channels[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["mesh"],
-    enable_backward=False,
-)
-
-batch_gather_channels_kernel = jax_kernel(
-    wp_batch_gather_channels[wp.float32],
-    num_outputs=1,
-    in_out_argnames=["output"],
-    enable_backward=False,
+_batch_gather_channels_kernels = _make_spline_jax_kernels(
+    wp_batch_gather_channels, 1, ["output"]
 )
 
 __all__ = [
@@ -233,14 +224,14 @@ def bspline_weight(u: jnp.ndarray, order: int) -> jnp.ndarray:
     Parameters
     ----------
     u : jax.Array
-        Input values.
+        Input values. dtype=float32 or float64.
     order : int
         Spline order (1-4).
 
     Returns
     -------
     weights : jax.Array
-        B-spline weights M_n(u).
+        B-spline weights M_n(u). dtype matches input u dtype.
 
     Notes
     -----
@@ -253,15 +244,13 @@ def bspline_weight(u: jnp.ndarray, order: int) -> jnp.ndarray:
     >>> weights = bspline_weight(u, order=4)
     """
     num_points = u.shape[0]
-
-    # Ensure float32 for kernel dispatch
-    u_f32 = u.astype(jnp.float32)
+    working_dtype = _normalize_dtype(u.dtype)
 
     # Allocate output
-    weights = jnp.zeros_like(u_f32)
+    weights = jnp.zeros_like(u)
 
-    (weights_out,) = weight_kernel(
-        u_f32,
+    (weights_out,) = _weight_kernels[working_dtype](
+        u,
         int(order),
         weights,
         launch_dims=num_points,
@@ -307,14 +296,13 @@ def spline_spread(
     Returns
     -------
     mesh : jax.Array
-        For single-system: shape (nx, ny, nz), dtype=float32
-        For batch: shape (B, nx, ny, nz), dtype=float32
+        For single-system: shape (nx, ny, nz), dtype matches positions dtype
+        For batch: shape (B, nx, ny, nz), dtype matches positions dtype
 
     Notes
     -----
     - Uses atomic adds for thread-safe accumulation to shared grid points.
     - Grid indices are wrapped using periodic boundary conditions.
-    - Output is always float32 regardless of input dtype.
 
     Examples
     --------
@@ -339,25 +327,25 @@ def spline_spread(
     num_atoms = positions.shape[0]
     num_points = spline_order**3
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
+    working_dtype = _normalize_dtype(positions.dtype)
 
-    # Ensure float32 for kernel dispatch
-    positions_f32 = positions.astype(jnp.float32)
-    values_f32 = values.astype(jnp.float32)
-    cell_f32 = cell.astype(jnp.float32)
+    # Cast inputs to working dtype
+    values_work = values.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
 
     # Compute cell_inv_t
-    if cell_f32.ndim == 2:
-        cell_f32 = cell_f32[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+    if cell_work.ndim == 2:
+        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_f32)
+    cell_inv = jnp.linalg.inv(cell_work)
     cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
 
     if batch_idx is None:
         # Single-system kernel
-        mesh = jnp.zeros((mesh_nx, mesh_ny, mesh_nz), dtype=jnp.float32)
-        (mesh_out,) = spread_kernel(
-            positions_f32,
-            values_f32,
+        mesh = jnp.zeros((mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype)
+        (mesh_out,) = _spread_kernels[working_dtype](
+            positions,
+            values_work,
             cell_inv_t,
             int(spline_order),
             mesh,
@@ -366,13 +354,13 @@ def spline_spread(
         return mesh_out
     else:
         # Batched kernel
-        num_systems = cell_f32.shape[0]
+        num_systems = cell_work.shape[0]
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
-        mesh = jnp.zeros((num_systems, mesh_nx, mesh_ny, mesh_nz), dtype=jnp.float32)
-        (mesh_out,) = batch_spread_kernel(
-            positions_f32,
-            values_f32,
+        mesh = jnp.zeros((num_systems, mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype)
+        (mesh_out,) = _batch_spread_kernels[working_dtype](
+            positions,
+            values_work,
             batch_idx_i32,
             cell_inv_t,
             int(spline_order),
@@ -416,14 +404,13 @@ def spline_gather(
 
     Returns
     -------
-    values : jax.Array, shape (N,), dtype=float32
+    values : jax.Array, shape (N,), dtype matches positions dtype
         Interpolated values at atomic positions.
 
     Notes
     -----
     - Uses atomic adds since multiple threads contribute to each atom's output.
     - Grid indices are wrapped using periodic boundary conditions.
-    - Output is always float32 regardless of input dtype.
 
     Examples
     --------
@@ -431,29 +418,29 @@ def spline_gather(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
 
-    # Ensure float32 for kernel dispatch
-    positions_f32 = positions.astype(jnp.float32)
-    mesh_f32 = mesh.astype(jnp.float32)
-    cell_f32 = cell.astype(jnp.float32)
+    # Cast inputs to working dtype
+    mesh_work = mesh.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
 
     # Compute cell_inv_t
-    if cell_f32.ndim == 2:
-        cell_f32 = cell_f32[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+    if cell_work.ndim == 2:
+        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_f32)
+    cell_inv = jnp.linalg.inv(cell_work)
     cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
 
     # Allocate output
-    output = jnp.zeros(num_atoms, dtype=jnp.float32)
+    output = jnp.zeros(num_atoms, dtype=working_dtype)
 
     if batch_idx is None:
         # Single-system kernel
-        (output_out,) = gather_kernel(
-            positions_f32,
+        (output_out,) = _gather_kernels[working_dtype](
+            positions,
             cell_inv_t,
             int(spline_order),
-            mesh_f32,
+            mesh_work,
             output,
             launch_dims=(num_atoms, num_points),
         )
@@ -462,12 +449,12 @@ def spline_gather(
         # Batched kernel
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
-        (output_out,) = batch_gather_kernel(
-            positions_f32,
+        (output_out,) = _batch_gather_kernels[working_dtype](
+            positions,
             batch_idx_i32,
             cell_inv_t,
             int(spline_order),
-            mesh_f32,
+            mesh_work,
             output,
             launch_dims=(num_atoms, num_points),
         )
@@ -509,7 +496,7 @@ def spline_gather_vec3(
 
     Returns
     -------
-    vectors : jax.Array, shape (N, 3), dtype=float32
+    vectors : jax.Array, shape (N, 3), dtype matches positions dtype
         Charge-weighted interpolated vectors at atomic positions.
 
     Notes
@@ -517,7 +504,6 @@ def spline_gather_vec3(
     - Uses atomic adds since multiple threads contribute to each atom's output.
     - Grid indices are wrapped using periodic boundary conditions.
     - The mesh must be a vec3-valued mesh (Warp vector type).
-    - Output is always float32 regardless of input dtype.
 
     Examples
     --------
@@ -525,31 +511,31 @@ def spline_gather_vec3(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
 
-    # Ensure float32 for kernel dispatch
-    positions_f32 = positions.astype(jnp.float32)
-    charges_f32 = charges.astype(jnp.float32)
-    mesh_f32 = mesh.astype(jnp.float32)
-    cell_f32 = cell.astype(jnp.float32)
+    # Cast inputs to working dtype
+    charges_work = charges.astype(working_dtype)
+    mesh_work = mesh.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
 
     # Compute cell_inv_t
-    if cell_f32.ndim == 2:
-        cell_f32 = cell_f32[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+    if cell_work.ndim == 2:
+        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_f32)
+    cell_inv = jnp.linalg.inv(cell_work)
     cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
 
     # Allocate output (vec3)
-    output = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    output = jnp.zeros((num_atoms, 3), dtype=working_dtype)
 
     if batch_idx is None:
         # Single-system kernel
-        (output_out,) = gather_vec3_kernel(
-            positions_f32,
-            charges_f32,
+        (output_out,) = _gather_vec3_kernels[working_dtype](
+            positions,
+            charges_work,
             cell_inv_t,
             int(spline_order),
-            mesh_f32,
+            mesh_work,
             output,
             launch_dims=(num_atoms, num_points),
         )
@@ -558,13 +544,13 @@ def spline_gather_vec3(
         # Batched kernel
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
-        (output_out,) = batch_gather_vec3_kernel(
-            positions_f32,
-            charges_f32,
+        (output_out,) = _batch_gather_vec3_kernels[working_dtype](
+            positions,
+            charges_work,
             batch_idx_i32,
             cell_inv_t,
             int(spline_order),
-            mesh_f32,
+            mesh_work,
             output,
             launch_dims=(num_atoms, num_points),
         )
@@ -611,7 +597,7 @@ def spline_gather_gradient(
 
     Returns
     -------
-    forces : jax.Array, shape (N, 3), dtype=float32
+    forces : jax.Array, shape (N, 3), dtype matches positions dtype
         Forces on atoms in Cartesian coordinates.
 
     Notes
@@ -620,7 +606,6 @@ def spline_gather_gradient(
     - The gradient is computed in fractional coordinates, then transformed:
       F_cart = cell_inv_t^T * F_frac
     - Grid indices are wrapped using periodic boundary conditions.
-    - Output is always float32 regardless of input dtype.
 
     Examples
     --------
@@ -628,31 +613,31 @@ def spline_gather_gradient(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
 
-    # Ensure float32 for kernel dispatch
-    positions_f32 = positions.astype(jnp.float32)
-    charges_f32 = charges.astype(jnp.float32)
-    mesh_f32 = mesh.astype(jnp.float32)
-    cell_f32 = cell.astype(jnp.float32)
+    # Cast inputs to working dtype
+    charges_work = charges.astype(working_dtype)
+    mesh_work = mesh.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
 
     # Compute cell_inv_t
-    if cell_f32.ndim == 2:
-        cell_f32 = cell_f32[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+    if cell_work.ndim == 2:
+        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_f32)
+    cell_inv = jnp.linalg.inv(cell_work)
     cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
 
     # Allocate forces output (vec3)
-    forces = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    forces = jnp.zeros((num_atoms, 3), dtype=working_dtype)
 
     if batch_idx is None:
         # Single-system kernel
-        (forces_out,) = gather_gradient_kernel(
-            positions_f32,
-            charges_f32,
+        (forces_out,) = _gather_gradient_kernels[working_dtype](
+            positions,
+            charges_work,
             cell_inv_t,
             int(spline_order),
-            mesh_f32,
+            mesh_work,
             forces,
             launch_dims=(num_atoms, num_points),
         )
@@ -661,13 +646,13 @@ def spline_gather_gradient(
         # Batched kernel
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
-        (forces_out,) = batch_gather_gradient_kernel(
-            positions_f32,
-            charges_f32,
+        (forces_out,) = _batch_gather_gradient_kernels[working_dtype](
+            positions,
+            charges_work,
             batch_idx_i32,
             cell_inv_t,
             int(spline_order),
-            mesh_f32,
+            mesh_work,
             forces,
             launch_dims=(num_atoms, num_points),
         )
@@ -709,13 +694,12 @@ def spline_spread_channels(
     mesh : jax.Array
         For single-system: shape (C, nx, ny, nz)
         For batch: shape (B, C, nx, ny, nz)
-        dtype=float32
+        dtype matches positions dtype
 
     Notes
     -----
     - Uses atomic adds for thread-safe accumulation.
     - Grid indices are wrapped using periodic boundary conditions.
-    - Output is always float32 regardless of input dtype.
 
     Examples
     --------
@@ -728,25 +712,25 @@ def spline_spread_channels(
     num_channels = values.shape[1]
     num_points = spline_order**3
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
+    working_dtype = _normalize_dtype(positions.dtype)
 
-    # Ensure float32 for kernel dispatch
-    positions_f32 = positions.astype(jnp.float32)
-    values_f32 = values.astype(jnp.float32)
-    cell_f32 = cell.astype(jnp.float32)
+    # Cast inputs to working dtype
+    values_work = values.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
 
     # Compute cell_inv_t
-    if cell_f32.ndim == 2:
-        cell_f32 = cell_f32[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+    if cell_work.ndim == 2:
+        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_f32)
+    cell_inv = jnp.linalg.inv(cell_work)
     cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
 
     if batch_idx is None:
         # Single-system kernel
-        mesh = jnp.zeros((num_channels, mesh_nx, mesh_ny, mesh_nz), dtype=jnp.float32)
-        (mesh_out,) = spread_channels_kernel(
-            positions_f32,
-            values_f32,
+        mesh = jnp.zeros((num_channels, mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype)
+        (mesh_out,) = _spread_channels_kernels[working_dtype](
+            positions,
+            values_work,
             cell_inv_t,
             int(spline_order),
             mesh,
@@ -755,16 +739,16 @@ def spline_spread_channels(
         return mesh_out
     else:
         # Batched kernel
-        num_systems = cell_f32.shape[0]
+        num_systems = cell_work.shape[0]
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
         # Flatten mesh from (B, C, nx, ny, nz) to (B*C, nx, ny, nz) for Warp 4D limit
         mesh = jnp.zeros(
-            (num_systems * num_channels, mesh_nx, mesh_ny, mesh_nz), dtype=jnp.float32
+            (num_systems * num_channels, mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype
         )
-        (mesh_flat,) = batch_spread_channels_kernel(
-            positions_f32,
-            values_f32,
+        (mesh_flat,) = _batch_spread_channels_kernels[working_dtype](
+            positions,
+            values_work,
             batch_idx_i32,
             cell_inv_t,
             int(spline_order),
@@ -810,13 +794,12 @@ def spline_gather_channels(
     -------
     values : jax.Array, shape (N, C)
         Interpolated multi-channel values at atomic positions.
-        dtype=float32
+        dtype matches positions dtype
 
     Notes
     -----
     - Uses atomic adds since multiple threads contribute to each atom's output.
     - Grid indices are wrapped using periodic boundary conditions.
-    - Output is always float32 regardless of input dtype.
 
     Examples
     --------
@@ -827,29 +810,29 @@ def spline_gather_channels(
     """
     num_atoms = positions.shape[0]
     num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
 
-    # Ensure float32 for kernel dispatch
-    positions_f32 = positions.astype(jnp.float32)
-    mesh_f32 = mesh.astype(jnp.float32)
-    cell_f32 = cell.astype(jnp.float32)
+    # Cast inputs to working dtype
+    mesh_work = mesh.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
 
     # Compute cell_inv_t
-    if cell_f32.ndim == 2:
-        cell_f32 = cell_f32[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+    if cell_work.ndim == 2:
+        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_f32)
+    cell_inv = jnp.linalg.inv(cell_work)
     cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
 
     if batch_idx is None:
         # Single-system kernel
-        num_channels = mesh_f32.shape[0]
-        output = jnp.zeros((num_atoms, num_channels), dtype=jnp.float32)
+        num_channels = mesh_work.shape[0]
+        output = jnp.zeros((num_atoms, num_channels), dtype=working_dtype)
 
-        (output_out,) = gather_channels_kernel(
-            positions_f32,
+        (output_out,) = _gather_channels_kernels[working_dtype](
+            positions,
             cell_inv_t,
             int(spline_order),
-            mesh_f32,
+            mesh_work,
             output,
             launch_dims=(num_atoms, num_points),
         )
@@ -857,23 +840,23 @@ def spline_gather_channels(
     else:
         # Batched kernel
         batch_idx_i32 = batch_idx.astype(jnp.int32)
-        num_systems = mesh_f32.shape[0]
-        num_channels = mesh_f32.shape[1]
+        num_systems = mesh_work.shape[0]
+        num_channels = mesh_work.shape[1]
 
         # Flatten mesh from (B, C, nx, ny, nz) to (B*C, nx, ny, nz)
         mesh_nx, mesh_ny, mesh_nz = (
-            mesh_f32.shape[2],
-            mesh_f32.shape[3],
-            mesh_f32.shape[4],
+            mesh_work.shape[2],
+            mesh_work.shape[3],
+            mesh_work.shape[4],
         )
-        mesh_flat = mesh_f32.reshape(
+        mesh_flat = mesh_work.reshape(
             num_systems * num_channels, mesh_nx, mesh_ny, mesh_nz
         )
 
-        output = jnp.zeros((num_atoms, num_channels), dtype=jnp.float32)
+        output = jnp.zeros((num_atoms, num_channels), dtype=working_dtype)
 
-        (output_out,) = batch_gather_channels_kernel(
-            positions_f32,
+        (output_out,) = _batch_gather_channels_kernels[working_dtype](
+            positions,
             batch_idx_i32,
             cell_inv_t,
             int(spline_order),
