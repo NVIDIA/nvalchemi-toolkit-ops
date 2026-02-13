@@ -52,17 +52,20 @@ except ModuleNotFoundError:
     PMECalculator = None
     CoulombPotential = None
 
-# Crystal structure generators are defined in the shared electrostatics conftest
-from test.interactions.electrostatics.conftest import (
+# Crystal structure generators from shared electrostatics conftest
+# Virial test utilities from torch-specific test_utils
+from test.interactions.electrostatics.bindings.torch.test_utils import (
     VIRIAL_DTYPE,
-    create_cscl_supercell,
-    create_wurtzite_system,
-    create_zincblende_system,
     fd_virial_full,
     get_virial_neighbor_data,
     make_non_neutral_system,
     make_virial_batch_cscl_system,
     make_virial_cscl_system,
+)
+from test.interactions.electrostatics.conftest import (
+    create_cscl_supercell,
+    create_wurtzite_system,
+    create_zincblende_system,
 )
 
 ###########################################################################################
