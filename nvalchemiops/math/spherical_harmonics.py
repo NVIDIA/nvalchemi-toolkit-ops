@@ -129,6 +129,10 @@ Y2_P2_COEFF = wp.constant(wp.float64(0.5462742152960396))  # sqrt(15/(16pi))
 # Small value for safe division
 EPSILON = wp.constant(wp.float64(1e-30))
 
+# Vector type aliases (replacing deprecated wp.vec(...) factory)
+vec5d = wp.types.vector(length=5, dtype=wp.float64)
+vec9d = wp.types.vector(length=9, dtype=wp.float64)
+
 
 # =============================================================================
 # L = 0 (Monopole) - 1 component
@@ -617,12 +621,12 @@ def eval_spherical_harmonics_l1(r: wp.vec3d) -> wp.vec3d:
 
 
 @wp.func
-def eval_spherical_harmonics_l2(r: wp.vec3d) -> wp.vec(length=5, dtype=wp.float64):
+def eval_spherical_harmonics_l2(r: wp.vec3d) -> vec5d:
     """Evaluate all L=2 harmonics.
 
     Returns
     -------
-    wp.vec(5)
+    vec5d
         (Y_2^{-2}, Y_2^{-1}, Y_2^0, Y_2^{+1}, Y_2^{+2}) values.
     """
     r2 = wp.dot(r, r)
@@ -631,23 +635,22 @@ def eval_spherical_harmonics_l2(r: wp.vec3d) -> wp.vec(length=5, dtype=wp.float6
     x, y, z = r[0], r[1], r[2]
     x2, y2, z2 = x * x, y * y, z * z
 
-    return wp.vec(
+    return vec5d(
         Y2_M2_COEFF * x * y * r2_inv,  # Y_2^{-2}
         Y2_M1_COEFF * y * z * r2_inv,  # Y_2^{-1}
         Y2_0_COEFF * (wp.float64(3.0) * z2 - r2) * r2_inv,  # Y_2^0
         Y2_P1_COEFF * x * z * r2_inv,  # Y_2^{+1}
         Y2_P2_COEFF * (x2 - y2) * r2_inv,  # Y_2^{+2}
-        dtype=wp.float64,
     )
 
 
 @wp.func
-def eval_all_spherical_harmonics(r: wp.vec3d) -> wp.vec(length=9, dtype=wp.float64):
+def eval_all_spherical_harmonics(r: wp.vec3d) -> vec9d:
     """Evaluate all spherical harmonics up to L=2.
 
     Returns
     -------
-    wp.vec(9)
+    vec9d
         All harmonics in order:
         [Y_0^0, Y_1^{-1}, Y_1^0, Y_1^{+1}, Y_2^{-2}, Y_2^{-1}, Y_2^0, Y_2^{+1}, Y_2^{+2}]
     """
@@ -659,7 +662,7 @@ def eval_all_spherical_harmonics(r: wp.vec3d) -> wp.vec(length=9, dtype=wp.float
     x, y, z = r[0], r[1], r[2]
     x2, y2, z2 = x * x, y * y, z * z
 
-    return wp.vec(
+    return vec9d(
         # L=0
         Y00_COEFF,  # Y_0^0
         # L=1
@@ -672,7 +675,6 @@ def eval_all_spherical_harmonics(r: wp.vec3d) -> wp.vec(length=9, dtype=wp.float
         Y2_0_COEFF * (wp.float64(3.0) * z2 - r2_safe) * r2_inv,  # Y_2^0
         Y2_P1_COEFF * x * z * r2_inv,  # Y_2^{+1}
         Y2_P2_COEFF * (x2 - y2) * r2_inv,  # Y_2^{+2}
-        dtype=wp.float64,
     )
 
 
