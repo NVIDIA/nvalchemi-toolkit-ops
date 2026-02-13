@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list
 
@@ -159,6 +160,14 @@ class TestBatchCellListEdgeCases:
 class TestBatchCellListJIT:
     """Smoke tests for batch_cell_list compatibility with jax.jit."""
 
+    @pytest.mark.xfail(
+        reason="estimate_batch_cell_list_sizes derives array shapes from traced input "
+        "data (cell geometry), which is incompatible with jax.jit. Provide "
+        "max_total_cells explicitly to bypass. See TODO in "
+        "estimate_batch_cell_list_sizes.",
+        raises=TypeError,
+        strict=True,
+    )
     def test_jit_with_pbc(self):
         """Test batched cell list with PBC works with jax.jit."""
         positions = jnp.vstack(

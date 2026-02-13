@@ -20,26 +20,89 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
+from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     allocate_cell_list,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
-from nvalchemiops.jax.types import (
-    get_warp_device_from_array,
-    get_wp_dtype,
-    get_wp_mat_dtype,
-    get_wp_vec_dtype,
-    jax_to_warp,
-)
 from nvalchemiops.neighbors.batch_cell_list import (
-    batch_build_cell_list as wp_batch_build_cell_list,
-)
-from nvalchemiops.neighbors.batch_cell_list import (
-    batch_query_cell_list as wp_batch_query_cell_list,
+    _batch_cell_list_bin_atoms_overload,
+    _batch_cell_list_build_neighbor_matrix_overload,
+    _batch_cell_list_construct_bin_size_overload,
+    _batch_cell_list_count_atoms_per_bin_overload,
+    _compute_cells_per_system,
 )
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+
+# ==============================================================================
+# JAX Kernel Wrappers
+# ==============================================================================
+
+# Build step 1: Construct bin sizes (per system)
+_jax_batch_construct_bin_size_f32 = jax_kernel(
+    _batch_cell_list_construct_bin_size_overload[wp.float32],
+    num_outputs=1,
+    in_out_argnames=["cells_per_dimension"],
+    enable_backward=False,
+)
+_jax_batch_construct_bin_size_f64 = jax_kernel(
+    _batch_cell_list_construct_bin_size_overload[wp.float64],
+    num_outputs=1,
+    in_out_argnames=["cells_per_dimension"],
+    enable_backward=False,
+)
+
+# Helper: Compute cells per system
+_jax_compute_cells_per_system = jax_kernel(
+    _compute_cells_per_system,
+    num_outputs=1,
+    in_out_argnames=["cells_per_system"],
+    enable_backward=False,
+)
+
+# Build step 2: Count atoms per bin
+_jax_batch_count_atoms_per_bin_f32 = jax_kernel(
+    _batch_cell_list_count_atoms_per_bin_overload[wp.float32],
+    num_outputs=2,
+    in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
+    enable_backward=False,
+)
+_jax_batch_count_atoms_per_bin_f64 = jax_kernel(
+    _batch_cell_list_count_atoms_per_bin_overload[wp.float64],
+    num_outputs=2,
+    in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
+    enable_backward=False,
+)
+
+# Build step 3: Bin atoms into cells
+_jax_batch_bin_atoms_f32 = jax_kernel(
+    _batch_cell_list_bin_atoms_overload[wp.float32],
+    num_outputs=3,
+    in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
+    enable_backward=False,
+)
+_jax_batch_bin_atoms_f64 = jax_kernel(
+    _batch_cell_list_bin_atoms_overload[wp.float64],
+    num_outputs=3,
+    in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
+    enable_backward=False,
+)
+
+# Query: Build neighbor matrix from batch cell list
+_jax_batch_build_neighbor_matrix_f32 = jax_kernel(
+    _batch_cell_list_build_neighbor_matrix_overload[wp.float32],
+    num_outputs=3,
+    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    enable_backward=False,
+)
+_jax_batch_build_neighbor_matrix_f64 = jax_kernel(
+    _batch_cell_list_build_neighbor_matrix_overload[wp.float64],
+    num_outputs=3,
+    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    enable_backward=False,
+)
 
 __all__ = [
     "batch_cell_list",
@@ -85,6 +148,14 @@ def estimate_batch_cell_list_sizes(
         Cells per dimension for each system.
     neighbor_search_radius : jax.Array, shape (num_systems, 3)
         Search radius for each system.
+
+    .. warning::
+
+        This function is **not compatible with** ``jax.jit``. The returned
+        ``max_total_cells`` is used to determine array allocation sizes, which
+        must be concrete (statically known) at JAX trace time. When using
+        ``batch_cell_list`` or ``batch_build_cell_list`` inside ``jax.jit``,
+        provide ``max_total_cells`` explicitly to bypass this function.
     """
 
     # Prepare batch info
@@ -116,6 +187,11 @@ def estimate_batch_cell_list_sizes(
             volume = 1000.0  # Default assumption
 
         cell_volume = cutoff**3
+        # TODO: This estimation derives array sizes from traced input data (cell
+        # geometry), which is fundamentally incompatible with jax.jit compilation.
+        # The JAX bindings need a refactored usage pattern where sizing is always
+        # performed outside the JIT boundary, or a fixed upper-bound allocation
+        # strategy is adopted.
         num_cells_est = max(int(volume / cell_volume * buffer_factor), 8)
         max_total_cells += num_cells_est
 
@@ -184,6 +260,11 @@ def batch_build_cell_list(
         Search radius in neighboring cells for each system.
     cell_origin : jax.Array, shape (3,), dtype same as positions
         Cell origin point (currently zeros).
+
+    Notes
+    -----
+    When calling inside ``jax.jit``, ``max_total_cells`` **must** be provided
+    to avoid calling ``estimate_batch_cell_list_sizes``, which is not JIT-compatible.
     """
 
     # Prepare batch info
@@ -218,67 +299,92 @@ def batch_build_cell_list(
         neighbor_search_radius,
     )
 
-    # Set device string
-    device_str = get_warp_device_from_array(positions)
-
-    wp_dtype = get_wp_dtype(positions.dtype)
-    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
-    wp_mat_dtype = get_wp_mat_dtype(cell.dtype) if cell is not None else None
-
-    # Convert to warp arrays
-    positions_wp = wp.from_dlpack(positions, dtype=wp_vec_dtype)
-    batch_idx_wp = wp.from_dlpack(batch_idx, dtype=wp.int32)
-    cells_per_dimension_wp = wp.from_dlpack(cells_per_dimension, dtype=wp.vec3i)
-    atom_periodic_shifts_wp = wp.from_dlpack(atom_periodic_shifts, dtype=wp.vec3i)
-    atom_to_cell_mapping_wp = wp.from_dlpack(atom_to_cell_mapping, dtype=wp.vec3i)
-    atoms_per_cell_count_wp = wp.from_dlpack(atoms_per_cell_count, dtype=wp.int32)
-    cell_atom_start_indices_wp = wp.from_dlpack(cell_atom_start_indices, dtype=wp.int32)
-    cell_atom_list_wp = wp.from_dlpack(cell_atom_list, dtype=wp.int32)
-
-    if cell is not None:
-        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
-        if cell.dtype != positions.dtype:
-            cell = cell.astype(positions.dtype)
-            wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
-        cell_wp = wp.from_dlpack(cell, dtype=wp_mat_dtype)
+    # Select kernels based on dtype
+    if positions.dtype == jnp.float64:
+        _construct = _jax_batch_construct_bin_size_f64
+        _count = _jax_batch_count_atoms_per_bin_f64
+        _bin = _jax_batch_bin_atoms_f64
     else:
-        cell_wp = None
+        _construct = _jax_batch_construct_bin_size_f32
+        _count = _jax_batch_count_atoms_per_bin_f32
+        _bin = _jax_batch_bin_atoms_f32
+        positions = positions.astype(jnp.float32)
 
+    # Ensure cell dtype matches positions
+    if cell is not None and cell.dtype != positions.dtype:
+        cell = cell.astype(positions.dtype)
+
+    # Ensure pbc is bool with shape (num_systems, 3)
     if pbc is not None:
-        pbc_wp = jax_to_warp(pbc, dtype=wp.bool)
+        pbc_bool = pbc.astype(jnp.bool_)
     else:
-        pbc_wp = None
+        pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
 
-    # Allocate cell_offsets array (shape num_systems, not num_systems+1)
-    cell_offsets = jnp.zeros(num_systems, dtype=jnp.int32)
-    cell_offsets_wp = wp.from_dlpack(cell_offsets, dtype=wp.int32)
+    total_atoms = positions.shape[0]
 
-    # Zero atoms_per_cell_count before building
-    atoms_per_cell_count = atoms_per_cell_count.at[:].set(0)
-    atoms_per_cell_count_wp = wp.from_dlpack(atoms_per_cell_count, dtype=wp.int32)
-
-    # Call warp kernel
-    wp_batch_build_cell_list(
-        positions=positions_wp,
-        cell=cell_wp,
-        pbc=pbc_wp,
-        cutoff=cutoff,
-        batch_idx=batch_idx_wp,
-        cells_per_dimension=cells_per_dimension_wp,
-        cell_offsets=cell_offsets_wp,
-        atom_periodic_shifts=atom_periodic_shifts_wp,
-        atom_to_cell_mapping=atom_to_cell_mapping_wp,
-        atoms_per_cell_count=atoms_per_cell_count_wp,
-        cell_atom_start_indices=cell_atom_start_indices_wp,
-        cell_atom_list=cell_atom_list_wp,
-        wp_dtype=wp_dtype,
-        device=device_str,
+    # Step 1: Construct bin sizes (one thread per system)
+    (cells_per_dimension,) = _construct(
+        cell,
+        pbc_bool,
+        cells_per_dimension,
+        float(cutoff),
+        int(max_total_cells),
+        launch_dims=(num_systems,),
     )
 
-    # Synchronize
-    wp.synchronize_device(device_str)
+    # Step 2: Compute cells_per_system and cell_offsets
+    cells_per_system = jnp.zeros(num_systems, dtype=jnp.int32)
+    (cells_per_system,) = _jax_compute_cells_per_system(
+        cells_per_dimension,
+        cells_per_system,
+        launch_dims=(num_systems,),
+    )
+    cell_offsets = jnp.concatenate(
+        [
+            jnp.array([0], dtype=jnp.int32),
+            jnp.cumsum(cells_per_system[:-1]),
+        ]
+    )
 
-    # Create cell origin
+    # Step 3: Count atoms per bin
+    atoms_per_cell_count, atom_periodic_shifts = _count(
+        positions,
+        cell,
+        pbc_bool,
+        batch_idx,
+        cells_per_dimension,
+        cell_offsets,
+        atoms_per_cell_count,
+        atom_periodic_shifts,
+        launch_dims=(total_atoms,),
+    )
+
+    # Step 4: Compute exclusive prefix sum (replaces wp.utils.array_scan)
+    cell_atom_start_indices = jnp.concatenate(
+        [
+            jnp.array([0], dtype=jnp.int32),
+            jnp.cumsum(atoms_per_cell_count[:-1]),
+        ]
+    )
+
+    # Step 5: Zero counts before second pass
+    atoms_per_cell_count = jnp.zeros_like(atoms_per_cell_count)
+
+    # Step 6: Bin atoms
+    atom_to_cell_mapping, atoms_per_cell_count, cell_atom_list = _bin(
+        positions,
+        cell,
+        pbc_bool,
+        batch_idx,
+        cells_per_dimension,
+        cell_offsets,
+        atom_to_cell_mapping,
+        atoms_per_cell_count,
+        cell_atom_start_indices,
+        cell_atom_list,
+        launch_dims=(total_atoms,),
+    )
+
     cell_origin = jnp.zeros(3, dtype=positions.dtype)
 
     return (
@@ -361,6 +467,7 @@ def batch_query_cell_list(
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
         batch_idx, batch_ptr, positions.shape[0]
     )
+    num_systems = batch_ptr.shape[0] - 1
 
     if neighbor_matrix is None:
         neighbor_matrix = jnp.full(
@@ -376,85 +483,64 @@ def batch_query_cell_list(
     else:
         num_neighbors = num_neighbors.at[:].set(0)
 
-    device_str = get_warp_device_from_array(positions)
-
-    wp_dtype = get_wp_dtype(positions.dtype)
-    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
-
-    # Convert to warp arrays
-    positions_wp = wp.from_dlpack(positions, dtype=wp_vec_dtype)
-    batch_idx_wp = wp.from_dlpack(batch_idx, dtype=wp.int32)
-    cells_per_dimension_wp = wp.from_dlpack(cells_per_dimension, dtype=wp.vec3i)
-    atom_to_cell_mapping_wp = wp.from_dlpack(atom_to_cell_mapping, dtype=wp.vec3i)
-    cell_atom_start_indices_wp = wp.from_dlpack(cell_atom_start_indices, dtype=wp.int32)
-    cell_atom_list_wp = wp.from_dlpack(cell_atom_list, dtype=wp.int32)
-    neighbor_search_radius_wp = wp.from_dlpack(neighbor_search_radius, dtype=wp.vec3i)
-    neighbor_matrix_wp = wp.from_dlpack(neighbor_matrix, dtype=wp.int32)
-    num_neighbors_wp = wp.from_dlpack(num_neighbors, dtype=wp.int32)
-    atom_periodic_shifts_wp = wp.from_dlpack(atom_periodic_shifts, dtype=wp.vec3i)
-
-    if cell is not None:
-        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
-        if cell.dtype != positions.dtype:
-            cell = cell.astype(positions.dtype)
-        wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
-        cell_wp = wp.from_dlpack(cell, dtype=wp_mat_dtype)
+    # Select kernel based on dtype
+    if positions.dtype == jnp.float64:
+        _query_kernel = _jax_batch_build_neighbor_matrix_f64
     else:
-        cell_wp = None
+        _query_kernel = _jax_batch_build_neighbor_matrix_f32
+        positions = positions.astype(jnp.float32)
 
+    # Ensure cell dtype matches positions
+    if cell is not None and cell.dtype != positions.dtype:
+        cell = cell.astype(positions.dtype)
+
+    # Ensure pbc is bool with shape (num_systems, 3)
     if pbc is not None:
-        pbc_wp = jax_to_warp(pbc, dtype=wp.bool)
+        pbc_bool = pbc.astype(jnp.bool_)
     else:
-        pbc_wp = None
+        pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+
+    total_atoms = positions.shape[0]
 
     # Allocate neighbor_matrix_shifts
     neighbor_matrix_shifts = jnp.zeros(
-        (positions.shape[0], max_neighbors, 3),
+        (total_atoms, max_neighbors, 3),
         dtype=jnp.int32,
     )
-    neighbor_matrix_shifts_wp = wp.from_dlpack(neighbor_matrix_shifts, dtype=wp.vec3i)
 
-    # Compute atoms_per_cell_count from cell_atom_start_indices and cell_atom_list
-    # This needs to be reconstructed from the output of batch_build_cell_list
+    # Compute atoms_per_cell_count (zeroed, will be filled by kernel)
     max_total_cells = cell_atom_start_indices.shape[0]
     atoms_per_cell_count = jnp.zeros(max_total_cells, dtype=jnp.int32)
-    atoms_per_cell_count_wp = wp.from_dlpack(atoms_per_cell_count, dtype=wp.int32)
 
-    # Allocate cell_offsets array (shape num_systems)
-    # Compute cell_offsets from cells_per_dimension using cumsum
-    cells_per_system = jnp.prod(cells_per_dimension, axis=1)  # (num_systems,)
+    # Compute cell_offsets from cells_per_dimension
+    cells_per_system = jnp.prod(cells_per_dimension, axis=1)
     cell_offsets = jnp.concatenate(
         [
             jnp.array([0], dtype=jnp.int32),
             jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
         ]
     )
-    cell_offsets_wp = wp.from_dlpack(cell_offsets, dtype=wp.int32)
 
-    # Call warp kernel
-    wp_batch_query_cell_list(
-        positions=positions_wp,
-        cell=cell_wp,
-        pbc=pbc_wp,
-        cutoff=cutoff,
-        batch_idx=batch_idx_wp,
-        cells_per_dimension=cells_per_dimension_wp,
-        neighbor_search_radius=neighbor_search_radius_wp,
-        cell_offsets=cell_offsets_wp,
-        atom_periodic_shifts=atom_periodic_shifts_wp,
-        atom_to_cell_mapping=atom_to_cell_mapping_wp,
-        atoms_per_cell_count=atoms_per_cell_count_wp,
-        cell_atom_start_indices=cell_atom_start_indices_wp,
-        cell_atom_list=cell_atom_list_wp,
-        neighbor_matrix=neighbor_matrix_wp,
-        neighbor_matrix_shifts=neighbor_matrix_shifts_wp,
-        num_neighbors=num_neighbors_wp,
-        wp_dtype=wp_dtype,
-        device=device_str,
+    neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _query_kernel(
+        positions,
+        cell,
+        pbc_bool,
+        batch_idx,
+        float(cutoff),
+        cells_per_dimension,
+        neighbor_search_radius,
+        atom_periodic_shifts,
+        atom_to_cell_mapping,
+        atoms_per_cell_count,
+        cell_atom_start_indices,
+        cell_atom_list,
+        cell_offsets,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        False,  # half_fill
+        launch_dims=(total_atoms,),
     )
-
-    # Synchronize
-    wp.synchronize_device(device_str)
 
     return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
 
