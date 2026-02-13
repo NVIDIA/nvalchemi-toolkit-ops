@@ -250,11 +250,15 @@ def neighbor_list(
         # Compute average atoms per system for method selection.
         num_systems = 1
         if cell is not None and cell.ndim == 3:
-            # cell shape is (num_systems, 3, 3) -- no GPU sync needed
+            # cell shape is (num_systems, 3, 3)
             num_systems = cell.shape[0]
+        elif batch_ptr is not None:
+            # batch_ptr shape is (num_systems + 1,)
+            num_systems = batch_ptr.shape[0] - 1
         elif batch_idx is not None:
             # NOTE: reading batch_idx[-1] triggers a GPU-to-CPU sync
-            num_systems = int(batch_idx[-1]) + 1
+            # assume sorted batch_idx
+            num_systems = max(1, batch_idx[-1].item() + 1)
         avg_atoms = total_atoms // num_systems
 
         if cutoff2 is not None:
