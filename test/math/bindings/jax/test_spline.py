@@ -32,7 +32,8 @@ Mathematical Properties Tested
 - Spread/gather are adjoint operations
 
 NOTE: Autograd/gradient tests are SKIPPED because JAX spline wrappers use
-enable_backward=False. All outputs are float32 (Warp kernel output type).
+enable_backward=False. Output dtype matches the input positions dtype
+(float32 or float64).
 """
 
 import jax
@@ -40,7 +41,10 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from nvalchemiops.jax.spline import (
+# Enable JAX float64 support (disabled by default)
+jax.config.update("jax_enable_x64", True)
+
+from nvalchemiops.jax.spline import (  # noqa: E402
     compute_bspline_deconvolution,
     compute_bspline_deconvolution_1d,
     spline_gather,
@@ -261,8 +265,8 @@ class TestSplineRegressionValues:
     """Regression tests with hardcoded expected values.
 
     These values match the Warp kernel regression tests to ensure JAX
-    bindings produce identical results. NOTE: Using float32 tolerances
-    since Warp kernels output float32.
+    bindings produce identical results. NOTE: Tolerance values work for
+    both float32 and float64 outputs.
     """
 
     def test_spread_regression(self, simple_system):
@@ -275,7 +279,7 @@ class TestSplineRegressionValues:
             positions, charges, cell, mesh_dims=(8, 8, 8), spline_order=4
         )
 
-        # Regression values (match Warp kernel tests) - float32 tolerances
+        # Regression values (match Warp kernel tests)
         assert float(mesh.sum()) == pytest.approx(1.0, rel=1e-4)
         assert float(mesh.max()) == pytest.approx(0.2508416403, rel=1e-4)
         assert float(mesh.min()) == pytest.approx(-0.2962962963, rel=1e-4)
@@ -293,10 +297,10 @@ class TestSplineRegressionValues:
         )
         output = spline_gather(positions, mesh, cell, spline_order=4)
 
-        # Regression values (match Warp kernel tests) - float32 tolerances
+        # Regression values (match Warp kernel tests)
         expected = jnp.array(
             [0.11403329, 0.12506939, 0.11594129, 0.10419698],
-            dtype=jnp.float32,
+            dtype=jnp.float64,
         )
         assert np.allclose(output, expected, rtol=1e-4)
         assert float(output.sum()) == pytest.approx(0.4592409390, rel=1e-4)
@@ -317,7 +321,7 @@ class TestSplineRegressionValues:
 
         # Each atom should gather approximately (1, 2, 3) * charge due to partition of unity
         for i in range(4):
-            expected_vec = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32) * float(
+            expected_vec = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float64) * float(
                 charges[i]
             )
             assert jnp.allclose(output[i], expected_vec, rtol=1e-4), (
@@ -340,7 +344,7 @@ class TestSplineRegressionValues:
             batch_idx=batch_idx,
         )
 
-        # Check per-system charge conservation - float32 tolerances
+        # Check per-system charge conservation
         sys0_charge = charges[batch_idx == 0].sum()
         sys1_charge = charges[batch_idx == 1].sum()
 
@@ -370,7 +374,7 @@ class TestSplineRegressionValues:
             positions, mesh, cell, spline_order=4, batch_idx=batch_idx
         )
 
-        # Output should have finite values - float32 tolerances
+        # Output should have finite values
         assert jnp.isfinite(output).all()
         assert output.shape == (4,)
 
@@ -403,7 +407,7 @@ class TestSplineSpread:
         mesh_total = mesh.sum()
         charge_total = charges.sum()
 
-        # Float32 tolerance
+        # Tolerance matches kernel precision
         assert jnp.allclose(mesh_total, charge_total, rtol=1e-3), (
             f"Charge not conserved: mesh={float(mesh_total)}, charges={float(charge_total)}"
         )
@@ -422,8 +426,8 @@ class TestSplineSpread:
         )
 
         assert mesh.shape == (12, 14, 16), f"Unexpected shape: {mesh.shape}"
-        # JAX spline outputs float32
-        assert mesh.dtype == jnp.float32
+        # Output dtype matches input positions dtype
+        assert mesh.dtype == jnp.float64
 
     def test_spread_locality(self):
         """Test that a single atom only affects nearby grid points."""
@@ -501,7 +505,7 @@ class TestSplineSpread:
 
             expected_pos = jnp.array(pos, dtype=jnp.float64)
 
-            # For interior positions, center of mass should match - float32 tolerance
+            # For interior positions, center of mass should match
             if all(grid_spacing < p < cell_size - grid_spacing for p in pos):
                 assert jnp.allclose(center_of_mass, expected_pos, rtol=1e-4), (
                     f"Center of mass mismatch for order={spline_order}, pos={pos}: "
@@ -527,8 +531,8 @@ class TestSplineGather:
 
         output = spline_gather(positions, mesh, cell, spline_order=4)
 
-        # Should gather ~2.5 at each position due to partition of unity - float32 tolerance
-        expected = jnp.array([2.5, 2.5], dtype=jnp.float32)
+        # Should gather ~2.5 at each position due to partition of unity
+        expected = jnp.array([2.5, 2.5], dtype=jnp.float64)
         assert jnp.allclose(output, expected, rtol=1e-4), (
             f"Expected {expected}, got {output}"
         )
@@ -545,7 +549,7 @@ class TestSplineGather:
         output = spline_gather(positions, mesh, cell, spline_order=4)
 
         assert output.shape == (10,), f"Unexpected shape: {output.shape}"
-        assert output.dtype == jnp.float32
+        assert output.dtype == jnp.float64
 
 
 ###########################################################################################
@@ -569,8 +573,8 @@ class TestSplineGatherGradient:
             positions, charges, potential, cell, spline_order=4
         )
 
-        # Gradient of uniform field should be zero - float32 tolerance
-        expected = jnp.zeros((2, 3), dtype=jnp.float32)
+        # Gradient of uniform field should be zero
+        expected = jnp.zeros((2, 3), dtype=jnp.float64)
         assert jnp.allclose(forces, expected, atol=1e-4), (
             f"Expected zero gradient, got {forces}"
         )
@@ -592,7 +596,7 @@ class TestSplineGatherGradient:
         )
 
         assert forces.shape == (10, 3), f"Unexpected shape: {forces.shape}"
-        assert forces.dtype == jnp.float32
+        assert forces.dtype == jnp.float64
 
 
 ###########################################################################################
@@ -617,8 +621,8 @@ class TestSplineGatherVec3:
 
         output = spline_gather_vec3(positions, charges, field, cell, spline_order=4)
 
-        # Each atom should gather (1, 2, 3) * charge - float32 tolerance
-        expected = jnp.array([[1.0, 2.0, 3.0], [-0.5, -1.0, -1.5]], dtype=jnp.float32)
+        # Each atom should gather (1, 2, 3) * charge
+        expected = jnp.array([[1.0, 2.0, 3.0], [-0.5, -1.0, -1.5]], dtype=jnp.float64)
         assert jnp.allclose(output, expected, rtol=1e-4), (
             f"Expected {expected}, got {output}"
         )
@@ -638,7 +642,7 @@ class TestSplineGatherVec3:
         output = spline_gather_vec3(positions, charges, field, cell, spline_order=4)
 
         assert output.shape == (10, 3), f"Unexpected shape: {output.shape}"
-        assert output.dtype == jnp.float32
+        assert output.dtype == jnp.float64
 
 
 ###########################################################################################
@@ -664,7 +668,7 @@ class TestNonCubicCell:
             positions, charges, cell, mesh_dims=(8, 8, 8), spline_order=4
         )
 
-        # Charge should be conserved even in triclinic cells - float32 tolerance
+        # Charge should be conserved even in triclinic cells
         assert jnp.allclose(mesh.sum(), charges.sum(), rtol=1e-4)
 
 
@@ -707,7 +711,7 @@ class TestSpreadGatherConsistency:
         lhs = jnp.sum(mesh * potential)  # <S(q), phi>
         rhs = jnp.sum(charges * gathered)  # <q, G(phi)>
 
-        # Should be equal (adjoint property) - float32 tolerance
+        # Should be equal (adjoint property)
         assert jnp.allclose(lhs, rhs, rtol=1e-3), (
             f"Adjoint property failed: <S(q),phi>={float(lhs)}, <q,G(phi)>={float(rhs)}"
         )
@@ -731,7 +735,7 @@ class TestSpreadGatherConsistency:
         charge_norm = jnp.sum(charges**2)
         gathered_norm = jnp.sum(gathered**2)
 
-        # Ratio should be reasonable (not testing exact equality) - float32 tolerance
+        # Ratio should be reasonable (not testing exact equality)
         ratio = gathered_norm / charge_norm
         assert 0.01 < ratio < 2.0, f"Sum of squares ratio out of range: {float(ratio)}"
 
@@ -771,7 +775,7 @@ class TestBatchSplineSpread:
             batch_idx=batch_idx,
         )
 
-        # Check per-system charge conservation - float32 tolerance
+        # Check per-system charge conservation
         sys0_charge = charges[batch_idx == 0].sum()
         sys1_charge = charges[batch_idx == 1].sum()
 
@@ -805,7 +809,7 @@ class TestBatchSplineSpread:
             batch_idx=batch_idx,
         )
 
-        # Both systems should match single-system result - float32 tolerance
+        # Both systems should match single-system result
         assert jnp.allclose(mesh_batch[0], mesh_single, rtol=1e-4)
         assert jnp.allclose(mesh_batch[1], mesh_single, rtol=1e-4)
 
@@ -838,7 +842,7 @@ class TestBatchSplineGather:
             positions, mesh, cell, spline_order=4, batch_idx=batch_idx
         )
 
-        # Should gather ~2.0 and ~3.0 respectively - float32 tolerance
+        # Should gather ~2.0 and ~3.0 respectively
         assert jnp.allclose(output[0], 2.0, rtol=1e-4)
         assert jnp.allclose(output[1], 3.0, rtol=1e-4)
 
@@ -866,7 +870,7 @@ class TestBatchSplineGather:
             pos_batch, mesh_batch, cell_batch, spline_order=4, batch_idx=batch_idx
         )
 
-        # Both atoms should match single-system result - float32 tolerance
+        # Both atoms should match single-system result
         assert jnp.allclose(gather_batch[0], gather_single[0], rtol=1e-4)
         assert jnp.allclose(gather_batch[1], gather_single[0], rtol=1e-4)
 
@@ -901,9 +905,9 @@ class TestBatchSplineGatherVec3:
             positions, charges, field, cell, spline_order=4, batch_idx=batch_idx
         )
 
-        # Check results - float32 tolerance
-        expected0 = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32) * charges[0]
-        expected1 = jnp.array([2.0, 3.0, 4.0], dtype=jnp.float32) * charges[1]
+        # Check results
+        expected0 = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float64) * charges[0]
+        expected1 = jnp.array([2.0, 3.0, 4.0], dtype=jnp.float64) * charges[1]
 
         assert jnp.allclose(output[0], expected0, rtol=1e-4)
         assert jnp.allclose(output[1], expected1, rtol=1e-4)
@@ -928,7 +932,7 @@ class TestBatchSplineGatherVec3:
         )
 
         assert output.shape == (10, 3), f"Unexpected shape: {output.shape}"
-        assert output.dtype == jnp.float32
+        assert output.dtype == jnp.float64
 
 
 ###########################################################################################
@@ -960,8 +964,8 @@ class TestBatchSplineGatherGradient:
             positions, charges, potential, cell, spline_order=4, batch_idx=batch_idx
         )
 
-        # Gradient of uniform fields should be zero - float32 tolerance
-        expected = jnp.zeros((2, 3), dtype=jnp.float32)
+        # Gradient of uniform fields should be zero
+        expected = jnp.zeros((2, 3), dtype=jnp.float64)
         assert jnp.allclose(forces, expected, atol=1e-4)
 
     def test_batch_gather_gradient_matches_single(self):
@@ -995,7 +999,7 @@ class TestBatchSplineGatherGradient:
             batch_idx=batch_idx,
         )
 
-        # Both should match - float32 tolerance
+        # Both should match
         assert jnp.allclose(grad_batch[0], grad_single[0], rtol=1e-4)
         assert jnp.allclose(grad_batch[1], grad_single[0], rtol=1e-4)
 
@@ -1088,7 +1092,7 @@ class TestMultiChannelSplineSpread:
 
         # JAX spline_spread_channels returns shape (C, nx, ny, nz)
         assert mesh.shape == (4, 8, 8, 8), f"Unexpected shape: {mesh.shape}"
-        assert mesh.dtype == jnp.float32
+        assert mesh.dtype == jnp.float64
 
     def test_spread_channels_conservation(self):
         """Test that multi-channel spread conserves per-channel totals."""
@@ -1100,7 +1104,7 @@ class TestMultiChannelSplineSpread:
             positions, values, cell, mesh_dims=(8, 8, 8), spline_order=4
         )
 
-        # Each channel should conserve its total - float32 tolerance
+        # Each channel should conserve its total
         # JAX shape is (C, nx, ny, nz)
         for c in range(3):
             channel_total = values[:, c].sum()
@@ -1131,7 +1135,7 @@ class TestMultiChannelSplineGather:
         output = spline_gather_channels(positions, mesh, cell, spline_order=4)
 
         assert output.shape == (10, 4), f"Unexpected shape: {output.shape}"
-        assert output.dtype == jnp.float32
+        assert output.dtype == jnp.float64
 
     def test_gather_channels_uniform_mesh(self):
         """Test gathering from uniform multi-channel mesh."""
@@ -1147,8 +1151,8 @@ class TestMultiChannelSplineGather:
 
         output = spline_gather_channels(positions, mesh, cell, spline_order=4)
 
-        # Each atom should gather (1, 2, 3) - float32 tolerance
-        expected = jnp.array([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]], dtype=jnp.float32)
+        # Each atom should gather (1, 2, 3)
+        expected = jnp.array([[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]], dtype=jnp.float64)
         assert jnp.allclose(output, expected, rtol=1e-4)
 
     def test_gather_channels_matches_single_channel(self):
@@ -1168,7 +1172,7 @@ class TestMultiChannelSplineGather:
         mesh_4d = mesh_3d[jnp.newaxis, :, :, :]
         output_multi = spline_gather_channels(positions, mesh_4d, cell, spline_order=4)
 
-        # Should match - float32 tolerance
+        # Should match
         assert jnp.allclose(output_multi[:, 0], output_single, rtol=1e-4)
 
 
@@ -1203,7 +1207,7 @@ class TestMultiChannelBatch:
 
         # JAX batch multi-channel shape is (B, C, nx, ny, nz)
         assert mesh.shape == (2, 3, 8, 8, 8), f"Unexpected shape: {mesh.shape}"
-        assert mesh.dtype == jnp.float32
+        assert mesh.dtype == jnp.float64
 
     def test_batch_gather_channels_output_shape(self):
         """Test that batched multi-channel gather returns correct shape."""
@@ -1223,7 +1227,7 @@ class TestMultiChannelBatch:
         )
 
         assert output.shape == (10, 3), f"Unexpected shape: {output.shape}"
-        assert output.dtype == jnp.float32
+        assert output.dtype == jnp.float64
 
 
 ###########################################################################################
@@ -1322,6 +1326,251 @@ class TestSpreadGatherRoundTrip:
 
         # Should recover something close to original (not exact due to truncation)
         # Just check that it completes and gives finite results
-        # Note: Due to float32 output from Warp kernels and numerical precision,
-        # values may be quite large after deconvolution
+        # Note: Due to numerical precision, values may be quite large after deconvolution
         assert jnp.isfinite(gathered).all()
+
+
+###########################################################################################
+########################### Dtype Preservation Tests ######################################
+###########################################################################################
+
+
+class TestDtypePreservation:
+    """Test that output dtype matches input positions dtype for all spline operations."""
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_spread_preserves_dtype(self, dtype):
+        """Test that spline_spread output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        charges = jnp.array([1.0, -1.0], dtype=dtype)
+        cell = jnp.eye(3, dtype=dtype) * 8.0
+
+        mesh = spline_spread(
+            positions, charges, cell, mesh_dims=(8, 8, 8), spline_order=4
+        )
+        assert mesh.dtype == dtype, f"Expected {dtype}, got {mesh.dtype}"
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_gather_preserves_dtype(self, dtype):
+        """Test that spline_gather output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        cell = jnp.eye(3, dtype=dtype) * 8.0
+        mesh = jnp.ones((8, 8, 8), dtype=dtype)
+
+        output = spline_gather(positions, mesh, cell, spline_order=4)
+        assert output.dtype == dtype, f"Expected {dtype}, got {output.dtype}"
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_gather_vec3_preserves_dtype(self, dtype):
+        """Test that spline_gather_vec3 output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        charges = jnp.array([1.0, -0.5], dtype=dtype)
+        cell = jnp.eye(3, dtype=dtype) * 8.0
+        field = jnp.ones((8, 8, 8, 3), dtype=dtype)
+
+        output = spline_gather_vec3(positions, charges, field, cell, spline_order=4)
+        assert output.dtype == dtype, f"Expected {dtype}, got {output.dtype}"
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_gather_gradient_preserves_dtype(self, dtype):
+        """Test that spline_gather_gradient output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        charges = jnp.array([1.0, -1.0], dtype=dtype)
+        cell = jnp.eye(3, dtype=dtype) * 8.0
+        potential = jnp.ones((8, 8, 8), dtype=dtype)
+
+        forces = spline_gather_gradient(
+            positions, charges, potential, cell, spline_order=4
+        )
+        assert forces.dtype == dtype, f"Expected {dtype}, got {forces.dtype}"
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_spread_channels_preserves_dtype(self, dtype):
+        """Test that spline_spread_channels output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        values = jnp.array([[1.0, 2.0], [-0.5, 1.5]], dtype=dtype)
+        cell = jnp.eye(3, dtype=dtype) * 8.0
+
+        mesh = spline_spread_channels(
+            positions, values, cell, mesh_dims=(8, 8, 8), spline_order=4
+        )
+        assert mesh.dtype == dtype, f"Expected {dtype}, got {mesh.dtype}"
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_gather_channels_preserves_dtype(self, dtype):
+        """Test that spline_gather_channels output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        cell = jnp.eye(3, dtype=dtype) * 8.0
+        mesh = jnp.ones((3, 8, 8, 8), dtype=dtype)
+
+        output = spline_gather_channels(positions, mesh, cell, spline_order=4)
+        assert output.dtype == dtype, f"Expected {dtype}, got {output.dtype}"
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_batch_spread_preserves_dtype(self, dtype):
+        """Test that batched spline_spread output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        charges = jnp.array([1.0, -1.0], dtype=dtype)
+        batch_idx = jnp.array([0, 1], dtype=jnp.int32)
+        cell = jnp.stack([jnp.eye(3, dtype=dtype) * 8.0, jnp.eye(3, dtype=dtype) * 8.0])
+
+        mesh = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=(8, 8, 8),
+            spline_order=4,
+            batch_idx=batch_idx,
+        )
+        assert mesh.dtype == dtype, f"Expected {dtype}, got {mesh.dtype}"
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_batch_gather_preserves_dtype(self, dtype):
+        """Test that batched spline_gather output dtype matches input."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=dtype)
+        batch_idx = jnp.array([0, 1], dtype=jnp.int32)
+        cell = jnp.stack([jnp.eye(3, dtype=dtype) * 8.0, jnp.eye(3, dtype=dtype) * 8.0])
+        mesh = jnp.ones((2, 8, 8, 8), dtype=dtype)
+
+        output = spline_gather(
+            positions, mesh, cell, spline_order=4, batch_idx=batch_idx
+        )
+        assert output.dtype == dtype, f"Expected {dtype}, got {output.dtype}"
+
+
+###########################################################################################
+########################### FP64 Precision Tests ##########################################
+###########################################################################################
+
+
+class TestFP64Precision:
+    """Test that FP64 spline operations achieve tighter tolerances than FP32."""
+
+    def test_fp64_charge_conservation_tight(self):
+        """Test that FP64 spread conserves charge to ~1e-10 (vs FP32's ~1e-3)."""
+        positions = jnp.array(
+            [[2.3, 2.7, 2.1], [5.8, 5.2, 5.6], [3.1, 4.2, 6.8]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.5, -0.8, 0.3], dtype=jnp.float64)
+        cell = jnp.eye(3, dtype=jnp.float64) * 8.0
+
+        mesh = spline_spread(
+            positions, charges, cell, mesh_dims=(16, 16, 16), spline_order=4
+        )
+
+        mesh_total = float(mesh.sum())
+        charge_total = float(charges.sum())
+
+        # FP64 should conserve charge to much tighter tolerance
+        assert abs(mesh_total - charge_total) < 1e-10, (
+            f"FP64 charge conservation failed: mesh={mesh_total}, charges={charge_total}, "
+            f"diff={abs(mesh_total - charge_total)}"
+        )
+
+    def test_fp64_gather_uniform_tight(self):
+        """Test that FP64 gather from uniform mesh is exact to ~1e-10."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=jnp.float64)
+        cell = jnp.eye(3, dtype=jnp.float64) * 8.0
+        mesh = jnp.full((8, 8, 8), 2.5, dtype=jnp.float64)
+
+        output = spline_gather(positions, mesh, cell, spline_order=4)
+
+        # FP64 should be nearly exact for uniform mesh
+        for i in range(2):
+            assert abs(float(output[i]) - 2.5) < 1e-10, (
+                f"FP64 gather from uniform mesh: expected 2.5, got {float(output[i])}"
+            )
+
+    def test_fp64_gradient_uniform_zero_tight(self):
+        """Test that FP64 gradient of uniform field is zero to ~1e-10."""
+        positions = jnp.array([[2.0, 2.0, 2.0], [5.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = jnp.eye(3, dtype=jnp.float64) * 8.0
+        potential = jnp.full((8, 8, 8), 1.0, dtype=jnp.float64)
+
+        forces = spline_gather_gradient(
+            positions, charges, potential, cell, spline_order=4
+        )
+
+        # FP64 gradient of uniform should be very close to zero
+        max_force = float(jnp.abs(forces).max())
+        assert max_force < 1e-10, (
+            f"FP64 gradient of uniform field should be ~0, got max |F| = {max_force}"
+        )
+
+    def test_fp64_spread_gather_adjoint_tight(self):
+        """Test spread/gather adjoint property at FP64 precision."""
+        key = jax.random.PRNGKey(42)
+        positions = jax.random.uniform(key, shape=(20, 3), dtype=jnp.float64) * 8.0
+        charges = jax.random.normal(
+            jax.random.PRNGKey(1), shape=(20,), dtype=jnp.float64
+        )
+        cell = jnp.eye(3, dtype=jnp.float64) * 8.0
+        mesh_dims = (16, 16, 16)
+
+        potential = jax.random.normal(
+            jax.random.PRNGKey(2), shape=mesh_dims, dtype=jnp.float64
+        )
+
+        charge_mesh = spline_spread(positions, charges, cell, mesh_dims, spline_order=4)
+        gathered = spline_gather(positions, potential, cell, spline_order=4)
+
+        lhs = float(jnp.sum(charge_mesh * potential))
+        rhs = float(jnp.sum(charges * gathered))
+
+        # FP64 adjoint property should hold to ~1e-7
+        assert abs(lhs - rhs) < 5e-8, (
+            f"FP64 adjoint property: <S(q), phi>={lhs}, <q, G(phi)>={rhs}, diff={abs(lhs - rhs)}"
+        )
+
+    def test_fp64_batch_charge_conservation_tight(self):
+        """Test that batched FP64 spread conserves per-system charge to ~1e-10."""
+        positions = jnp.array(
+            [[2.0, 2.0, 2.0], [5.0, 5.0, 5.0], [3.0, 3.0, 3.0], [6.0, 6.0, 6.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -0.5, 0.8, -0.3], dtype=jnp.float64)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        cell = jnp.stack([jnp.eye(3, dtype=jnp.float64) * 8.0] * 2)
+
+        mesh = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=(8, 8, 8),
+            spline_order=4,
+            batch_idx=batch_idx,
+        )
+
+        # Per-system charge conservation at FP64 precision
+        for sys in range(2):
+            sys_charge = float(charges[batch_idx == sys].sum())
+            sys_mesh = float(mesh[sys].sum())
+            assert abs(sys_mesh - sys_charge) < 1e-10, (
+                f"System {sys}: mesh_sum={sys_mesh}, charge_sum={sys_charge}, "
+                f"diff={abs(sys_mesh - sys_charge)}"
+            )
+
+    def test_fp32_vs_fp64_precision_difference(self):
+        """Verify that FP64 actually provides better precision than FP32."""
+        positions_f64 = jnp.array([[2.3, 2.7, 2.1], [5.8, 5.2, 5.6]], dtype=jnp.float64)
+        positions_f32 = positions_f64.astype(jnp.float32)
+        charges_f64 = jnp.array([1.5, -0.8], dtype=jnp.float64)
+        charges_f32 = charges_f64.astype(jnp.float32)
+        cell_f64 = jnp.eye(3, dtype=jnp.float64) * 8.0
+        cell_f32 = cell_f64.astype(jnp.float32)
+
+        mesh_f64 = spline_spread(positions_f64, charges_f64, cell_f64, (16, 16, 16), 4)
+        mesh_f32 = spline_spread(positions_f32, charges_f32, cell_f32, (16, 16, 16), 4)
+
+        # Both should conserve charge, but FP64 should be tighter
+        total_charge = 1.5 - 0.8  # = 0.7
+        err_f64 = abs(float(mesh_f64.sum()) - total_charge)
+        err_f32 = abs(float(mesh_f32.sum()) - total_charge)
+
+        assert err_f64 < err_f32 or err_f32 < 1e-5, (
+            f"FP64 error ({err_f64}) should be <= FP32 error ({err_f32})"
+        )
+        assert mesh_f64.dtype == jnp.float64
+        assert mesh_f32.dtype == jnp.float32
