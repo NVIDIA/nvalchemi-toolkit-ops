@@ -46,6 +46,7 @@ from nvalchemiops.jax.interactions.electrostatics.coulomb import (
     coulomb_energy_forces,
     coulomb_forces,
 )
+from test.interactions.electrostatics.bindings.jax.conftest import cubic_cell_jax
 
 
 class TestUndampedCoulombEnergy:
@@ -55,10 +56,7 @@ class TestUndampedCoulombEnergy:
         """Test energy between opposite charges."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -82,10 +80,7 @@ class TestUndampedCoulombEnergy:
     def test_energy_charge_scaling(self, device):  # noqa: ARG002
         """Test that energy scales as q1 * q2."""
         positions = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -118,10 +113,7 @@ class TestUndampedCoulombEnergy:
     def test_energy_inverse_law(self, device):  # noqa: ARG002
         """Test that energy follows 1/r law."""
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -187,10 +179,7 @@ class TestUndampedCoulombForces:
         """Test repulsive force between like charges."""
         positions = jnp.array([[0.0, 0.0, 0.0], [0.0, 2.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, 1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -215,10 +204,7 @@ class TestUndampedCoulombForces:
     def test_inverse_square_law(self, device):  # noqa: ARG002
         """Test that force follows 1/r² law."""
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -255,10 +241,7 @@ class TestUndampedCoulombForces:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, 1.0, -2.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         # 3-atom system: each atom neighbors the other 2
         neighbor_matrix = jnp.array([[1, 2], [0, 2], [0, 1]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((3, 2, 3), dtype=jnp.int32)
@@ -281,10 +264,7 @@ class TestUndampedCoulombForces:
         """Test that pairs beyond cutoff have zero interaction."""
         positions = jnp.array([[0.0, 0.0, 0.0], [15.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -309,10 +289,7 @@ class TestDampedCoulomb:
         """Test that erfc damping reduces energy magnitude."""
         positions = jnp.array([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -343,10 +320,7 @@ class TestDampedCoulomb:
         """Test that erfc damping reduces force magnitude."""
         positions = jnp.array([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -379,10 +353,7 @@ class TestDampedCoulomb:
         """Test that damping has minimal effect at short range."""
         positions = jnp.array([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -413,10 +384,7 @@ class TestDampedCoulomb:
         """Test that larger alpha produces stronger damping."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -449,10 +417,7 @@ class TestNeighborMatrixFormat:
             [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]], dtype=jnp.float64
         )
         charges = jnp.array([1.0, -1.0, 0.5], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
 
         # Neighbor list format
         neighbor_list = jnp.array(
@@ -497,10 +462,7 @@ class TestNeighborMatrixFormat:
         """Test damped calculation with neighbor matrix."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
 
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
@@ -526,10 +488,7 @@ class TestPeriodicBoundaries:
 
     def test_minimum_image(self, device):  # noqa: ARG002
         """Test minimum image convention."""
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0)
         # Atoms at x=0.5 and x=9.5, distance through PBC = 1.0
         positions = jnp.array([[0.5, 5.0, 5.0], [9.5, 5.0, 5.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
@@ -564,10 +523,7 @@ class TestBatchedCalculations:
             [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 2.0, 0.0]], dtype=jnp.float64
         )
         charges = jnp.array([1.0, -1.0, 0.5], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         # 3-atom system: each atom neighbors the other 2
         neighbor_matrix = jnp.array([[1, 2], [0, 2], [0, 1]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((3, 2, 3), dtype=jnp.int32)
@@ -612,10 +568,7 @@ class TestBatchedCalculations:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
 
         # 4-atom batched system: atom 0 <-> 1 (batch 0), atom 2 <-> 3 (batch 1)
         neighbor_matrix = jnp.array([[1], [0], [3], [2]], dtype=jnp.int32)
@@ -652,10 +605,7 @@ class TestBatchedCalculations:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, 1.0, -2.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
 
         batch_idx = jnp.array([0, 0, 1, 1, 1], dtype=jnp.int32)
         # Batch 0: atom 0 <-> 1
@@ -697,10 +647,7 @@ class TestBatchedCalculations:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
 
         # 4-atom batched system: atom 0 <-> 1 (batch 0), atom 2 <-> 3 (batch 1)
         neighbor_matrix = jnp.array([[1], [0], [3], [2]], dtype=jnp.int32)
@@ -729,10 +676,7 @@ class TestNumericalStability:
         """Test that very small distances don't cause numerical issues."""
         positions = jnp.array([[0.0, 0.0, 0.0], [1e-10, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -754,10 +698,7 @@ class TestNumericalStability:
         """Test that zero charges produce zero interaction."""
         positions = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([0.0, 1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -782,10 +723,7 @@ class TestInputValidation:
         """Test that missing neighbor data raises error."""
         positions = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
 
         with pytest.raises(ValueError, match="Must provide either"):
             coulomb_energy_forces(
@@ -800,10 +738,7 @@ class TestInputValidation:
         """Test that providing both formats raises error."""
         positions = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
 
         neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
         neighbor_shifts = jnp.zeros((2, 3), dtype=jnp.int32)
@@ -831,10 +766,7 @@ class TestFloat64Float32Support:
         """Test energy calculation with float64 dtype."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -855,10 +787,7 @@ class TestFloat64Float32Support:
         """Test energy calculation with float32 dtype."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float32)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float32)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float32,
-        )
+        cell = cubic_cell_jax(100.0, dtype=jnp.float32)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -879,14 +808,11 @@ class TestFloat64Float32Support:
         """Test that float32 and float64 produce consistent results."""
         positions_f64 = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges_f64 = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell_f64 = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell_f64 = cubic_cell_jax(100.0)
 
         positions_f32 = positions_f64.astype(jnp.float32)
         charges_f32 = charges_f64.astype(jnp.float32)
-        cell_f32 = cell_f64.astype(jnp.float32)
+        cell_f32 = cubic_cell_jax(100.0, dtype=jnp.float32)
 
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
@@ -918,10 +844,7 @@ class TestFloat64Float32Support:
         """Test float32 damped calculation."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float32)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float32)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float32,
-        )
+        cell = cubic_cell_jax(100.0, dtype=jnp.float32)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -954,10 +877,7 @@ class TestBatchedNeighborMatrix:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0], [3], [2]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((4, 1, 3), dtype=jnp.int32)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
@@ -989,10 +909,7 @@ class TestBatchedNeighborMatrix:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0], [3], [2]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((4, 1, 3), dtype=jnp.int32)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
@@ -1030,10 +947,7 @@ class TestBatchedNeighborMatrix:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0], [3], [2]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((4, 1, 3), dtype=jnp.int32)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
@@ -1061,10 +975,7 @@ class TestForcesOnlyAPI:
         """Test that forces-only output matches energy_forces."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -1094,10 +1005,7 @@ class TestForcesOnlyAPI:
         """Test forces-only with damping."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -1127,10 +1035,7 @@ class TestForcesOnlyAPI:
         """Test forces-only with neighbor matrix."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -1164,10 +1069,7 @@ class TestDefaultFillValue:
         """Test energy with default fill_value."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -1187,10 +1089,7 @@ class TestDefaultFillValue:
         """Test energy_forces with default fill_value."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -1215,10 +1114,7 @@ class TestEmptyInputs:
         """Test empty neighbor matrix for energy."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.zeros((2, 0), dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 0, 3), dtype=jnp.int32)
 
@@ -1239,10 +1135,7 @@ class TestEmptyInputs:
         """Test empty neighbor matrix for energy_forces."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.zeros((2, 0), dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 0, 3), dtype=jnp.int32)
 
@@ -1268,10 +1161,7 @@ class TestCoulombJIT:
         """Test coulomb_energy with neighbor matrix works under jax.jit."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -1298,10 +1188,7 @@ class TestCoulombJIT:
         """Test coulomb_energy_forces with neighbor matrix works under jax.jit."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 
@@ -1330,10 +1217,7 @@ class TestCoulombJIT:
         """Test coulomb_energy with explicit fill_value works under jax.jit."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(100.0)
         neighbor_matrix = jnp.array([[1], [0]], dtype=jnp.int32)
         neighbor_matrix_shifts = jnp.zeros((2, 1, 3), dtype=jnp.int32)
 

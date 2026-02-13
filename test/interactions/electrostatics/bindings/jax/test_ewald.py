@@ -49,11 +49,12 @@ from nvalchemiops.jax.interactions.electrostatics.ewald import (
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
-from nvalchemiops.jax.neighbors import cell_list
-from test.interactions.electrostatics.conftest import (
-    create_cscl_supercell,
-    create_wurtzite_system,
-    create_zincblende_system,
+from nvalchemiops.jax.neighbors import batch_cell_list, cell_list
+from test.interactions.electrostatics.bindings.jax.conftest import (
+    cubic_cell_jax,
+    fd_virial_full_jax,
+    make_crystal_system_jax,
+    make_virial_cscl_system_jax,
 )
 
 # Try to import torchpme for reference calculations
@@ -372,15 +373,21 @@ class TestDtypeSupport:
             dtype=jnp.float32,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float32)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]]
-        ).astype(jnp.float32)
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float32)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)  # (2, 3, 3)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = jnp.array([[True, True, True]])
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
         )
 
         alpha = jnp.array([0.3, 0.3], dtype=jnp.float32)
@@ -475,13 +482,21 @@ class TestEwaldRealSpaceAPI:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)  # (2, 3, 3)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = jnp.array([[True, True, True]])
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
         )
 
         alpha = jnp.array([0.3, 0.3])
@@ -511,13 +526,21 @@ class TestEwaldRealSpaceAPI:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)  # (2, 3, 3)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = jnp.array([[True, True, True]])
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
         )
 
         alpha = jnp.array([0.3, 0.3])
@@ -699,13 +722,21 @@ class TestEwaldSummationAPI:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)  # (2, 3, 3)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = jnp.array([[True, True, True]])
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
         )
 
         alpha = 0.3
@@ -737,13 +768,21 @@ class TestEwaldSummationAPI:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)  # (2, 3, 3)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = jnp.array([[True, True, True]])
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
         )
 
         alpha = 0.3
@@ -778,13 +817,21 @@ class TestEwaldSummationAPI:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)  # (2, 3, 3)
         batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
 
         cutoff = 5.0
-        pbc = jnp.array([[True, True, True]])
-        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = cell_list(
-            positions, cutoff, cell, pbc
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
         )
 
         # Different alpha for each system
@@ -815,21 +862,7 @@ class TestRealSpaceCorrectness:
     def test_real_space_energy_matches_torchpme(self, device, crystal_fn, alpha):
         """Test real-space energy matches torchpme reference."""
         # Create crystal system
-        crystal_generators = {
-            "cscl": create_cscl_supercell,
-            "wurtzite": create_wurtzite_system,
-            "zincblende": create_zincblende_system,
-        }
-        crystal = crystal_generators[crystal_fn](size=2)
-
-        positions_np = crystal.positions
-        charges_np = crystal.charges
-        cell_np = crystal.cell
-
-        # Convert to JAX
-        positions = jnp.array(positions_np, dtype=jnp.float64)
-        charges = jnp.array(charges_np, dtype=jnp.float64)
-        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax(crystal_fn, size=2)
 
         # Build neighbor list
         cutoff = 10.0
@@ -885,16 +918,7 @@ class TestRealSpaceCorrectness:
     def test_real_space_forces_match_torchpme(self, device, crystal_fn):
         """Test real-space forces match torchpme reference."""
         # Create crystal system
-        crystal = create_cscl_supercell(size=2)
-
-        positions_np = crystal.positions
-        charges_np = crystal.charges
-        cell_np = crystal.cell
-
-        # Convert to JAX
-        positions = jnp.array(positions_np, dtype=jnp.float64)
-        charges = jnp.array(charges_np, dtype=jnp.float64)
-        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax("cscl", size=2)
 
         # Build neighbor list
         cutoff = 10.0
@@ -929,20 +953,10 @@ class TestReciprocalSpaceCorrectness:
     def test_reciprocal_energy_matches_torchpme(self, device, crystal_fn):
         """Test reciprocal-space energy matches torchpme reference."""
         # Create crystal system
-        crystal_generators = {
-            "cscl": create_cscl_supercell,
-            "zincblende": create_zincblende_system,
-        }
-        crystal = crystal_generators[crystal_fn](size=2)
-
-        positions_np = crystal.positions
-        charges_np = crystal.charges
-        cell_np = crystal.cell
-
-        # Convert to JAX
-        positions = jnp.array(positions_np, dtype=jnp.float64)
-        charges = jnp.array(charges_np, dtype=jnp.float64)
-        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax(crystal_fn, size=2)
+        positions_np = np.array(positions)
+        charges_np = np.array(charges)
+        cell_np = np.array(cell[0])  # (3, 3) for torchpme
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -971,16 +985,7 @@ class TestReciprocalSpaceCorrectness:
     def test_reciprocal_forces_match_torchpme(self, device, crystal_fn):
         """Test reciprocal-space forces match torchpme reference."""
         # Create crystal system
-        crystal = create_cscl_supercell(size=2)
-
-        positions_np = crystal.positions
-        charges_np = crystal.charges
-        cell_np = crystal.cell
-
-        # Convert to JAX
-        positions = jnp.array(positions_np, dtype=jnp.float64)
-        charges = jnp.array(charges_np, dtype=jnp.float64)
-        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax("cscl", size=2)
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -1220,16 +1225,7 @@ class TestEdgeCases:
 
     def test_non_cubic_cells(self, device):
         """Test with wurtzite (hexagonal) cell."""
-        crystal = create_wurtzite_system(size=2)
-
-        positions_np = crystal.positions
-        charges_np = crystal.charges
-        cell_np = crystal.cell
-
-        # Convert to JAX
-        positions = jnp.array(positions_np, dtype=jnp.float64)
-        charges = jnp.array(charges_np, dtype=jnp.float64)
-        cell = jnp.array(cell_np[jnp.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax("wurtzite", size=2)
 
         # Build neighbor list
         cutoff = 10.0
@@ -1288,10 +1284,7 @@ class TestEwaldJIT:
         """Test ewald_real_space works under jax.jit."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0, dtype=jnp.float64)
         pbc = jnp.array([[True, True, True]])
 
         # Build neighbor list eagerly (it uses .devices().pop() internally)
@@ -1330,10 +1323,7 @@ class TestEwaldJIT:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0, dtype=jnp.float64)
         alpha = jnp.array([0.3], dtype=jnp.float64)
 
         # k_vectors must be computed eagerly (dynamic shape)
@@ -1365,10 +1355,6 @@ class TestEwaldRealSpaceVirial:
 
     def test_virial_shape(self, device):
         """Test that virial has correct shape (1, 3, 3) for single system."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
@@ -1398,10 +1384,6 @@ class TestEwaldRealSpaceVirial:
 
     def test_virial_dtype(self, device):
         """Test that virial dtype matches input dtype."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
@@ -1429,10 +1411,6 @@ class TestEwaldRealSpaceVirial:
 
     def test_virial_nonzero(self, device):
         """Test that virial has non-zero elements."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
@@ -1462,11 +1440,6 @@ class TestEwaldRealSpaceVirial:
 
     def test_virial_fd(self, device):
         """Test virial matches finite difference approximation."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            fd_virial_full_jax,
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list for original positions
@@ -1511,10 +1484,6 @@ class TestEwaldRealSpaceVirial:
 
     def test_virial_without_forces(self, device):
         """Test that compute_virial=True, compute_forces=False works."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         # Build neighbor list
@@ -1549,10 +1518,6 @@ class TestEwaldReciprocalSpaceVirial:
 
     def test_virial_shape(self, device):
         """Test that virial has correct shape (1, 3, 3) for single system."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1574,10 +1539,6 @@ class TestEwaldReciprocalSpaceVirial:
 
     def test_virial_nonzero(self, device):
         """Test that virial has non-zero elements."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1599,11 +1560,6 @@ class TestEwaldReciprocalSpaceVirial:
 
     def test_virial_fd(self, device):
         """Test virial matches finite difference approximation."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            fd_virial_full_jax,
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1639,10 +1595,6 @@ class TestEwaldReciprocalSpaceVirial:
 
     def test_virial_symmetry(self, device):
         """Test that virial is approximately symmetric."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=2)
 
         alpha = jnp.array([0.3], dtype=jnp.float64)
@@ -1668,11 +1620,6 @@ class TestEwaldTotalVirial:
 
     def test_combined_virial_fd(self, device):
         """Test combined virial matches finite difference of total energy."""
-        from test.interactions.electrostatics.bindings.jax.conftest import (
-            fd_virial_full_jax,
-            make_virial_cscl_system_jax,
-        )
-
         positions, charges, cell = make_virial_cscl_system_jax(size=1)
 
         cutoff = 6.0
@@ -1724,10 +1671,7 @@ class TestEwaldVirialJIT:
         """Test that ewald_real_space with compute_virial works under jax.jit."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0, dtype=jnp.float64)
         pbc = jnp.array([[True, True, True]])
 
         # Build neighbor list eagerly
@@ -1770,10 +1714,7 @@ class TestEwaldVirialJIT:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0, dtype=jnp.float64)
         alpha = jnp.array([0.3], dtype=jnp.float64)
 
         # k_vectors must be computed eagerly (dynamic shape)

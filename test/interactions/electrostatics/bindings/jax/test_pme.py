@@ -52,13 +52,10 @@ from nvalchemiops.jax.interactions.electrostatics.pme import (
 )
 from nvalchemiops.jax.neighbors import cell_list
 from test.interactions.electrostatics.bindings.jax.conftest import (
+    cubic_cell_jax,
     fd_virial_full_jax,
+    make_crystal_system_jax,
     make_virial_cscl_system_jax,
-)
-from test.interactions.electrostatics.conftest import (
-    create_cscl_supercell,
-    create_wurtzite_system,
-    create_zincblende_system,
 )
 
 # Try to import torchpme for reference calculations
@@ -419,7 +416,7 @@ class TestPMEReciprocalSpaceAPI:
         """Test handling of empty system."""
         positions = jnp.zeros((0, 3), dtype=jnp.float64)
         charges = jnp.zeros(0, dtype=jnp.float64)
-        cell = jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0
+        cell = cubic_cell_jax(10.0)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -630,23 +627,17 @@ class TestPMECorrectnessTorchPME:
         )
 
     @pytest.mark.parametrize("size", [1, 2])
-    @pytest.mark.parametrize("system_fn", ["cscl", "wurtzite", "zincblende"])
+    @pytest.mark.parametrize("crystal_type", ["cscl", "wurtzite", "zincblende"])
     @pytest.mark.parametrize("alpha", [0.3, 0.5])
-    def test_crystal_systems_match_torchpme(self, size, system_fn, alpha, device):
+    def test_crystal_systems_match_torchpme(self, size, crystal_type, alpha, device):
         """Test PME on crystal systems against torchpme."""
-        system_fns = {
-            "cscl": create_cscl_supercell,
-            "wurtzite": create_wurtzite_system,
-            "zincblende": create_zincblende_system,
-        }
-        system = system_fns[system_fn](size)
-
-        positions = jnp.array(system.positions, dtype=jnp.float64)
-        charges = jnp.array(system.charges, dtype=jnp.float64)
-        cell = jnp.array(system.cell[np.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax(crystal_type, size=size)
+        positions_np = np.array(positions)
+        charges_np = np.array(charges)
+        cell_np = np.array(cell[0])
 
         mesh_spacing = 0.5
-        cell_lengths = np.linalg.norm(system.cell, axis=1)
+        cell_lengths = np.linalg.norm(cell_np, axis=1)
         mesh_dims = tuple(
             int(np.ceil(length / mesh_spacing)) for length in cell_lengths
         )
@@ -664,13 +655,13 @@ class TestPMECorrectnessTorchPME:
 
         # TorchPME reference
         torchpme_energy = calculate_pme_reciprocal_energy_torchpme(
-            system.positions, system.charges, system.cell, mesh_spacing, alpha, 4
+            positions_np, charges_np, cell_np, mesh_spacing, alpha, 4
         )
 
         assert jnp.allclose(
             our_energy.sum(), torchpme_energy.sum(), rtol=1e-2, atol=1e-3
         ), (
-            f"{system_fn} size={size} alpha={alpha}: "
+            f"{crystal_type} size={size} alpha={alpha}: "
             f"ours={float(our_energy.sum()):.6f}, torchpme={torchpme_energy.sum():.6f}"
         )
 
@@ -891,29 +882,14 @@ class TestPMEBatchConsistency:
             ), f"System {sys_idx}: Net force = {net_force}"
             start_idx = end_idx
 
-    @pytest.mark.parametrize("system_fn", ["cscl", "wurtzite", "zincblende"])
-    def test_batch_explicit_forces_vs_single(self, device, system_fn):
+    @pytest.mark.parametrize("crystal_type", ["cscl", "wurtzite", "zincblende"])
+    def test_batch_explicit_forces_vs_single(self, device, crystal_type):
         """Test batch explicit forces match single-system explicit forces."""
-        dtype = jnp.float64
-
-        system_fns = {
-            "cscl": create_cscl_supercell,
-            "wurtzite": create_wurtzite_system,
-            "zincblende": create_zincblende_system,
-        }
-
         # Create two systems
-        system1 = system_fns[system_fn](1)
-        system2 = system_fns[system_fn](2)
+        pos1, chg1, cell1 = make_crystal_system_jax(crystal_type, size=1)
+        pos2, chg2, cell2 = make_crystal_system_jax(crystal_type, size=2)
 
-        pos1 = jnp.array(system1.positions, dtype=dtype)
-        chg1 = jnp.array(system1.charges, dtype=dtype)
-        cell1 = jnp.array(system1.cell, dtype=dtype)
-
-        pos2 = jnp.array(system2.positions, dtype=dtype)
-        chg2 = jnp.array(system2.charges, dtype=dtype)
-        cell2 = jnp.array(system2.cell, dtype=dtype)
-
+        # cell1, cell2 are already (1, 3, 3) shape
         mesh_dims = (16, 16, 16)
         alpha = 0.3
 
@@ -921,7 +897,7 @@ class TestPMEBatchConsistency:
         _, forces1_single = pme_reciprocal_space(
             positions=pos1,
             charges=chg1,
-            cell=cell1.reshape(1, 3, 3),
+            cell=cell1,
             alpha=jnp.array([alpha]),
             mesh_dimensions=mesh_dims,
             compute_forces=True,
@@ -929,7 +905,7 @@ class TestPMEBatchConsistency:
         _, forces2_single = pme_reciprocal_space(
             positions=pos2,
             charges=chg2,
-            cell=cell2.reshape(1, 3, 3),
+            cell=cell2,
             alpha=jnp.array([alpha]),
             mesh_dimensions=mesh_dims,
             compute_forces=True,
@@ -939,7 +915,7 @@ class TestPMEBatchConsistency:
         n1, n2 = pos1.shape[0], pos2.shape[0]
         positions_batch = jnp.concatenate([pos1, pos2], axis=0)
         charges_batch = jnp.concatenate([chg1, chg2], axis=0)
-        cells_batch = jnp.stack([cell1, cell2], axis=0)
+        cells_batch = jnp.concatenate([cell1, cell2], axis=0)
         batch_idx = jnp.array([0] * n1 + [1] * n2, dtype=jnp.int32)
 
         _, forces_batch = pme_reciprocal_space(
@@ -956,10 +932,10 @@ class TestPMEBatchConsistency:
         forces2_batch = forces_batch[n1:]
 
         assert jnp.allclose(forces1_batch, forces1_single, rtol=1e-4, atol=1e-6), (
-            f"{system_fn}: System 1 forces mismatch"
+            f"{crystal_type}: System 1 forces mismatch"
         )
         assert jnp.allclose(forces2_batch, forces2_single, rtol=1e-4, atol=1e-6), (
-            f"{system_fn}: System 2 forces mismatch"
+            f"{crystal_type}: System 2 forces mismatch"
         )
 
 
@@ -1285,11 +1261,7 @@ class TestNonCubicCells:
 
     def test_wurtzite_cell(self, device):
         """Test PME with wurtzite (hexagonal) cell."""
-        crystal = create_wurtzite_system(size=2)
-
-        positions = jnp.array(crystal.positions, dtype=jnp.float64)
-        charges = jnp.array(crystal.charges, dtype=jnp.float64)
-        cell = jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax("wurtzite", size=2)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1356,7 +1328,7 @@ class TestSingleAtomSystem:
         """Test PME with single atom."""
         positions = jnp.array([[5.0, 5.0, 5.0]], dtype=jnp.float64)
         charges = jnp.array([1.0], dtype=jnp.float64)
-        cell = jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0
+        cell = cubic_cell_jax(10.0)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -1385,7 +1357,7 @@ class TestZeroCharges:
         """Test that zero charges give zero energy."""
         positions = jnp.array([[2.0, 5.0, 5.0], [8.0, 5.0, 5.0]], dtype=jnp.float64)
         charges = jnp.array([0.0, 0.0], dtype=jnp.float64)
-        cell = jnp.eye(3, dtype=jnp.float64).reshape(1, 3, 3) * 10.0
+        cell = cubic_cell_jax(10.0)
 
         energies, forces = pme_reciprocal_space(
             positions=positions,
@@ -2092,11 +2064,7 @@ class TestFullPMENeighborList:
 
     def test_full_pme_neighbor_list_crystal_system(self, device):
         """Test full PME with neighbor list on a crystal system."""
-        crystal = create_cscl_supercell(1)
-
-        positions = jnp.array(crystal.positions, dtype=jnp.float64)
-        charges = jnp.array(crystal.charges, dtype=jnp.float64)
-        cell = jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax("cscl", size=1)
 
         cutoff = 5.0
         pbc = jnp.array([[True, True, True]])
@@ -2127,19 +2095,10 @@ class TestFullPMENeighborList:
             net_force, jnp.zeros(3, dtype=net_force.dtype), atol=5e-2
         ), f"Net force = {net_force}"
 
-    @pytest.mark.parametrize("system_fn", ["cscl", "wurtzite", "zincblende"])
-    def test_full_pme_neighbor_list_multiple_crystals(self, device, system_fn):
+    @pytest.mark.parametrize("crystal_type", ["cscl", "wurtzite", "zincblende"])
+    def test_full_pme_neighbor_list_multiple_crystals(self, device, crystal_type):
         """Test full PME with neighbor list on multiple crystal types."""
-        system_fns = {
-            "cscl": create_cscl_supercell,
-            "wurtzite": create_wurtzite_system,
-            "zincblende": create_zincblende_system,
-        }
-        crystal = system_fns[system_fn](1)
-
-        positions = jnp.array(crystal.positions, dtype=jnp.float64)
-        charges = jnp.array(crystal.charges, dtype=jnp.float64)
-        cell = jnp.array(crystal.cell[np.newaxis, :, :], dtype=jnp.float64)
+        positions, charges, cell = make_crystal_system_jax(crystal_type, size=1)
 
         cutoff = 5.0
         pbc = jnp.array([[True, True, True]])
@@ -2175,10 +2134,7 @@ class TestPMEJIT:
         """Test pme_reciprocal_space works under jax.jit."""
         positions = jnp.array([[4.0, 5.0, 5.0], [6.0, 5.0, 5.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0)
         alpha = jnp.array([0.3], dtype=jnp.float64)
 
         @jax.jit
@@ -2202,10 +2158,7 @@ class TestPMEJIT:
         """Test pme_reciprocal_space with forces works under jax.jit."""
         positions = jnp.array([[4.0, 5.0, 5.0], [6.0, 5.0, 5.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0)
         alpha = jnp.array([0.3], dtype=jnp.float64)
 
         @jax.jit
@@ -2234,10 +2187,7 @@ class TestPMEJIT:
             dtype=jnp.float64,
         )
         charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
-        cell = jnp.array(
-            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-            dtype=jnp.float64,
-        )
+        cell = cubic_cell_jax(10.0)
         pbc = jnp.array([[True, True, True]])
 
         # Build neighbor list eagerly (it uses .devices().pop() internally)
