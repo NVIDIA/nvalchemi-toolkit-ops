@@ -961,3 +961,334 @@ class TestDFT_D3JIT:
 
         # Dispersion should be attractive (negative)
         assert energy[0] < 0.0
+
+
+# ==============================================================================
+# PBC Tests
+# ==============================================================================
+
+
+class TestDFTD3PBC:
+    """Test DFT-D3 with periodic boundary conditions."""
+
+    def _make_periodic_h2(self, d3_params, device):
+        """Create H2 in a periodic box with shifts."""
+        # H2 in a 10 Bohr cubic box
+        positions = place_on_device(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        )
+        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
+        cell = place_on_device(
+            jnp.array(
+                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        # Neighbor matrix: each atom sees the other, zero shifts (same image)
+        neighbor_matrix = place_on_device(
+            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
+        )
+        # Shifts: shape (N, max_neighbors, 3), all zero (same periodic image)
+        neighbor_matrix_shifts = place_on_device(
+            jnp.zeros((2, 5, 3), dtype=jnp.int32), device
+        )
+        d3p = D3Parameters(
+            rcov=place_on_device(d3_params.rcov, device),
+            r4r2=place_on_device(d3_params.r4r2, device),
+            c6ab=place_on_device(d3_params.c6ab, device),
+            cn_ref=place_on_device(d3_params.cn_ref, device),
+        )
+        return positions, numbers, cell, neighbor_matrix, neighbor_matrix_shifts, d3p
+
+    def test_pbc_neighbor_matrix_basic(self, functional_params, d3_params, device):
+        """Test PBC with neighbor matrix format produces finite results."""
+        pos, nums, cell, nm, nms, d3p = self._make_periodic_h2(d3_params, device)
+
+        energy, forces, coord_num = dftd3(
+            pos,
+            nums,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            cell=cell,
+            d3_params=d3p,
+        )
+
+        assert energy.shape == (1,)
+        assert forces.shape == (2, 3)
+        assert jnp.all(jnp.isfinite(energy))
+        assert jnp.all(jnp.isfinite(forces))
+        assert energy[0] < 0.0  # Attractive
+
+    def test_pbc_neighbor_list_basic(self, functional_params, d3_params, device):
+        """Test PBC with neighbor list format produces finite results."""
+        pos, nums, cell, _, _, d3p = self._make_periodic_h2(d3_params, device)
+
+        # Neighbor list format: COO with pointers
+        neighbor_list = place_on_device(
+            jnp.array([[0, 1], [1, 0]], dtype=jnp.int32), device
+        )
+        neighbor_ptr = place_on_device(jnp.array([0, 1, 2], dtype=jnp.int32), device)
+        unit_shifts = place_on_device(jnp.zeros((2, 3), dtype=jnp.int32), device)
+
+        energy, forces, coord_num = dftd3(
+            pos,
+            nums,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            unit_shifts=unit_shifts,
+            cell=cell,
+            d3_params=d3p,
+        )
+
+        assert energy.shape == (1,)
+        assert forces.shape == (2, 3)
+        assert jnp.all(jnp.isfinite(energy))
+        assert jnp.all(jnp.isfinite(forces))
+
+    def test_pbc_energy_differs_from_nonpbc(self, functional_params, d3_params, device):
+        """Periodic energy differs from non-periodic when periodic images contribute."""
+        # Use a SMALL box so periodic images are close and contribute
+        positions = place_on_device(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        )
+        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
+        d3p = D3Parameters(
+            rcov=place_on_device(d3_params.rcov, device),
+            r4r2=place_on_device(d3_params.r4r2, device),
+            c6ab=place_on_device(d3_params.c6ab, device),
+            cn_ref=place_on_device(d3_params.cn_ref, device),
+        )
+
+        # Non-periodic: neighbor sees same-image neighbor only
+        nm = place_on_device(
+            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
+        )
+        e_nonpbc, _, _ = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_matrix=nm,
+            d3_params=d3p,
+        )
+
+        # Periodic: add a periodic image neighbor via shifts
+        # Use small box: 3.0 Bohr so periodic image of atom 1 is close
+        small_cell = place_on_device(
+            jnp.array(
+                [[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        # Neighbor matrix: atom 0 sees [atom 1 (same image), atom 1 (image +1,0,0)]
+        nm_pbc = place_on_device(
+            jnp.array([[1, 1, 2, 2, 2], [0, 0, 2, 2, 2]], dtype=jnp.int32), device
+        )
+        nms_pbc = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
+        # Set shift for second neighbor of atom 0: image (+1, 0, 0)
+        nms_pbc = nms_pbc.at[0, 1, 0].set(1)
+        # Set shift for second neighbor of atom 1: image (-1, 0, 0)
+        nms_pbc = nms_pbc.at[1, 1, 0].set(-1)
+
+        e_pbc, _, _ = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_matrix=nm_pbc,
+            neighbor_matrix_shifts=nms_pbc,
+            cell=small_cell,
+            d3_params=d3p,
+        )
+
+        # Energy with periodic images should be more negative (more neighbors)
+        assert float(e_pbc[0]) < float(e_nonpbc[0]), (
+            f"PBC energy ({e_pbc[0]}) should be more negative than non-PBC ({e_nonpbc[0]})"
+        )
+
+
+# ==============================================================================
+# Virial Tests
+# ==============================================================================
+
+
+class TestDFTD3Virial:
+    """Test DFT-D3 virial computation."""
+
+    def test_virial_shape(self, functional_params, d3_params, device):
+        """Virial has shape (num_systems, 3, 3)."""
+        positions = place_on_device(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        )
+        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
+        cell = place_on_device(
+            jnp.array(
+                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        nm = place_on_device(
+            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
+        )
+        nms = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
+        d3p = D3Parameters(
+            rcov=place_on_device(d3_params.rcov, device),
+            r4r2=place_on_device(d3_params.r4r2, device),
+            c6ab=place_on_device(d3_params.c6ab, device),
+            cn_ref=place_on_device(d3_params.cn_ref, device),
+        )
+
+        result = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            cell=cell,
+            d3_params=d3p,
+            compute_virial=True,
+        )
+
+        assert len(result) == 4
+        energy, forces, coord_num, virial = result
+        assert virial.shape == (1, 3, 3)  # Single system
+
+    def test_virial_finite_nonzero(self, functional_params, d3_params, device):
+        """Virial is finite and non-zero for periodic system."""
+        positions = place_on_device(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        )
+        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
+        cell = place_on_device(
+            jnp.array(
+                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        nm = place_on_device(
+            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
+        )
+        nms = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
+        d3p = D3Parameters(
+            rcov=place_on_device(d3_params.rcov, device),
+            r4r2=place_on_device(d3_params.r4r2, device),
+            c6ab=place_on_device(d3_params.c6ab, device),
+            cn_ref=place_on_device(d3_params.cn_ref, device),
+        )
+
+        result = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            cell=cell,
+            d3_params=d3p,
+            compute_virial=True,
+        )
+
+        virial = result[3]
+        assert jnp.all(jnp.isfinite(virial))
+        # For a dimer along x with interaction, virial should have non-zero xx component
+        assert jnp.any(jnp.abs(virial) > 1e-10)
+
+    def test_virial_symmetry(self, functional_params, d3_params, device):
+        """Virial tensor is approximately symmetric."""
+        positions = place_on_device(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        )
+        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
+        cell = place_on_device(
+            jnp.array(
+                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+                dtype=jnp.float32,
+            ),
+            device,
+        )
+        nm = place_on_device(
+            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
+        )
+        nms = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
+        d3p = D3Parameters(
+            rcov=place_on_device(d3_params.rcov, device),
+            r4r2=place_on_device(d3_params.r4r2, device),
+            c6ab=place_on_device(d3_params.c6ab, device),
+            cn_ref=place_on_device(d3_params.cn_ref, device),
+        )
+
+        result = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_matrix=nm,
+            neighbor_matrix_shifts=nms,
+            cell=cell,
+            d3_params=d3p,
+            compute_virial=True,
+        )
+
+        virial = result[3].squeeze(0)  # (3, 3)
+        assert jnp.allclose(virial, virial.T, atol=1e-6, rtol=1e-6)
+
+    def test_virial_requires_shifts(self, functional_params, d3_params):
+        """Virial raises ValueError when shifts are missing."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1, 1], dtype=jnp.int32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float32,
+        )
+        nm = jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32)
+
+        # Neighbor matrix format without shifts
+        with pytest.raises(ValueError):
+            dftd3(
+                positions,
+                numbers,
+                a1=functional_params["a1"],
+                a2=functional_params["a2"],
+                s8=functional_params["s8"],
+                neighbor_matrix=nm,
+                cell=cell,
+                d3_params=d3_params,
+                compute_virial=True,
+            )
