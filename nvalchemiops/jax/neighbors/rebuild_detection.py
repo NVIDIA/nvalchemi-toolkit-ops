@@ -24,17 +24,11 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
+from warp.jax_experimental import jax_kernel
 
-from nvalchemiops.jax.types import (
-    get_warp_device_from_array,
-    get_wp_dtype,
-    get_wp_mat_dtype,
-    get_wp_vec_dtype,
-    jax_to_warp,
-)
 from nvalchemiops.neighbors.rebuild_detection import (
-    check_cell_list_rebuild,
-    check_neighbor_list_rebuild,
+    _check_atoms_changed_cells_overload,
+    _check_atoms_moved_beyond_skin_overload,
 )
 
 __all__ = [
@@ -43,6 +37,38 @@ __all__ = [
     "check_cell_list_rebuild_needed",
     "check_neighbor_list_rebuild_needed",
 ]
+
+# ==============================================================================
+# JAX Kernel Wrappers
+# ==============================================================================
+
+# Cell list rebuild detection kernel wrappers
+_jax_check_cells_f32 = jax_kernel(
+    _check_atoms_changed_cells_overload[wp.float32],
+    num_outputs=1,
+    in_out_argnames=["rebuild_flag"],
+    enable_backward=False,
+)
+_jax_check_cells_f64 = jax_kernel(
+    _check_atoms_changed_cells_overload[wp.float64],
+    num_outputs=1,
+    in_out_argnames=["rebuild_flag"],
+    enable_backward=False,
+)
+
+# Neighbor list rebuild detection kernel wrappers
+_jax_check_skin_f32 = jax_kernel(
+    _check_atoms_moved_beyond_skin_overload[wp.float32],
+    num_outputs=1,
+    in_out_argnames=["rebuild_flag"],
+    enable_backward=False,
+)
+_jax_check_skin_f64 = jax_kernel(
+    _check_atoms_moved_beyond_skin_overload[wp.float64],
+    num_outputs=1,
+    in_out_argnames=["rebuild_flag"],
+    enable_backward=False,
+)
 
 
 # ==============================================================================
@@ -92,55 +118,42 @@ def cell_list_needs_rebuild(
     if total_atoms == 0:
         return jnp.array([False], dtype=jnp.bool_)
 
-    # Get device string
-    device_str = get_warp_device_from_array(current_positions)
-
-    # Get warp data types
-    wp_dtype = get_wp_dtype(current_positions.dtype)
-    wp_vec_dtype = get_wp_vec_dtype(current_positions.dtype)
     # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
     if cell.dtype != current_positions.dtype:
         cell = cell.astype(current_positions.dtype)
-    wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
 
-    # Convert JAX arrays to Warp via dlpack
-    current_positions_wp = wp.from_dlpack(current_positions, dtype=wp_vec_dtype)
-    cell_wp = wp.from_dlpack(cell, dtype=wp_mat_dtype)
-    pbc_wp = jax_to_warp(pbc, dtype=wp.bool)
-    atom_to_cell_mapping_wp = wp.from_dlpack(atom_to_cell_mapping, dtype=wp.vec3i)
-    # Squeeze cells_per_dimension to 1D if needed and convert to int32 array
+    # Ensure pbc is bool
+    pbc = pbc.astype(jnp.bool_)
+
+    # Squeeze cells_per_dimension to 1D if needed
     cells_1d = (
         cells_per_dimension.squeeze()
         if cells_per_dimension.ndim == 2
         else cells_per_dimension
     )
-    cells_per_dimension_wp = wp.from_dlpack(cells_1d, dtype=wp.int32)
 
-    # For bool arrays, we need to use jax_to_warp which handles bool conversion
-    # and then read back the modified value
-    rebuild_flag_jax = jnp.array([False], dtype=jnp.bool_)
-    rebuild_flag_wp = jax_to_warp(rebuild_flag_jax, dtype=wp.bool, device=device_str)
+    # Allocate output
+    rebuild_flag = jnp.array([False], dtype=jnp.bool_)
 
-    # Call warp kernel
-    check_cell_list_rebuild(
-        current_positions=current_positions_wp,
-        atom_to_cell_mapping=atom_to_cell_mapping_wp,
-        cells_per_dimension=cells_per_dimension_wp,
-        cell=cell_wp,
-        pbc=pbc_wp,
-        rebuild_flag=rebuild_flag_wp,
-        wp_dtype=wp_dtype,
-        device=device_str,
+    # Select kernel based on dtype
+    if current_positions.dtype == jnp.float64:
+        _jax_check = _jax_check_cells_f64
+    else:
+        _jax_check = _jax_check_cells_f32
+        current_positions = current_positions.astype(jnp.float32)
+
+    # Call kernel
+    (rebuild_flag,) = _jax_check(
+        current_positions,
+        cell,
+        atom_to_cell_mapping,
+        cells_1d,
+        pbc,
+        rebuild_flag,
+        launch_dims=(total_atoms,),
     )
 
-    # Synchronize
-    wp.synchronize_device(device_str)
-
-    # Read back the modified value from the warp array
-    rebuild_needed_np = rebuild_flag_wp.numpy()
-    rebuild_needed = jnp.asarray(rebuild_needed_np, dtype=jnp.bool_)
-
-    return rebuild_needed
+    return rebuild_flag
 
 
 def neighbor_list_needs_rebuild(
@@ -186,40 +199,27 @@ def neighbor_list_needs_rebuild(
     if total_atoms == 0:
         return jnp.array([False], dtype=jnp.bool_)
 
-    # Get device string
-    device_str = get_warp_device_from_array(reference_positions)
+    # Allocate output
+    rebuild_flag = jnp.array([False], dtype=jnp.bool_)
 
-    # Get warp data types
-    wp_dtype = get_wp_dtype(reference_positions.dtype)
-    wp_vec_dtype = get_wp_vec_dtype(reference_positions.dtype)
+    # Select kernel based on dtype
+    if reference_positions.dtype == jnp.float64:
+        _jax_check = _jax_check_skin_f64
+    else:
+        _jax_check = _jax_check_skin_f32
+        reference_positions = reference_positions.astype(jnp.float32)
+        current_positions = current_positions.astype(jnp.float32)
 
-    # Convert JAX arrays to Warp via dlpack
-    reference_positions_wp = wp.from_dlpack(reference_positions, dtype=wp_vec_dtype)
-    current_positions_wp = wp.from_dlpack(current_positions, dtype=wp_vec_dtype)
-
-    # For bool arrays, we need to use jax_to_warp which handles bool conversion
-    # and then read back the modified value
-    rebuild_flag_jax = jnp.array([False], dtype=jnp.bool_)
-    rebuild_flag_wp = jax_to_warp(rebuild_flag_jax, dtype=wp.bool, device=device_str)
-
-    # Call warp kernel
-    check_neighbor_list_rebuild(
-        reference_positions=reference_positions_wp,
-        current_positions=current_positions_wp,
-        skin_distance_threshold=skin_distance_threshold,
-        rebuild_flag=rebuild_flag_wp,
-        wp_dtype=wp_dtype,
-        device=device_str,
+    # Call kernel
+    (rebuild_flag,) = _jax_check(
+        reference_positions,
+        current_positions,
+        float(skin_distance_threshold),
+        rebuild_flag,
+        launch_dims=(total_atoms,),
     )
 
-    # Synchronize
-    wp.synchronize_device(device_str)
-
-    # Read back the modified value from the warp array
-    rebuild_needed_np = rebuild_flag_wp.numpy()
-    rebuild_needed = jnp.asarray(rebuild_needed_np, dtype=jnp.bool_)
-
-    return rebuild_needed
+    return rebuild_flag
 
 
 # ==============================================================================

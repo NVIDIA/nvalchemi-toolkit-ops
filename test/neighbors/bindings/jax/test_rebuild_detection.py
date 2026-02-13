@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 
 from nvalchemiops.jax.neighbors.rebuild_detection import (
@@ -207,3 +208,91 @@ class TestCellListNeedsRebuild:
         )
 
         assert not rebuild_needed.item()
+
+
+# ==============================================================================
+# Tests: JIT compatibility
+# ==============================================================================
+
+
+class TestNeighborListRebuildJIT:
+    """Test neighbor_list_needs_rebuild under jax.jit."""
+
+    def test_jit_no_movement(self):
+        """Test JIT: no rebuild needed when atoms don't move."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32)
+
+        @jax.jit
+        def check_rebuild(ref, cur):
+            return neighbor_list_needs_rebuild(ref, cur, 0.5)
+
+        result = check_rebuild(positions, positions)
+        assert result.shape == (1,)
+        assert not result.item()
+
+    def test_jit_beyond_skin(self):
+        """Test JIT: rebuild needed when atom moves beyond skin distance."""
+        reference = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32)
+        current = reference + jnp.array(
+            [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=jnp.float32
+        )
+
+        @jax.jit
+        def check_rebuild(ref, cur):
+            return neighbor_list_needs_rebuild(ref, cur, 0.5)
+
+        result = check_rebuild(reference, current)
+        assert result.item()
+
+    def test_jit_within_skin(self):
+        """Test JIT: no rebuild for small movements within skin distance."""
+        reference = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32)
+        current = reference + jnp.array(
+            [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0]], dtype=jnp.float32
+        )
+
+        @jax.jit
+        def check_rebuild(ref, cur):
+            return neighbor_list_needs_rebuild(ref, cur, 0.5)
+
+        result = check_rebuild(reference, current)
+        assert not result.item()
+
+
+class TestCellListRebuildJIT:
+    """Test cell_list_needs_rebuild under jax.jit."""
+
+    def test_jit_no_movement(self):
+        """Test JIT: no rebuild needed when atoms stay in same cells."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]], dtype=jnp.float32
+        )
+        pbc = jnp.array([True, True, True])
+        cells_per_dim = jnp.array([2, 2, 2], dtype=jnp.int32)
+        mapping = jnp.array([[0, 0, 0], [1, 0, 0]], dtype=jnp.int32)
+
+        @jax.jit
+        def check_rebuild(pos, mapping, cells, c, p):
+            return cell_list_needs_rebuild(pos, mapping, cells, c, p)
+
+        result = check_rebuild(positions, mapping, cells_per_dim, cell, pbc)
+        assert result.shape == (1,)
+        assert not result.item()
+
+    def test_jit_across_cells(self):
+        """Test JIT: rebuild needed when atom crosses cell boundary."""
+        positions = jnp.array([[6.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]], dtype=jnp.float32
+        )
+        pbc = jnp.array([True, True, True])
+        cells_per_dim = jnp.array([2, 2, 2], dtype=jnp.int32)
+        mapping = jnp.array([[0, 0, 0], [1, 0, 0]], dtype=jnp.int32)
+
+        @jax.jit
+        def check_rebuild(pos, mapping, cells, c, p):
+            return cell_list_needs_rebuild(pos, mapping, cells, c, p)
+
+        result = check_rebuild(positions, mapping, cells_per_dim, cell, pbc)
+        assert result.item()
