@@ -20,21 +20,16 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import warp as wp
+from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
-from nvalchemiops.jax.types import (
-    get_warp_device_from_array,
-    get_wp_dtype,
-    get_wp_mat_dtype,
-    get_wp_vec_dtype,
-)
 from nvalchemiops.neighbors.batch_naive_dual_cutoff import (
-    batch_naive_neighbor_matrix_dual_cutoff,
-    batch_naive_neighbor_matrix_pbc_dual_cutoff,
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_overload,
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_overload,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     _expand_naive_shifts,
@@ -42,6 +37,70 @@ from nvalchemiops.neighbors.neighbor_utils import (
 )
 
 __all__ = ["batch_naive_neighbor_list_dual_cutoff"]
+
+# ==============================================================================
+# JAX Kernel Wrappers
+# ==============================================================================
+
+# No-PBC batch naive dual cutoff neighbor matrix kernel wrappers
+_jax_fill_batch_dual_f32 = jax_kernel(
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_overload[wp.float32],
+    num_outputs=4,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "num_neighbors1",
+        "neighbor_matrix2",
+        "num_neighbors2",
+    ],
+    enable_backward=False,
+)
+_jax_fill_batch_dual_f64 = jax_kernel(
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_overload[wp.float64],
+    num_outputs=4,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "num_neighbors1",
+        "neighbor_matrix2",
+        "num_neighbors2",
+    ],
+    enable_backward=False,
+)
+
+# PBC batch naive dual cutoff neighbor matrix kernel wrappers
+_jax_fill_batch_dual_pbc_f32 = jax_kernel(
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_overload[wp.float32],
+    num_outputs=6,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts1",
+        "neighbor_matrix_shifts2",
+        "num_neighbors1",
+        "num_neighbors2",
+    ],
+    enable_backward=False,
+)
+_jax_fill_batch_dual_pbc_f64 = jax_kernel(
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_overload[wp.float64],
+    num_outputs=6,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts1",
+        "neighbor_matrix_shifts2",
+        "num_neighbors1",
+        "num_neighbors2",
+    ],
+    enable_backward=False,
+)
+
+# Expand shifts kernel wrapper (no overloads — single kernel)
+_jax_expand_naive_shifts = jax_kernel(
+    _expand_naive_shifts,
+    num_outputs=2,
+    in_out_argnames=["shifts", "shift_system_idx"],
+    enable_backward=False,
+)
 
 
 def batch_naive_neighbor_list_dual_cutoff(
@@ -286,93 +345,86 @@ def batch_naive_neighbor_list_dual_cutoff(
                     num_neighbors2,
                 )
 
-    # Get device and dtype info
-    device_str = get_warp_device_from_array(positions)
-    num_systems = len(batch_ptr) - 1
+    # Select kernel based on dtype
+    if positions.dtype == jnp.float64:
+        _jax_fill = _jax_fill_batch_dual_f64
+        _jax_fill_pbc = _jax_fill_batch_dual_pbc_f64
+    else:
+        _jax_fill = _jax_fill_batch_dual_f32
+        _jax_fill_pbc = _jax_fill_batch_dual_pbc_f32
+        positions = positions.astype(jnp.float32)
 
-    wp_dtype = get_wp_dtype(positions.dtype)
-    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
-    wp_mat_dtype = get_wp_mat_dtype(cell.dtype) if cell is not None else None
-
-    # Convert JAX arrays to Warp via dlpack (zero-copy)
-    positions_wp = wp.from_dlpack(positions, dtype=wp_vec_dtype)
-    batch_idx_wp = wp.from_dlpack(batch_idx, dtype=wp.int32)
-    batch_ptr_wp = wp.from_dlpack(batch_ptr, dtype=wp.int32)
-    neighbor_matrix1_wp = wp.from_dlpack(neighbor_matrix1, dtype=wp.int32)
-    neighbor_matrix2_wp = wp.from_dlpack(neighbor_matrix2, dtype=wp.int32)
-    num_neighbors1_wp = wp.from_dlpack(num_neighbors1, dtype=wp.int32)
-    num_neighbors2_wp = wp.from_dlpack(num_neighbors2, dtype=wp.int32)
+    total_atoms = positions.shape[0]
+    num_systems = batch_ptr.shape[0] - 1
 
     if pbc is None:
-        # No PBC case
-        batch_naive_neighbor_matrix_dual_cutoff(
-            positions=positions_wp,
-            cutoff1=cutoff1,
-            cutoff2=cutoff2,
-            batch_idx=batch_idx_wp,
-            batch_ptr=batch_ptr_wp,
-            neighbor_matrix1=neighbor_matrix1_wp,
-            num_neighbors1=num_neighbors1_wp,
-            neighbor_matrix2=neighbor_matrix2_wp,
-            num_neighbors2=num_neighbors2_wp,
-            wp_dtype=wp_dtype,
-            device=device_str,
-            half_fill=half_fill,
+        neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = _jax_fill(
+            positions,
+            float(cutoff1 * cutoff1),
+            float(cutoff2 * cutoff2),
+            batch_idx.astype(jnp.int32),
+            batch_ptr.astype(jnp.int32),
+            neighbor_matrix1,
+            num_neighbors1,
+            neighbor_matrix2,
+            num_neighbors2,
+            half_fill,
+            launch_dims=(total_atoms,),
         )
     else:
-        # PBC case - expand shifts and call kernel
-        shifts = jnp.empty((total_shifts, 3), dtype=jnp.int32)
-        shift_system_idx = jnp.empty((total_shifts,), dtype=jnp.int32)
-        shifts_wp = wp.from_dlpack(shifts, dtype=wp.vec3i)
-        shift_system_idx_wp = wp.from_dlpack(shift_system_idx, dtype=wp.int32)
-        shift_range_per_dimension_wp = wp.from_dlpack(
-            shift_range_per_dimension, dtype=wp.vec3i
-        )
-        shift_offset_wp = wp.from_dlpack(shift_offset, dtype=wp.int32)
+        shifts = jnp.zeros((total_shifts, 3), dtype=jnp.int32)
+        shift_system_idx = jnp.zeros(total_shifts, dtype=jnp.int32)
 
-        wp_device_obj = wp.get_device(device_str)
-        wp.launch(
-            kernel=_expand_naive_shifts,
-            dim=num_systems,
-            inputs=[
-                shift_range_per_dimension_wp,
-                shift_offset_wp,
-                shifts_wp,
-                shift_system_idx_wp,
-            ],
-            device=wp_device_obj,
+        shifts, shift_system_idx = _jax_expand_naive_shifts(
+            shift_range_per_dimension,
+            shift_offset,
+            shifts,
+            shift_system_idx,
+            launch_dims=(num_systems,),
         )
 
-        cell_wp = wp.from_dlpack(cell, dtype=wp_mat_dtype)
-        neighbor_matrix_shifts1_wp = wp.from_dlpack(
-            neighbor_matrix_shifts1, dtype=wp.vec3i
-        )
-        neighbor_matrix_shifts2_wp = wp.from_dlpack(
-            neighbor_matrix_shifts2, dtype=wp.vec3i
-        )
+        if cell.dtype != positions.dtype:
+            cell = cell.astype(positions.dtype)
 
-        batch_naive_neighbor_matrix_pbc_dual_cutoff(
-            positions=positions_wp,
-            cell=cell_wp,
-            cutoff1=cutoff1,
-            cutoff2=cutoff2,
-            batch_ptr=batch_ptr_wp,
-            shifts=shifts_wp,
-            shift_system_idx=shift_system_idx_wp,
-            neighbor_matrix1=neighbor_matrix1_wp,
-            neighbor_matrix2=neighbor_matrix2_wp,
-            neighbor_matrix_shifts1=neighbor_matrix_shifts1_wp,
-            neighbor_matrix_shifts2=neighbor_matrix_shifts2_wp,
-            num_neighbors1=num_neighbors1_wp,
-            num_neighbors2=num_neighbors2_wp,
-            wp_dtype=wp_dtype,
-            device=device_str,
-            max_atoms_per_system=max_atoms_per_system,
-            half_fill=half_fill,
-        )
+        # max_atoms_per_system was already computed above (in the PBC allocation section)
+        # but wrap in try/except for jit safety
+        if max_atoms_per_system is None:
+            try:
+                atoms_per_system = batch_ptr[1:] - batch_ptr[:-1]
+                max_atoms_per_system = int(jnp.max(atoms_per_system))
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ):
+                raise ValueError(
+                    "Cannot infer max_atoms_per_system inside jax.jit. "
+                    "Please provide max_atoms_per_system explicitly when using jax.jit."
+                ) from None
 
-    # Synchronize device
-    wp.synchronize_device(device_str)
+        (
+            neighbor_matrix1,
+            neighbor_matrix2,
+            neighbor_matrix_shifts1,
+            neighbor_matrix_shifts2,
+            num_neighbors1,
+            num_neighbors2,
+        ) = _jax_fill_pbc(
+            positions,
+            cell,
+            float(cutoff1 * cutoff1),
+            float(cutoff2 * cutoff2),
+            batch_ptr.astype(jnp.int32),
+            shifts,
+            shift_system_idx,
+            neighbor_matrix1,
+            neighbor_matrix2,
+            neighbor_matrix_shifts1,
+            neighbor_matrix_shifts2,
+            num_neighbors1,
+            num_neighbors2,
+            half_fill,
+            launch_dims=(total_shifts, max_atoms_per_system),
+        )
 
     if return_neighbor_list:
         if pbc is not None:
