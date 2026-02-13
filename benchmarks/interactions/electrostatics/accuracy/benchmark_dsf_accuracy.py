@@ -52,6 +52,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 import yaml
 
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.torch.interactions.electrostatics import dsf_coulomb
 from nvalchemiops.torch.neighbors import neighbor_list
 
@@ -104,26 +105,6 @@ def load_config(config_path: Path) -> dict:
         config = yaml.safe_load(f)
     return config
 
-
-def estimate_max_neighbors(cutoff: float, density: float, safety: float) -> int:
-    """Estimate max neighbors from density and cutoff.
-
-    Parameters
-    ----------
-    cutoff : float
-        Cutoff radius in Angstroms.
-    density : float
-        Number density in atoms/Angstrom^3.
-    safety : float
-        Safety factor for over-allocation.
-
-    Returns
-    -------
-    int
-        Estimated maximum number of neighbors per atom.
-    """
-    volume = (4.0 / 3.0) * math.pi * cutoff**3
-    return math.ceil(density * volume * safety)
 
 
 def compute_min_perpendicular_width(cell: np.ndarray) -> float:
