@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import warp as wp
 
 
@@ -187,63 +186,3 @@ def get_wp_mat_dtype(dtype: jnp.dtype):
         return wp.mat33h
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
-
-
-def jax_to_warp(
-    arr: jax.Array,
-    dtype: type | None = None,
-    device: str | None = None,
-) -> wp.array:
-    """Convert a JAX array to a Warp array.
-
-    This function handles the conversion from JAX to Warp, using DLPack for
-    zero-copy conversion when possible. For boolean arrays, it falls back to
-    numpy conversion since DLPack doesn't support booleans.
-
-    Parameters
-    ----------
-    arr : jax.Array
-        The JAX array to convert.
-    dtype : type | None, optional
-        The Warp dtype to use. If None, inferred from the JAX dtype.
-    device : str | None, optional
-        The Warp device to use. If None, inferred from the JAX array's device.
-        Only used for boolean arrays (non-bool arrays use DLPack which preserves device).
-
-    Returns
-    -------
-    wp.array
-        The Warp array view of the JAX data.
-
-    Notes
-    -----
-    - For non-boolean arrays, this uses DLPack for zero-copy conversion
-    - For boolean arrays, this converts via numpy (not zero-copy)
-    - The returned Warp array shares memory with the JAX array (except for bool)
-
-    .. warning::
-
-        This function is **not compatible with** ``jax.jit`` **tracing**. It calls
-        ``wp.from_dlpack()`` which requires concrete array data, but JAX replaces
-        arrays with abstract tracers during ``jax.jit`` compilation. Use
-        ``warp.jax_experimental.jax_kernel`` instead for jit-compatible code paths.
-
-    Examples
-    --------
-    >>> import jax.numpy as jnp
-    >>> from nvalchemiops.jax.types import jax_to_warp
-    >>> positions = jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32)
-    >>> wp_positions = jax_to_warp(positions, dtype=wp.vec3f)
-    """
-    # Boolean arrays need special handling - DLPack doesn't support bool
-    if arr.dtype == jnp.bool_:
-        # Infer device from JAX array if not provided
-        if device is None:
-            device = get_warp_device_from_array(arr)
-        # Convert via numpy for boolean arrays
-        return wp.from_numpy(
-            np.array(arr), dtype=dtype if dtype else wp.bool, device=device
-        )
-    else:
-        # Use DLPack for zero-copy conversion
-        return wp.from_dlpack(arr, dtype=dtype)

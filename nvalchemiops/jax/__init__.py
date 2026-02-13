@@ -32,7 +32,6 @@ from nvalchemiops.jax.types import (
     get_wp_dtype,
     get_wp_mat_dtype,
     get_wp_vec_dtype,
-    jax_to_warp,
 )
 
 __all__ = [
@@ -41,5 +40,4 @@ __all__ = [
     "get_wp_dtype",
     "get_wp_mat_dtype",
     "get_wp_vec_dtype",
-    "jax_to_warp",
 ]
