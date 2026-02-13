@@ -217,10 +217,10 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 
 `atomic_density`
 : Atomic density in atoms per unit volume, used by `estimate_max_neighbors()`.
-  Default is 0.5. Increase for dense systems to avoid truncated neighbor lists.
+  Default is 0.2. Increase for dense systems to avoid truncated neighbor lists.
 
 `safety_factor`
-: Multiplier applied to the neighbor estimate. Default is 5.0. Provides
+: Multiplier applied to the neighbor estimate. Default is 1.0. Provides
   headroom for density fluctuations.
 
 `max_nbins`
@@ -243,7 +243,7 @@ from nvalchemiops.torch.neighbors.unbatched import estimate_cell_list_sizes
 
 max_neighbors = estimate_max_neighbors(
     cutoff,
-    atomic_density=0.3,
+    atomic_density=0.15,
     safety_factor=1.0
 )
 
@@ -254,15 +254,15 @@ max_total_cells, neighbor_search_radius = estimate_cell_list_sizes(
 
 **Setting `atomic_density`**: This should reflect the expected atomic density of
 your system in atoms per unit volume (using the same length units as `cutoff`).
-If set too low, the neighbor matrix may be too narrow and neighbors will be
-silently truncated. If set too high, memory is wasted on unused columns.
+If set too low, the neighbor matrix may be too narrow and a
+`NeighborOverflowError` will be raised at runtime. If set too high, memory is
+wasted on unused columns.
 
 **Setting `safety_factor`**: This multiplier provides headroom for local density
-fluctuations (e.g., atoms clustering in one region). A value of 5.0 is
-conservative for most systems, but 1.0 is typically sufficient for "reasonable"
-structures/systems (e.g. in standard public datasets). Reduce it for
-memory-constrained scenarios where you are confident in uniform density;
-increase it for systems with significant density variation.
+fluctuations (e.g., atoms clustering in one region). The default of 1.0 is
+typically sufficient for systems with reasonably uniform density (e.g. standard
+public datasets). Increase it for systems with significant density variation
+where atoms may cluster in one region.
 
 ```{tip}
 Users should check the "convergence" of the neighbor list computation by checking
@@ -287,7 +287,7 @@ from nvalchemiops.torch.neighbors import neighbor_list
 from nvalchemiops.torch.neighbors.neighbor_utils import estimate_max_neighbors
 
 num_atoms = positions.shape[0]
-max_neighbors = estimate_max_neighbors(cutoff, atomic_density=1.0)
+max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.15)
 
 # Pre-allocate tensors
 neighbor_matrix = torch.full(
