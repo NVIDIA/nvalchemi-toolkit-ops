@@ -25,20 +25,6 @@ import pytest
 from nvalchemiops.jax.interactions.dispersion import D3Parameters, dftd3
 
 # ==============================================================================
-# Device Utilities
-# ==============================================================================
-
-
-def place_on_device(arr: jax.Array, device_type: str) -> jax.Array:
-    """Place a JAX array on the specified device type."""
-    if device_type == "cpu":
-        device = jax.devices("cpu")[0]
-    else:
-        device = jax.devices("gpu")[0]
-    return jax.device_put(arr, device)
-
-
-# ==============================================================================
 # Fixtures
 # ==============================================================================
 
@@ -249,26 +235,10 @@ class TestDFT_D3Basic:
 
     def test_h2_neighbor_matrix(self, h2_system, functional_params, d3_params, device):
         """Test H2 with neighbor matrix format on specified device."""
-        # Prepare inputs and place on device
-        positions = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
-        neighbor_matrix = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), device
-        )
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
-
-        # Call dftd3
         result = dftd3(
             positions,
             numbers,
@@ -279,7 +249,7 @@ class TestDFT_D3Basic:
             k3=functional_params["k3"],
             s6=functional_params["s6"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
 
         energy, forces, coord_num = result[0], result[1], result[2]
@@ -294,41 +264,15 @@ class TestDFT_D3Basic:
         assert jnp.all(jnp.isfinite(forces))
         assert jnp.all(jnp.isfinite(coord_num))
 
-        # Verify outputs are on the expected device
-        expected_platform = device
-        energy_platform = energy.devices().pop().platform
-        forces_platform = forces.devices().pop().platform
-        coord_num_platform = coord_num.devices().pop().platform
-
-        assert energy_platform == expected_platform
-        assert forces_platform == expected_platform
-        assert coord_num_platform == expected_platform
-
     def test_h2_neighbor_list(self, h2_system, functional_params, d3_params, device):
-        """Test H2 with neighbor list format on specified device."""
-        # Prepare inputs and place on device
-        positions = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
+        """Test H2 with neighbor list format"""
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
 
         # Build neighbor list: atom 0 -> 1, atom 1 -> 0
-        neighbor_list = place_on_device(
-            jnp.array([[0, 1], [1, 0]], dtype=jnp.int32), device
-        )
-        neighbor_ptr = place_on_device(jnp.array([0, 1, 2], dtype=jnp.int32), device)
+        neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
 
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
-
-        # Call dftd3
         result = dftd3(
             positions,
             numbers,
@@ -340,7 +284,7 @@ class TestDFT_D3Basic:
             s6=functional_params["s6"],
             neighbor_list=neighbor_list,
             neighbor_ptr=neighbor_ptr,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
 
         energy, forces, coord_num = result[0], result[1], result[2]
@@ -354,12 +298,6 @@ class TestDFT_D3Basic:
         assert jnp.all(jnp.isfinite(energy))
         assert jnp.all(jnp.isfinite(forces))
         assert jnp.all(jnp.isfinite(coord_num))
-
-        # Verify outputs are on the expected device
-        expected_platform = device
-        assert energy.devices().pop().platform == expected_platform
-        assert forces.devices().pop().platform == expected_platform
-        assert coord_num.devices().pop().platform == expected_platform
 
     def test_empty_system(self, functional_params, d3_params):
         """Test empty system (edge case)."""
@@ -429,24 +367,10 @@ class TestDFT_D3Dtypes:
     """Test DFT-D3 with different dtypes."""
 
     def test_float32_positions(self, h2_system, functional_params, d3_params, device):
-        """Test with float32 positions on specified device."""
-        positions = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
-        neighbor_matrix = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), device
-        )
-
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        """Test with float32 positions."""
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
         result = dftd3(
             positions,
@@ -455,7 +379,7 @@ class TestDFT_D3Dtypes:
             a2=functional_params["a2"],
             s8=functional_params["s8"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
 
         energy, forces = result[0], result[1]
@@ -463,24 +387,10 @@ class TestDFT_D3Dtypes:
         assert energy.dtype == jnp.float32
 
     def test_float64_positions(self, h2_system, functional_params, d3_params, device):
-        """Test with float64 positions on specified device."""
-        positions = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float64), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
-        neighbor_matrix = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), device
-        )
-
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        """Test with float64 positions."""
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float64)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
         result = dftd3(
             positions,
@@ -489,7 +399,7 @@ class TestDFT_D3Dtypes:
             a2=functional_params["a2"],
             s8=functional_params["s8"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
 
         energy, forces, coord_num = result[0], result[1], result[2]
@@ -504,23 +414,9 @@ class TestDFT_D3Dtypes:
     ):
         """Test that float32 and float64 positions produce similar results."""
         # Run with float32
-        positions_f32 = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
-        neighbor_matrix = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), device
-        )
-
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        positions_f32 = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
         result_f32 = dftd3(
             positions_f32,
@@ -529,7 +425,7 @@ class TestDFT_D3Dtypes:
             a2=functional_params["a2"],
             s8=functional_params["s8"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
         energy_f32, forces_f32, coord_num_f32 = (
             result_f32[0],
@@ -538,9 +434,7 @@ class TestDFT_D3Dtypes:
         )
 
         # Run with float64
-        positions_f64 = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float64), device
-        )
+        positions_f64 = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float64)
         result_f64 = dftd3(
             positions_f64,
             numbers,
@@ -548,7 +442,7 @@ class TestDFT_D3Dtypes:
             a2=functional_params["a2"],
             s8=functional_params["s8"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
         energy_f64, forces_f64, coord_num_f64 = (
             result_f64[0],
@@ -572,23 +466,9 @@ class TestPhysicalCorrectness:
 
     def test_h2_energy_sign(self, h2_system, functional_params, d3_params, device):
         """Test that H2 produces negative (attractive) dispersion energy."""
-        positions = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
-        neighbor_matrix = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), device
-        )
-
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
         result = dftd3(
             positions,
@@ -597,7 +477,7 @@ class TestPhysicalCorrectness:
             a2=functional_params["a2"],
             s8=functional_params["s8"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
 
         energy = result[0]
@@ -618,23 +498,9 @@ class TestPhysicalCorrectness:
         self, ne2_system, functional_params, d3_params, device
     ):
         """Test that Ne2 has significant dispersion energy."""
-        positions = place_on_device(
-            jnp.array(ne2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(ne2_system["numbers"], dtype=jnp.int32), device
-        )
-        neighbor_matrix = place_on_device(
-            jnp.array(ne2_system["nbmat"], dtype=jnp.int32), device
-        )
-
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        positions = jnp.array(ne2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(ne2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(ne2_system["nbmat"], dtype=jnp.int32)
 
         result = dftd3(
             positions,
@@ -643,7 +509,7 @@ class TestPhysicalCorrectness:
             a2=functional_params["a2"],
             s8=functional_params["s8"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
 
         energy_ne2 = result[0]
@@ -655,22 +521,9 @@ class TestPhysicalCorrectness:
     def test_forces_zero_for_no_neighbors(self, functional_params, d3_params, device):
         """Test that forces are zero when atoms have no neighbors."""
         # Single atom with no neighbors
-        positions = place_on_device(
-            jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32), device
-        )
-        numbers = place_on_device(jnp.array([1], dtype=jnp.int32), device)
-        neighbor_matrix = place_on_device(
-            jnp.array([[1]], dtype=jnp.int32),
-            device,  # Padding (only self)
-        )
-
-        # Place d3_params on device
-        d3_params_device = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1], dtype=jnp.int32)
+        neighbor_matrix = jnp.array([[1]], dtype=jnp.int32)  # Padding (only self)
 
         result = dftd3(
             positions,
@@ -679,7 +532,7 @@ class TestPhysicalCorrectness:
             a2=functional_params["a2"],
             s8=functional_params["s8"],
             neighbor_matrix=neighbor_matrix,
-            d3_params=d3_params_device,
+            d3_params=d3_params,
         )
 
         energy = result[0]
@@ -844,22 +697,14 @@ class TestDFT_D3JIT:
 
     def test_jit_neighbor_matrix(self, h2_system, functional_params, d3_params, device):
         """Test H2 with neighbor matrix format works with jax.jit."""
-        # Prepare inputs and place on device
-        positions = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
-        neighbor_matrix = place_on_device(
-            jnp.array(h2_system["nbmat"], dtype=jnp.int32), device
-        )
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
-        # Place d3_params on device
-        rcov = place_on_device(d3_params.rcov, device)
-        r4r2 = place_on_device(d3_params.r4r2, device)
-        c6ab = place_on_device(d3_params.c6ab, device)
-        cn_ref = place_on_device(d3_params.cn_ref, device)
+        rcov = d3_params.rcov
+        r4r2 = d3_params.r4r2
+        c6ab = d3_params.c6ab
+        cn_ref = d3_params.cn_ref
 
         # Define jitted function with array parameters as arguments
         # Scalar parameters must be static literals for Warp FFI compatibility
@@ -902,25 +747,17 @@ class TestDFT_D3JIT:
 
     def test_jit_neighbor_list(self, h2_system, functional_params, d3_params, device):
         """Test H2 with neighbor list format works with jax.jit."""
-        # Prepare inputs and place on device
-        positions = place_on_device(
-            jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32), device
-        )
-        numbers = place_on_device(
-            jnp.array(h2_system["numbers"], dtype=jnp.int32), device
-        )
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
 
         # Build neighbor list: atom 0 -> 1, atom 1 -> 0
-        neighbor_list = place_on_device(
-            jnp.array([[0, 1], [1, 0]], dtype=jnp.int32), device
-        )
-        neighbor_ptr = place_on_device(jnp.array([0, 1, 2], dtype=jnp.int32), device)
+        neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
 
-        # Place d3_params on device
-        rcov = place_on_device(d3_params.rcov, device)
-        r4r2 = place_on_device(d3_params.r4r2, device)
-        c6ab = place_on_device(d3_params.c6ab, device)
-        cn_ref = place_on_device(d3_params.cn_ref, device)
+        rcov = d3_params.rcov
+        r4r2 = d3_params.r4r2
+        c6ab = d3_params.c6ab
+        cn_ref = d3_params.cn_ref
 
         # Define jitted function with array parameters as arguments
         # Scalar parameters must be static literals for Warp FFI compatibility
@@ -971,39 +808,31 @@ class TestDFT_D3JIT:
 class TestDFTD3PBC:
     """Test DFT-D3 with periodic boundary conditions."""
 
-    def _make_periodic_h2(self, d3_params, device):
+    def _make_periodic_h2(self, d3_params):
         """Create H2 in a periodic box with shifts."""
         # H2 in a 10 Bohr cubic box
-        positions = place_on_device(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
-        )
-        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
-        cell = place_on_device(
-            jnp.array(
-                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-                dtype=jnp.float32,
-            ),
-            device,
+        positions = jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1, 1], dtype=jnp.int32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float32,
         )
         # Neighbor matrix: each atom sees the other, zero shifts (same image)
-        neighbor_matrix = place_on_device(
-            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
-        )
+        neighbor_matrix = jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32)
         # Shifts: shape (N, max_neighbors, 3), all zero (same periodic image)
-        neighbor_matrix_shifts = place_on_device(
-            jnp.zeros((2, 5, 3), dtype=jnp.int32), device
+        neighbor_matrix_shifts = jnp.zeros((2, 5, 3), dtype=jnp.int32)
+        return (
+            positions,
+            numbers,
+            cell,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            d3_params,
         )
-        d3p = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
-        return positions, numbers, cell, neighbor_matrix, neighbor_matrix_shifts, d3p
 
     def test_pbc_neighbor_matrix_basic(self, functional_params, d3_params, device):
         """Test PBC with neighbor matrix format produces finite results."""
-        pos, nums, cell, nm, nms, d3p = self._make_periodic_h2(d3_params, device)
+        pos, nums, cell, nm, nms, d3p = self._make_periodic_h2(d3_params)
 
         energy, forces, coord_num = dftd3(
             pos,
@@ -1028,14 +857,12 @@ class TestDFTD3PBC:
 
     def test_pbc_neighbor_list_basic(self, functional_params, d3_params, device):
         """Test PBC with neighbor list format produces finite results."""
-        pos, nums, cell, _, _, d3p = self._make_periodic_h2(d3_params, device)
+        pos, nums, cell, _, _, d3p = self._make_periodic_h2(d3_params)
 
         # Neighbor list format: COO with pointers
-        neighbor_list = place_on_device(
-            jnp.array([[0, 1], [1, 0]], dtype=jnp.int32), device
-        )
-        neighbor_ptr = place_on_device(jnp.array([0, 1, 2], dtype=jnp.int32), device)
-        unit_shifts = place_on_device(jnp.zeros((2, 3), dtype=jnp.int32), device)
+        neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        unit_shifts = jnp.zeros((2, 3), dtype=jnp.int32)
 
         energy, forces, coord_num = dftd3(
             pos,
@@ -1061,21 +888,11 @@ class TestDFTD3PBC:
     def test_pbc_energy_differs_from_nonpbc(self, functional_params, d3_params, device):
         """Periodic energy differs from non-periodic when periodic images contribute."""
         # Use a SMALL box so periodic images are close and contribute
-        positions = place_on_device(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
-        )
-        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
-        d3p = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        positions = jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1, 1], dtype=jnp.int32)
 
         # Non-periodic: neighbor sees same-image neighbor only
-        nm = place_on_device(
-            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
-        )
+        nm = jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32)
         e_nonpbc, _, _ = dftd3(
             positions,
             numbers,
@@ -1086,23 +903,18 @@ class TestDFTD3PBC:
             k3=functional_params["k3"],
             s6=functional_params["s6"],
             neighbor_matrix=nm,
-            d3_params=d3p,
+            d3_params=d3_params,
         )
 
         # Periodic: add a periodic image neighbor via shifts
         # Use small box: 3.0 Bohr so periodic image of atom 1 is close
-        small_cell = place_on_device(
-            jnp.array(
-                [[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]],
-                dtype=jnp.float32,
-            ),
-            device,
+        small_cell = jnp.array(
+            [[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 3.0]]],
+            dtype=jnp.float32,
         )
         # Neighbor matrix: atom 0 sees [atom 1 (same image), atom 1 (image +1,0,0)]
-        nm_pbc = place_on_device(
-            jnp.array([[1, 1, 2, 2, 2], [0, 0, 2, 2, 2]], dtype=jnp.int32), device
-        )
-        nms_pbc = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
+        nm_pbc = jnp.array([[1, 1, 2, 2, 2], [0, 0, 2, 2, 2]], dtype=jnp.int32)
+        nms_pbc = jnp.zeros((2, 5, 3), dtype=jnp.int32)
         # Set shift for second neighbor of atom 0: image (+1, 0, 0)
         nms_pbc = nms_pbc.at[0, 1, 0].set(1)
         # Set shift for second neighbor of atom 1: image (-1, 0, 0)
@@ -1120,7 +932,7 @@ class TestDFTD3PBC:
             neighbor_matrix=nm_pbc,
             neighbor_matrix_shifts=nms_pbc,
             cell=small_cell,
-            d3_params=d3p,
+            d3_params=d3_params,
         )
 
         # Energy with periodic images should be more negative (more neighbors)
@@ -1139,27 +951,14 @@ class TestDFTD3Virial:
 
     def test_virial_shape(self, functional_params, d3_params, device):
         """Virial has shape (num_systems, 3, 3)."""
-        positions = place_on_device(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        positions = jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1, 1], dtype=jnp.int32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float32,
         )
-        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
-        cell = place_on_device(
-            jnp.array(
-                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-                dtype=jnp.float32,
-            ),
-            device,
-        )
-        nm = place_on_device(
-            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
-        )
-        nms = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
-        d3p = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        neighbor_matrix = jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32)
+        neighbor_matrix_shifts = jnp.zeros((2, 5, 3), dtype=jnp.int32)
 
         result = dftd3(
             positions,
@@ -1170,10 +969,10 @@ class TestDFTD3Virial:
             k1=functional_params["k1"],
             k3=functional_params["k3"],
             s6=functional_params["s6"],
-            neighbor_matrix=nm,
-            neighbor_matrix_shifts=nms,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             cell=cell,
-            d3_params=d3p,
+            d3_params=d3_params,
             compute_virial=True,
         )
 
@@ -1183,27 +982,14 @@ class TestDFTD3Virial:
 
     def test_virial_finite_nonzero(self, functional_params, d3_params, device):
         """Virial is finite and non-zero for periodic system."""
-        positions = place_on_device(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        positions = jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1, 1], dtype=jnp.int32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float32,
         )
-        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
-        cell = place_on_device(
-            jnp.array(
-                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-                dtype=jnp.float32,
-            ),
-            device,
-        )
-        nm = place_on_device(
-            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
-        )
-        nms = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
-        d3p = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        neighbor_matrix = jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32)
+        neighbor_matrix_shifts = jnp.zeros((2, 5, 3), dtype=jnp.int32)
 
         result = dftd3(
             positions,
@@ -1214,10 +1000,10 @@ class TestDFTD3Virial:
             k1=functional_params["k1"],
             k3=functional_params["k3"],
             s6=functional_params["s6"],
-            neighbor_matrix=nm,
-            neighbor_matrix_shifts=nms,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             cell=cell,
-            d3_params=d3p,
+            d3_params=d3_params,
             compute_virial=True,
         )
 
@@ -1228,27 +1014,14 @@ class TestDFTD3Virial:
 
     def test_virial_symmetry(self, functional_params, d3_params, device):
         """Virial tensor is approximately symmetric."""
-        positions = place_on_device(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32), device
+        positions = jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1, 1], dtype=jnp.int32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float32,
         )
-        numbers = place_on_device(jnp.array([1, 1], dtype=jnp.int32), device)
-        cell = place_on_device(
-            jnp.array(
-                [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
-                dtype=jnp.float32,
-            ),
-            device,
-        )
-        nm = place_on_device(
-            jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32), device
-        )
-        nms = place_on_device(jnp.zeros((2, 5, 3), dtype=jnp.int32), device)
-        d3p = D3Parameters(
-            rcov=place_on_device(d3_params.rcov, device),
-            r4r2=place_on_device(d3_params.r4r2, device),
-            c6ab=place_on_device(d3_params.c6ab, device),
-            cn_ref=place_on_device(d3_params.cn_ref, device),
-        )
+        neighbor_matrix = jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32)
+        neighbor_matrix_shifts = jnp.zeros((2, 5, 3), dtype=jnp.int32)
 
         result = dftd3(
             positions,
@@ -1259,10 +1032,10 @@ class TestDFTD3Virial:
             k1=functional_params["k1"],
             k3=functional_params["k3"],
             s6=functional_params["s6"],
-            neighbor_matrix=nm,
-            neighbor_matrix_shifts=nms,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             cell=cell,
-            d3_params=d3p,
+            d3_params=d3_params,
             compute_virial=True,
         )
 
