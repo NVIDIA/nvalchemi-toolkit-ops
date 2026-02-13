@@ -289,7 +289,6 @@ def _dftd3_nm_impl(
     cell: jax.Array | None = None,
     neighbor_matrix_shifts: jax.Array | None = None,
     compute_virial: bool = False,
-    device: str | None = None,
 ) -> (
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
@@ -482,7 +481,6 @@ def _dftd3_nl_impl(
     cell: jax.Array | None = None,
     unit_shifts: jax.Array | None = None,
     compute_virial: bool = False,
-    device: str | None = None,
 ) -> (
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
@@ -672,7 +670,6 @@ def dftd3(
     unit_shifts: jax.Array | None = None,
     compute_virial: bool = False,
     num_systems: int | None = None,
-    device: str | None = None,
 ) -> (
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
@@ -773,9 +770,6 @@ def dftd3(
     num_systems : int, optional
         Number of systems in batch. If None, inferred from ``cell``
         or from ``batch_idx`` (introduces device synchronization overhead). Default: None
-    device : str or None, optional
-        Warp device string (e.g., 'cuda:0', 'cpu'). If None, inferred from
-        positions array placement. Default: None
 
     Returns
     -------
@@ -956,7 +950,6 @@ def dftd3(
             cell=cell,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_virial=compute_virial,
-            device=device,
         )
     else:
         # Extract idx_j from neighbor_list (row 1 contains destination atoms)
@@ -983,5 +976,4 @@ def dftd3(
             cell=cell,
             unit_shifts=unit_shifts,
             compute_virial=compute_virial,
-            device=device,
         )
