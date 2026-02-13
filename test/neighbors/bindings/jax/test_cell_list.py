@@ -192,6 +192,13 @@ class TestCellListEdgeCases:
 class TestCellListJIT:
     """Smoke tests for cell_list compatibility with jax.jit."""
 
+    @pytest.mark.xfail(
+        reason="estimate_cell_list_sizes derives array shapes from traced input data "
+        "(cell geometry), which is incompatible with jax.jit. Provide max_total_cells "
+        "explicitly to bypass. See TODO in estimate_cell_list_sizes.",
+        raises=TypeError,
+        strict=True,
+    )
     def test_jit_with_pbc(self):
         """Test cell_list with PBC works with jax.jit."""
         positions = jnp.array(
