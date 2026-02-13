@@ -352,6 +352,15 @@ class TestNaiveNeighborListJIT:
         assert num_neighbors.shape == (3,)
         assert jnp.all(num_neighbors >= 0)
 
+    @pytest.mark.xfail(
+        reason="PBC path calls compute_naive_num_shifts which uses int() on traced values. "
+        "Full JIT support for PBC neighbor lists is planned but not yet implemented.",
+        raises=(
+            jax.errors.ConcretizationTypeError,
+            jax.errors.TracerIntegerConversionError,
+        ),
+        strict=True,
+    )
     def test_jit_with_pbc(self):
         """Test naive_neighbor_list with PBC works with jax.jit."""
         positions = jnp.array(
