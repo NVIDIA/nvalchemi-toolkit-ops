@@ -389,7 +389,7 @@ def ewald_real_space(
     neighbor_shifts: jax.Array | None = None,
     neighbor_matrix: jax.Array | None = None,
     neighbor_matrix_shifts: jax.Array | None = None,
-    mask_value: int = -1,
+    mask_value: int | None = None,
     batch_idx: jax.Array | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
@@ -421,8 +421,9 @@ def ewald_real_space(
         Dense neighbor matrix format.
     neighbor_matrix_shifts : jax.Array | None, shape (N, max_neighbors, 3)
         Periodic image shifts for neighbor_matrix.
-    mask_value : int, default=-1
+    mask_value : int | None, optional
         Value indicating invalid entries in neighbor_matrix.
+        If None (default), uses num_atoms as the mask value.
     batch_idx : jax.Array | None, shape (N,)
         System index for each atom.
     compute_forces : bool, default=False
@@ -472,6 +473,10 @@ def ewald_real_space(
 
     num_atoms = positions_cast.shape[0]
     is_batched = batch_idx is not None
+
+    # Default mask_value to num_atoms (matches cell_list fill_value convention)
+    if mask_value is None:
+        mask_value = num_atoms
 
     # Expand cell to (B, 3, 3) if only (1, 3, 3) was given for a batch
     if is_batched:
@@ -641,7 +646,7 @@ def ewald_real_space(
                         batch_idx_i32,
                         neighbor_matrix_i32,
                         neighbor_matrix_shifts_i32,
-                        wp.int32(mask_value),
+                        int(mask_value),
                         alpha_arr,
                         compute_virial,
                         energies,
@@ -662,7 +667,7 @@ def ewald_real_space(
                         batch_idx_i32,
                         neighbor_matrix_i32,
                         neighbor_matrix_shifts_i32,
-                        wp.int32(mask_value),
+                        int(mask_value),
                         alpha_arr,
                         compute_virial,
                         energies,
@@ -679,7 +684,7 @@ def ewald_real_space(
                     batch_idx_i32,
                     neighbor_matrix_i32,
                     neighbor_matrix_shifts_i32,
-                    wp.int32(mask_value),
+                    int(mask_value),
                     alpha_arr,
                     energies,
                     launch_dims=(num_atoms,),
@@ -699,7 +704,7 @@ def ewald_real_space(
                         cell_cast,
                         neighbor_matrix_i32,
                         neighbor_matrix_shifts_i32,
-                        wp.int32(mask_value),
+                        int(mask_value),
                         alpha_arr,
                         compute_virial,
                         energies,
@@ -720,7 +725,7 @@ def ewald_real_space(
                     cell_cast,
                     neighbor_matrix_i32,
                     neighbor_matrix_shifts_i32,
-                    wp.int32(mask_value),
+                    int(mask_value),
                     alpha_arr,
                     compute_virial,
                     energies,
@@ -735,7 +740,7 @@ def ewald_real_space(
                     cell_cast,
                     neighbor_matrix_i32,
                     neighbor_matrix_shifts_i32,
-                    wp.int32(mask_value),
+                    int(mask_value),
                     alpha_arr,
                     energies,
                     launch_dims=(num_atoms,),
@@ -1217,7 +1222,7 @@ def ewald_summation(
         neighbor_shifts=neighbor_shifts,
         neighbor_matrix=neighbor_matrix,
         neighbor_matrix_shifts=neighbor_matrix_shifts,
-        mask_value=mask_value if mask_value is not None else -1,
+        mask_value=mask_value,
         batch_idx=batch_idx,
         compute_forces=compute_forces,
         compute_charge_gradients=False,
