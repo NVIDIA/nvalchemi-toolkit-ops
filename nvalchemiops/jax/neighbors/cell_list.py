@@ -91,8 +91,6 @@ def estimate_cell_list_sizes(
     if pbc.ndim == 1:
         pbc = pbc[jnp.newaxis, :]
 
-    jax_device = positions.devices().pop()
-
     # Simple estimation: compute total volume and estimate cell volume
     # Cell volume = det(cell_matrix)
     det = jnp.linalg.det(cell[0])
@@ -102,16 +100,12 @@ def estimate_cell_list_sizes(
     max_total_cells = max(num_cells_est, 8)  # Minimum 8 cells
 
     # Estimate cells per dimension
-    cells_per_dimension = jax.device_put(
-        jnp.ceil(jnp.ones(3) * (max_total_cells ** (1 / 3))).astype(jnp.int32),
-        jax_device,
+    cells_per_dimension = jnp.ceil(jnp.ones(3) * (max_total_cells ** (1 / 3))).astype(
+        jnp.int32
     )
 
     # Search radius estimate
-    neighbor_search_radius = jax.device_put(
-        jnp.ones(3, dtype=jnp.int32) * 1,
-        jax_device,
-    )
+    neighbor_search_radius = jnp.ones(3, dtype=jnp.int32) * 1
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
 
@@ -196,8 +190,6 @@ def build_cell_list(
     if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
 
-    jax_device = positions.devices().pop()
-
     if max_total_cells is None:
         max_total_cells, _, neighbor_search_radius_est = estimate_cell_list_sizes(
             positions, cell, cutoff, pbc
@@ -206,42 +198,21 @@ def build_cell_list(
             neighbor_search_radius = neighbor_search_radius_est
     else:
         if neighbor_search_radius is None:
-            neighbor_search_radius = jax.device_put(
-                jnp.ones(3, dtype=jnp.int32),
-                jax_device,
-            )
+            neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
 
     # Allocate cell list tensors if not provided
     if cells_per_dimension is None:
-        cells_per_dimension = jax.device_put(
-            jnp.ones(3, dtype=jnp.int32),
-            jax_device,
-        )
+        cells_per_dimension = jnp.ones(3, dtype=jnp.int32)
     if atom_periodic_shifts is None:
-        atom_periodic_shifts = jax.device_put(
-            jnp.zeros((positions.shape[0], 3), dtype=jnp.int32),
-            jax_device,
-        )
+        atom_periodic_shifts = jnp.zeros((positions.shape[0], 3), dtype=jnp.int32)
     if atom_to_cell_mapping is None:
-        atom_to_cell_mapping = jax.device_put(
-            jnp.zeros((positions.shape[0], 3), dtype=jnp.int32),
-            jax_device,
-        )
+        atom_to_cell_mapping = jnp.zeros((positions.shape[0], 3), dtype=jnp.int32)
     if atoms_per_cell_count is None:
-        atoms_per_cell_count = jax.device_put(
-            jnp.zeros(max_total_cells, dtype=jnp.int32),
-            jax_device,
-        )
+        atoms_per_cell_count = jnp.zeros(max_total_cells, dtype=jnp.int32)
     if cell_atom_start_indices is None:
-        cell_atom_start_indices = jax.device_put(
-            jnp.zeros(max_total_cells, dtype=jnp.int32),
-            jax_device,
-        )
+        cell_atom_start_indices = jnp.zeros(max_total_cells, dtype=jnp.int32)
     if cell_atom_list is None:
-        cell_atom_list = jax.device_put(
-            jnp.zeros(positions.shape[0], dtype=jnp.int32),
-            jax_device,
-        )
+        cell_atom_list = jnp.zeros(positions.shape[0], dtype=jnp.int32)
 
     # Set device string
     device_str = get_warp_device_from_array(positions)
@@ -364,35 +335,24 @@ def query_cell_list(
     if cell.dtype != positions.dtype:
         cell = cell.astype(positions.dtype)
 
-    jax_device = positions.devices().pop()
-
     if neighbor_matrix is None:
-        neighbor_matrix = jax.device_put(
-            jnp.full(
-                (positions.shape[0], max_neighbors),
-                positions.shape[0],
-                dtype=jnp.int32,
-            ),
-            jax_device,
+        neighbor_matrix = jnp.full(
+            (positions.shape[0], max_neighbors),
+            positions.shape[0],
+            dtype=jnp.int32,
         )
     else:
         neighbor_matrix = neighbor_matrix.at[:].set(positions.shape[0])
 
     if num_neighbors is None:
-        num_neighbors = jax.device_put(
-            jnp.zeros(positions.shape[0], dtype=jnp.int32),
-            jax_device,
-        )
+        num_neighbors = jnp.zeros(positions.shape[0], dtype=jnp.int32)
     else:
         num_neighbors = num_neighbors.at[:].set(0)
 
     if neighbor_matrix_shifts is None:
-        neighbor_matrix_shifts = jax.device_put(
-            jnp.zeros(
-                (positions.shape[0], max_neighbors, 3),
-                dtype=jnp.int32,
-            ),
-            jax_device,
+        neighbor_matrix_shifts = jnp.zeros(
+            (positions.shape[0], max_neighbors, 3),
+            dtype=jnp.int32,
         )
     else:
         neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(0)

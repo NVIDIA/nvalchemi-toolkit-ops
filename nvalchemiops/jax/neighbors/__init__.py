@@ -273,14 +273,8 @@ def neighbor_list(
 
         if batch_idx is not None or batch_ptr is not None:
             method = "batch_" + method
-            # Extract device from positions array
-            jax_device = (
-                positions.devices().pop()
-                if hasattr(positions, "devices")
-                else jax.devices()[0]
-            )
             batch_idx, batch_ptr = prepare_batch_idx_ptr(
-                batch_idx, batch_ptr, total_atoms, jax_device
+                batch_idx, batch_ptr, total_atoms
             )
     match method:
         case "naive":

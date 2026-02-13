@@ -86,11 +86,10 @@ def estimate_batch_cell_list_sizes(
     neighbor_search_radius : jax.Array, shape (num_systems, 3)
         Search radius for each system.
     """
-    jax_device = positions.devices().pop()
 
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
-        batch_idx, batch_ptr, positions.shape[0], jax_device
+        batch_idx, batch_ptr, positions.shape[0]
     )
     num_systems = batch_ptr.shape[0] - 1
 
@@ -186,11 +185,10 @@ def batch_build_cell_list(
     cell_origin : jax.Array, shape (3,), dtype same as positions
         Cell origin point (currently zeros).
     """
-    jax_device = positions.devices().pop()
 
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
-        batch_idx, batch_ptr, positions.shape[0], jax_device
+        batch_idx, batch_ptr, positions.shape[0]
     )
     num_systems = batch_ptr.shape[0] - 1
 
@@ -201,12 +199,9 @@ def batch_build_cell_list(
             )
         )
         # Ensure neighbor_search_radius is on the correct device
-        neighbor_search_radius = jax.device_put(neighbor_search_radius, jax_device)
+        neighbor_search_radius = neighbor_search_radius
     else:
-        neighbor_search_radius = jax.device_put(
-            jnp.ones((num_systems, 3), dtype=jnp.int32),
-            jax_device,
-        )
+        neighbor_search_radius = jnp.ones((num_systems, 3), dtype=jnp.int32)
 
     # Allocate cell list tensors
     (
@@ -221,7 +216,6 @@ def batch_build_cell_list(
         positions.shape[0],
         max_total_cells,
         neighbor_search_radius,
-        jax_device,
     )
 
     # Set device string
@@ -256,10 +250,7 @@ def batch_build_cell_list(
         pbc_wp = None
 
     # Allocate cell_offsets array (shape num_systems, not num_systems+1)
-    cell_offsets = jax.device_put(
-        jnp.zeros(num_systems, dtype=jnp.int32),
-        jax_device,
-    )
+    cell_offsets = jnp.zeros(num_systems, dtype=jnp.int32)
     cell_offsets_wp = wp.from_dlpack(cell_offsets, dtype=wp.int32)
 
     # Zero atoms_per_cell_count before building
@@ -288,10 +279,7 @@ def batch_build_cell_list(
     wp.synchronize_device(device_str)
 
     # Create cell origin
-    cell_origin = jax.device_put(
-        jnp.zeros(3, dtype=positions.dtype),
-        jax_device,
-    )
+    cell_origin = jnp.zeros(3, dtype=positions.dtype)
 
     return (
         cells_per_dimension,
@@ -369,30 +357,22 @@ def batch_query_cell_list(
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(cutoff)
 
-    jax_device = positions.devices().pop()
-
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
-        batch_idx, batch_ptr, positions.shape[0], jax_device
+        batch_idx, batch_ptr, positions.shape[0]
     )
 
     if neighbor_matrix is None:
-        neighbor_matrix = jax.device_put(
-            jnp.full(
-                (positions.shape[0], max_neighbors),
-                positions.shape[0],
-                dtype=jnp.int32,
-            ),
-            jax_device,
+        neighbor_matrix = jnp.full(
+            (positions.shape[0], max_neighbors),
+            positions.shape[0],
+            dtype=jnp.int32,
         )
     else:
         neighbor_matrix = neighbor_matrix.at[:].set(positions.shape[0])
 
     if num_neighbors is None:
-        num_neighbors = jax.device_put(
-            jnp.zeros(positions.shape[0], dtype=jnp.int32),
-            jax_device,
-        )
+        num_neighbors = jnp.zeros(positions.shape[0], dtype=jnp.int32)
     else:
         num_neighbors = num_neighbors.at[:].set(0)
 
@@ -428,35 +408,26 @@ def batch_query_cell_list(
         pbc_wp = None
 
     # Allocate neighbor_matrix_shifts
-    neighbor_matrix_shifts = jax.device_put(
-        jnp.zeros(
-            (positions.shape[0], max_neighbors, 3),
-            dtype=jnp.int32,
-        ),
-        jax_device,
+    neighbor_matrix_shifts = jnp.zeros(
+        (positions.shape[0], max_neighbors, 3),
+        dtype=jnp.int32,
     )
     neighbor_matrix_shifts_wp = wp.from_dlpack(neighbor_matrix_shifts, dtype=wp.vec3i)
 
     # Compute atoms_per_cell_count from cell_atom_start_indices and cell_atom_list
     # This needs to be reconstructed from the output of batch_build_cell_list
     max_total_cells = cell_atom_start_indices.shape[0]
-    atoms_per_cell_count = jax.device_put(
-        jnp.zeros(max_total_cells, dtype=jnp.int32),
-        jax_device,
-    )
+    atoms_per_cell_count = jnp.zeros(max_total_cells, dtype=jnp.int32)
     atoms_per_cell_count_wp = wp.from_dlpack(atoms_per_cell_count, dtype=wp.int32)
 
     # Allocate cell_offsets array (shape num_systems)
     # Compute cell_offsets from cells_per_dimension using cumsum
     cells_per_system = jnp.prod(cells_per_dimension, axis=1)  # (num_systems,)
-    cell_offsets = jax.device_put(
-        jnp.concatenate(
-            [
-                jnp.array([0], dtype=jnp.int32),
-                jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
-            ]
-        ),
-        jax_device,
+    cell_offsets = jnp.concatenate(
+        [
+            jnp.array([0], dtype=jnp.int32),
+            jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
+        ]
     )
     cell_offsets_wp = wp.from_dlpack(cell_offsets, dtype=wp.int32)
 
@@ -544,11 +515,10 @@ def batch_cell_list(
     batch_query_cell_list : Query cell list separately
     batch_naive_neighbor_list : Naive O(N^2) method
     """
-    jax_device = positions.devices().pop()
 
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
-        batch_idx, batch_ptr, positions.shape[0], jax_device
+        batch_idx, batch_ptr, positions.shape[0]
     )
 
     # Build cell list

@@ -88,10 +88,9 @@ def cell_list_needs_rebuild(
     check_cell_list_rebuild_needed : Convenience wrapper that returns Python bool
     """
     total_atoms = current_positions.shape[0]
-    jax_device = current_positions.devices().pop()
 
     if total_atoms == 0:
-        return jax.device_put(jnp.array([False], dtype=jnp.bool_), jax_device)
+        return jnp.array([False], dtype=jnp.bool_)
 
     # Get device string
     device_str = get_warp_device_from_array(current_positions)
@@ -119,7 +118,7 @@ def cell_list_needs_rebuild(
 
     # For bool arrays, we need to use jax_to_warp which handles bool conversion
     # and then read back the modified value
-    rebuild_flag_jax = jax.device_put(jnp.array([False], dtype=jnp.bool_), jax_device)
+    rebuild_flag_jax = jnp.array([False], dtype=jnp.bool_)
     rebuild_flag_wp = jax_to_warp(rebuild_flag_jax, dtype=wp.bool, device=device_str)
 
     # Call warp kernel
@@ -139,10 +138,7 @@ def cell_list_needs_rebuild(
 
     # Read back the modified value from the warp array
     rebuild_needed_np = rebuild_flag_wp.numpy()
-    rebuild_needed = jax.device_put(
-        jnp.asarray(rebuild_needed_np, dtype=jnp.bool_),
-        jax_device,
-    )
+    rebuild_needed = jnp.asarray(rebuild_needed_np, dtype=jnp.bool_)
 
     return rebuild_needed
 
@@ -183,14 +179,12 @@ def neighbor_list_needs_rebuild(
     """
     # Check for shape compatibility
     if reference_positions.shape != current_positions.shape:
-        jax_device = current_positions.devices().pop()
-        return jax.device_put(jnp.array([True], dtype=jnp.bool_), jax_device)
+        return jnp.array([True], dtype=jnp.bool_)
 
     total_atoms = reference_positions.shape[0]
-    jax_device = reference_positions.devices().pop()
 
     if total_atoms == 0:
-        return jax.device_put(jnp.array([False], dtype=jnp.bool_), jax_device)
+        return jnp.array([False], dtype=jnp.bool_)
 
     # Get device string
     device_str = get_warp_device_from_array(reference_positions)
@@ -205,7 +199,7 @@ def neighbor_list_needs_rebuild(
 
     # For bool arrays, we need to use jax_to_warp which handles bool conversion
     # and then read back the modified value
-    rebuild_flag_jax = jax.device_put(jnp.array([False], dtype=jnp.bool_), jax_device)
+    rebuild_flag_jax = jnp.array([False], dtype=jnp.bool_)
     rebuild_flag_wp = jax_to_warp(rebuild_flag_jax, dtype=wp.bool, device=device_str)
 
     # Call warp kernel
@@ -223,10 +217,7 @@ def neighbor_list_needs_rebuild(
 
     # Read back the modified value from the warp array
     rebuild_needed_np = rebuild_flag_wp.numpy()
-    rebuild_needed = jax.device_put(
-        jnp.asarray(rebuild_needed_np, dtype=jnp.bool_),
-        jax_device,
-    )
+    rebuild_needed = jnp.asarray(rebuild_needed_np, dtype=jnp.bool_)
 
     return rebuild_needed
 

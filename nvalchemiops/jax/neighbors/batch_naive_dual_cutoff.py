@@ -155,11 +155,9 @@ def batch_naive_neighbor_list_dual_cutoff(
     if pbc is not None and cell is None:
         raise ValueError("If pbc is provided, cell must also be provided")
 
-    jax_device = positions.devices().pop()
-
     # Prepare batch_idx and batch_ptr
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
-        batch_idx, batch_ptr, positions.shape[0], jax_device
+        batch_idx, batch_ptr, positions.shape[0]
     )
 
     if cell is not None:
@@ -189,68 +187,50 @@ def batch_naive_neighbor_list_dual_cutoff(
 
     # Allocate first neighbor matrix
     if neighbor_matrix1 is None:
-        neighbor_matrix1 = jax.device_put(
-            jnp.full(
-                (positions.shape[0], max_neighbors1),
-                fill_value,
-                dtype=jnp.int32,
-            ),
-            jax_device,
+        neighbor_matrix1 = jnp.full(
+            (positions.shape[0], max_neighbors1),
+            fill_value,
+            dtype=jnp.int32,
         )
     else:
         neighbor_matrix1 = neighbor_matrix1.at[:].set(fill_value)
 
     # Allocate second neighbor matrix
     if neighbor_matrix2 is None:
-        neighbor_matrix2 = jax.device_put(
-            jnp.full(
-                (positions.shape[0], max_neighbors2),
-                fill_value,
-                dtype=jnp.int32,
-            ),
-            jax_device,
+        neighbor_matrix2 = jnp.full(
+            (positions.shape[0], max_neighbors2),
+            fill_value,
+            dtype=jnp.int32,
         )
     else:
         neighbor_matrix2 = neighbor_matrix2.at[:].set(fill_value)
 
     # Allocate first num_neighbors
     if num_neighbors1 is None:
-        num_neighbors1 = jax.device_put(
-            jnp.zeros(positions.shape[0], dtype=jnp.int32),
-            jax_device,
-        )
+        num_neighbors1 = jnp.zeros(positions.shape[0], dtype=jnp.int32)
     else:
         num_neighbors1 = num_neighbors1.at[:].set(0)
 
     # Allocate second num_neighbors
     if num_neighbors2 is None:
-        num_neighbors2 = jax.device_put(
-            jnp.zeros(positions.shape[0], dtype=jnp.int32),
-            jax_device,
-        )
+        num_neighbors2 = jnp.zeros(positions.shape[0], dtype=jnp.int32)
     else:
         num_neighbors2 = num_neighbors2.at[:].set(0)
 
     if pbc is not None:
         # Allocate shift matrices
         if neighbor_matrix_shifts1 is None:
-            neighbor_matrix_shifts1 = jax.device_put(
-                jnp.zeros(
-                    (positions.shape[0], max_neighbors1, 3),
-                    dtype=jnp.int32,
-                ),
-                jax_device,
+            neighbor_matrix_shifts1 = jnp.zeros(
+                (positions.shape[0], max_neighbors1, 3),
+                dtype=jnp.int32,
             )
         else:
             neighbor_matrix_shifts1 = neighbor_matrix_shifts1.at[:].set(0)
 
         if neighbor_matrix_shifts2 is None:
-            neighbor_matrix_shifts2 = jax.device_put(
-                jnp.zeros(
-                    (positions.shape[0], max_neighbors2, 3),
-                    dtype=jnp.int32,
-                ),
-                jax_device,
+            neighbor_matrix_shifts2 = jnp.zeros(
+                (positions.shape[0], max_neighbors2, 3),
+                dtype=jnp.int32,
             )
         else:
             neighbor_matrix_shifts2 = neighbor_matrix_shifts2.at[:].set(0)
@@ -341,14 +321,8 @@ def batch_naive_neighbor_list_dual_cutoff(
         )
     else:
         # PBC case - expand shifts and call kernel
-        shifts = jax.device_put(
-            jnp.empty((total_shifts, 3), dtype=jnp.int32),
-            jax_device,
-        )
-        shift_system_idx = jax.device_put(
-            jnp.empty((total_shifts,), dtype=jnp.int32),
-            jax_device,
-        )
+        shifts = jnp.empty((total_shifts, 3), dtype=jnp.int32)
+        shift_system_idx = jnp.empty((total_shifts,), dtype=jnp.int32)
         shifts_wp = wp.from_dlpack(shifts, dtype=wp.vec3i)
         shift_system_idx_wp = wp.from_dlpack(shift_system_idx, dtype=wp.int32)
         shift_range_per_dimension_wp = wp.from_dlpack(
@@ -356,7 +330,7 @@ def batch_naive_neighbor_list_dual_cutoff(
         )
         shift_offset_wp = wp.from_dlpack(shift_offset, dtype=wp.int32)
 
-        wp_device_obj = wp.device_from_jax(jax_device)
+        wp_device_obj = wp.get_device(device_str)
         wp.launch(
             kernel=_expand_naive_shifts,
             dim=num_systems,

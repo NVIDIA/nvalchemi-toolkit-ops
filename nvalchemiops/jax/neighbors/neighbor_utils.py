@@ -76,21 +76,15 @@ def compute_naive_num_shifts(
     nvalchemiops.neighbors.neighbor_utils.compute_naive_num_shifts : Core warp launcher
     """
     num_systems = cell.shape[0]
-    jax_device = cell.devices().pop()
 
     # Allocate on JAX device
-    num_shifts = jax.device_put(jnp.empty(num_systems, dtype=jnp.int32), jax_device)
-    shift_range = jax.device_put(
-        jnp.empty((num_systems, 3), dtype=jnp.int32), jax_device
-    )
+    num_shifts = jnp.empty(num_systems, dtype=jnp.int32)
+    shift_range = jnp.empty((num_systems, 3), dtype=jnp.int32)
 
     wp_dtype = get_wp_dtype(cell.dtype)
 
-    # Get device string from JAX device
-    if jax_device.platform == "gpu":
-        device_str = "cuda:0"
-    else:
-        device_str = "cpu"
+    # warp-jax is CUDA-only
+    device_str = "cuda"
 
     # Convert JAX arrays to Warp via dlpack (zero-copy)
     wp_cell = wp.from_dlpack(cell.astype(jnp.float32), dtype=wp.mat33f)
@@ -113,9 +107,7 @@ def compute_naive_num_shifts(
     wp.synchronize_device(device_str)
 
     # Compute cumulative sum for shift offsets
-    shift_offset = jax.device_put(
-        jnp.zeros(num_systems + 1, dtype=jnp.int32), jax_device
-    )
+    shift_offset = jnp.zeros(num_systems + 1, dtype=jnp.int32)
     shift_offset = shift_offset.at[1:].set(jnp.cumsum(num_shifts))
     total_shifts_value = int(shift_offset[-1])
 
@@ -170,20 +162,10 @@ def get_neighbor_list_from_neighbor_matrix(
     """
     # Handle empty case
     if neighbor_matrix.shape[0] == 0:
-        jax_device = neighbor_matrix.devices().pop()
-        neighbor_list = jax.device_put(
-            jnp.zeros((2, 0), dtype=neighbor_matrix.dtype),
-            jax_device,
-        )
-        neighbor_ptr = jax.device_put(
-            jnp.zeros(1, dtype=jnp.int32),
-            jax_device,
-        )
+        neighbor_list = jnp.zeros((2, 0), dtype=neighbor_matrix.dtype)
+        neighbor_ptr = jnp.zeros(1, dtype=jnp.int32)
         if neighbor_shift_matrix is not None:
-            neighbor_shift_list = jax.device_put(
-                jnp.empty((0, 3), dtype=neighbor_shift_matrix.dtype),
-                jax_device,
-            )
+            neighbor_shift_list = jnp.empty((0, 3), dtype=neighbor_shift_matrix.dtype)
             return neighbor_list, neighbor_ptr, neighbor_shift_list
         else:
             return neighbor_list, neighbor_ptr
@@ -218,7 +200,6 @@ def prepare_batch_idx_ptr(
     batch_idx: jax.Array | None,
     batch_ptr: jax.Array | None,
     num_atoms: int,
-    jax_device: jax.Device,
 ) -> tuple[jax.Array, jax.Array]:
     """Prepare batch index and pointer tensors from either representation.
 
@@ -233,8 +214,6 @@ def prepare_batch_idx_ptr(
         Tensor indicating the start index of each batch in the atom list.
     num_atoms : int
         Total number of atoms across all systems.
-    jax_device : jax.Device
-        Device on which to create tensors if needed.
 
     Returns
     -------
@@ -265,12 +244,9 @@ def prepare_batch_idx_ptr(
     if batch_idx is None:
         num_systems = batch_ptr.shape[0] - 1
         num_atoms_per_system = batch_ptr[1:] - batch_ptr[:-1]
-        batch_idx = jax.device_put(
-            jnp.repeat(
-                jnp.arange(num_systems, dtype=jnp.int32),
-                num_atoms_per_system,
-            ),
-            jax_device,
+        batch_idx = jnp.repeat(
+            jnp.arange(num_systems, dtype=jnp.int32),
+            num_atoms_per_system,
         )
 
     elif batch_ptr is None:
@@ -289,7 +265,6 @@ def allocate_cell_list(
     total_atoms: int,
     max_total_cells: int,
     neighbor_search_radius: jax.Array,
-    jax_device: jax.Device,
 ) -> tuple[
     jax.Array,
     jax.Array,
@@ -309,8 +284,6 @@ def allocate_cell_list(
         Maximum number of cells to allocate.
     neighbor_search_radius : jax.Array, shape (3,) or (num_systems, 3), dtype=int32
         Radius of neighboring cells to search in each dimension.
-    jax_device : jax.Device
-        Device on which to create tensors.
 
     Returns
     -------
@@ -345,34 +318,16 @@ def allocate_cell_list(
     is_batched = neighbor_search_radius.ndim == 2
     num_systems = neighbor_search_radius.shape[0] if is_batched else 1
 
-    cells_per_dimension = jax.device_put(
-        jnp.zeros(
-            (3,) if not is_batched else (num_systems, 3),
-            dtype=jnp.int32,
-        ),
-        jax_device,
+    cells_per_dimension = jnp.zeros(
+        (3,) if not is_batched else (num_systems, 3),
+        dtype=jnp.int32,
     )
 
-    atom_periodic_shifts = jax.device_put(
-        jnp.zeros((total_atoms, 3), dtype=jnp.int32),
-        jax_device,
-    )
-    atom_to_cell_mapping = jax.device_put(
-        jnp.zeros((total_atoms, 3), dtype=jnp.int32),
-        jax_device,
-    )
-    atoms_per_cell_count = jax.device_put(
-        jnp.zeros((max_total_cells,), dtype=jnp.int32),
-        jax_device,
-    )
-    cell_atom_start_indices = jax.device_put(
-        jnp.zeros((max_total_cells,), dtype=jnp.int32),
-        jax_device,
-    )
-    cell_atom_list = jax.device_put(
-        jnp.zeros((total_atoms,), dtype=jnp.int32),
-        jax_device,
-    )
+    atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+    atom_to_cell_mapping = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+    atoms_per_cell_count = jnp.zeros((max_total_cells,), dtype=jnp.int32)
+    cell_atom_start_indices = jnp.zeros((max_total_cells,), dtype=jnp.int32)
+    cell_atom_list = jnp.zeros((total_atoms,), dtype=jnp.int32)
     return (
         cells_per_dimension,
         neighbor_search_radius,

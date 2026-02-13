@@ -272,10 +272,9 @@ class TestPrepareBatchIdxPtr:
     def test_from_batch_idx(self):
         """Test conversion from batch_idx to batch_ptr."""
         batch_idx = jnp.array([0, 0, 0, 1, 1, 2], dtype=jnp.int32)
-        jax_device = jax.devices("cpu")[0] if device == "cpu" else jax.devices("gpu")[0]
 
         result_idx, result_ptr = prepare_batch_idx_ptr(
-            batch_idx=batch_idx, batch_ptr=None, num_atoms=6, jax_device=jax_device
+            batch_idx=batch_idx, batch_ptr=None, num_atoms=6
         )
 
         assert result_idx.shape == (6,)
@@ -288,10 +287,9 @@ class TestPrepareBatchIdxPtr:
     def test_from_batch_ptr(self):
         """Test conversion from batch_ptr to batch_idx."""
         batch_ptr = jnp.array([0, 3, 5, 6], dtype=jnp.int32)
-        jax_device = jax.devices("cpu")[0] if device == "cpu" else jax.devices("gpu")[0]
 
         result_idx, result_ptr = prepare_batch_idx_ptr(
-            batch_idx=None, batch_ptr=batch_ptr, num_atoms=6, jax_device=jax_device
+            batch_idx=None, batch_ptr=batch_ptr, num_atoms=6
         )
 
         assert result_idx.shape == (6,)
@@ -304,13 +302,11 @@ class TestPrepareBatchIdxPtr:
         """Test when both batch_idx and batch_ptr are provided."""
         batch_idx = jnp.array([0, 0, 0, 1, 1, 2], dtype=jnp.int32)
         batch_ptr = jnp.array([0, 3, 5, 6], dtype=jnp.int32)
-        jax_device = jax.devices("cpu")[0] if device == "cpu" else jax.devices("gpu")[0]
 
         result_idx, result_ptr = prepare_batch_idx_ptr(
             batch_idx=batch_idx,
             batch_ptr=batch_ptr,
             num_atoms=6,
-            jax_device=jax_device,
         )
 
         assert result_idx.shape == (6,)
@@ -318,20 +314,15 @@ class TestPrepareBatchIdxPtr:
 
     def test_error_both_none(self):
         """Test that error is raised when both are None."""
-        jax_device = jax.devices("cpu")[0] if device == "cpu" else jax.devices("gpu")[0]
-
         with pytest.raises(ValueError):
-            prepare_batch_idx_ptr(
-                batch_idx=None, batch_ptr=None, num_atoms=6, jax_device=jax_device
-            )
+            prepare_batch_idx_ptr(batch_idx=None, batch_ptr=None, num_atoms=6)
 
     def test_single_system(self):
         """Test with single system."""
         batch_idx = jnp.array([0, 0, 0], dtype=jnp.int32)
-        jax_device = jax.devices("cpu")[0] if device == "cpu" else jax.devices("gpu")[0]
 
         result_idx, result_ptr = prepare_batch_idx_ptr(
-            batch_idx=batch_idx, batch_ptr=None, num_atoms=3, jax_device=jax_device
+            batch_idx=batch_idx, batch_ptr=None, num_atoms=3
         )
 
         assert result_idx.shape == (3,)
