@@ -24,14 +24,43 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from nvalchemiops.jax.neighbors.batched import (
+# Batch cell list functions
+from nvalchemiops.jax.neighbors.batch_cell_list import (
     batch_build_cell_list,
     batch_cell_list,
-    batch_naive_neighbor_list,
-    batch_naive_neighbor_list_dual_cutoff,
     batch_query_cell_list,
     estimate_batch_cell_list_sizes,
 )
+
+# Batch naive functions
+from nvalchemiops.jax.neighbors.batch_naive import (
+    batch_naive_neighbor_list,
+)
+
+# Batch naive dual cutoff functions
+from nvalchemiops.jax.neighbors.batch_naive_dual_cutoff import (
+    batch_naive_neighbor_list_dual_cutoff,
+)
+
+# Unbatched cell list functions
+from nvalchemiops.jax.neighbors.cell_list import (
+    build_cell_list,
+    cell_list,
+    estimate_cell_list_sizes,
+    query_cell_list,
+)
+
+# Unbatched naive functions
+from nvalchemiops.jax.neighbors.naive import (
+    naive_neighbor_list,
+)
+
+# Unbatched naive dual cutoff functions
+from nvalchemiops.jax.neighbors.naive_dual_cutoff import (
+    naive_neighbor_list_dual_cutoff,
+)
+
+# Utility functions
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     NeighborOverflowError,
     allocate_cell_list,
@@ -40,19 +69,13 @@ from nvalchemiops.jax.neighbors.neighbor_utils import (
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
+
+# Rebuild detection
 from nvalchemiops.jax.neighbors.rebuild_detection import (
     cell_list_needs_rebuild,
     check_cell_list_rebuild_needed,
     check_neighbor_list_rebuild_needed,
     neighbor_list_needs_rebuild,
-)
-from nvalchemiops.jax.neighbors.unbatched import (
-    build_cell_list,
-    cell_list,
-    estimate_cell_list_sizes,
-    naive_neighbor_list,
-    naive_neighbor_list_dual_cutoff,
-    query_cell_list,
 )
 
 

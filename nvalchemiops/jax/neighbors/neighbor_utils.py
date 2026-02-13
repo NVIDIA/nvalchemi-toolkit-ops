@@ -165,8 +165,8 @@ def get_neighbor_list_from_neighbor_matrix(
 
     See Also
     --------
-    nvalchemiops.jax.neighbors.unbatched.naive_neighbor_list : Uses this for format conversion
-    nvalchemiops.jax.neighbors.unbatched.cell_list : Uses this for format conversion
+    nvalchemiops.jax.neighbors.naive.naive_neighbor_list : Uses this for format conversion
+    nvalchemiops.jax.neighbors.cell_list.cell_list : Uses this for format conversion
     """
     # Handle empty case
     if neighbor_matrix.shape[0] == 0:
@@ -256,8 +256,8 @@ def prepare_batch_idx_ptr(
 
     See Also
     --------
-    nvalchemiops.jax.neighbors.batched.batch_naive_neighbor_list : Uses this for batch setup
-    nvalchemiops.jax.neighbors.batched.batch_cell_list : Uses this for batch setup
+    nvalchemiops.jax.neighbors.batch_naive.batch_naive_neighbor_list : Uses this for batch setup
+    nvalchemiops.jax.neighbors.batch_cell_list.batch_cell_list : Uses this for batch setup
     """
     if batch_idx is None and batch_ptr is None:
         raise ValueError("Either batch_idx or batch_ptr must be provided.")
@@ -338,8 +338,8 @@ def allocate_cell_list(
     See Also
     --------
     nvalchemiops.neighbors.cell_list.build_cell_list : Warp launcher that uses these tensors
-    nvalchemiops.jax.neighbors.unbatched.build_cell_list : High-level JAX wrapper
-    nvalchemiops.jax.neighbors.batched.batch_build_cell_list : Batched version
+    nvalchemiops.jax.neighbors.cell_list.build_cell_list : High-level JAX wrapper
+    nvalchemiops.jax.neighbors.batch_cell_list.batch_build_cell_list : Batched version
     """
     # Detect number of systems from neighbor_search_radius shape
     is_batched = neighbor_search_radius.ndim == 2

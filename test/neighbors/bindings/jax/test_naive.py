@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from nvalchemiops.jax.neighbors.unbatched import naive_neighbor_list
+from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 
 from .conftest import requires_gpu
 

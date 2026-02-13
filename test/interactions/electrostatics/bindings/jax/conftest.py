@@ -60,7 +60,10 @@ def device():
     str
         Device type string "gpu".
     """
-    if len(jax.devices("gpu")) == 0:
+    try:
+        if len(jax.devices("gpu")) == 0:
+            pytest.skip("No CUDA device available.")
+    except RuntimeError:
         pytest.skip("No CUDA device available.")
     return "gpu"
 

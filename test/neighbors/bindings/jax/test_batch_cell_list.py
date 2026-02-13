@@ -20,7 +20,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
-from nvalchemiops.jax.neighbors.batched import batch_cell_list
+from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list
 
 from .conftest import requires_gpu
 

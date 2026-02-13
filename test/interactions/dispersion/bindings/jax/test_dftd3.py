@@ -50,7 +50,10 @@ def device():
     jax_kernel wrappers are CUDA-only (Warp JAX FFI limitation),
     so DFT-D3 JAX binding tests only run on GPU.
     """
-    if len(jax.devices("gpu")) == 0:
+    try:
+        if len(jax.devices("gpu")) == 0:
+            pytest.skip("No CUDA device available.")
+    except RuntimeError:
         pytest.skip("No CUDA device available.")
     return "gpu"
 
