@@ -329,6 +329,7 @@ class TestCellListEdgeCases:
             cutoff,
             cell,
             pbc,
+            max_neighbors=1500,
             return_neighbor_list=return_neighbor_list,
         )
         if return_neighbor_list:
@@ -428,7 +429,9 @@ class TestCellListOutputFormats:
             pbc = pbc.reshape(1, 3)
 
         if preallocate:
-            max_neighbors = estimate_max_neighbors(cutoff)
+            max_neighbors = estimate_max_neighbors(
+                cutoff, atomic_density=0.35, safety_factor=5.0
+            )
             max_cells, neighbor_search_radius = estimate_cell_list_sizes(
                 cell, pbc, cutoff
             )
@@ -468,11 +471,15 @@ class TestCellListOutputFormats:
                 num_neighbors=num_neighbors,
             )
         else:
+            max_neighbors = estimate_max_neighbors(
+                cutoff, atomic_density=0.35, safety_factor=5.0
+            )
             results = cell_list(
                 positions,
                 cutoff,
                 cell,
                 pbc,
+                max_neighbors=max_neighbors,
                 fill_value=fill_value,
                 return_neighbor_list=True,
             )
@@ -497,7 +504,9 @@ class TestCellListOutputFormats:
         cutoff = 3.0
 
         if preallocate:
-            max_neighbors = estimate_max_neighbors(cutoff)
+            max_neighbors = estimate_max_neighbors(
+                cutoff, atomic_density=0.35, safety_factor=5.0
+            )
             max_cells, neighbor_search_radius = estimate_cell_list_sizes(
                 cell, pbc, cutoff
             )
@@ -537,11 +546,15 @@ class TestCellListOutputFormats:
                 num_neighbors=num_neighbors,
             )
         else:
+            max_neighbors = estimate_max_neighbors(
+                cutoff, atomic_density=0.35, safety_factor=5.0
+            )
             results = cell_list(
                 positions,
                 cutoff,
                 cell,
                 pbc,
+                max_neighbors=max_neighbors,
                 fill_value=fill_value,
                 return_neighbor_list=False,
             )
