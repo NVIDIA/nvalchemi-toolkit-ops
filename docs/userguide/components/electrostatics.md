@@ -1019,4 +1019,4 @@ See the unit tests at `test/interactions/electrostatics/` in the repository.
 
 ---
 
-For detailed API documentation, see the [PyTorch API](../../modules/torch/electrostatics) and [Warp API](../../modules/warp/electrostatics) references.
+For detailed API documentation, see the [PyTorch API](../../modules/torch/electrostatics), [JAX API](../../modules/jax/electrostatics), and [Warp API](../../modules/warp/electrostatics) references.

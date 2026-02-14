@@ -14,6 +14,16 @@ torch/dispersion.rst
 torch/electrostatics.rst
 ```
 
+## JAX Reference
+
+```{toctree}
+:maxdepth: 2
+
+jax/neighbors.rst
+jax/dispersion.rst
+jax/electrostatics.rst
+```
+
 ## Warp Reference
 
 ```{toctree}

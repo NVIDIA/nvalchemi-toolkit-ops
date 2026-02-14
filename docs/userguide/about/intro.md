@@ -48,7 +48,7 @@ ALCHEMI Toolkit-Ops prioritizes performance, correctness, and usability:
 1. All algorithms are GPU-accelerated via NVIDIA Warp kernels
 2. High-level APIs handle algorithm selection automatically; low-level kernels
    remain accessible for custom workflows
-3. Outputs are PyTorch tensors with full `torch.compile` compatibility
+3. Outputs are PyTorch tensors or JAX arrays, with `torch.compile` and `jax.jit` compatibility
 4. Both dense (neighbor matrix) and sparse (COO) formats are supported
 
 ## Core Components
@@ -59,6 +59,9 @@ The {func}`~nvalchemiops.torch.neighbors.neighbor_list` function provides a unif
 interface that automatically selects between algorithms based on system size
 and whether batch indices are provided. It returns either a dense neighbor
 matrix or sparse COO list, with consistent behavior across all modes.
+
+A corresponding JAX API is available at {func}`~nvalchemiops.jax.neighbors.neighbor_list`
+with the same algorithm selection and output format options.
 
 ```{tip}
 The crossover point between cell list and naive algorithms depends on system
@@ -364,6 +367,13 @@ ALCHEMI Toolkit-Ops integrates with the scientific Python ecosystem:
 All inputs and outputs are PyTorch tensors with automatic CPU/GPU handling.
 Custom operators are registered for `torch.compile` compatibility, and tensors
 maintain gradients for automatic differentiation where applicable.
+
+### JAX
+
+JAX bindings provide a functional API using ``jax.Array`` inputs and outputs.
+The JAX interface mirrors the PyTorch API with identical algorithms and output
+formats, enabling users to choose their preferred framework. Install with
+``pip install 'nvalchemi-toolkit-ops[jax]'``.
 
 ### NVIDIA Tools
 
