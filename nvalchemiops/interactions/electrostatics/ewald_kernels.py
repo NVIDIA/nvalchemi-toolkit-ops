@@ -3017,10 +3017,10 @@ def ewald_real_space_energy_forces(
     alpha: wp.array,
     pair_energies: wp.array,
     atomic_forces: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy and forces kernel using CSR neighbor list.
 
@@ -3050,16 +3050,12 @@ def ewald_real_space_energy_forces(
         Warp device.
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
-    virial : wp.array, optional
-        OUTPUT: Virial tensor. If None, a dummy array is created.
+    virial : wp.array
+        OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
     num_atoms = positions.shape[0]
     if device is None:
         device = str(positions.device)
-
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_kernel_overload[wp_dtype],
@@ -3149,10 +3145,10 @@ def ewald_real_space_energy_forces_matrix(
     alpha: wp.array,
     pair_energies: wp.array,
     atomic_forces: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy and forces kernel using neighbor matrix.
 
@@ -3183,15 +3179,11 @@ def ewald_real_space_energy_forces_matrix(
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
     virial : wp.array, optional
-        OUTPUT: Virial tensor. If None, a dummy array is created.
+        OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
         device = str(positions.device)
-
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[wp_dtype],
@@ -3224,10 +3216,10 @@ def ewald_real_space_energy_forces_charge_grad(
     pair_energies: wp.array,
     atomic_forces: wp.array,
     charge_gradients: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy, forces, and charge gradients kernel (CSR).
 
@@ -3260,15 +3252,11 @@ def ewald_real_space_energy_forces_charge_grad(
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
     virial : wp.array, optional
-        OUTPUT: Virial tensor. If None, a dummy array is created.
+        OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
     num_atoms = positions.shape[0]
     if device is None:
         device = str(positions.device)
-
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_charge_grad_kernel_overload[wp_dtype],
@@ -3302,10 +3290,10 @@ def ewald_real_space_energy_forces_charge_grad_matrix(
     pair_energies: wp.array,
     atomic_forces: wp.array,
     charge_gradients: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch Ewald real-space energy, forces, and charge gradients kernel (matrix).
 
@@ -3337,16 +3325,12 @@ def ewald_real_space_energy_forces_charge_grad_matrix(
         Warp device.
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
-    virial : wp.array, optional
-        OUTPUT: Virial tensor. If None, a dummy array is created.
+    virial : wp.array
+        OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
         device = str(positions.device)
-
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(1, dtype=mat_dtype, device=device)
 
     wp.launch(
         _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
@@ -3447,10 +3431,10 @@ def batch_ewald_real_space_energy_forces(
     alpha: wp.array,
     pair_energies: wp.array,
     atomic_forces: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy and forces kernel (CSR).
 
@@ -3488,10 +3472,6 @@ def batch_ewald_real_space_energy_forces(
     num_atoms = positions.shape[0]
     if device is None:
         device = str(positions.device)
-
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
 
     wp.launch(
         _batch_ewald_real_space_energy_forces_kernel_overload[wp_dtype],
@@ -3587,10 +3567,10 @@ def batch_ewald_real_space_energy_forces_matrix(
     alpha: wp.array,
     pair_energies: wp.array,
     atomic_forces: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy and forces kernel (matrix).
 
@@ -3629,10 +3609,6 @@ def batch_ewald_real_space_energy_forces_matrix(
     if device is None:
         device = str(positions.device)
 
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
-
     wp.launch(
         _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[wp_dtype],
         dim=num_atoms,
@@ -3666,10 +3642,10 @@ def batch_ewald_real_space_energy_forces_charge_grad(
     pair_energies: wp.array,
     atomic_forces: wp.array,
     charge_gradients: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy, forces, charge gradients kernel (CSR).
 
@@ -3710,10 +3686,6 @@ def batch_ewald_real_space_energy_forces_charge_grad(
     if device is None:
         device = str(positions.device)
 
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
-
     wp.launch(
         _batch_ewald_real_space_energy_forces_charge_grad_kernel_overload[wp_dtype],
         dim=num_atoms,
@@ -3748,10 +3720,10 @@ def batch_ewald_real_space_energy_forces_charge_grad_matrix(
     pair_energies: wp.array,
     atomic_forces: wp.array,
     charge_gradients: wp.array,
+    virial: wp.array,
     wp_dtype: type,
     device: str | None = None,
     compute_virial: bool = False,
-    virial: wp.array | None = None,
 ) -> None:
     """Launch batched Ewald real-space energy, forces, charge gradients kernel (matrix).
 
@@ -3791,10 +3763,6 @@ def batch_ewald_real_space_energy_forces_charge_grad_matrix(
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
         device = str(positions.device)
-
-    if virial is None:
-        mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-        virial = wp.zeros(alpha.shape[0], dtype=mat_dtype, device=device)
 
     wp.launch(
         _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[

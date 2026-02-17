@@ -208,6 +208,10 @@ def _batch_build_cell_list_op(
     cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
     wp_cell_offsets = wp.from_torch(cell_offsets, dtype=wp.int32)
 
+    # Allocate cells_per_system scratch buffer
+    cells_per_system = torch.zeros(num_systems, dtype=torch.int32, device=device)
+    wp_cells_per_system = wp.from_torch(cells_per_system, dtype=wp.int32)
+
     wp_atom_periodic_shifts = wp.from_torch(
         atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
     )
@@ -232,6 +236,7 @@ def _batch_build_cell_list_op(
         batch_idx=wp_batch_idx,
         cells_per_dimension=wp_cells_per_dimension,
         cell_offsets=wp_cell_offsets,
+        cells_per_system=wp_cells_per_system,
         atom_periodic_shifts=wp_atom_periodic_shifts,
         atom_to_cell_mapping=wp_atom_to_cell_mapping,
         atoms_per_cell_count=wp_atoms_per_cell_count,

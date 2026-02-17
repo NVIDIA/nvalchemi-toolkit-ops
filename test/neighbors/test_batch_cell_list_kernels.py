@@ -542,8 +542,9 @@ class TestBatchCellListKernels:
             wp_cell_atom_list,
         ) = allocate_cell_list_wp(total_atoms, max_total_cells, num_systems, wp_device)
 
-        # Allocate cell offsets
+        # Allocate cell offsets and cells_per_system scratch buffer
         wp_cell_offsets = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
+        wp_cells_per_system = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
 
         # Build cell list using warp launcher
         batch_build_cell_list(
@@ -554,6 +555,7 @@ class TestBatchCellListKernels:
             wp_idx,
             wp_cells_per_dimension,
             wp_cell_offsets,
+            wp_cells_per_system,
             wp_atom_periodic_shifts,
             wp_atom_to_cell_mapping,
             wp_atoms_per_cell_count,
@@ -681,8 +683,9 @@ class TestBatchCellListWpLaunchers:
             wp_cell_atom_list,
         ) = allocate_cell_list_wp(total_atoms, max_cells, num_systems, wp_device)
 
-        # Allocate cell offsets
+        # Allocate cell offsets and cells_per_system scratch buffer
         wp_cell_offsets = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
+        wp_cells_per_system = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
 
         # Build cell list using warp launcher
         batch_build_cell_list(
@@ -693,6 +696,7 @@ class TestBatchCellListWpLaunchers:
             wp_idx,
             wp_cells_per_dimension,
             wp_cell_offsets,
+            wp_cells_per_system,
             wp_atom_periodic_shifts,
             wp_atom_to_cell_mapping,
             wp_atoms_per_cell_count,
@@ -757,6 +761,7 @@ class TestBatchCellListWpLaunchers:
         ) = allocate_cell_list_wp(total_atoms, max_cells, num_systems, wp_device)
 
         wp_cell_offsets = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
+        wp_cells_per_system = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
 
         batch_build_cell_list(
             wp_positions,
@@ -766,6 +771,7 @@ class TestBatchCellListWpLaunchers:
             wp_idx,
             wp_cells_per_dimension,
             wp_cell_offsets,
+            wp_cells_per_system,
             wp_atom_periodic_shifts,
             wp_atom_to_cell_mapping,
             wp_atoms_per_cell_count,
@@ -923,8 +929,9 @@ class TestBatchCellListScalingPureWarp:
             wp_cell_atom_list,
         ) = allocate_cell_list_wp(total_atoms, max_total_cells, num_systems, wp_device)
 
-        # Allocate cell offsets
+        # Allocate cell offsets and cells_per_system scratch buffer
         wp_cell_offsets = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
+        wp_cells_per_system = wp.zeros(num_systems, dtype=wp.int32, device=wp_device)
 
         # Build cell list using warp launcher
         batch_build_cell_list(
@@ -935,6 +942,7 @@ class TestBatchCellListScalingPureWarp:
             wp_idx,
             wp_cells_per_dimension,
             wp_cell_offsets,
+            wp_cells_per_system,
             wp_atom_periodic_shifts,
             wp_atom_to_cell_mapping,
             wp_atoms_per_cell_count,

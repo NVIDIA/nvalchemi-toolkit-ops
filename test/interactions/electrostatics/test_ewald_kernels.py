@@ -625,6 +625,7 @@ class TestWpEwaldRealSpaceEnergyForces:
         energies = allocate_energy_output(num_atoms, device)
         forces = allocate_force_output(num_atoms, device)
         alpha_arr = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
 
         ewald_real_space_energy_forces(
             positions=inputs["positions"],
@@ -636,6 +637,7 @@ class TestWpEwaldRealSpaceEnergyForces:
             alpha=alpha_arr,
             pair_energies=energies,
             atomic_forces=forces,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -653,6 +655,7 @@ class TestWpEwaldRealSpaceEnergyForces:
         energies = allocate_energy_output(num_atoms, device)
         forces = allocate_force_output(num_atoms, device)
         alpha_arr = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
 
         ewald_real_space_energy_forces(
             positions=inputs["positions"],
@@ -664,6 +667,7 @@ class TestWpEwaldRealSpaceEnergyForces:
             alpha=alpha_arr,
             pair_energies=energies,
             atomic_forces=forces,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -697,6 +701,7 @@ class TestWpEwaldRealSpaceEnergyForces:
         energies_combined = allocate_energy_output(num_atoms, device)
         forces = allocate_force_output(num_atoms, device)
         alpha_arr2 = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
         ewald_real_space_energy_forces(
             positions=inputs["positions"],
             charges=inputs["charges"],
@@ -707,6 +712,7 @@ class TestWpEwaldRealSpaceEnergyForces:
             alpha=alpha_arr2,
             pair_energies=energies_combined,
             atomic_forces=forces,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -727,6 +733,7 @@ class TestWpEwaldRealSpaceEnergyForcesMatrix:
         energies = allocate_energy_output(num_atoms, device)
         forces = allocate_force_output(num_atoms, device)
         alpha_arr = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
 
         ewald_real_space_energy_forces_matrix(
             positions=inputs["positions"],
@@ -738,6 +745,7 @@ class TestWpEwaldRealSpaceEnergyForcesMatrix:
             alpha=alpha_arr,
             pair_energies=energies,
             atomic_forces=forces,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -835,6 +843,7 @@ class TestWpBatchEwaldRealSpaceEnergy:
 
         energies = allocate_energy_output(batch_two_systems["num_atoms"], device)
         forces = allocate_force_output(batch_two_systems["num_atoms"], device)
+        virial = wp.zeros(2, dtype=wp.mat33d, device=device)
 
         batch_ewald_real_space_energy_forces(
             positions=positions,
@@ -847,6 +856,7 @@ class TestWpBatchEwaldRealSpaceEnergy:
             alpha=alpha_arr,
             pair_energies=energies,
             atomic_forces=forces,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1273,6 +1283,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
         forces = allocate_force_output(num_atoms, device)
         charge_grads = allocate_charge_grad_output(num_atoms, device)
         alpha_arr = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
 
         ewald_real_space_energy_forces_charge_grad(
             positions=inputs["positions"],
@@ -1285,6 +1296,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
             pair_energies=energies,
             atomic_forces=forces,
             charge_gradients=charge_grads,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1303,6 +1315,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
         energies_ef = allocate_energy_output(num_atoms, device)
         forces_ef = allocate_force_output(num_atoms, device)
         alpha_arr2 = make_alpha_array(0.3, device)
+        virial_ef = wp.zeros(1, dtype=wp.mat33d, device=device)
         ewald_real_space_energy_forces(
             positions=inputs["positions"],
             charges=inputs["charges"],
@@ -1313,6 +1326,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
             alpha=alpha_arr2,
             pair_energies=energies_ef,
             atomic_forces=forces_ef,
+            virial=virial_ef,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1321,6 +1335,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
         energies_cg = allocate_energy_output(num_atoms, device)
         forces_cg = allocate_force_output(num_atoms, device)
         charge_grads = allocate_charge_grad_output(num_atoms, device)
+        virial_cg = wp.zeros(1, dtype=wp.mat33d, device=device)
         ewald_real_space_energy_forces_charge_grad(
             positions=inputs["positions"],
             charges=inputs["charges"],
@@ -1332,6 +1347,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
             pair_energies=energies_cg,
             atomic_forces=forces_cg,
             charge_gradients=charge_grads,
+            virial=virial_cg,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1348,6 +1364,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
         forces = allocate_force_output(num_atoms, device)
         charge_grads = allocate_charge_grad_output(num_atoms, device)
         alpha_arr = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
 
         ewald_real_space_energy_forces_charge_grad(
             positions=inputs["positions"],
@@ -1360,6 +1377,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGrad:
             pair_energies=energies,
             atomic_forces=forces,
             charge_gradients=charge_grads,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1388,6 +1406,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGradMatrix:
         forces = allocate_force_output(num_atoms, device)
         charge_grads = allocate_charge_grad_output(num_atoms, device)
         alpha_arr = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
 
         ewald_real_space_energy_forces_charge_grad_matrix(
             positions=inputs["positions"],
@@ -1400,6 +1419,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGradMatrix:
             pair_energies=energies,
             atomic_forces=forces,
             charge_gradients=charge_grads,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1417,6 +1437,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGradMatrix:
         forces = allocate_force_output(num_atoms, device)
         charge_grads = allocate_charge_grad_output(num_atoms, device)
         alpha_arr = make_alpha_array(0.3, device)
+        virial = wp.zeros(1, dtype=wp.mat33d, device=device)
 
         ewald_real_space_energy_forces_charge_grad_matrix(
             positions=inputs["positions"],
@@ -1429,6 +1450,7 @@ class TestWpEwaldRealSpaceEnergyForcesChargeGradMatrix:
             pair_energies=energies,
             atomic_forces=forces,
             charge_gradients=charge_grads,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1473,6 +1495,7 @@ class TestWpBatchEwaldRealSpaceEnergyForcesMatrix:
         num_atoms = batch_two_systems_matrix["num_atoms"]
         energies = allocate_energy_output(num_atoms, device)
         forces = allocate_force_output(num_atoms, device)
+        virial = wp.zeros(2, dtype=wp.mat33d, device=device)
 
         batch_ewald_real_space_energy_forces_matrix(
             positions=positions,
@@ -1485,6 +1508,7 @@ class TestWpBatchEwaldRealSpaceEnergyForcesMatrix:
             alpha=alpha_arr,
             pair_energies=energies,
             atomic_forces=forces,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1533,6 +1557,7 @@ class TestWpBatchEwaldRealSpaceEnergyForcesChargeGrad:
         energies = allocate_energy_output(num_atoms, device)
         forces = allocate_force_output(num_atoms, device)
         charge_grads = allocate_charge_grad_output(num_atoms, device)
+        virial = wp.zeros(2, dtype=wp.mat33d, device=device)
 
         batch_ewald_real_space_energy_forces_charge_grad(
             positions=positions,
@@ -1546,6 +1571,7 @@ class TestWpBatchEwaldRealSpaceEnergyForcesChargeGrad:
             pair_energies=energies,
             atomic_forces=forces,
             charge_gradients=charge_grads,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
@@ -1591,6 +1617,7 @@ class TestWpBatchEwaldRealSpaceEnergyForcesChargeGradMatrix:
         energies = allocate_energy_output(num_atoms, device)
         forces = allocate_force_output(num_atoms, device)
         charge_grads = allocate_charge_grad_output(num_atoms, device)
+        virial = wp.zeros(2, dtype=wp.mat33d, device=device)
 
         batch_ewald_real_space_energy_forces_charge_grad_matrix(
             positions=positions,
@@ -1604,6 +1631,7 @@ class TestWpBatchEwaldRealSpaceEnergyForcesChargeGradMatrix:
             pair_energies=energies,
             atomic_forces=forces,
             charge_gradients=charge_grads,
+            virial=virial,
             wp_dtype=wp.float64,
             device=device,
         )
