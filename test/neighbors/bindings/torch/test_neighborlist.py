@@ -746,6 +746,190 @@ class TestNeighborListNoPBC:
         assert neighbor_ptr.shape[0] == 101
 
 
+def _sorted_pairs(neighbor_list_coo):
+    """Extract sorted (i, j) pairs from COO neighbor list for order-independent comparison."""
+    import numpy as np
+
+    sources = neighbor_list_coo[0].cpu().numpy()
+    targets = neighbor_list_coo[1].cpu().numpy()
+    idx = np.lexsort([targets, sources])
+    return torch.from_numpy(np.stack([sources[idx], targets[idx]], axis=1))
+
+
+class TestNeighborListBoundingBoxCell:
+    """Test bounding-box cell fallback when cell=None for cell_list methods."""
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_cell_list_no_cell_vs_naive(self, dtype, device):
+        """Explicit cell_list with cell=None should match naive results."""
+        torch.manual_seed(42)
+        positions = torch.randn(200, 3, dtype=dtype, device=device) * 10.0
+        cutoff = 3.0
+
+        cell_result = neighbor_list(
+            positions, cutoff, method="cell_list", return_neighbor_list=True
+        )
+        naive_result = neighbor_list(
+            positions, cutoff, method="naive", return_neighbor_list=True
+        )
+
+        # cell_list returns shifts (pbc is auto-created), naive does not
+        cell_pairs = _sorted_pairs(cell_result[0])
+        naive_pairs = _sorted_pairs(naive_result[0])
+        torch.testing.assert_close(cell_pairs, naive_pairs)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_auto_dispatch_cell_list_vs_naive(self, dtype, device):
+        """Auto-dispatched cell_list (>= 2000 atoms) with cell=None should match naive."""
+        torch.manual_seed(42)
+        positions = torch.randn(2500, 3, dtype=dtype, device=device) * 50.0
+        cutoff = 2.0
+
+        auto_result = neighbor_list(positions, cutoff, return_neighbor_list=True)
+        naive_result = neighbor_list(
+            positions, cutoff, method="naive", return_neighbor_list=True
+        )
+
+        auto_pairs = _sorted_pairs(auto_result[0])
+        naive_pairs = _sorted_pairs(naive_result[0])
+        torch.testing.assert_close(auto_pairs, naive_pairs)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_batch_cell_list_no_cell_vs_batch_naive(self, dtype, device):
+        """Batch cell_list with cell=None should match batch naive results."""
+        torch.manual_seed(42)
+        n1, n2 = 150, 100
+        positions1 = torch.randn(n1, 3, dtype=dtype, device=device) * 10.0
+        positions2 = torch.randn(n2, 3, dtype=dtype, device=device) * 10.0
+        positions = torch.cat([positions1, positions2], dim=0)
+        batch_idx = torch.cat(
+            [
+                torch.zeros(n1, dtype=torch.int32, device=device),
+                torch.ones(n2, dtype=torch.int32, device=device),
+            ]
+        )
+        batch_ptr = torch.tensor([0, n1, n1 + n2], dtype=torch.int32, device=device)
+        cutoff = 3.0
+
+        cell_result = neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list",
+            return_neighbor_list=True,
+        )
+        naive_result = neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_naive",
+            return_neighbor_list=True,
+        )
+
+        cell_pairs = _sorted_pairs(cell_result[0])
+        naive_pairs = _sorted_pairs(naive_result[0])
+        torch.testing.assert_close(cell_pairs, naive_pairs)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_negative_positions(self, dtype, device):
+        """Bounding-box cell should handle positions with large negative offset."""
+        torch.manual_seed(42)
+        positions = torch.randn(200, 3, dtype=dtype, device=device) * 10.0 - 50.0
+        cutoff = 3.0
+
+        cell_result = neighbor_list(
+            positions, cutoff, method="cell_list", return_neighbor_list=True
+        )
+        naive_result = neighbor_list(
+            positions, cutoff, method="naive", return_neighbor_list=True
+        )
+
+        cell_pairs = _sorted_pairs(cell_result[0])
+        naive_pairs = _sorted_pairs(naive_result[0])
+        torch.testing.assert_close(cell_pairs, naive_pairs)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_planar_positions(self, dtype, device):
+        """Bounding-box cell should handle planar positions (one dimension constant)."""
+        torch.manual_seed(42)
+        positions = torch.randn(200, 3, dtype=dtype, device=device) * 10.0
+        positions[:, 2] = 0.0  # All atoms on z=0 plane
+        cutoff = 3.0
+
+        cell_result = neighbor_list(
+            positions, cutoff, method="cell_list", return_neighbor_list=True
+        )
+        naive_result = neighbor_list(
+            positions, cutoff, method="naive", return_neighbor_list=True
+        )
+
+        cell_pairs = _sorted_pairs(cell_result[0])
+        naive_pairs = _sorted_pairs(naive_result[0])
+        torch.testing.assert_close(cell_pairs, naive_pairs)
+
+
 class TestNeighborListInvalidMethod:
     """Test error handling for invalid method."""
 

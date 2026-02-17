@@ -266,13 +266,6 @@ def neighbor_list(
 
         elif avg_atoms >= 2000:
             method = "cell_list"
-            if cell is None:
-                cell = torch.eye(
-                    3, dtype=positions.dtype, device=positions.device
-                ).reshape(1, 3, 3)
-                pbc = torch.tensor(
-                    [False, False, False], dtype=torch.bool, device=positions.device
-                )
         else:
             method = "naive"
 
@@ -295,9 +288,11 @@ def neighbor_list(
             )
         case "cell_list":
             if cell is None:
-                cell = torch.eye(
-                    3, dtype=positions.dtype, device=positions.device
-                ).reshape(1, 3, 3)
+                pos_min = positions.min(dim=0).values
+                positions = positions - pos_min
+                pos_max = positions.max(dim=0).values
+                cell_lengths = pos_max + 0.1 * cutoff
+                cell = torch.diag(cell_lengths).reshape(1, 3, 3)
                 pbc = torch.tensor(
                     [False, False, False], dtype=torch.bool, device=positions.device
                 )
@@ -326,11 +321,32 @@ def neighbor_list(
             )
         case "batch_cell_list":
             if cell is None:
-                cell = torch.eye(
-                    3, dtype=positions.dtype, device=positions.device
-                ).reshape(1, 3, 3)
-                pbc = torch.tensor(
-                    [False, False, False], dtype=torch.bool, device=positions.device
+                num_systems = (
+                    batch_ptr.shape[0] - 1
+                    if batch_ptr is not None
+                    else batch_idx[-1].item() + 1
+                )
+                expanded_idx = batch_idx.unsqueeze(1).expand_as(positions)
+                pos_min = torch.full(
+                    (num_systems, 3),
+                    float("inf"),
+                    dtype=positions.dtype,
+                    device=positions.device,
+                )
+                pos_min.scatter_reduce_(0, expanded_idx, positions, reduce="amin")
+                pos_max = torch.full(
+                    (num_systems, 3),
+                    float("-inf"),
+                    dtype=positions.dtype,
+                    device=positions.device,
+                )
+                pos_max.scatter_reduce_(0, expanded_idx, positions, reduce="amax")
+                cell_lengths = pos_max - pos_min + 0.1 * cutoff
+                cell = torch.diag_embed(cell_lengths)
+                pbc = torch.zeros(
+                    (num_systems, 3),
+                    dtype=torch.bool,
+                    device=positions.device,
                 )
             return batch_cell_list(
                 positions,
