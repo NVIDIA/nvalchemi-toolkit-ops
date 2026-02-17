@@ -340,6 +340,8 @@ def neighbor_list(
                     device=positions.device,
                 )
                 pos_max.scatter_reduce_(0, expanded_idx, positions, reduce="amax")
+                # TODO: switch to segment_ops once #17 is merged
+                positions = positions - torch.index_select(pos_min, 0, batch_idx)
                 cell_lengths = pos_max - pos_min + 0.1 * cutoff
                 cell = torch.diag_embed(cell_lengths)
                 pbc = torch.zeros(

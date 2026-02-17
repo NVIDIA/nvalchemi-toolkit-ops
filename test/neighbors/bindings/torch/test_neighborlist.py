@@ -932,6 +932,147 @@ class TestNeighborListBoundingBoxCell:
             ),
         ],
     )
+    def test_batch_negative_positions(self, dtype, device):
+        """Batched bounding-box cell should handle positions with large negative offset."""
+        torch.manual_seed(42)
+        n1, n2 = 150, 100
+        positions1 = torch.randn(n1, 3, dtype=dtype, device=device) * 10.0 - 50.0
+        positions2 = torch.randn(n2, 3, dtype=dtype, device=device) * 10.0 - 50.0
+        positions = torch.cat([positions1, positions2], dim=0)
+        batch_idx = torch.cat(
+            [
+                torch.zeros(n1, dtype=torch.int32, device=device),
+                torch.ones(n2, dtype=torch.int32, device=device),
+            ]
+        )
+        batch_ptr = torch.tensor([0, n1, n1 + n2], dtype=torch.int32, device=device)
+        cutoff = 3.0
+
+        cell_result = neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list",
+            return_neighbor_list=True,
+        )
+        naive_result = neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_naive",
+            return_neighbor_list=True,
+        )
+
+        cell_pairs = _sorted_pairs(cell_result[0])
+        naive_pairs = _sorted_pairs(naive_result[0])
+        torch.testing.assert_close(cell_pairs, naive_pairs)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_batch_different_offsets_per_system(self, dtype, device):
+        """Batched bounding-box cell with per-system offsets should match batch naive."""
+        torch.manual_seed(42)
+        n1, n2 = 150, 100
+        positions1 = torch.randn(n1, 3, dtype=dtype, device=device) * 10.0
+        positions2 = torch.randn(n2, 3, dtype=dtype, device=device) * 10.0 + 100.0
+        positions = torch.cat([positions1, positions2], dim=0)
+        batch_idx = torch.cat(
+            [
+                torch.zeros(n1, dtype=torch.int32, device=device),
+                torch.ones(n2, dtype=torch.int32, device=device),
+            ]
+        )
+        batch_ptr = torch.tensor([0, n1, n1 + n2], dtype=torch.int32, device=device)
+        cutoff = 3.0
+
+        cell_result = neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list",
+            return_neighbor_list=True,
+        )
+        naive_result = neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_naive",
+            return_neighbor_list=True,
+        )
+
+        cell_pairs = _sorted_pairs(cell_result[0])
+        naive_pairs = _sorted_pairs(naive_result[0])
+        torch.testing.assert_close(cell_pairs, naive_pairs)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_batch_cell_list_no_cell_positions_unchanged(self, dtype, device):
+        """Calling neighbor_list with batch_cell_list should not mutate input positions."""
+        torch.manual_seed(42)
+        n1, n2 = 150, 100
+        positions1 = torch.randn(n1, 3, dtype=dtype, device=device) * 10.0
+        positions2 = torch.randn(n2, 3, dtype=dtype, device=device) * 10.0
+        positions = torch.cat([positions1, positions2], dim=0)
+        positions_clone = positions.clone()
+        batch_idx = torch.cat(
+            [
+                torch.zeros(n1, dtype=torch.int32, device=device),
+                torch.ones(n2, dtype=torch.int32, device=device),
+            ]
+        )
+        batch_ptr = torch.tensor([0, n1, n1 + n2], dtype=torch.int32, device=device)
+        cutoff = 3.0
+
+        neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list",
+            return_neighbor_list=True,
+        )
+
+        torch.testing.assert_close(positions, positions_clone)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
     def test_negative_positions(self, dtype, device):
         """Bounding-box cell should handle positions with large negative offset."""
         torch.manual_seed(42)
