@@ -350,8 +350,8 @@ import torch
 from nvalchemiops.torch.neighbors import neighbor_list
 
 # Create atomic system
-positions = torch.rand(1000, 3, device="cuda") * 10.0
-cell = torch.eye(3, device="cuda").unsqueeze(0) * 10.0
+positions = torch.rand(1000, 3, device="cuda") * 20.0
+cell = torch.eye(3, device="cuda").unsqueeze(0) * 20.0
 pbc = torch.tensor([True, True, True], device="cuda")
 cutoff = 5.0
 
