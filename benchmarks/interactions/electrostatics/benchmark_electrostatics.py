@@ -305,27 +305,24 @@ def run_from_config(config, output_dir=None):
 
                 for cfg in configs:
                     n, bs = cfg["num_atoms"], cfg["batch_size"]
-                    total = n * bs if bs > 1 else n
 
-                    # OOM prevention
+                    # OOM prevention (use actual CsCl atom count for threshold)
+                    from benchmarks.systems import cscl_actual_atoms
+                    actual_n_est = cscl_actual_atoms(n) if sys_name == "cscl" else n
                     skip_threshold = skip_accuracy_for_large.get(
                         accuracy
                     ) or skip_accuracy_for_large.get(str(accuracy))
-                    if skip_threshold and n >= skip_threshold:
-                        print(f"  {format_num(n)}: SKIP (OOM risk at {accuracy:.0e})")
+                    if skip_threshold and actual_n_est >= skip_threshold:
+                        print(f"  {format_num(actual_n_est)}: SKIP (OOM risk at {accuracy:.0e})")
                         continue
-                    if total > max_atoms:
+                    total_est = actual_n_est * bs
+                    if total_est > max_atoms:
                         print(
-                            f"  {format_num(n)}×{bs}: SKIP (>{format_num(max_atoms)})"
+                            f"  {format_num(actual_n_est)}×{bs}: SKIP (>{format_num(max_atoms)})"
                         )
                         continue
 
-                    # --- Fresh GPU state for each config ---
                     clean_gpu()
-                    alloc_gb = torch.cuda.memory_allocated() / 1024**3
-                    print(
-                        f"\n  {format_num(n)} atoms × {bs} batch = {format_num(total)} total  [GPU: {alloc_gb:.1f} GB allocated]"
-                    )
 
                     try:
                         data = create_system(
@@ -341,6 +338,10 @@ def run_from_config(config, output_dir=None):
                     atoms_per_system = data["atoms_per_system"]
                     actual_total = data.get("total_atoms", atoms_per_system)
                     batch_size = data.get("batch_size", 1)
+                    alloc_gb = torch.cuda.memory_allocated() / 1024**3
+                    print(
+                        f"\n  {format_num(atoms_per_system)} atoms × {batch_size} batch = {format_num(actual_total)} total  [GPU: {alloc_gb:.1f} GB allocated]"
+                    )
                     pbc = data["pbc"]
 
                     # Convert to f64 once, then drop original f32 data dict

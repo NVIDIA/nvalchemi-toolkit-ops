@@ -296,13 +296,8 @@ def run_from_config(config, output_dir=None):
 
             for cfg in configs:
                 n, bs = cfg['num_atoms'], cfg['batch_size']
-                total = n * bs if bs > 1 else n
-                print(f'\n  {format_num(n)} atoms × {bs} batch = {format_num(total)} total')
 
-                # Clean GPU once per atom-size group (not per method/cutoff)
                 clean_gpu()
-                alloc_gb = torch.cuda.memory_allocated() / 1024**3
-                print(f'  [GPU: {alloc_gb:.1f} GB allocated]')
 
                 try:
                     data = create_system(
@@ -313,6 +308,10 @@ def run_from_config(config, output_dir=None):
                     continue
 
                 actual_total = data.get('total_atoms', data['atoms_per_system'])
+                actual_n = data['atoms_per_system']
+                alloc_gb = torch.cuda.memory_allocated() / 1024**3
+                print(f'\n  {format_num(actual_n)} atoms × {bs} batch = {format_num(actual_total)} total')
+                print(f'  [GPU: {alloc_gb:.1f} GB allocated]')
 
                 for cutoff in cutoffs:
                     # Check cutoff limits
