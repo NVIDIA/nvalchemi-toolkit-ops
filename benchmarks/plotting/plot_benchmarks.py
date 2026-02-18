@@ -585,11 +585,24 @@ def _setup_panel_axes(ax, panel, x_ticks=None, x_limits=None, x_label=None):
     import matplotlib.ticker as ticker_sp
 
     ax.set_yscale("log")
+
+    # Ensure sufficient y-axis ticks on log scale: place major ticks at
+    # 1-2-5 subdivisions per decade so narrow ranges still get labels.
+    ax.yaxis.set_major_locator(
+        ticker_sp.LogLocator(base=10, subs=(1.0, 2.0, 5.0), numticks=12)
+    )
+    ax.yaxis.set_minor_locator(
+        ticker_sp.LogLocator(base=10, subs="auto", numticks=12)
+    )
+    ax.yaxis.set_minor_formatter(ticker_sp.NullFormatter())
+
     ax.grid(True, which="both", **GRID_STYLE)
 
     if panel == "time":
         ax.set_ylabel("Time per atom [\u03bcs]", fontsize=AXIS_LABEL_SIZE)
+        ax.yaxis.set_major_formatter(ticker_sp.FuncFormatter(throughput_formatter))
     elif panel == "throughput":
+
         ax.set_ylabel("Throughput [10\u2076 atoms/s]", fontsize=AXIS_LABEL_SIZE)
         ax.yaxis.set_major_formatter(ticker_sp.FuncFormatter(throughput_formatter))
     elif panel == "memory":
@@ -975,14 +988,15 @@ def _get_panel_y(rows, panel):
 
 
 def _get_panel_y_from_raw(rows, panel, time_values):
-    """Extract y-values for D3 panels (uses pre-extracted D3-only time)."""
+    """Extract y-values for D3 panels (uses pre-extracted D3-only time).
+
+    time_values are per-atom times in microseconds, so throughput in
+    Matoms/s = 1 / time_us_per_atom.
+    """
     if panel == "time":
         return time_values
     elif panel == "throughput":
-        return [
-            r["total_atoms"] / (t * 1e-6) / 1e6 if t > 0 else 0
-            for r, t in zip(rows, time_values)
-        ]
+        return [1.0 / t if t > 0 else 0 for t in time_values]
     elif panel == "memory":
         return [r["mem_peak_gb"] * 1024 for r in rows]
     return []
