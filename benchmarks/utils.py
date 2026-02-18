@@ -43,6 +43,85 @@ except ImportError:
 BackendType = Literal["torch", "jax", "warp"]
 
 
+def _nvml_get_device_name(device_index: int = 0) -> str:
+    """Get GPU device name using NVML.
+
+    Parameters
+    ----------
+    device_index : int, default=0
+        GPU device index.
+
+    Returns
+    -------
+    str
+        GPU device name (e.g., "NVIDIA H100 80GB HBM3").
+
+    Raises
+    ------
+    ImportError
+        If pynvml (nvidia-ml-py) is not installed.
+    RuntimeError
+        If NVML initialization fails (e.g., no GPU available).
+    """
+    try:
+        import pynvml
+
+        pynvml.nvmlInit()
+    except ImportError:
+        raise ImportError(
+            "`pynvml` required for benchmarks; run `uv pip install nvidia-ml-py`."
+        )
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        name = pynvml.nvmlDeviceGetName(handle)
+        return name
+    finally:
+        pynvml.nvmlShutdown()
+
+
+def _nvml_get_gpu_memory_used_mb(device_index: int = 0) -> float:
+    """Get current GPU memory usage in MB using NVML.
+
+    Parameters
+    ----------
+    device_index : int, default=0
+        GPU device index.
+
+    Returns
+    -------
+    float
+        Memory used in megabytes.
+    """
+    import pynvml
+
+    pynvml.nvmlInit()
+    try:
+        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        return mem_info.used / (1024**2)
+    finally:
+        pynvml.nvmlShutdown()
+
+
+def _nvml_get_gpu_sku(device_index: int = 0) -> str:
+    """Get GPU SKU name for filename generation using NVML.
+
+    Parameters
+    ----------
+    device_index : int, default=0
+        GPU device index.
+
+    Returns
+    -------
+    str
+        Cleaned GPU SKU string suitable for filenames (e.g., "h100-80gb-hbm3").
+    """
+    name = _nvml_get_device_name(device_index)
+    sku = name.replace(" ", "-").replace("_", "-")
+    sku = sku.replace("NVIDIA-", "").replace("GeForce-", "")
+    return sku.lower()
+
+
 class TimeoutError(Exception):
     """Exception raised when a benchmark times out."""
 
@@ -218,15 +297,11 @@ class BenchmarkTimer:
                     return self._torch.cuda.max_memory_allocated() / (1024**2)
                 return None
             case "jax":
-                try:
-                    devices = self._jax.local_devices()
-                    for d in devices:
-                        if d.platform == "gpu":
-                            stats = d.memory_stats()
-                            if stats and "peak_bytes_in_use" in stats:
-                                return stats["peak_bytes_in_use"] / (1024**2)
-                except Exception:  # noqa: S110
-                    pass
+                if self.is_cuda:
+                    try:
+                        return _nvml_get_gpu_memory_used_mb()
+                    except Exception:
+                        return None
                 return None
         return None
 
