@@ -28,8 +28,17 @@ NH3_PARTIAL_CHARGES = {"H": 0.3, "N": -0.9}
 # CsCl charges (ionic crystal)
 CSCL_CHARGES = {"Cs": 1.0, "Cl": -1.0}
 
-# CsCl lattice constant in Angstroms (BCC, Cs at corner, Cl at body center)
+# CsCl lattice constant in Angstroms (Cs at corner, Cl at body center)
 CSCL_LATTICE_CONSTANT = 4.119
+
+
+def cscl_actual_atoms(n):
+    """Return actual CsCl atom count for a target of n atoms.
+
+    CsCl has 2 atoms per cubic unit cell, so valid sizes are 2*k^3.
+    """
+    n_cells = max(1, int(np.ceil((n / 2) ** (1 / 3))))
+    return 2 * n_cells**3
 
 # Default paths (relative to benchmarks/ directory)
 SCRIPT_DIR = Path(__file__).parent
@@ -219,9 +228,8 @@ def create_cscl_system(num_atoms, device="cuda", dtype=torch.float32):
     a = CSCL_LATTICE_CONSTANT
     atoms_per_cell = 2  # Cs + Cl
 
-    # Number of unit cells per dimension
     n_cells = max(1, int(np.ceil((num_atoms / atoms_per_cell) ** (1 / 3))))
-    actual_atoms = atoms_per_cell * n_cells**3
+    actual_atoms = cscl_actual_atoms(num_atoms)
 
     # Build supercell
     positions = []
@@ -428,9 +436,9 @@ def get_constant_total_configs(system_type, target_atoms, nh3_dir=None):
                 continue
             yield {"num_atoms": n, "pdb_path": pdb, "batch_size": batch_size}
     else:
-        # Use standard power-of-2 sizes for CsCl
         for n in [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]:
-            batch_size = target_atoms // n
+            actual = cscl_actual_atoms(n)
+            batch_size = target_atoms // actual
             if batch_size < 1:
                 continue
             yield {"num_atoms": n, "pdb_path": None, "batch_size": batch_size}
@@ -475,7 +483,8 @@ def get_constant_atoms_configs(
                 yield {"num_atoms": n, "pdb_path": pdb, "batch_size": bs}
     else:
         for n in atoms_per_system_sizes:
+            actual = cscl_actual_atoms(n)
             for bs in all_batch_sizes:
-                if n * bs > max_total_atoms:
+                if actual * bs > max_total_atoms:
                     break
                 yield {"num_atoms": n, "pdb_path": None, "batch_size": bs}
