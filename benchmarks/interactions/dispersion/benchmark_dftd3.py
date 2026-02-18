@@ -34,6 +34,12 @@ import os
 import sys
 from pathlib import Path
 
+# configure memory management: keep in mind that the allocator
+# in particular impacts throughput, but is necessary to give
+# a better handle on *actual* memory consumption
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
 import numpy as np
 import yaml
 from pymatgen.core import Lattice, Structure
@@ -399,11 +405,20 @@ def convert_to_backend(
         case "jax":
             dtype = getattr(jnp, dtype_str)
             for src, dst in float_keys:
-                result[dst] = jnp.array(np_data[src], dtype=dtype)
+                arr = jnp.array(np_data[src], dtype=dtype)
+                # JAX dftd3() derives num_systems from cell.shape[0],
+                # so cell must always be (batch, 3, 3) even for single systems.
+                if dst == "cell" and arr.ndim == 2:
+                    arr = arr[jnp.newaxis, :, :]
+                result[dst] = arr
             for src, dst in int_keys:
                 result[dst] = jnp.array(np_data[src], dtype=jnp.int32)
             for src, dst in bool_keys:
-                result[dst] = jnp.array(np_data[src], dtype=jnp.bool_)
+                arr = jnp.array(np_data[src], dtype=jnp.bool_)
+                # Keep pbc shape consistent with cell: (batch, 3).
+                if dst == "pbc" and arr.ndim == 1:
+                    arr = arr[jnp.newaxis, :]
+                result[dst] = arr
             for src, dst in optional_int_keys:
                 result[dst] = (
                     jnp.array(np_data[src], dtype=jnp.int32)
