@@ -23,8 +23,6 @@ import torch
 
 from benchmarks.utils import (
     create_run_directory,
-    get_gpu_sku,
-    get_timestamp,
     write_run_log,
 )
 
@@ -72,6 +70,7 @@ def apply_global_overrides(config, args):
 
 
 def parse_args():
+    """Parse command-line arguments for the benchmark suite."""
     parser = argparse.ArgumentParser(
         description="Unified Benchmark Suite (NL + D3 + Electrostatics)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -126,17 +125,22 @@ module-specific CLI options.
         "--output-dir", type=Path, default=None, help="Override output directory"
     )
     parser.add_argument(
-        "--no-plot", action="store_true",
+        "--no-plot",
+        action="store_true",
         help="Skip plotting after benchmarks",
     )
     parser.add_argument(
-        "--plot-only", type=Path, default=None, metavar="RESULTS_DIR",
+        "--plot-only",
+        type=Path,
+        default=None,
+        metavar="RESULTS_DIR",
         help="Skip benchmarks, only generate plots from existing results directory",
     )
     return parser.parse_args()
 
 
 def main():
+    """Run the unified benchmark suite."""
     args = parse_args()
 
     benchmarks = {"nl", "d3", "el"} if "all" in args.benchmark else set(args.benchmark)
@@ -246,7 +250,10 @@ def main():
 
 def _generate_plots(results_dir):
     """Generate 3-panel review plots and single-panel docs plots from CSVs."""
-    from benchmarks.plotting.plot_benchmarks import plot_single_panel, load_csv, _detect_and_plot
+    from benchmarks.plotting.plot_benchmarks import (
+        _detect_and_plot,
+        plot_single_panel,
+    )
 
     results_dir = Path(results_dir)
     csvs = sorted(results_dir.glob("*.csv"))

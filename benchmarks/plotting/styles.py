@@ -400,6 +400,7 @@ def throughput_formatter(val, pos):
     if val <= 0:
         return ""
     import math
+
     exp = math.floor(math.log10(val))
     coeff = val / 10**exp
     if not any(abs(coeff - c) < 0.01 for c in (1, 2, 5)):
@@ -417,6 +418,7 @@ def memory_formatter(val, pos):
     if val <= 0:
         return ""
     import math
+
     exp = math.floor(math.log10(val))
     coeff = val / 10**exp
     if not any(abs(coeff - c) < 0.01 for c in (1, 2, 5)):

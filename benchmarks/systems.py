@@ -40,6 +40,7 @@ def cscl_actual_atoms(n):
     n_cells = max(1, int(np.ceil((n / 2) ** (1 / 3))))
     return 2 * n_cells**3
 
+
 # Default paths (relative to benchmarks/ directory)
 SCRIPT_DIR = Path(__file__).parent
 DEFAULT_NH3_DIR = SCRIPT_DIR / "nh3"

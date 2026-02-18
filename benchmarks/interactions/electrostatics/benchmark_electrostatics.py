@@ -32,11 +32,10 @@ from benchmarks.utils import (
     cuda_timed_runs,
     format_num,
     get_gpu_memory_info,
-    get_gpu_sku,
-    get_timestamp,
     make_csv_name,
     save_results,
 )
+from nvalchemiops.neighbors import estimate_max_neighbors
 from nvalchemiops.torch.interactions.electrostatics import (
     estimate_ewald_parameters,
     estimate_pme_parameters,
@@ -45,7 +44,6 @@ from nvalchemiops.torch.interactions.electrostatics import (
     generate_k_vectors_pme,
     particle_mesh_ewald,
 )
-from nvalchemiops.neighbors import estimate_max_neighbors
 from nvalchemiops.torch.neighbors import batch_naive_neighbor_list
 
 # =============================================================================
@@ -54,6 +52,7 @@ from nvalchemiops.torch.neighbors import batch_naive_neighbor_list
 
 
 def load_config(config_path):
+    """Load and validate YAML benchmark configuration."""
     config_path = Path(config_path)
     if not config_path.exists():
         raise FileNotFoundError(f"Config not found: {config_path}")
@@ -62,6 +61,7 @@ def load_config(config_path):
 
 
 def merge_cli_overrides(config, args):
+    """Merge CLI argument overrides into the YAML config."""
     if args.timing_runs is not None:
         config["parameters"]["timing_runs"] = args.timing_runs
     if args.timing_mode is not None:
@@ -126,8 +126,8 @@ def benchmark_pme(
             mesh_dimensions=mesh_dims,
             spline_order=spline_order,
             batch_idx=batch_idx,
-            k_vectors=k_vectors,
-            k_squared=k_squared,
+            k_vectors=k_vectors,  # noqa: F821
+            k_squared=k_squared,  # noqa: F821
             neighbor_list=nl_data,
             neighbor_ptr=nl_ptr,
             neighbor_shifts=nl_shifts,
@@ -197,7 +197,7 @@ def benchmark_ewald(
             neighbor_list=nl_data,
             neighbor_ptr=nl_ptr,
             neighbor_shifts=nl_shifts,
-            k_vectors=k_vectors,
+            k_vectors=k_vectors,  # noqa: F821
             compute_forces=True,
             compute_charge_gradients=compute_cg,
             accuracy=accuracy,
@@ -308,12 +308,15 @@ def run_from_config(config, output_dir=None):
 
                     # OOM prevention (use actual CsCl atom count for threshold)
                     from benchmarks.systems import cscl_actual_atoms
+
                     actual_n_est = cscl_actual_atoms(n) if sys_name == "cscl" else n
                     skip_threshold = skip_accuracy_for_large.get(
                         accuracy
                     ) or skip_accuracy_for_large.get(str(accuracy))
                     if skip_threshold and actual_n_est >= skip_threshold:
-                        print(f"  {format_num(actual_n_est)}: SKIP (OOM risk at {accuracy:.0e})")
+                        print(
+                            f"  {format_num(actual_n_est)}: SKIP (OOM risk at {accuracy:.0e})"
+                        )
                         continue
                     total_est = actual_n_est * bs
                     if total_est > max_atoms:
@@ -377,11 +380,11 @@ def run_from_config(config, output_dir=None):
                     del pme_params, ewald_params
 
                     # Generate NL in LIST format (COO + ptr)
-                    if batch_idx is None:
+                    if batch_idx is None:  # noqa: F821
                         batch_idx = torch.zeros(
-                            positions.shape[0],
+                            positions.shape[0],  # noqa: F821
                             dtype=torch.int32,
-                            device=positions.device,
+                            device=positions.device,  # noqa: F821
                         )
                     maxnb = estimate_max_neighbors(
                         real_cutoff, atomic_density=0.2, safety_factor=1.0
@@ -389,17 +392,17 @@ def run_from_config(config, output_dir=None):
 
                     try:
                         nl_data, nl_ptr, nl_shifts = batch_naive_neighbor_list(
-                            positions=positions,
+                            positions=positions,  # noqa: F821
                             cutoff=real_cutoff,
                             batch_idx=batch_idx,
                             pbc=pbc,
-                            cell=cell,
+                            cell=cell,  # noqa: F821
                             max_neighbors=maxnb,
                             return_neighbor_list=True,
                         )
                     except Exception as e:
                         print(f"    SKIP (NL): {e}")
-                        del positions, charges, cell, batch_idx
+                        del positions, charges, cell, batch_idx  # noqa: F821
                         continue
 
                     print(
@@ -414,10 +417,10 @@ def run_from_config(config, output_dir=None):
                             try:
                                 if method == "pme":
                                     r = benchmark_pme(
-                                        positions,
-                                        charges,
-                                        cell,
-                                        batch_idx,
+                                        positions,  # noqa: F821
+                                        charges,  # noqa: F821
+                                        cell,  # noqa: F821
+                                        batch_idx,  # noqa: F821
                                         nl_data,
                                         nl_shifts,
                                         nl_ptr,
@@ -431,10 +434,10 @@ def run_from_config(config, output_dir=None):
                                     )
                                 else:
                                     r = benchmark_ewald(
-                                        positions,
-                                        charges,
-                                        cell,
-                                        batch_idx,
+                                        positions,  # noqa: F821
+                                        charges,  # noqa: F821
+                                        cell,  # noqa: F821
+                                        batch_idx,  # noqa: F821
                                         nl_data,
                                         nl_shifts,
                                         nl_ptr,
@@ -472,7 +475,7 @@ def run_from_config(config, output_dir=None):
                                 print(f"    {label:10s}: FAILED - {e}")
 
                     # --- Explicit cleanup: free ALL GPU tensors before next config ---
-                    del positions, charges, cell, batch_idx
+                    del positions, charges, cell, batch_idx  # noqa: F821
                     del nl_data, nl_ptr, nl_shifts
 
             if results:
@@ -490,6 +493,7 @@ def run_from_config(config, output_dir=None):
 
 
 def parse_args():
+    """Parse command-line arguments for electrostatics benchmarks."""
     parser = argparse.ArgumentParser(
         description="Electrostatics Benchmark (2 systems × 3 modes)"
     )
@@ -507,6 +511,7 @@ def parse_args():
 
 
 def main():
+    """Run electrostatics benchmarks."""
     args = parse_args()
     config = load_config(args.config)
     config = merge_cli_overrides(config, args)

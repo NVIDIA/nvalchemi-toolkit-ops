@@ -20,39 +20,26 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
 
 from benchmarks.plotting.styles import (
     AXIS_LABEL_SIZE,
     CUTOFF_COLORS,
     CUTOFF_STYLES,
     D3_CUTOFF_COLORS,
-    DARK_GREEN,
-    DARKEST_GREEN,
     GPU_VRAM_REFS,
     GRAY,
     GRID_STYLE,
-    LEGEND_SIZE,
-    LIGHT_GREEN,
-    METHOD_COLORS,
-    METHOD_STYLES,
     NVIDIA_GREEN,
     SINGLE_PANEL_SIZE,
     THREE_PANEL_SIZE,
-    TICK_LABEL_SIZE,
     TITLE_SIZE,
     X_AXIS_LIMITS,
-    X_AXIS_TICKS_LARGE,
     X_AXIS_TICKS_MEDIUM,
-    X_AXIS_TICKS_SMALL,
-    add_scaling_reference,
     create_table_legend,
     format_accuracy,
     format_legend_label,
     format_num,
     format_system_name,
-    get_cutoff_style,
-    get_method_style,
     memory_formatter,
     setup_log2_xaxis,
     setup_plot_style,
@@ -84,18 +71,27 @@ def add_vram_reference_lines(ax, unit="MB", gpu_vram_gb=None):
             y=val, color="black", linestyle=":", linewidth=1.5, alpha=0.5, zorder=1
         )
         ax.text(
-            0.99, val, f" {vram_gb} GB {gpu_name}",
+            0.99,
+            val,
+            f" {vram_gb} GB {gpu_name}",
             transform=ax.get_yaxis_transform(),
-            va="bottom", ha="right", fontsize=8, color="black", alpha=0.7,
+            va="bottom",
+            ha="right",
+            fontsize=8,
+            color="black",
+            alpha=0.7,
         )
     if max_vram_val > 0:
         ax.set_ylim(top=max_vram_val * 1.5)
         saved_formatter = ax.yaxis.get_major_formatter()
+
         def _vram_aware_formatter(val, pos, _orig=saved_formatter, _cap=max_vram_val):
             if val > _cap:
                 return ""
             return _orig(val, pos)
+
         import matplotlib.ticker as _vtick
+
         ax.yaxis.set_major_formatter(_vtick.FuncFormatter(_vram_aware_formatter))
 
 
@@ -288,9 +284,7 @@ def plot_d3_generic(data, system_name, mode_name, output_dir):
 # Accuracy colors (viridis-shifted like cutoff)
 ACCURACY_COLORS = {
     1e-4: NVIDIA_GREEN,
-    0.0001: NVIDIA_GREEN,
     1e-6: "#31688E",
-    0.000001: "#31688E",
 }
 
 # Method styles: solid for default (1e-6), dashed for lower accuracy (1e-4)
@@ -305,9 +299,7 @@ EL_METHOD_STYLES = {
 # Accuracy determines linestyle: 1e-6 = solid (default), 1e-4 = dashed
 ACCURACY_LINESTYLES = {
     1e-6: "-",
-    0.000001: "-",
     1e-4: (0, (4, 2)),
-    0.0001: (0, (4, 2)),
 }
 
 
@@ -511,8 +503,6 @@ def plot_single_panel(csv_path, panel, output_path):
     output_path : str or Path
         Where to save the PNG.
     """
-    import matplotlib.ticker as ticker_sp
-
     csv_path = Path(csv_path)
     output_path = Path(output_path)
     data = load_csv(csv_path)
@@ -841,13 +831,6 @@ def _render_d3_panel(ax, data, system, mode, panel):
 def _render_el_panel(ax, data, system, mode, panel):
     """Render a single EL panel."""
     # Filter to _cg methods
-    method_bases = sorted(
-        {
-            r.get("method", "").replace("_cg", "")
-            for r in data
-            if r.get("method", "") not in ("", "method")
-        }
-    )
     cg_data = [r for r in data if r.get("method", "").endswith("_cg")]
     if cg_data:
         data = cg_data
@@ -882,9 +865,7 @@ def _render_el_panel(ax, data, system, mode, panel):
     # Color by aps for batch (green=small, orange=large), by accuracy for non-batch
     ACCURACY_COLORS = {
         1e-4: NVIDIA_GREEN,
-        0.0001: NVIDIA_GREEN,
         1e-6: "#31688E",
-        0.000001: "#31688E",
     }
 
     if is_batch:
@@ -1046,6 +1027,7 @@ def _detect_and_plot(csv_path, output_dir):
 
 
 def main():
+    """CLI entry point for benchmark plotting."""
     parser = argparse.ArgumentParser(description="Plot benchmark results")
     parser.add_argument("input_dir", type=Path, help="Directory with CSV files")
     parser.add_argument("--output-dir", "-o", type=Path, default=None)

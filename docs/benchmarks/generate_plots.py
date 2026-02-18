@@ -41,9 +41,7 @@ def _load_from_file(module_name: str, file_path: Path):
         parent_name = ".".join(parts[:i])
         if parent_name not in sys.modules:
             parent_pkg = types.ModuleType(parent_name)
-            parent_pkg.__path__ = [
-                str(_PROJECT_ROOT / "/".join(parts[:i]))
-            ]
+            parent_pkg.__path__ = [str(_PROJECT_ROOT / "/".join(parts[:i]))]
             parent_pkg.__package__ = parent_name
             sys.modules[parent_name] = parent_pkg
 
@@ -98,6 +96,7 @@ def main():
     Sphinx rebuilds when only markdown has changed.
     """
     import os
+
     if os.environ.get("SKIP_BENCHMARK_PLOTS", "").strip() in ("1", "true", "yes"):
         print("  [generate_plots] SKIP_BENCHMARK_PLOTS set, skipping")
         return
