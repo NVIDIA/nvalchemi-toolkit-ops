@@ -171,5 +171,3 @@ python benchmarks/benchmark_suite.py --plot-only benchmarks/benchmark-results/ru
 ```
 
 Results are saved as CSV files and plots are generated automatically.
-To update the documentation plots, copy your CSVs to
-`docs/benchmarks/benchmark_results/` and rebuild docs with `make docs`.

@@ -8,9 +8,10 @@ in ``docs/conf.py``. It reads CSV benchmark results and produces individual
 PNG plots (one per metric) using the shared plotting infrastructure from
 ``benchmarks.plotting``.
 
-The CSVs in ``benchmark_results/`` are committed to the repo so that
-``make docs`` never needs to re-run benchmarks. Users can reproduce results
-on their own hardware and replace the CSVs.
+Reference CSVs in ``benchmark_results/`` are committed to the repo so that
+``make docs`` never needs to re-run GPU benchmarks.  Users who want to
+reproduce benchmarks on their own hardware should use the benchmark suite
+directly (see ``benchmarks/README.md``).
 
 Note on imports: during a Sphinx build, ``docs/benchmarks/`` shadows the
 project-root ``benchmarks/`` package in ``sys.modules``.  We use
