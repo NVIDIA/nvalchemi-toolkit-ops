@@ -17,6 +17,20 @@ electrostatics
 dftd3
 ```
 
+## Hardware and Software
+
+Results on this page were collected on the following system:
+
+| Component | Version |
+|-----------|---------|
+| GPU | NVIDIA H100 80 GB HBM3 |
+| CUDA | 12.8 |
+| PyTorch | 2.10.0+cu128 |
+| nvalchemi-toolkit-ops | 0.2.0 |
+| Warp | 1.11.0 |
+| Python | 3.12.3 |
+| OS | Linux 5.15.0-1063-nvidia |
+
 ## About These Benchmarks
 
 Benchmarks are intended to be indicative of `nvalchemiops` performance under

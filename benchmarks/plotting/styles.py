@@ -410,7 +410,17 @@ def throughput_formatter(val, pos):
 
 
 def memory_formatter(val, pos):
-    """Format memory axis in human-readable binary units (KB/MB/GB)."""
+    """Format memory axis in human-readable units (KB/MB/GB).
+
+    Only labels 1-2-5 positions per decade (in MB) to avoid clutter.
+    """
+    if val <= 0:
+        return ""
+    import math
+    exp = math.floor(math.log10(val))
+    coeff = val / 10**exp
+    if not any(abs(coeff - c) < 0.01 for c in (1, 2, 5)):
+        return ""
     if val >= 1024:
         return f"{val / 1024:.0f} GB"
     elif val >= 1:

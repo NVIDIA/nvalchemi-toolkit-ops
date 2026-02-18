@@ -64,7 +64,7 @@ LINE_ALPHA = 0.55
 
 
 def add_vram_reference_lines(ax, unit="MB", gpu_vram_gb=None):
-    """Add horizontal GPU VRAM reference line and cap y-axis just above it.
+    """Add horizontal GPU VRAM reference line with label on the right edge.
 
     Parameters
     ----------
@@ -83,23 +83,20 @@ def add_vram_reference_lines(ax, unit="MB", gpu_vram_gb=None):
         ax.axhline(
             y=val, color="black", linestyle=":", linewidth=1.5, alpha=0.5, zorder=1
         )
-    # Set top just above VRAM so the 80 GB tick + H100 label are visible
+        ax.text(
+            0.99, val, f" {vram_gb} GB {gpu_name}",
+            transform=ax.get_yaxis_transform(),
+            va="bottom", ha="right", fontsize=8, color="black", alpha=0.7,
+        )
     if max_vram_val > 0:
-        ax.set_ylim(top=max_vram_val * 5)
-        # Add VRAM as explicit extra tick
-        major_ticks = [t for t in ax.get_yticks() if t > 0 and t < max_vram_val * 0.9]
-        major_ticks.append(max_vram_val)
-        ax.set_yticks(major_ticks)
-        # Custom labels: normal formatter for all, but VRAM tick gets "80 GB H100"
-        labels = []
-        for t in major_ticks:
-            if t == max_vram_val:
-                gpu_name = refs[0][0] if refs else ""
-                vram_gb = refs[0][1] if refs else int(t / 1024)
-                labels.append(f"{vram_gb} GB\n{gpu_name}")
-            else:
-                labels.append(memory_formatter(t, None))
-        ax.set_yticklabels(labels)
+        ax.set_ylim(top=max_vram_val * 1.5)
+        saved_formatter = ax.yaxis.get_major_formatter()
+        def _vram_aware_formatter(val, pos, _orig=saved_formatter, _cap=max_vram_val):
+            if val > _cap:
+                return ""
+            return _orig(val, pos)
+        import matplotlib.ticker as _vtick
+        ax.yaxis.set_major_formatter(_vtick.FuncFormatter(_vram_aware_formatter))
 
 
 # =============================================================================
@@ -585,25 +582,20 @@ def _setup_panel_axes(ax, panel, x_ticks=None, x_limits=None, x_label=None):
     import matplotlib.ticker as ticker_sp
 
     ax.set_yscale("log")
-
-    # Ensure sufficient y-axis ticks on log scale: place major ticks at
-    # 1-2-5 subdivisions per decade so narrow ranges still get labels.
-    ax.yaxis.set_major_locator(
-        ticker_sp.LogLocator(base=10, subs=(1.0, 2.0, 5.0), numticks=12)
-    )
-    ax.yaxis.set_minor_locator(
-        ticker_sp.LogLocator(base=10, subs="auto", numticks=12)
-    )
     ax.yaxis.set_minor_formatter(ticker_sp.NullFormatter())
-
     ax.grid(True, which="both", **GRID_STYLE)
 
     if panel == "time":
         ax.set_ylabel("Time per atom [\u03bcs]", fontsize=AXIS_LABEL_SIZE)
+        ax.yaxis.set_major_locator(
+            ticker_sp.LogLocator(base=10, subs=(1.0, 2.0, 5.0), numticks=12)
+        )
         ax.yaxis.set_major_formatter(ticker_sp.FuncFormatter(throughput_formatter))
     elif panel == "throughput":
-
         ax.set_ylabel("Throughput [10\u2076 atoms/s]", fontsize=AXIS_LABEL_SIZE)
+        ax.yaxis.set_major_locator(
+            ticker_sp.LogLocator(base=10, subs=(1.0, 2.0, 5.0), numticks=12)
+        )
         ax.yaxis.set_major_formatter(ticker_sp.FuncFormatter(throughput_formatter))
     elif panel == "memory":
         ax.set_ylabel("Peak Memory", fontsize=AXIS_LABEL_SIZE)
