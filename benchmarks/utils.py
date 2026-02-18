@@ -16,13 +16,31 @@ import argparse
 import csv
 import signal
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, Literal
 
 import numpy as np
-import torch
 from pymatgen.core import Lattice, Structure
-from torch.cuda import cudart
+
+# Lazy import for torch - allows module to be imported without torch installed
+# Other functions in this file still use torch types in their signatures
+try:
+    import torch
+    from torch.cuda import cudart
+except ImportError:
+    torch = None
+    cudart = None
+
+try:
+    import jax
+    from jax import numpy as jnp
+except ImportError:
+    jax = None
+    jnp = None
+
+BackendType = Literal["torch", "jax", "warp"]
 
 
 class TimeoutError(Exception):
@@ -70,12 +88,16 @@ def timeout(seconds):
 class BenchmarkTimer:
     """High-precision timing utility with CPU/GPU synchronization support.
 
-    Includes graceful error handling for timeouts and CUDA OOM errors.
+    Supports multiple backends (torch, jax, warp) with backend-specific
+    synchronization, memory tracking, and timing mechanisms.
+
+    Includes graceful error handling for timeouts and OOM errors.
     """
 
     def __init__(
         self,
-        device: torch.device,
+        backend: BackendType = "torch",
+        device: str | None = None,
         warmup_runs: int = 3,
         timing_runs: int = 10,
         timeout_seconds: int = 60,
@@ -84,8 +106,13 @@ class BenchmarkTimer:
 
         Parameters
         ----------
-        device : torch.device
-            Device for computation (CPU or CUDA).
+        backend : BackendType, default="torch"
+            Backend framework to use. Supported: "torch", "jax", "warp".
+        device : str | None, default=None
+            Device for computation. Meaning varies by backend:
+            - torch: Device string like "cuda:0", "cpu". If None, defaults to "cuda" if available.
+            - jax: Not used directly; JAX selects devices automatically.
+            - warp: Not yet supported.
         warmup_runs : int, default=3
             Number of warmup runs before timing.
         timing_runs : int, default=10
@@ -93,19 +120,147 @@ class BenchmarkTimer:
         timeout_seconds : int, default=60
             Maximum time (in seconds) allowed for a single benchmark run.
             If exceeded, the benchmark will fail gracefully.
+
+        Raises
+        ------
+        ImportError
+            If the requested backend library is not installed.
+        NotImplementedError
+            If the warp backend is requested (not yet supported).
         """
+        self.backend = backend
         self.device = device
         self.warmup_runs = warmup_runs
         self.timing_runs = timing_runs
         self.timeout_seconds = timeout_seconds
-        self.is_cuda = device.type == "cuda"
 
-    def time_function(self, func, *args, **kwargs) -> dict[str, float | None]:
+        # Backend-specific initialization
+        self._torch = None
+        self._jax = None
+        self._cudart = None
+        self.is_cuda = False
+
+        match backend:
+            case "torch":
+                try:
+                    import torch as _torch
+                    from torch.cuda import cudart as _cudart
+
+                    self._torch = _torch
+                    self._cudart = _cudart
+                except ImportError as e:
+                    raise ImportError(
+                        "torch backend requires PyTorch. Run `uv sync --extra torch"
+                    ) from e
+
+                # Determine if using CUDA
+                if device is None:
+                    self.is_cuda = self._torch.cuda.is_available()
+                    self.device = "cuda" if self.is_cuda else "cpu"
+                else:
+                    self.is_cuda = "cuda" in str(device)
+
+            case "jax":
+                try:
+                    import jax as _jax
+
+                    self._jax = _jax
+                except ImportError as e:
+                    raise ImportError(
+                        "jax backend requires JAX. Run `uv sync --extra 'jax'"
+                    ) from e
+
+                # Check if JAX is using GPU
+                try:
+                    devices = self._jax.local_devices()
+                    self.is_cuda = any(d.platform == "gpu" for d in devices)
+                except Exception:
+                    self.is_cuda = False
+
+            case "warp":
+                raise NotImplementedError(
+                    "warp backend benchmarking is not yet supported"
+                )
+
+            case _:
+                raise ValueError(
+                    f"Unsupported backend: {backend}. "
+                    "Supported backends: 'torch', 'jax', 'warp'"
+                )
+
+    def synchronize(self, result: Any | None = None):
+        """Synchronize device, optionally blocking on a computation result.
+
+        Parameters
+        ----------
+        result : Any, optional
+            Computation result to block on (used for JAX backend).
+        """
+        match self.backend:
+            case "torch":
+                if self.is_cuda:
+                    self._torch.cuda.synchronize()
+            case "jax":
+                if result is not None:
+                    self._jax.block_until_ready(result)
+
+    def get_peak_memory(self) -> float | None:
+        """Get peak GPU memory usage in MB, or None if unavailable.
+
+        Returns
+        -------
+        float | None
+            Peak memory usage in megabytes, or None if not available.
+        """
+        match self.backend:
+            case "torch":
+                if self.is_cuda:
+                    return self._torch.cuda.max_memory_allocated() / (1024**2)
+                return None
+            case "jax":
+                try:
+                    devices = self._jax.local_devices()
+                    for d in devices:
+                        if d.platform == "gpu":
+                            stats = d.memory_stats()
+                            if stats and "peak_bytes_in_use" in stats:
+                                return stats["peak_bytes_in_use"] / (1024**2)
+                except Exception:  # noqa: S110
+                    pass
+                return None
+        return None
+
+    def clear_memory(self):
+        """Clear GPU memory caches and reset peak memory stats."""
+        match self.backend:
+            case "torch":
+                if self.is_cuda:
+                    self._torch.cuda.empty_cache()
+                    self._torch.cuda.reset_peak_memory_stats()
+            case "jax":
+                pass  # JAX manages memory automatically
+
+    def _get_oom_exception_type(self) -> type:
+        """Return the OOM exception class for the current backend.
+
+        Returns
+        -------
+        type
+            Exception class to catch for OOM errors.
+        """
+        match self.backend:
+            case "torch":
+                return self._torch.cuda.OutOfMemoryError
+            case "jax":
+                return RuntimeError  # JAX OOM manifests as RuntimeError
+        return RuntimeError
+
+    def time_function(self, func: Callable, *args, **kwargs) -> dict[str, float | None]:
         """Time a function with proper synchronization and error handling.
 
         Parameters
         ----------
-        func : callable
+        func : Callable
             Function to time.
         *args, **kwargs
             Arguments to pass to function.
@@ -125,27 +280,27 @@ class BenchmarkTimer:
         Notes
         -----
         This method handles:
-        - CUDA Out of Memory errors (gracefully caught and reported)
+        - OOM errors (gracefully caught and reported)
         - Timeout errors (if execution exceeds timeout_seconds)
         - General exceptions during warmup or timing
         """
+        oom_exception = self._get_oom_exception_type()
+
         try:
             # Warmup runs with timeout
             with timeout(self.timeout_seconds):
                 for i in range(self.warmup_runs):
                     try:
-                        _ = func(*args, **kwargs)
-                        if self.is_cuda:
-                            torch.cuda.synchronize()
-                    except torch.cuda.OutOfMemoryError:
-                        if self.is_cuda:
-                            torch.cuda.empty_cache()
+                        result = func(*args, **kwargs)
+                        self.synchronize(result)
+                    except oom_exception:
+                        self.clear_memory()
                         return {
                             "median": None,
                             "times": [],
                             "peak_memory_mb": None,
                             "success": False,
-                            "error": f"CUDA Out of Memory during warmup run {i + 1}",
+                            "error": f"Out of Memory during warmup run {i + 1}",
                             "error_type": "OOM",
                         }
                     except Exception as e:
@@ -159,52 +314,73 @@ class BenchmarkTimer:
                         }
 
             # Reset peak memory stats before timing runs
-            if self.is_cuda:
-                torch.cuda.reset_peak_memory_stats()
+            self.clear_memory()
 
             # Timing runs
             times = []
-            cudart().cudaProfilerStart()
+
+            # Start profiler (torch backend only)
+            if self.backend == "torch" and self._cudart is not None:
+                self._cudart().cudaProfilerStart()
 
             for i in range(self.timing_runs):
                 try:
                     with timeout(self.timeout_seconds):
-                        if self.is_cuda:
-                            torch.cuda.synchronize()
-                            start_event = torch.cuda.Event(enable_timing=True)
-                            end_event = torch.cuda.Event(enable_timing=True)
+                        match self.backend:
+                            case "torch":
+                                if self.is_cuda:
+                                    self._torch.cuda.synchronize()
+                                    start_event = self._torch.cuda.Event(
+                                        enable_timing=True
+                                    )
+                                    end_event = self._torch.cuda.Event(
+                                        enable_timing=True
+                                    )
 
-                            start_event.record()
-                            func(*args, **kwargs)
-                            end_event.record()
+                                    start_event.record()
+                                    func(*args, **kwargs)
+                                    end_event.record()
 
-                            torch.cuda.synchronize()
-                            elapsed_time = start_event.elapsed_time(
-                                end_event
-                            )  # milliseconds
-                            times.append(elapsed_time)
-                        else:
-                            start_time = time.perf_counter()
-                            func(*args, **kwargs)
-                            end_time = time.perf_counter()
-                            times.append(
-                                (end_time - start_time) * 1000.0
-                            )  # Convert to ms
+                                    self._torch.cuda.synchronize()
+                                    elapsed_time = start_event.elapsed_time(
+                                        end_event
+                                    )  # milliseconds
+                                    times.append(elapsed_time)
+                                else:
+                                    start_time = time.perf_counter()
+                                    func(*args, **kwargs)
+                                    end_time = time.perf_counter()
+                                    times.append(
+                                        (end_time - start_time) * 1000.0
+                                    )  # Convert to ms
 
-                except torch.cuda.OutOfMemoryError:
-                    if self.is_cuda:
-                        torch.cuda.empty_cache()
-                    cudart().cudaProfilerStop()
+                            case "jax":
+                                start_time = time.perf_counter()
+                                result = func(*args, **kwargs)
+                                # Block until computation is complete
+                                self._jax.block_until_ready(result)
+                                end_time = time.perf_counter()
+                                times.append(
+                                    (end_time - start_time) * 1000.0
+                                )  # Convert to ms
+
+                except oom_exception:
+                    self.clear_memory()
+                    # Stop profiler (torch backend only)
+                    if self.backend == "torch" and self._cudart is not None:
+                        self._cudart().cudaProfilerStop()
                     return {
                         "median": None,
                         "times": times,  # Return partial results
                         "peak_memory_mb": None,
                         "success": False,
-                        "error": f"CUDA Out of Memory during timing run {i + 1}/{self.timing_runs}",
+                        "error": f"Out of Memory during timing run {i + 1}/{self.timing_runs}",
                         "error_type": "OOM",
                     }
                 except TimeoutError as e:
-                    cudart().cudaProfilerStop()
+                    # Stop profiler (torch backend only)
+                    if self.backend == "torch" and self._cudart is not None:
+                        self._cudart().cudaProfilerStop()
                     return {
                         "median": None,
                         "times": times,  # Return partial results
@@ -214,7 +390,9 @@ class BenchmarkTimer:
                         "error_type": "Timeout",
                     }
                 except Exception as e:
-                    cudart().cudaProfilerStop()
+                    # Stop profiler (torch backend only)
+                    if self.backend == "torch" and self._cudart is not None:
+                        self._cudart().cudaProfilerStop()
                     return {
                         "median": None,
                         "times": times,  # Return partial results
@@ -224,12 +402,12 @@ class BenchmarkTimer:
                         "error_type": type(e).__name__,
                     }
 
-            cudart().cudaProfilerStop()
+            # Stop profiler (torch backend only)
+            if self.backend == "torch" and self._cudart is not None:
+                self._cudart().cudaProfilerStop()
 
             # Get peak memory usage
-            peak_memory_mb = None
-            if self.is_cuda:
-                peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
+            peak_memory_mb = self.get_peak_memory()
 
             if not times:
                 return {
