@@ -166,13 +166,18 @@ def estimate_cell_list_sizes(
     num_cells_est = jnp.int32(volume / cell_volume * buffer_factor)
     max_total_cells = jnp.max(jnp.array([num_cells_est, 8]))  # Minimum 8 cells
 
-    # Estimate cells per dimension
-    cells_per_dimension = jnp.ceil(jnp.ones(3) * (max_total_cells ** (1 / 3))).astype(
-        jnp.int32
-    )
+    # Compute cells_per_dimension and neighbor_search_radius from cell geometry,
+    # mirroring the Warp _estimate_cell_list_sizes kernel used by the Torch path.
+    inverse_cell_transpose = jnp.linalg.inv(cell[0]).T
+    face_distances = 1.0 / jnp.linalg.norm(inverse_cell_transpose, axis=1)
+    cells_per_dimension = jnp.maximum(jnp.int32(face_distances / cutoff), 1)
 
-    # Search radius estimate
-    neighbor_search_radius = jnp.ones(3, dtype=jnp.int32) * 1
+    pbc_squeezed = pbc.squeeze()[:3] if pbc.ndim > 1 else pbc[:3]
+    neighbor_search_radius = jnp.where(
+        (cells_per_dimension == 1) & ~pbc_squeezed,
+        jnp.zeros(3, dtype=jnp.int32),
+        jnp.int32(jnp.ceil(cutoff * cells_per_dimension / face_distances)),
+    )
 
     return max_total_cells, cells_per_dimension, neighbor_search_radius
 
