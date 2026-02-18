@@ -64,16 +64,12 @@ accuracy levels. PME's $O(N \log N)$ advantage becomes apparent for larger syste
 Execution time scaling for Ewald and PME at $10^{-4}$ and $10^{-6}$ accuracy.
 ```
 
----
-
 ```{figure} _static/el-cscl-system-size-scaling-throughput.png
 :width: 90%
 :alt: EL CsCl system size throughput
 
 Throughput (10⁶ atoms/s) for single systems.
 ```
-
----
 
 ```{figure} _static/el-cscl-system-size-scaling-memory.png
 :width: 90%
@@ -97,16 +93,12 @@ large ones.
 Time per atom at constant ~128k total atoms. X-axis shows system size × batch size.
 ```
 
----
-
 ```{figure} _static/el-cscl-constant-workload-scaling-throughput.png
 :width: 90%
 :alt: EL CsCl constant workload throughput
 
 Throughput (10⁶ atoms/s) at constant total workload.
 ```
-
----
 
 ```{figure} _static/el-cscl-constant-workload-scaling-memory.png
 :width: 90%
@@ -129,16 +121,12 @@ performance scales with increasing number of concurrent systems.
 Time per atom for batched systems at two accuracy levels.
 ```
 
----
-
 ```{figure} _static/el-cscl-batch-scaling-throughput.png
 :width: 90%
 :alt: EL CsCl batch scaling throughput
 
 Throughput (10⁶ atoms/s) for batched processing.
 ```
-
----
 
 ```{figure} _static/el-cscl-batch-scaling-memory.png
 :width: 90%
@@ -173,16 +161,12 @@ Single system growing from 128 to 128k atoms.
 Execution time scaling for Ewald and PME on NH₃ clusters.
 ```
 
----
-
 ```{figure} _static/el-nh3-system-size-scaling-throughput.png
 :width: 90%
 :alt: EL NH3 system size throughput
 
 Throughput (10⁶ atoms/s) vs. system size.
 ```
-
----
 
 ```{figure} _static/el-nh3-system-size-scaling-memory.png
 :width: 90%
@@ -204,16 +188,12 @@ Fixed total atom count (~128k), varying system size × batch size.
 Time per atom at constant ~128k total atoms. X-axis shows system size × batch size.
 ```
 
----
-
 ```{figure} _static/el-nh3-constant-workload-scaling-throughput.png
 :width: 90%
 :alt: EL NH3 constant workload throughput
 
 Throughput (10⁶ atoms/s) at constant total workload.
 ```
-
----
 
 ```{figure} _static/el-nh3-constant-workload-scaling-memory.png
 :width: 90%
@@ -233,14 +213,10 @@ Fixed atoms per system, growing batch size.
 :alt: EL NH3 batch scaling time
 ```
 
----
-
 ```{figure} _static/el-nh3-batch-scaling-throughput.png
 :width: 90%
 :alt: EL NH3 batch scaling throughput
 ```
-
----
 
 ```{figure} _static/el-nh3-batch-scaling-memory.png
 :width: 90%

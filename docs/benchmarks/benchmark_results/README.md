@@ -1,72 +1,44 @@
-# Neighbor List Benchmark Results
+# Benchmark Reference CSVs
 
-This directory contains pre-computed benchmark results for different neighbor list algorithms
-on various GPU hardware.
+Pre-computed H100 benchmark results used by `docs/benchmarks/generate_plots.py`
+during `make docs`. These CSVs are the source of truth for the Sphinx
+documentation plots.
 
-## File Naming Convention
+## File Naming
 
-Results are stored in CSV files with the following naming pattern:
-
-```bash
-neighbor_list_benchmark_<method>_<gpu_sku>.csv
+```text
+{module}-{system}-{scaling-mode}.csv
 ```
 
-Where:
+- **module**: `nl` (Neighbor List), `d3` (DFT-D3), `el` (Electrostatics)
+- **system**: `cscl` (CsCl crystal), `nh3` (NH₃ molecular clusters)
+- **scaling-mode**: `system-size-scaling`, `constant-workload-scaling`, `batch-scaling`
 
-- `<method>`: The neighbor list algorithm (`naive`, `cell_list`, `batch_naive`, `batch_cell_list`)
-- `<gpu_sku>`: GPU identifier (e.g., `rtx_a3000_laptop_gpu`, `a100_sxm4_80gb`)
+## CSV Columns
 
-## Running Benchmarks
+All CSVs share these core columns:
 
-To generate new benchmark results:
+| Column | Description |
+|--------|-------------|
+| `system` | System name (cscl or nh3) |
+| `scaling_mode` | Scaling mode |
+| `method` | Algorithm or method name |
+| `atoms_per_system` | Atoms per individual system |
+| `batch_size` | Number of batched replicas |
+| `total_atoms` | Total atoms (atoms_per_system × batch_size) |
+| `time_us_per_atom` | Time per atom (μs) |
+| `throughput_matoms_per_sec` | Throughput (10⁶ atoms/s) |
+| `mem_peak_gb` | Peak GPU VRAM (GB) |
 
-```bash
-cd benchmarks/neighborlist
-python benchmark_neighborlist.py --config benchmark_config.yaml --output-dir ../../docs/benchmarks/benchmark_results
-```
+Module-specific columns: `cutoff` (NL, D3), `accuracy` (EL),
+`time_d3_us_per_atom` (D3-only time excluding NL).
 
-### Command Line Options
+## Updating Results
 
-- `--config`: Path to YAML configuration file (required)
-- `--output-dir`: Output directory for CSV files (default: `../../docs/benchmarks/benchmark_results`)
-- `--methods`: Specific methods to benchmark (e.g., `--methods naive cell_list`)
-- `--gpu-sku`: Override GPU SKU name for output files
-
-### Examples
-
-Run all benchmarks:
-
-```bash
-python benchmark_neighborlist.py --config benchmark_config.yaml
-```
-
-Run only specific methods:
+Run the benchmark suite on your hardware and copy CSVs here:
 
 ```bash
-python benchmark_neighborlist.py --config benchmark_config.yaml --methods naive cell_list
+uv sync --all-extras --group benchmark
+python benchmarks/benchmark_suite.py --benchmark all
+cp benchmarks/benchmark-results/run_*/*.csv docs/benchmarks/benchmark_results/
 ```
-
-Override GPU SKU name:
-
-```bash
-python benchmark_neighborlist.py --config benchmark_config.yaml --gpu-sku custom_gpu_name
-```
-
-## CSV Format
-
-Each CSV file contains the following columns:
-
-- `method`: Algorithm name
-- `total_atoms`: Total number of atoms in the system
-- `atoms_per_system`: Atoms per system (for batch methods)
-- `total_neighbors`: Total number of neighbor pairs found
-- `batch_size`: Batch size (1 for single-system methods)
-- `median_time_us`: Median execution time in microseconds
-- `success`: Whether the benchmark completed successfully (optional)
-- `error`: Error message if benchmark failed (optional)
-- `error_type`: Error type (e.g., "OOM", "Timeout") if failed (optional)
-
-## Visualization
-
-The Sphinx documentation automatically discovers and visualizes all CSV files in this directory.
-See the benchmarks section of the documentation for interactive plots and comparisons.

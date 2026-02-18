@@ -25,7 +25,7 @@ from benchmarks.utils import (
     create_run_directory,
     get_gpu_sku,
     get_timestamp,
-    write_run_readme,
+    write_run_log,
 )
 
 SCRIPT_DIR = Path(__file__).parent
@@ -216,7 +216,6 @@ def main():
             el_results = run_el(config, output_dir=run_dir)
             results_summary["EL"] = len(el_results)
 
-    # Write README with reproducibility info
     end_time = datetime.now()
     extra = {
         "Benchmarks run": ", ".join(sorted(benchmarks)),
@@ -225,7 +224,7 @@ def main():
     }
     for name, count in results_summary.items():
         extra[f"{name} results"] = count
-    write_run_readme(run_dir, start_time, end_time, extra_info=extra)
+    write_run_log(run_dir, start_time, end_time, extra_info=extra)
 
     # --- Plotting ---
     if not args.no_plot:
@@ -239,7 +238,7 @@ def main():
     total = sum(results_summary.values())
     print(f"  Total: {total} results")
     print(f"  Output: {run_dir}")
-    print(f"  README: {run_dir / 'README.md'}")
+    print(f"  Run log: {run_dir / 'RUN_LOG.md'}")
     print("=" * 70)
 
     return 0 if total > 0 else 1

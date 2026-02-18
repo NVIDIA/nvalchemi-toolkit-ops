@@ -61,16 +61,12 @@ scales with the number of atoms for both cutoff radii.
 Time per atom vs. system size for DFT-D3(BJ) with 15 Å and 25 Å cutoffs.
 ```
 
----
-
 ```{figure} _static/d3-cscl-system-size-scaling-throughput.png
 :width: 90%
 :alt: D3 CsCl system size throughput
 
 Throughput (10⁶ atoms/s) vs. system size.
 ```
-
----
 
 ```{figure} _static/d3-cscl-system-size-scaling-memory.png
 :width: 90%
@@ -94,16 +90,12 @@ at both cutoff radii.
 Time per atom at constant ~128k total atoms. X-axis shows system size × batch size.
 ```
 
----
-
 ```{figure} _static/d3-cscl-constant-workload-scaling-throughput.png
 :width: 90%
 :alt: D3 CsCl constant workload throughput
 
 Throughput (10⁶ atoms/s) at constant total workload.
 ```
-
----
 
 ```{figure} _static/d3-cscl-constant-workload-scaling-memory.png
 :width: 90%
@@ -126,16 +118,12 @@ performance scales with increasing number of concurrent systems.
 Time per atom for batched systems at different cutoff radii and system sizes.
 ```
 
----
-
 ```{figure} _static/d3-cscl-batch-scaling-throughput.png
 :width: 90%
 :alt: D3 CsCl batch scaling throughput
 
 Throughput (10⁶ atoms/s) for batched processing.
 ```
-
----
 
 ```{figure} _static/d3-cscl-batch-scaling-memory.png
 :width: 90%
@@ -170,16 +158,12 @@ Single system growing from 128 to 128k atoms.
 Time per atom vs. system size for NH₃ clusters.
 ```
 
----
-
 ```{figure} _static/d3-nh3-system-size-scaling-throughput.png
 :width: 90%
 :alt: D3 NH3 system size throughput
 
 Throughput (10⁶ atoms/s) vs. system size.
 ```
-
----
 
 ```{figure} _static/d3-nh3-system-size-scaling-memory.png
 :width: 90%
@@ -201,16 +185,12 @@ Fixed total atom count (~128k), varying system size × batch size.
 Time per atom at constant ~128k total atoms. X-axis shows system size × batch size.
 ```
 
----
-
 ```{figure} _static/d3-nh3-constant-workload-scaling-throughput.png
 :width: 90%
 :alt: D3 NH3 constant workload throughput
 
 Throughput (10⁶ atoms/s) at constant total workload.
 ```
-
----
 
 ```{figure} _static/d3-nh3-constant-workload-scaling-memory.png
 :width: 90%
@@ -230,14 +210,10 @@ Fixed atoms per system, growing batch size.
 :alt: D3 NH3 batch scaling time
 ```
 
----
-
 ```{figure} _static/d3-nh3-batch-scaling-throughput.png
 :width: 90%
 :alt: D3 NH3 batch scaling throughput
 ```
-
----
 
 ```{figure} _static/d3-nh3-batch-scaling-memory.png
 :width: 90%

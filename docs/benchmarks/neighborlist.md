@@ -62,8 +62,6 @@ Time per atom vs. system size. The $O(N^2)$ naive scaling becomes apparent for
 larger systems, while cell list maintains near-constant time per atom.
 ```
 
----
-
 ```{figure} _static/nl-cscl-system-size-scaling-throughput.png
 :width: 90%
 :alt: NL CsCl system size throughput
@@ -71,8 +69,6 @@ larger systems, while cell list maintains near-constant time per atom.
 Throughput (10⁶ atoms/s) vs. system size. Cell list maintains high throughput
 even for very large systems.
 ```
-
----
 
 ```{figure} _static/nl-cscl-system-size-scaling-memory.png
 :width: 90%
@@ -93,14 +89,10 @@ Reveals the overhead of batching many small systems vs. fewer large ones.
 :alt: NL CsCl constant workload time
 ```
 
----
-
 ```{figure} _static/nl-cscl-constant-workload-scaling-throughput.png
 :width: 90%
 :alt: NL CsCl constant workload throughput
 ```
-
----
 
 ```{figure} _static/nl-cscl-constant-workload-scaling-memory.png
 :width: 90%
@@ -121,8 +113,6 @@ process many small molecules simultaneously on a single GPU.
 Time per atom decreases as batch size grows, showing GPU utilization improvement.
 ```
 
----
-
 ```{figure} _static/nl-cscl-batch-scaling-throughput.png
 :width: 90%
 :alt: NL CsCl batch scaling throughput
@@ -130,8 +120,6 @@ Time per atom decreases as batch size grows, showing GPU utilization improvement
 Throughput (10⁶ atoms/s) for batched processing. Different lines show
 different cutoff radii and system sizes.
 ```
-
----
 
 ```{figure} _static/nl-cscl-batch-scaling-memory.png
 :width: 90%
@@ -165,16 +153,12 @@ Single system growing from 128 to 128k atoms.
 Time per atom vs. system size for NH₃ clusters.
 ```
 
----
-
 ```{figure} _static/nl-nh3-system-size-scaling-throughput.png
 :width: 90%
 :alt: NL NH3 system size throughput
 
 Throughput (10⁶ atoms/s) vs. system size.
 ```
-
----
 
 ```{figure} _static/nl-nh3-system-size-scaling-memory.png
 :width: 90%
@@ -194,14 +178,10 @@ Fixed total atom count (~128k), varying system size × batch size.
 :alt: NL NH3 constant workload time
 ```
 
----
-
 ```{figure} _static/nl-nh3-constant-workload-scaling-throughput.png
 :width: 90%
 :alt: NL NH3 constant workload throughput
 ```
-
----
 
 ```{figure} _static/nl-nh3-constant-workload-scaling-memory.png
 :width: 90%
@@ -219,14 +199,10 @@ Fixed atoms per system, growing batch size.
 :alt: NL NH3 batch scaling time
 ```
 
----
-
 ```{figure} _static/nl-nh3-batch-scaling-throughput.png
 :width: 90%
 :alt: NL NH3 batch scaling throughput
 ```
-
----
 
 ```{figure} _static/nl-nh3-batch-scaling-memory.png
 :width: 90%

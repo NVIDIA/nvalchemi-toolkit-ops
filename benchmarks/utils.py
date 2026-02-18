@@ -480,8 +480,8 @@ def make_plot_name(module, system, mode):
     return make_csv_name(module, system, mode).replace(".csv", ".png")
 
 
-def write_run_readme(run_dir, start_time, end_time=None, extra_info=None):
-    """Write a README.md with reproducibility info to the run directory.
+def write_run_log(run_dir, start_time, end_time=None, extra_info=None):
+    """Write a RUN_LOG.md with environment and reproducibility info.
 
     Parameters
     ----------
@@ -566,10 +566,9 @@ def write_run_readme(run_dir, start_time, end_time=None, extra_info=None):
         "",
         "## Reproducibility",
         "",
-        "To reproduce:",
         "```bash",
-        "cd benchmarks/neighborlist",
-        "python benchmark_neighborlist.py --config benchmark_config.yaml",
+        "uv sync --all-extras --group benchmark",
+        "python -m benchmarks.benchmark_suite --benchmark all",
         "```",
         "",
     ]
@@ -581,6 +580,6 @@ def write_run_readme(run_dir, start_time, end_time=None, extra_info=None):
             lines.append(f"- **{k}**: {v}")
         lines.append("")
 
-    readme_path = run_dir / "README.md"
-    readme_path.write_text("\n".join(lines))
-    return readme_path
+    log_path = run_dir / "RUN_LOG.md"
+    log_path.write_text("\n".join(lines))
+    return log_path
