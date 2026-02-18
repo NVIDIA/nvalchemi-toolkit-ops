@@ -28,7 +28,7 @@ systems:
   cscl:
     enabled: true
     atom_counts: [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
-    constant_atoms_sizes: [256, 8192]   # ~256 atoms (small) and ~8k atoms (large)
+    constant_atoms_sizes: [250, 8192]   # CsCl valid: 2*5^3=250, 2*16^3=8192
 
   nh3:
     enabled: true

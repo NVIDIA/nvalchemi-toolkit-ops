@@ -92,7 +92,16 @@ def _load_plotting_modules():
 
 
 def main():
-    """Generate all single-panel PNGs from benchmark CSVs."""
+    """Generate all single-panel PNGs from benchmark CSVs.
+
+    Set SKIP_BENCHMARK_PLOTS=1 to skip plot generation during incremental
+    Sphinx rebuilds when only markdown has changed.
+    """
+    import os
+    if os.environ.get("SKIP_BENCHMARK_PLOTS", "").strip() in ("1", "true", "yes"):
+        print("  [generate_plots] SKIP_BENCHMARK_PLOTS set, skipping")
+        return
+
     _styles, _plot = _load_plotting_modules()
 
     results_dir = Path(__file__).parent / "benchmark_results"

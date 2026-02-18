@@ -1,9 +1,11 @@
 # Benchmarks
 
-Performance benchmarks for ALCHEMI Toolkit-Ops kernels. Currently, results
-are static and cached but we intend to evolve to CI-generated benchmark
-results gradually to cover different NVIDIA architectures, benchmark
-systems, and so on.
+Performance benchmarks for ALCHEMI Toolkit-Ops kernels across two chemical
+systems (CsCl crystal and NH₃ molecular clusters) and three scaling modes.
+For a high-level overview of these benchmarks in context, see the
+[NVIDIA Developer Blog post](https://developer.nvidia.com/blog/accelerating-ai-powered-chemistry-and-materials-science-simulations-with-nvidia-alchemi-toolkit-ops/).
+The figures below expand on the blog with additional systems, cutoff radii,
+and per-metric breakdowns.
 
 ## Available Benchmarks
 

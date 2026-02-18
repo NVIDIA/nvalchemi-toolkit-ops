@@ -392,13 +392,21 @@ def add_scaling_reference(
 
 
 def throughput_formatter(val, pos):
-    """Format throughput axis: integers when >=1, one decimal when >=0.1."""
+    """Format throughput axis in 10^6 atoms/s with clean tick labels.
+
+    Only labels ticks at 1-2-5 subdivisions per decade to avoid clutter
+    on log-scale axes (suppresses labels at 3, 4, 6, 7, 8, 9 positions).
+    """
+    if val <= 0:
+        return ""
+    import math
+    exp = math.floor(math.log10(val))
+    coeff = val / 10**exp
+    if not any(abs(coeff - c) < 0.01 for c in (1, 2, 5)):
+        return ""
     if val >= 1 and val == int(val):
         return f"{int(val)}"
-    elif val >= 0.1:
-        return f"{val:.1f}"
-    else:
-        return f"{val:.2f}"
+    return f"{val:g}"
 
 
 def memory_formatter(val, pos):
