@@ -34,12 +34,6 @@ import os
 import sys
 from pathlib import Path
 
-# configure memory management: keep in mind that the allocator
-# in particular impacts throughput, but is necessary to give
-# a better handle on *actual* memory consumption
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-
 import numpy as np
 import yaml
 from pymatgen.core import Lattice, Structure
@@ -69,27 +63,54 @@ except ImportError:
     torch_dftd3 = None  # type: ignore
     torch_neighbor_list = None  # type: ignore
 
-# Guarded JAX imports
-try:
-    import jax
-    import jax.numpy as jnp
+# JAX globals — populated lazily by _import_jax() so that env vars
+# (XLA allocator mode) can be configured before the first import.
+JAX_AVAILABLE = False
+jax = None  # type: ignore
+jnp = None  # type: ignore
+JaxD3Parameters = None  # type: ignore
+jax_dftd3 = None  # type: ignore
+jax_neighbor_list = None  # type: ignore
 
-    from nvalchemiops.jax.interactions.dispersion import (
-        D3Parameters as JaxD3Parameters,
-    )
-    from nvalchemiops.jax.interactions.dispersion import (
-        dftd3 as jax_dftd3,
-    )
-    from nvalchemiops.jax.neighbors import neighbor_list as jax_neighbor_list
 
-    JAX_AVAILABLE = True
-except ImportError:
-    JAX_AVAILABLE = False
-    jax = None  # type: ignore
-    jnp = None  # type: ignore
-    JaxD3Parameters = None  # type: ignore
-    jax_dftd3 = None  # type: ignore
-    jax_neighbor_list = None  # type: ignore
+def _setup_jax_allocator(mode: str) -> None:
+    """Configure XLA memory allocator before JAX is imported.
+
+    Parameters
+    ----------
+    mode : str
+        ``"throughput"`` uses XLA's default preallocator (fast).
+        ``"memory"`` uses the platform allocator (accurate memory accounting).
+    """
+    if mode == "memory":
+        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
+
+def _import_jax() -> None:
+    """Import JAX and nvalchemiops JAX bindings, setting module globals."""
+    global JAX_AVAILABLE, jax, jnp, JaxD3Parameters, jax_dftd3, jax_neighbor_list
+    try:
+        import jax as _jax
+        import jax.numpy as _jnp
+
+        from nvalchemiops.jax.interactions.dispersion import (
+            D3Parameters as _JaxD3Parameters,
+        )
+        from nvalchemiops.jax.interactions.dispersion import (
+            dftd3 as _jax_dftd3,
+        )
+        from nvalchemiops.jax.neighbors import neighbor_list as _jax_neighbor_list
+
+        jax = _jax
+        jnp = _jnp
+        JaxD3Parameters = _JaxD3Parameters
+        jax_dftd3 = _jax_dftd3
+        jax_neighbor_list = _jax_neighbor_list
+        JAX_AVAILABLE = True
+    except ImportError:
+        pass
+
 
 # Optional torch-dftd imports (only needed for torch_dftd backend)
 try:
@@ -676,6 +697,7 @@ def run_dftd3_nvalchemiops_benchmark(
                 "total_neighbors": 0,
                 "median_time_ms": float("inf"),
                 "peak_memory_mb": timing_results.get("peak_memory_mb"),
+                "memory_note": "torch:cuda.max_memory_allocated",
                 "success": False,
                 "error": timing_results.get("error", "Unknown error"),
                 "error_type": timing_results.get("error_type", "Unknown"),
@@ -691,6 +713,7 @@ def run_dftd3_nvalchemiops_benchmark(
             "total_neighbors": total_neighbors,
             "median_time_ms": float(median_time_ms),
             "peak_memory_mb": peak_memory_mb,
+            "memory_note": "torch:cuda.max_memory_allocated",
             "success": True,
         }
 
@@ -703,6 +726,7 @@ def run_dftd3_nvalchemiops_benchmark(
             "total_neighbors": 0,
             "median_time_ms": float("inf"),
             "peak_memory_mb": None,
+            "memory_note": "torch:cuda.max_memory_allocated",
             "success": False,
             "error": str(e),
             "error_type": type(e).__name__,
@@ -736,28 +760,72 @@ def run_dftd3_nvalchemiops_jax_benchmark(
         total_atoms = backend_data["total_atoms"]
         total_neighbors = int(jnp.sum(num_neighbor_data))
         batch_idx = backend_data["batch_idx"]
+        cell = backend_data["cell"]
 
-        # Define the function to benchmark
-        def dftd3_call():
+        # Closure-captured scalars stay concrete under JIT (not traced).
+        # This is required for Warp FFI compatibility.
+        a1_val = dftd3_config["a1"]
+        a2_val = dftd3_config["a2"]
+        s6_val = dftd3_config["s6"]
+        s8_val = dftd3_config["s8"]
+        k1_val = dftd3_config["k1"]
+        k3_val = dftd3_config["k3"]
+        s5_on_val = dftd3_config["s5_smoothing_on"]
+        s5_off_val = dftd3_config["s5_smoothing_off"]
+        fill_val = total_atoms
+
+        @jax.jit
+        def jitted_dftd3(
+            positions,
+            numbers,
+            neighbor_matrix,
+            batch_idx,
+            cell,
+            rcov,
+            r4r2,
+            c6ab,
+            cn_ref,
+        ):
+            params = JaxD3Parameters(
+                rcov=rcov,
+                r4r2=r4r2,
+                c6ab=c6ab,
+                cn_ref=cn_ref,
+            )
             return jax_dftd3(
                 positions=positions,
                 numbers=numbers,
-                d3_params=d3_params,
+                d3_params=params,
                 neighbor_matrix=neighbor_matrix,
-                fill_value=total_atoms,
-                a1=dftd3_config["a1"],
-                a2=dftd3_config["a2"],
-                s6=dftd3_config["s6"],
-                s8=dftd3_config["s8"],
-                k1=dftd3_config["k1"],
-                k3=dftd3_config["k3"],
+                fill_value=fill_val,
+                a1=a1_val,
+                a2=a2_val,
+                s6=s6_val,
+                s8=s8_val,
+                k1=k1_val,
+                k3=k3_val,
                 batch_idx=batch_idx,
-                s5_smoothing_on=dftd3_config["s5_smoothing_on"],
-                s5_smoothing_off=dftd3_config["s5_smoothing_off"],
+                cell=cell,
+                s5_smoothing_on=s5_on_val,
+                s5_smoothing_off=s5_off_val,
+            )
+
+        def dftd3_call():
+            return jitted_dftd3(
+                positions,
+                numbers,
+                neighbor_matrix,
+                batch_idx,
+                cell,
+                d3_params.rcov,
+                d3_params.r4r2,
+                d3_params.c6ab,
+                d3_params.cn_ref,
             )
 
         # Time the function
         timing_results = timer.time_function(dftd3_call)
+        compile_ms = timing_results.get("compile_ms")
 
         if not timing_results["success"]:
             return {
@@ -765,8 +833,10 @@ def run_dftd3_nvalchemiops_jax_benchmark(
                 "batch_size": batch_size,
                 "supercell_size": supercell_size,
                 "total_neighbors": 0,
+                "compile_ms": compile_ms,
                 "median_time_ms": float("inf"),
                 "peak_memory_mb": timing_results.get("peak_memory_mb"),
+                "memory_note": "jax:nvml_process_used",
                 "success": False,
                 "error": timing_results.get("error", "Unknown error"),
                 "error_type": timing_results.get("error_type", "Unknown"),
@@ -780,8 +850,10 @@ def run_dftd3_nvalchemiops_jax_benchmark(
             "batch_size": batch_size,
             "supercell_size": supercell_size,
             "total_neighbors": total_neighbors,
+            "compile_ms": compile_ms,
             "median_time_ms": float(median_time_ms),
             "peak_memory_mb": peak_memory_mb,
+            "memory_note": "jax:nvml_process_used",
             "success": True,
         }
 
@@ -792,8 +864,10 @@ def run_dftd3_nvalchemiops_jax_benchmark(
             "batch_size": batch_size,
             "supercell_size": supercell_size,
             "total_neighbors": 0,
+            "compile_ms": None,
             "median_time_ms": float("inf"),
             "peak_memory_mb": None,
+            "memory_note": "jax:nvml_process_used",
             "success": False,
             "error": str(e),
             "error_type": type(e).__name__,
@@ -1029,8 +1103,24 @@ def main():
         type=str,
         help="Override GPU SKU name for output files (default: auto-detect)",
     )
+    parser.add_argument(
+        "--jax-allocator",
+        type=str,
+        choices=["throughput", "memory"],
+        default="throughput",
+        help=(
+            "JAX XLA memory allocator mode (default: throughput). "
+            "'throughput' uses XLA's preallocator for fast steady-state timing. "
+            "'memory' uses the platform allocator for accurate memory accounting."
+        ),
+    )
 
     args = parser.parse_args()
+
+    # Configure JAX allocator and import JAX (env vars must precede import)
+    if args.backend == "jax":
+        _setup_jax_allocator(args.jax_allocator)
+    _import_jax()
 
     # Validate backend availability
     _check_backend_available(args.backend)
@@ -1096,7 +1186,13 @@ def main():
     print(f"Dtype: {dtype}")
     print(f"Warmup iterations: {warmup}")
     print(f"Timing iterations: {timing}")
+    if args.backend == "jax":
+        print(f"JAX allocator mode: {args.jax_allocator}")
     print(f"Output directory: {output_dir}")
+    print(
+        f"Memory metric: "
+        f"{'torch.cuda.max_memory_allocated (allocator peak)' if args.backend in ('torch', 'torch_dftd') else 'NVML used_memory (process-wide, not directly comparable to Torch)'}"
+    )
 
     # Run benchmarks for each system configuration
     for system_config in config["systems"]:
@@ -1192,9 +1288,15 @@ def main():
                     mem_str = ""
                     if result.get("peak_memory_mb") is not None:
                         mem_str = f" | {result['peak_memory_mb']:.1f} MB"
+                    compile_str = ""
+                    if result.get("compile_ms") is not None:
+                        compile_str = f" | warmup {result['compile_ms']:.0f} ms"
+                    neighbor_str = ""
+                    if result.get("total_neighbors"):
+                        neighbor_str = f" | {result['total_neighbors']:,d} neighbors"
                     print(
                         f"{result['median_time_ms']:.3f} ms "
-                        f"({throughput:.1f} atoms/s){mem_str}"
+                        f"({throughput:.1f} atoms/s){mem_str}{compile_str}{neighbor_str}"
                     )
                 else:
                     print(f"FAILED ({error_type}): {error}")

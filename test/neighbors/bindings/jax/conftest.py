@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -29,6 +31,16 @@ jax.config.update("jax_enable_x64", True)
 requires_gpu = pytest.mark.skipif(
     not any(d.platform == "gpu" for d in jax.devices()),
     reason="JAX Warp bindings require GPU",
+)
+
+try:
+    _ = import_module("vesin")
+    VESIN_AVAILABLE = True
+except ModuleNotFoundError:
+    VESIN_AVAILABLE = False
+
+requires_vesin = pytest.mark.skipif(
+    not VESIN_AVAILABLE, reason="`vesin` required for consistency checks."
 )
 
 

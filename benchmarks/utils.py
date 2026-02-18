@@ -347,6 +347,8 @@ class BenchmarkTimer:
             Additional keys:
             - "median": Median time in milliseconds (or None if failed)
             - "times": List of individual run times (empty if failed)
+            - "compile_ms": Wall-clock time for all warmup runs in ms (captures
+              JIT compilation overhead for JAX; also measured for other backends)
             - "peak_memory_mb": Peak GPU memory usage in MB (or None if CPU/failed)
             - "success": Boolean indicating if benchmark completed successfully
             - "error": Error message if benchmark failed (optional)
@@ -361,8 +363,11 @@ class BenchmarkTimer:
         """
         oom_exception = self._get_oom_exception_type()
 
+        compile_ms: float | None = None
+
         try:
-            # Warmup runs with timeout
+            # Warmup runs with timeout (timed to capture compile overhead)
+            warmup_start = time.perf_counter()
             with timeout(self.timeout_seconds):
                 for i in range(self.warmup_runs):
                     try:
@@ -373,6 +378,7 @@ class BenchmarkTimer:
                         return {
                             "median": None,
                             "times": [],
+                            "compile_ms": None,
                             "peak_memory_mb": None,
                             "success": False,
                             "error": f"Out of Memory during warmup run {i + 1}",
@@ -382,11 +388,13 @@ class BenchmarkTimer:
                         return {
                             "median": None,
                             "times": [],
+                            "compile_ms": None,
                             "peak_memory_mb": None,
                             "success": False,
                             "error": f"Warmup run {i + 1} failed: {str(e)}",
                             "error_type": type(e).__name__,
                         }
+            compile_ms = (time.perf_counter() - warmup_start) * 1000.0
 
             # Reset peak memory stats before timing runs
             self.clear_memory()
@@ -447,6 +455,7 @@ class BenchmarkTimer:
                     return {
                         "median": None,
                         "times": times,  # Return partial results
+                        "compile_ms": compile_ms,
                         "peak_memory_mb": None,
                         "success": False,
                         "error": f"Out of Memory during timing run {i + 1}/{self.timing_runs}",
@@ -459,6 +468,7 @@ class BenchmarkTimer:
                     return {
                         "median": None,
                         "times": times,  # Return partial results
+                        "compile_ms": compile_ms,
                         "peak_memory_mb": None,
                         "success": False,
                         "error": f"Timeout during timing run {i + 1}/{self.timing_runs}: {str(e)}",
@@ -471,6 +481,7 @@ class BenchmarkTimer:
                     return {
                         "median": None,
                         "times": times,  # Return partial results
+                        "compile_ms": compile_ms,
                         "peak_memory_mb": None,
                         "success": False,
                         "error": f"Timing run {i + 1} failed: {str(e)}",
@@ -488,6 +499,7 @@ class BenchmarkTimer:
                 return {
                     "median": None,
                     "times": [],
+                    "compile_ms": compile_ms,
                     "peak_memory_mb": peak_memory_mb,
                     "success": False,
                     "error": "No successful timing runs",
@@ -497,6 +509,7 @@ class BenchmarkTimer:
             return {
                 "median": float(np.median(times)),
                 "times": times,
+                "compile_ms": compile_ms,
                 "peak_memory_mb": peak_memory_mb,
                 "success": True,
             }
@@ -505,6 +518,7 @@ class BenchmarkTimer:
             return {
                 "median": None,
                 "times": [],
+                "compile_ms": compile_ms,
                 "peak_memory_mb": None,
                 "success": False,
                 "error": f"Overall timeout: {str(e)}",
@@ -514,6 +528,7 @@ class BenchmarkTimer:
             return {
                 "median": None,
                 "times": [],
+                "compile_ms": compile_ms,
                 "peak_memory_mb": None,
                 "success": False,
                 "error": f"Unexpected error: {str(e)}",
