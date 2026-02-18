@@ -31,6 +31,10 @@ All axes use log₂ scaling. The x-axis displays linearized atom counts
 (128, 256, 512, ...) for readability, but spacing is logarithmic.
 Some data points at the largest sizes may be absent due to GPU out-of-memory
 (OOM), particularly for the 25 Å cutoff at 128k atoms.
+For small systems with large cutoffs (e.g., 128 atoms at 25 Å), the
+simulation cell may be smaller than 2×cutoff, violating the minimum image
+convention. These points are included for completeness but should be
+interpreted with care.
 ```
 
 ## Performance Results
