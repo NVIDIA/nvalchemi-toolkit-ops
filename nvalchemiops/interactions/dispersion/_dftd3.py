@@ -1782,6 +1782,16 @@ def dftd3_matrix(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor (not computed for non-periodic systems). Must be
         pre-allocated but will not be modified.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Values are not used for non-periodic systems, but the array must
+        still be provided with shape matching neighbor_matrix.
+        Must be pre-allocated by caller.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -1800,15 +1810,6 @@ def dftd3_matrix(
         Distance where S5 switching completes, in same units as positions. Default: 0.0
     fill_value : int or None, optional
         Value indicating padding in neighbor_matrix. If None, inferred from num_atoms.
-    batch_idx : wp.array(dtype=int32), shape [num_atoms]
-        Batch indices mapping each atom to its system index.
-    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]
-        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
-        For non-periodic systems this should be a zero-filled array.
-        Must be pre-allocated by caller.
-    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
-        Must be pre-allocated and zeroed by caller.
 
     Returns
     -------
@@ -2007,6 +2008,15 @@ def dftd3_matrix_pbc(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor in energy units. Must be pre-allocated and zeroed.
         Only computed if compute_virial=True.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Populated by Pass 0 from unit cell shifts. Must be pre-allocated
+        with shape matching neighbor_matrix.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -2025,14 +2035,6 @@ def dftd3_matrix_pbc(
         Distance where S5 switching completes, in same units as positions. Default: 0.0
     fill_value : int or None, optional
         Value indicating padding in neighbor_matrix. If None, inferred from num_atoms.
-    batch_idx : wp.array(dtype=int32), shape [num_atoms]
-        Batch indices mapping each atom to its system index.
-    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]
-        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
-        Computed from unit cell shifts in Pass 0. Must be pre-allocated and zeroed by caller.
-    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
-        Must be pre-allocated and zeroed by caller.
     compute_virial : bool, optional
         If True, compute virial tensor. Default: False
 
@@ -2241,6 +2243,16 @@ def dftd3(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor (not computed for non-periodic systems). Must be
         pre-allocated but will not be modified.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_edges]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Values are not used for non-periodic systems, but the array must
+        still be provided with length matching idx_j.
+        Must be pre-allocated by caller.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -2257,15 +2269,6 @@ def dftd3(
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
         Distance where S5 switching completes, in same units as positions. Default: 0.0
-    batch_idx : wp.array(dtype=int32), shape [num_atoms]
-        Batch indices mapping each atom to its system index.
-    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_edges]
-        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
-        For non-periodic systems this should be a zero-filled array.
-        Must be pre-allocated by caller.
-    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
-        Must be pre-allocated and zeroed by caller.
 
     Returns
     -------
@@ -2466,6 +2469,15 @@ def dftd3_pbc(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor in energy units. Must be pre-allocated and zeroed.
         Only computed if compute_virial=True.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_edges]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Populated by Pass 0 from unit cell shifts. Must be pre-allocated
+        with length matching idx_j.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -2482,14 +2494,6 @@ def dftd3_pbc(
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
         Distance where S5 switching completes, in same units as positions. Default: 0.0
-    batch_idx : wp.array(dtype=int32), shape [num_atoms]
-        Batch indices mapping each atom to its system index.
-    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_edges]
-        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
-        Computed from unit cell shifts in Pass 0. Must be pre-allocated and zeroed by caller.
-    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
-        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
-        Must be pre-allocated and zeroed by caller.
     compute_virial : bool, optional
         If True, compute virial tensor. Default: False
 

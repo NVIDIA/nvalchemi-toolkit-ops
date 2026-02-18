@@ -3044,14 +3044,15 @@ def ewald_real_space_energy_forces(
         OUTPUT: Per-atom energies.
     atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Per-atom forces.
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Virial tensor. Only written when compute_virial=True.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar type (wp.float32 or wp.float64).
     device : str, optional
         Warp device.
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
-    virial : wp.array
-        OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
     num_atoms = positions.shape[0]
     if device is None:
@@ -3319,14 +3320,15 @@ def ewald_real_space_energy_forces_charge_grad_matrix(
         OUTPUT: Per-atom forces.
     charge_gradients : wp.array, shape (N,), dtype=wp.float64
         OUTPUT: Per-atom charge gradients.
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Virial tensor. Only written when compute_virial=True.
+        Must be pre-allocated by caller.
     wp_dtype : type
         Warp scalar type (wp.float32 or wp.float64).
     device : str, optional
         Warp device.
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
-    virial : wp.array
-        OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
     num_atoms = neighbor_matrix.shape[0]
     if device is None:
