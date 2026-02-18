@@ -66,8 +66,12 @@ dev = [
     {include-group="docs"},
 ]
 benchmark = [
-    "natsort",
+    "loguru",
+    "matplotlib",
     "nvidia-ml-py",  # pynvml for GPU memory tracking
+    "pymatgen",  # CsCl crystal structure generation
+    "rdkit",  # molecular conformer generation
+    "requests",  # PDB file downloads
 ]
 docs = [
     "sphinx>=6.0.0",

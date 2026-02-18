@@ -5,11 +5,14 @@
 
 Loads per-module YAML configs and dispatches benchmarks in-process.
 CLI flags override YAML values. Each sub-benchmark can also run standalone.
+Plots are generated automatically unless --no-plot is specified.
 
 Usage:
-    python benchmark_suite.py --benchmark nl --system cscl --mode system_size
-    python benchmark_suite.py --benchmark d3 el --system nh3 --mode constant_workload
     python benchmark_suite.py --benchmark all
+    python benchmark_suite.py --benchmark nl --system cscl --mode system_size
+    python benchmark_suite.py --benchmark d3 el --system nh3
+    python benchmark_suite.py --no-plot --benchmark nl
+    python benchmark_suite.py --plot-only benchmarks/benchmark-results/run_2026-02-17/
 """
 
 import argparse
@@ -74,10 +77,11 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python benchmark_suite.py --benchmark nl
+    python benchmark_suite.py --benchmark all
     python benchmark_suite.py --benchmark d3 --system cscl --mode system_size
     python benchmark_suite.py --benchmark all --timing-runs 50
-    python benchmark_suite.py --benchmark nl el --system nh3 --mode constant_workload
+    python benchmark_suite.py --benchmark nl --no-plot
+    python benchmark_suite.py --plot-only benchmark-results/run_2026-02-17/
 
 Benchmark aliases:
     nl      Neighbor List
@@ -120,6 +124,14 @@ module-specific CLI options.
     parser.add_argument("--warmup-runs", type=int, default=None)
     parser.add_argument(
         "--output-dir", type=Path, default=None, help="Override output directory"
+    )
+    parser.add_argument(
+        "--no-plot", action="store_true",
+        help="Skip plotting after benchmarks",
+    )
+    parser.add_argument(
+        "--plot-only", type=Path, default=None, metavar="RESULTS_DIR",
+        help="Skip benchmarks, only generate plots from existing results directory",
     )
     return parser.parse_args()
 
@@ -215,6 +227,10 @@ def main():
         extra[f"{name} results"] = count
     write_run_readme(run_dir, start_time, end_time, extra_info=extra)
 
+    # --- Plotting ---
+    if not args.no_plot:
+        _generate_plots(run_dir)
+
     # Summary
     print(f"\n{'=' * 70}")
     print("BENCHMARK SUITE COMPLETE")
@@ -229,5 +245,46 @@ def main():
     return 0 if total > 0 else 1
 
 
+def _generate_plots(results_dir):
+    """Generate 3-panel review plots and single-panel docs plots from CSVs."""
+    from benchmarks.plotting.plot_benchmarks import plot_single_panel, load_csv, _detect_and_plot
+
+    results_dir = Path(results_dir)
+    csvs = sorted(results_dir.glob("*.csv"))
+    if not csvs:
+        print("\n  No CSVs found, skipping plots")
+        return
+
+    print(f"\n{'=' * 70}")
+    print(f"GENERATING PLOTS ({len(csvs)} CSVs)")
+    print("=" * 70)
+
+    # 3-panel review plots
+    three_panel_dir = results_dir
+    for csv in csvs:
+        try:
+            _detect_and_plot(csv, three_panel_dir)
+        except Exception as e:
+            print(f"  ERROR (3-panel) {csv.name}: {e}")
+
+    # Single-panel plots for docs
+    single_dir = results_dir / "single-panels"
+    single_dir.mkdir(exist_ok=True)
+    for csv in csvs:
+        for panel in ("time", "throughput", "memory"):
+            try:
+                out = single_dir / f"{csv.stem}-{panel}.png"
+                plot_single_panel(csv, panel, out)
+            except Exception as e:
+                print(f"  ERROR (single) {csv.stem}-{panel}: {e}")
+
+    print(f"  3-panel plots: {three_panel_dir}")
+    print(f"  Single-panel plots: {single_dir}")
+
+
 if __name__ == "__main__":
+    args_check = parse_args()
+    if args_check.plot_only:
+        _generate_plots(args_check.plot_only)
+        sys.exit(0)
     sys.exit(main())

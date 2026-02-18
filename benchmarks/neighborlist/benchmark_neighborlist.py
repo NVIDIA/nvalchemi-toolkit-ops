@@ -1,592 +1,432 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+"""Neighbor List Benchmark.
 
-"""
-Neighbor List Scaling Benchmarks
-=================================
-
-CLI tool to benchmark neighbor list algorithms and generate CSV files
-for documentation. Results are saved with GPU-specific naming:
-`neighbor_list_benchmark_<method>_<gpu_sku>.csv`
+Benchmarks naive O(N²) and cell-list O(N) neighbor list construction
+across two chemical systems (CsCl, NH3) and three scaling modes.
+Configuration is loaded from a per-module YAML file.
 
 Usage:
+    cd benchmarks/neighborlist
     python benchmark_neighborlist.py --config benchmark_config.yaml
-
-The config file specifies which methods to benchmark and their parameters.
-Results are saved per-method to allow selective benchmarking.
+    python benchmark_neighborlist.py --config benchmark_config.yaml --system cscl --mode system_size
+    python benchmark_neighborlist.py --config benchmark_config.yaml --output-dir ../../docs/benchmarks/benchmark_results
 """
 
 import argparse
-import csv
-import sys
-import traceback
 from pathlib import Path
 
 import torch
+import warp as wp
 import yaml
 
-# Add parent directory to path for imports
-sys.path.append(str(Path(__file__).parent.parent))
+# Official nvalchemiops APIs (tme branch)
+from nvalchemiops.neighbors import estimate_max_neighbors
+from nvalchemiops.torch.neighbors import (
+    batch_cell_list,
+    batch_naive_neighbor_list,
+)
 
-from benchmarks.systems import create_crystal_system
-from benchmarks.utils import BenchmarkTimer
-from nvalchemiops.torch.neighbors import neighbor_list
-from nvalchemiops.torch.neighbors.batch_cell_list import estimate_batch_cell_list_sizes
-from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
-from nvalchemiops.torch.neighbors.neighbor_utils import (
-    allocate_cell_list,
-    compute_naive_num_shifts,
-    estimate_max_neighbors,
+from benchmarks.utils import (
+    build_result,
+    clean_gpu,
+    create_run_directory,
+    cuda_timed_runs,
+    format_num,
+    get_gpu_memory_info,
+    get_gpu_sku,
+    get_timestamp,
+    make_csv_name,
+    save_results,
+)
+from benchmarks.systems import (
+    create_system,
+    get_constant_atoms_configs,
+    get_constant_total_configs,
+    get_system_size_configs,
 )
 
 
-def get_gpu_sku() -> str:
-    """Get GPU SKU name for filename generation."""
-    if not torch.cuda.is_available():
-        return "cpu"
+# =============================================================================
+# Config Loading
+# =============================================================================
 
-    try:
-        gpu_name = torch.cuda.get_device_name(0)
-        # Clean up GPU name for filename (remove spaces, special chars)
-        sku = gpu_name.replace(" ", "-").replace("_", "-")
-        # Remove common prefixes to shorten
-        sku = sku.replace("NVIDIA-", "").replace("GeForce-", "")
-        return sku.lower()
-    except Exception:
-        return "unknown_gpu"
+def load_config(config_path):
+    """Load benchmark configuration from YAML file.
 
+    Parameters
+    ----------
+    config_path : str or Path
+        Path to benchmark_config.yaml.
 
-def load_config(config_path: Path) -> dict:
-    """Load benchmark configuration from YAML file."""
+    Returns
+    -------
+    dict
+        Parsed YAML configuration.
+    """
+    config_path = Path(config_path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        return yaml.safe_load(f)
+
+
+def merge_cli_overrides(config, args):
+    """Apply CLI overrides on top of YAML config.
+
+    CLI arguments take precedence over YAML values.
+    Only non-None CLI values override.
+
+    Parameters
+    ----------
+    config : dict
+        Parsed YAML config.
+    args : argparse.Namespace
+        Parsed CLI arguments.
+
+    Returns
+    -------
+    dict
+        Config with CLI overrides applied.
+    """
+    # Timing overrides
+    if args.timing_runs is not None:
+        config['parameters']['timing_runs'] = args.timing_runs
+    if args.timing_mode is not None:
+        config['parameters']['timing_mode'] = args.timing_mode
+    if args.warmup_runs is not None:
+        config['parameters']['warmup_runs'] = args.warmup_runs
+    if args.cutoffs is not None:
+        config['parameters']['cutoffs'] = args.cutoffs
+
+    # System filter: disable systems not requested
+    if args.system is not None and 'all' not in args.system:
+        for sys_name in list(config['systems'].keys()):
+            config['systems'][sys_name]['enabled'] = sys_name in args.system
+
+    # Mode filter: disable modes not requested
+    if args.mode is not None and 'all' not in args.mode:
+        for mode_name in list(config['scaling'].keys()):
+            if isinstance(config['scaling'][mode_name], dict):
+                config['scaling'][mode_name]['enabled'] = mode_name in args.mode
+
+    # Method filter
+    if args.methods is not None:
+        for method in config.get('methods', []):
+            method['enabled'] = method['name'] in args.methods
+
+    # Output overrides
+    if args.output_dir is not None:
+        config['output']['base_dir'] = str(args.output_dir)
+    if args.gpu_sku is not None:
+        config['output']['gpu_sku_override'] = args.gpu_sku
+
     return config
 
 
-def validate_config(config: dict) -> None:
-    """Validate benchmark configuration structure."""
-    required_keys = ["methods", "parameters"]
-    for key in required_keys:
-        if key not in config:
-            raise ValueError(f"Config missing required key: {key}")
+# =============================================================================
+# Core Benchmark Function
+# =============================================================================
 
-    param_keys = ["cutoff", "warmup_iterations", "timing_iterations", "dtype"]
-    for key in param_keys:
-        if key not in config["parameters"]:
-            raise ValueError(f"Config parameters missing required key: {key}")
+def benchmark_nl(data, cutoff, method, num_runs, timing_mode='batch', warmup_runs=3):
+    """Benchmark a single NL configuration.
 
-    for method_config in config["methods"]:
-        if (
-            "name" not in method_config
-            or "atom_counts" not in method_config
-            or "batch_sizes" not in method_config
-        ):
-            raise ValueError(f"Method config missing required keys: {method_config}")
+    Optimized: no redundant clean_gpu or extra kernel calls.
+    Memory is measured from a single warmup run. Neighbor count
+    captured from warmup result. clean_gpu() is the caller's
+    responsibility (once per atom-size group, not per config).
 
+    Parameters
+    ----------
+    data : dict
+        System data from create_system().
+    cutoff : float
+        Cutoff distance in Angstroms.
+    method : str
+        'naive' or 'cell'.
+    num_runs : int
+        Number of timing iterations.
+    timing_mode : str
+        'batch' or 'per_run'.
+    warmup_runs : int
+        Number of warmup iterations.
 
-# %%
-# Utility Functions
-# -----------------
-# Helper functions for preparing inputs and running benchmarks.
+    Returns
+    -------
+    dict
+        Timing and memory results with NL-specific extras.
+    """
+    positions = data['positions']
+    cell = data['cell']
+    pbc = data['pbc']
+    batch_idx = data.get('batch_idx')
+    total_atoms = data.get('total_atoms', data['atoms_per_system'])
 
+    maxnb = estimate_max_neighbors(cutoff, atomic_density=0.2, safety_factor=1.0)
+    nl_func = batch_cell_list if method == 'cell' else batch_naive_neighbor_list
 
-def prepare_inputs(method, atoms_per_system, batch_size, cutoff, device, dtype):
-    """Prepare inputs for a specific neighbor list method with pre-allocated tensors."""
-    is_batch = "batch" in method
-    device_obj = torch.device(device)
+    # Ensure batch_idx exists even for single systems
+    if batch_idx is None:
+        batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=positions.device)
 
-    if is_batch:
-        positions_list = []
-        cells_list = []
-        pbc_list = []
-        batch_idx_list = []
-
-        try:
-            for i in range(batch_size):
-                system = create_crystal_system(
-                    atoms_per_system, lattice_type="fcc", device=device_obj, dtype=dtype
-                )
-
-                # Debug: Check system creation
-                if (
-                    "positions" not in system
-                    or "cell" not in system
-                    or "pbc" not in system
-                ):
-                    raise ValueError(
-                        f"System {i} missing required keys. Has: {system.keys()}"
-                    )
-
-                # Validate positions shape
-                pos = system["positions"]
-                if pos.shape[0] != atoms_per_system:
-                    raise ValueError(
-                        f"System {i}: requested {atoms_per_system} atoms, got {pos.shape[0]}. "
-                        f"FCC lattice may not support exact atom count."
-                    )
-                positions_list.append(pos)
-
-                # Ensure cell has right shape before squeezing
-                cell = system["cell"]
-                if cell.ndim == 3:
-                    cell = cell.squeeze(0)
-                elif cell.ndim != 2 or cell.shape != (3, 3):
-                    raise ValueError(
-                        f"System {i} cell has unexpected shape: {cell.shape}. Expected (3,3) or (1,3,3)"
-                    )
-                cells_list.append(cell)
-
-                # Ensure pbc has right shape
-                pbc = system["pbc"]
-                if pbc.ndim == 2:
-                    pbc = pbc.squeeze(0)
-                elif pbc.ndim != 1 or pbc.shape[0] != 3:
-                    raise ValueError(
-                        f"System {i} pbc has unexpected shape: {pbc.shape}. Expected (3,) or (1,3)"
-                    )
-                pbc_list.append(pbc)
-
-                batch_idx_list.extend(
-                    [i] * pos.shape[0]
-                )  # Use actual atom count, not requested
-
-        except Exception as e:
-            raise ValueError(
-                f"Error creating batch systems (atoms_per_system={atoms_per_system}, batch_size={batch_size}): {e}"
-            ) from e
-
-        # Check if we have any systems before stacking
-        if not cells_list or not pbc_list:
-            raise ValueError(
-                f"No systems created for batching. cells_list={len(cells_list)}, pbc_list={len(pbc_list)}"
-            )
-
-        # Debug: Check list contents before stacking
-        if len(cells_list) != batch_size:
-            raise ValueError(f"Expected {batch_size} cells, got {len(cells_list)}")
-        if len(pbc_list) != batch_size:
-            raise ValueError(f"Expected {batch_size} pbc tensors, got {len(pbc_list)}")
-
-        try:
-            positions = torch.cat(positions_list)
-            cells = torch.stack(cells_list)
-            pbc = torch.stack(pbc_list)
-            batch_idx = torch.tensor(batch_idx_list, dtype=torch.int32, device=device)
-        except Exception as e:
-            raise ValueError(
-                f"Error stacking batch tensors: {e}. "
-                f"cells_list[0].shape={cells_list[0].shape if cells_list else 'N/A'}, "
-                f"pbc_list[0].shape={pbc_list[0].shape if pbc_list else 'N/A'}"
-            ) from e
-
-        # Prepare batch_ptr for batch methods
-        batch_ptr = torch.arange(
-            0,
-            (batch_size + 1) * atoms_per_system,
-            atoms_per_system,
-            dtype=torch.int32,
-            device=device,
+    def run_nl():
+        return nl_func(
+            positions=positions, cell=cell, pbc=pbc,
+            cutoff=cutoff, batch_idx=batch_idx, max_neighbors=maxnb,
         )
 
-        total_atoms_actual = positions.shape[0]
+    # Single warmup run: captures neighbor count + peak memory
+    torch.cuda.reset_peak_memory_stats()
+    mem_before = torch.cuda.memory_allocated()
+    result = run_nl()
+    torch.cuda.synchronize()
+    wp.synchronize()
+    mem_peak = torch.cuda.max_memory_allocated()
+    mem_delta = mem_peak - mem_before
+    gpu_info = get_gpu_memory_info()
 
-        # Pre-allocate tensors
-        max_neighbors = estimate_max_neighbors(
-            cutoff, atomic_density=0.35, safety_factor=1.0
-        )
-        neighbor_matrix = torch.full(
-            (total_atoms_actual, max_neighbors),
-            total_atoms_actual,
-            dtype=torch.int32,
-            device=device,
-        )
-        neighbor_matrix_shifts = torch.zeros(
-            (total_atoms_actual, max_neighbors, 3), dtype=torch.int32, device=device
-        )
-        num_neighbors = torch.zeros(
-            total_atoms_actual, dtype=torch.int32, device=device
-        )
+    n_neighbors = int(result[0].shape[1]) if hasattr(result[0], 'shape') else 0
 
-        inputs = {
-            "positions": positions,
-            "cutoff": cutoff,
-            "cell": cells,
-            "pbc": pbc,
-            "method": method,
-            "batch_idx": batch_idx,
-            "neighbor_matrix": neighbor_matrix,
-            "neighbor_matrix_shifts": neighbor_matrix_shifts,
-            "num_neighbors": num_neighbors,
-        }
+    mem_info = {
+        'mem_delta_bytes': mem_delta,
+        'mem_peak_bytes': mem_peak,
+        'mem_delta_mb': mem_delta / 1024**2,
+        'mem_peak_gb': mem_peak / 1024**3,
+        'mem_gpu_percent': 100.0 * mem_peak / gpu_info['total'],
+    }
 
-        # Method-specific allocations
-        if "naive" in method:
-            # Pre-compute shifts for naive method
-            shift_range_per_dimension, shift_offset, total_shifts = (
-                compute_naive_num_shifts(cells, cutoff, pbc)
-            )
-            inputs["shift_range_per_dimension"] = shift_range_per_dimension
-            inputs["shift_offset"] = shift_offset
-            inputs["total_shifts"] = total_shifts
-            inputs["batch_ptr"] = batch_ptr
-        elif "cell_list" in method:
-            # Pre-allocate cell list cache (use batch-specific estimator for batch methods)
-            max_total_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
-                cells,
-                pbc,
-                cutoff,
-            )
-            cell_list_cache = allocate_cell_list(
-                total_atoms_actual, max_total_cells, neighbor_search_radius, device
-            )
-            inputs["cells_per_dimension"] = cell_list_cache[0]
-            inputs["neighbor_search_radius"] = cell_list_cache[1]
-            inputs["atom_periodic_shifts"] = cell_list_cache[2]
-            inputs["atom_to_cell_mapping"] = cell_list_cache[3]
-            inputs["atoms_per_cell_count"] = cell_list_cache[4]
-            inputs["cell_atom_start_indices"] = cell_list_cache[5]
-            inputs["cell_atom_list"] = cell_list_cache[6]
-            # Note: batch_cell_list uses batch_idx, not batch_ptr
-            # batch_idx is already in inputs
-
-        return inputs
-    else:
-        # Single system
-        system = create_crystal_system(
-            atoms_per_system, lattice_type="fcc", device=device_obj, dtype=dtype
-        )
-
-        positions = system["positions"]
-        cell = system["cell"].reshape(1, 3, 3)
-        pbc = system["pbc"].reshape(1, 3)
-        total_atoms_actual = positions.shape[0]
-
-        # Pre-allocate tensors
-        max_neighbors = estimate_max_neighbors(
-            cutoff, atomic_density=0.35, safety_factor=1.0
-        )
-        neighbor_matrix = torch.full(
-            (total_atoms_actual, max_neighbors),
-            total_atoms_actual,
-            dtype=torch.int32,
-            device=device,
-        )
-        neighbor_matrix_shifts = torch.zeros(
-            (total_atoms_actual, max_neighbors, 3), dtype=torch.int32, device=device
-        )
-        num_neighbors = torch.zeros(
-            total_atoms_actual, dtype=torch.int32, device=device
-        )
-
-        inputs = {
-            "positions": positions,
-            "cutoff": cutoff,
-            "cell": cell,
-            "pbc": pbc,
-            "method": method,
-            "neighbor_matrix": neighbor_matrix,
-            "neighbor_matrix_shifts": neighbor_matrix_shifts,
-            "num_neighbors": num_neighbors,
-        }
-
-        # Method-specific allocations
-        if "naive" in method:
-            # Pre-compute shifts for naive method
-            shift_range_per_dimension, shift_offset, total_shifts = (
-                compute_naive_num_shifts(cell, cutoff, pbc)
-            )
-            inputs["shift_range_per_dimension"] = shift_range_per_dimension
-            inputs["shift_offset"] = shift_offset
-            inputs["total_shifts"] = total_shifts
-        elif "cell_list" in method:
-            # Pre-allocate cell list cache
-            max_total_cells, neighbor_search_radius = estimate_cell_list_sizes(
-                cell, pbc, cutoff
-            )
-            cell_list_cache = allocate_cell_list(
-                total_atoms_actual, max_total_cells, neighbor_search_radius, device
-            )
-            inputs["cells_per_dimension"] = cell_list_cache[0]
-            inputs["neighbor_search_radius"] = cell_list_cache[1]
-            inputs["atom_periodic_shifts"] = cell_list_cache[2]
-            inputs["atom_to_cell_mapping"] = cell_list_cache[3]
-            inputs["atoms_per_cell_count"] = cell_list_cache[4]
-            inputs["cell_atom_start_indices"] = cell_list_cache[5]
-            inputs["cell_atom_list"] = cell_list_cache[6]
-
-        return inputs
-
-
-def run_single_benchmark(
-    method, num_atoms_per_system, batch_size, timer, cutoff, device, dtype
-):
-    """Run a single benchmark configuration."""
-    # Prepare inputs (includes pre-allocated tensors)
-    inputs = prepare_inputs(
-        method, num_atoms_per_system, batch_size, cutoff, device, dtype
-    )
-
-    # Time the neighbor list construction
-    timing_results = timer.time_function(neighbor_list, **inputs)
-
-    # Check if benchmark was successful
-    if not timing_results.get("success", False):
-        # Return error result with inf for median_time_us
-        return {
-            "method": method,
-            "total_atoms": num_atoms_per_system * batch_size
-            if "batch" in method
-            else num_atoms_per_system,
-            "atoms_per_system": num_atoms_per_system,
-            "total_neighbors": 0,  # Changed from None to 0
-            "batch_size": batch_size,
-            "median_time_us": float("inf"),  # Changed from None to inf
-            "success": False,
-            "error": timing_results.get("error", "Unknown error"),
-            "error_type": timing_results.get("error_type", "Unknown"),
-            "peak_memory_mb": timing_results.get("peak_memory_mb"),
-        }
-
-    # Extract number of neighbors from the pre-allocated num_neighbors tensor
-    # (neighbor_list was already called during timing, results are in the tensors)
-    num_neighbors_total = inputs["num_neighbors"].sum().item()
-
-    # Convert from ms to us
-    median_time_ms = timing_results["median"]
+    # Timing (warmup inside cuda_timed_runs handles GPU pipeline warmup)
+    time_sec = cuda_timed_runs(run_nl, num_runs, mode=timing_mode, warmup_runs=warmup_runs)
 
     return {
-        "method": method,
-        "total_atoms": num_atoms_per_system * batch_size
-        if "batch" in method
-        else num_atoms_per_system,
-        "atoms_per_system": num_atoms_per_system,
-        "total_neighbors": num_neighbors_total,
-        "batch_size": batch_size,
-        "median_time_ms": float(median_time_ms),
-        "peak_memory_mb": timing_results.get("peak_memory_mb"),
-        "success": True,
+        'time_seconds': time_sec,
+        'mem_info': mem_info,
+        'max_neighbors': n_neighbors,
+        'total_neighbor_pairs': total_atoms * n_neighbors,
     }
 
 
-def run_benchmarks_for_method(
-    method_config: dict,
-    gpu_sku: str,
-    cutoff: float,
-    device: str,
-    dtype: torch.dtype,
-    timer: BenchmarkTimer,
-    output_dir: Path,
-) -> None:
-    """Run benchmarks for a single method and save results."""
-    method = method_config["name"]
-    atom_counts = method_config["atom_counts"]
-    batch_sizes = method_config["batch_sizes"]
-    is_batch_method = "batch" in method
+# =============================================================================
+# Config-Driven Runner
+# =============================================================================
 
-    print(f"\n{'=' * 70}")
-    print(f"Benchmarking: {method}")
-    print(f"{'=' * 70}")
+def run_from_config(config, output_dir=None):
+    """Run NL benchmarks driven entirely by YAML config.
+
+    This is the main entry point, used both standalone and from benchmark_suite.py.
+
+    Parameters
+    ----------
+    config : dict
+        Merged config (YAML + CLI overrides).
+    output_dir : Path, optional
+        Override output directory. If None, uses config['output']['base_dir'].
+
+    Returns
+    -------
+    list[dict]
+        All benchmark results.
+    """
+    params = config['parameters']
+    num_runs = params['timing_runs']
+    timing_mode = params['timing_mode']
+    warmup_runs = params['warmup_runs']
+    cutoffs = params['cutoffs']
+    cutoff_limits = params.get('cutoff_limits', {})
+
+    # Resolve output directory
+    if output_dir is None:
+        output_dir = create_run_directory(config['output']['base_dir'], prefix='nl')
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect enabled methods
+    methods = [m['name'] for m in config.get('methods', []) if m.get('enabled', True)]
+
+    print(f'NL Benchmark Suite')
+    print(f'GPU: {torch.cuda.get_device_name(0)}')
+    print(f'Cutoffs: {cutoffs} Å | Methods: {methods}')
+    print(f'Timing: {num_runs} runs')
+    print(f'Output: {output_dir}')
 
     all_results = []
 
-    for atoms in atom_counts:
-        for batch_size in batch_sizes:
-            # Pre-validate configuration for batch methods
-            if is_batch_method:
-                atoms_per_system = atoms
-                total_atoms = atoms_per_system * batch_size
+    # Iterate: systems × scaling modes
+    for sys_name, sys_config in config['systems'].items():
+        if not sys_config.get('enabled', True):
+            continue
 
-                if atoms_per_system < 1:
-                    # Skip invalid configuration silently
-                    continue
-            else:
-                atoms_per_system = atoms
-                total_atoms = atoms_per_system
+        # Resolve NH3 pdb_dir relative to benchmarks/ root
+        nh3_dir = sys_config.get('pdb_dir')
+        if nh3_dir:
+            nh3_dir = Path(nh3_dir)
+            if not nh3_dir.is_absolute():
+                # Resolve relative to the config file's parent's parent (benchmarks/)
+                nh3_dir = Path(__file__).parent.parent / nh3_dir.name
+                if not nh3_dir.exists():
+                    nh3_dir = Path(__file__).parent.parent / 'nh3'
 
-            try:
-                result = run_single_benchmark(
-                    method, atoms_per_system, batch_size, timer, cutoff, device, dtype
-                )
-                result["method"] = method.replace("_", "-")
-                error_type = (
-                    None if "error_type" not in result else result.pop("error_type")
-                )
-                all_results.append(result)
+        atom_counts = sys_config.get('atom_counts', [])
+        constant_atoms_sizes = sys_config.get('constant_atoms_sizes', [1024, 8192])
 
-                if result.get("success", True):
-                    # Successful benchmark
-                    atoms_str = f"{result['total_atoms']:,}"
-                    time_str = f"{result['median_time_ms']:.1f}"
-                    neighbors_str = f"{result['total_neighbors']:,}"
-
-                    print(
-                        f"  {atoms_str:>8} atoms, batch={batch_size:2d}: "
-                        f"{time_str:>8} ms, {neighbors_str:>10} neighbors"
-                    )
-                else:
-                    # Failed benchmark
-                    atoms_str = f"{result['total_atoms']:,}"
-
-                    print(
-                        f"  {atoms_str:>8} atoms, batch={batch_size:2d}: FAILED ({error_type})"
-                    )
-                    if error_type in ["OOM", "Timeout"]:
-                        print("    └─ Skipping larger systems for this method")
-                        break
-
-            except ValueError as e:
-                # Handle configuration errors
-                print(
-                    f"  {total_atoms:>8} atoms, batch={batch_size:2d}: SKIPPED - {str(e)}"
-                )
+        for mode_name, mode_config in config['scaling'].items():
+            if not isinstance(mode_config, dict) or not mode_config.get('enabled', True):
                 continue
-            except Exception as e:
-                # Print full traceback for debugging
-                print(
-                    f"  {total_atoms:>8} atoms, batch={batch_size:2d}: EXCEPTION - {type(e).__name__}: {e}"
-                )
-                print("\nFULL TRACEBACK:")
-                traceback.print_exc()
 
-                # Add failed result
-                all_results.append(
-                    {
-                        "method": method.replace("_", "-"),
-                        "total_atoms": total_atoms,
-                        "atoms_per_system": atoms_per_system,
-                        "total_neighbors": 0,
-                        "batch_size": batch_size,
-                        "median_time_ms": float("inf"),
-                    }
-                )
+            print(f'\n{"="*70}')
+            print(f'NL: {sys_name.upper()} / {mode_name}')
+            print(f'{"="*70}')
 
-                # Break on critical errors
-                if isinstance(e, (IndexError, KeyError, RuntimeError)):
-                    print("  Critical error - skipping remaining configurations")
-                    break
+            # Get configs for this (system, mode) combination
+            if mode_name == 'system_size':
+                configs = list(get_system_size_configs(sys_name, atom_counts, nh3_dir))
+            elif mode_name == 'constant_workload':
+                target = mode_config.get('target_atoms', 131072)
+                configs = list(get_constant_total_configs(sys_name, target, nh3_dir))
+            elif mode_name == 'batch_scaling':
+                max_total = mode_config.get('max_total_atoms', 131072)
+                configs = list(get_constant_atoms_configs(
+                    sys_name, constant_atoms_sizes, max_total, nh3_dir
+                ))
+            else:
+                continue
 
-    # Save results to CSV with GPU-specific name
-    if all_results:
-        output_file = (
-            output_dir
-            / f"neighbor_list_benchmark_{method.replace('_', '-')}_{gpu_sku}.csv"
-        )
-        with open(output_file, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
-            writer.writeheader()
-            writer.writerows(all_results)
-        print(f"\n✓ Results saved to: {output_file}")
+            results = []
 
-        # Print summary
-        successful = [r for r in all_results if r.get("success", True)]
-        failed = [r for r in all_results if not r.get("success", True)]
-        print(
-            f"  Total: {len(all_results)} | Successful: {len(successful)} | Failed: {len(failed)}"
-        )
+            for cfg in configs:
+                n, bs = cfg['num_atoms'], cfg['batch_size']
+                total = n * bs if bs > 1 else n
+                print(f'\n  {format_num(n)} atoms × {bs} batch = {format_num(total)} total')
+
+                # Clean GPU once per atom-size group (not per method/cutoff)
+                clean_gpu()
+                alloc_gb = torch.cuda.memory_allocated() / 1024**3
+                print(f'  [GPU: {alloc_gb:.1f} GB allocated]')
+
+                try:
+                    data = create_system(
+                        sys_name, num_atoms=n, pdb_path=cfg.get('pdb_path'), batch_size=bs,
+                    )
+                except Exception as e:
+                    print(f'    SKIP: {e}')
+                    continue
+
+                actual_total = data.get('total_atoms', data['atoms_per_system'])
+
+                for cutoff in cutoffs:
+                    # Check cutoff limits
+                    limit = cutoff_limits.get(cutoff) or cutoff_limits.get(str(cutoff))
+                    if limit and actual_total > limit:
+                        print(f'    {cutoff}Å: SKIP (>{format_num(limit)} limit)')
+                        continue
+
+                    # Note: cell_size < 2*cutoff violates minimum image convention
+                    # but we still benchmark for completeness. Document in sphinx docs.
+                    if data['cell_size'] < 2 * cutoff:
+                        print(f'    {cutoff}Å: WARNING cell {data["cell_size"]:.1f}Å < 2×cutoff (benchmarking anyway)')
+
+                    for method in methods:
+                        try:
+                            r = benchmark_nl(
+                                data, cutoff, method, num_runs, timing_mode, warmup_runs,
+                            )
+                            result = build_result(
+                                system=sys_name,
+                                scaling_mode=mode_name,
+                                method=method,
+                                atoms_per_system=data['atoms_per_system'],
+                                batch_size=data.get('batch_size', 1),
+                                total_atoms=actual_total,
+                                time_seconds=r['time_seconds'],
+                                mem_info=r['mem_info'],
+                                cutoff=cutoff,
+                                max_neighbors=r['max_neighbors'],
+                                throughput_pairs_per_sec=(
+                                    r['total_neighbor_pairs'] / r['time_seconds']
+                                    if r['time_seconds'] > 0 else 0.0
+                                ),
+                            )
+                            results.append(result)
+                            print(
+                                f'    {cutoff}Å {method:5s}: '
+                                f'{result["time_us_per_atom"]:.3f} μs/atom | '
+                                f'{result["throughput_matoms_per_sec"]:.1f} Matom/s | '
+                                f'{result["mem_delta_mb"]:.1f} MB'
+                            )
+                        except torch.cuda.OutOfMemoryError:
+                            print(f'    {cutoff}Å {method:5s}: OOM')
+                            clean_gpu()
+                        except Exception as e:
+                            print(f'    {cutoff}Å {method:5s}: FAILED - {e}')
+
+                # Explicit cleanup: free ALL GPU tensors before next config
+                del data
+
+            # Save per-(system, mode) CSV with standardized name
+            if results:
+                csv_name = make_csv_name('nl', sys_name, mode_name)
+                save_results(results, output_dir / csv_name)
+                all_results.extend(results)
+
+    print(f'\n{"="*70}')
+    print(f'COMPLETE: {len(all_results)} results saved to {output_dir}')
+    print(f'{"="*70}')
+
+    return all_results
+
+
+# =============================================================================
+# CLI
+# =============================================================================
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Neighbor List Benchmark (2 systems × 3 modes)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    python benchmark_neighborlist.py --config benchmark_config.yaml
+    python benchmark_neighborlist.py --config benchmark_config.yaml --system cscl --mode system_size
+    python benchmark_neighborlist.py --config benchmark_config.yaml --cutoffs 6 15 --methods cell
+    python benchmark_neighborlist.py --config benchmark_config.yaml --output-dir ../../docs/benchmarks/benchmark_results
+        """,
+    )
+    # Required: config file
+    parser.add_argument('--config', type=Path, required=True,
+                        help='Path to benchmark_config.yaml')
+
+    # Optional CLI overrides
+    parser.add_argument('--system', '-s', nargs='+', default=None,
+                        help='Systems to benchmark (cscl, nh3, or all)')
+    parser.add_argument('--mode', '-m', nargs='+', default=None,
+                        help='Scaling modes (system_size, constant_workload, batch_scaling, or all)')
+    parser.add_argument('--cutoffs', '-c', type=float, nargs='+', default=None,
+                        help='Override cutoff radii in Angstroms')
+    parser.add_argument('--methods', nargs='+', default=None,
+                        help='Override NL methods (naive, cell)')
+    parser.add_argument('--timing-runs', '-n', type=int, default=None,
+                        help='Override number of timing runs')
+    parser.add_argument('--timing-mode', default=None, choices=['batch', 'per_run'],
+                        help='Override timing mode')
+    parser.add_argument('--warmup-runs', type=int, default=None)
+    parser.add_argument('--output-dir', '-o', type=Path, default=None,
+                        help='Override output directory')
+    parser.add_argument('--gpu-sku', default=None,
+                        help='Override GPU SKU name for filenames')
+    return parser.parse_args()
 
 
 def main():
-    """Main entry point for the benchmark script."""
-    parser = argparse.ArgumentParser(
-        description="Benchmark neighbor list algorithms and generate CSV files for documentation"
-    )
-    parser.add_argument(
-        "--config", type=Path, required=True, help="Path to YAML configuration file"
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("./benchmark_results"),
-        help="Output directory for CSV files (default: ./benchmark_results)",
-    )
-    parser.add_argument(
-        "--methods",
-        nargs="+",
-        help="Specific methods to benchmark (default: all methods in config)",
-    )
-    parser.add_argument(
-        "--gpu-sku",
-        type=str,
-        help="Override GPU SKU name for output files (default: auto-detect)",
-    )
+    args = parse_args()
 
-    args = parser.parse_args()
-
-    # Load and validate config
+    # Load YAML config, merge CLI overrides
     config = load_config(args.config)
-    validate_config(config)
+    config = merge_cli_overrides(config, args)
 
-    # Get parameters
-    params = config["parameters"]
-    cutoff = float(params["cutoff"])
-    warmup = int(params["warmup_iterations"])
-    timing = int(params["timing_iterations"])
-    dtype_str = params["dtype"]
-    dtype = getattr(torch, dtype_str)
-
-    # Setup device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    device_obj = torch.device(device)
-
-    # Get GPU SKU
-    gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku()
-
-    # Create output directory
-    output_dir = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Initialize timer
-    timer = BenchmarkTimer(device_obj, warmup_runs=warmup, timing_runs=timing)
-
-    # Print configuration
-    print("=" * 70)
-    print("NEIGHBOR LIST BENCHMARK")
-    print("=" * 70)
-    print(f"Device: {device}")
-    print(f"GPU SKU: {gpu_sku}")
-    print(f"Cutoff: {cutoff} Å")
-    print(f"Dtype: {dtype}")
-    print(f"Warmup iterations: {warmup}")
-    print(f"Timing iterations: {timing}")
-    print(f"Output directory: {output_dir}")
-
-    # Filter methods if specified
-    methods_to_run = config["methods"]
-    if args.methods:
-        methods_to_run = [m for m in methods_to_run if m["name"] in args.methods]
-        print(f"Running methods: {[m['name'] for m in methods_to_run]}")
-    else:
-        print(f"Running all {len(methods_to_run)} methods from config")
-
-    # Run benchmarks for each method
-    for method_config in methods_to_run:
-        run_benchmarks_for_method(
-            method_config,
-            gpu_sku,
-            cutoff,
-            device,
-            dtype,
-            timer,
-            output_dir,
-        )
-
-    print("\n" + "=" * 70)
-    print("BENCHMARK COMPLETE")
-    print("=" * 70)
+    # Run benchmarks from config
+    run_from_config(config, output_dir=args.output_dir)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
