@@ -320,9 +320,10 @@ def neighbor_list(
                 **kwargs,
             )
         case "batch_cell_list":
-            batch_idx, batch_ptr = prepare_batch_idx_ptr(
-                batch_idx, batch_ptr, positions.shape[0], positions.device
-            )
+            if batch_idx is None or batch_ptr is None:
+                batch_idx, batch_ptr = prepare_batch_idx_ptr(
+                    batch_idx, batch_ptr, positions.shape[0], positions.device
+                )
             if cell is None:
                 num_systems = batch_ptr.shape[0] - 1
                 expanded_idx = batch_idx.unsqueeze(1).expand_as(positions)
