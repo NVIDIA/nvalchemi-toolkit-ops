@@ -694,6 +694,97 @@ def run_dftd3_nvalchemiops_benchmark(
         }
 
 
+def run_dftd3_nvalchemiops_jax_benchmark(
+    supercell_size: int,
+    cutoff: float,
+    d3_params: "JaxD3Parameters",
+    dftd3_config: dict,
+    max_neighbors: int,
+    timer: BenchmarkTimer,
+    dtype_str: str = "float32",
+    batch_size: int = 1,
+) -> dict:
+    """Run DFT-D3 benchmark using nvalchemiops JAX backend (single or batched)."""
+    try:
+        # Prepare system data as numpy, then convert to JAX
+        np_data = prepare_system_numpy(supercell_size, batch_size)
+        backend_data = convert_to_backend(np_data, "jax", dtype_str=dtype_str)
+
+        # Compute neighbor list with JAX backend
+        neighbor_data, num_neighbor_data, _ = compute_neighbor_list(
+            backend_data, "jax", cutoff, max_neighbors, return_neighbor_list=False
+        )
+
+        positions = backend_data["positions"]
+        numbers = backend_data["numbers"]
+        neighbor_matrix = neighbor_data
+        total_atoms = backend_data["total_atoms"]
+        total_neighbors = int(jnp.sum(num_neighbor_data))
+        batch_idx = backend_data["batch_idx"]
+
+        # Define the function to benchmark
+        def dftd3_call():
+            return jax_dftd3(
+                positions=positions,
+                numbers=numbers,
+                d3_params=d3_params,
+                neighbor_matrix=neighbor_matrix,
+                fill_value=total_atoms,
+                a1=dftd3_config["a1"],
+                a2=dftd3_config["a2"],
+                s6=dftd3_config["s6"],
+                s8=dftd3_config["s8"],
+                k1=dftd3_config["k1"],
+                k3=dftd3_config["k3"],
+                batch_idx=batch_idx,
+                s5_smoothing_on=dftd3_config["s5_smoothing_on"],
+                s5_smoothing_off=dftd3_config["s5_smoothing_off"],
+            )
+
+        # Time the function
+        timing_results = timer.time_function(dftd3_call)
+
+        if not timing_results["success"]:
+            return {
+                "total_atoms": total_atoms,
+                "batch_size": batch_size,
+                "supercell_size": supercell_size,
+                "total_neighbors": 0,
+                "median_time_ms": float("inf"),
+                "peak_memory_mb": timing_results.get("peak_memory_mb"),
+                "success": False,
+                "error": timing_results.get("error", "Unknown error"),
+                "error_type": timing_results.get("error_type", "Unknown"),
+            }
+
+        median_time_ms = timing_results["median"]
+        peak_memory_mb = timing_results.get("peak_memory_mb")
+
+        return {
+            "total_atoms": total_atoms,
+            "batch_size": batch_size,
+            "supercell_size": supercell_size,
+            "total_neighbors": total_neighbors,
+            "median_time_ms": float(median_time_ms),
+            "peak_memory_mb": peak_memory_mb,
+            "success": True,
+        }
+
+    except Exception as e:
+        total_atoms = 2 * supercell_size**3 * batch_size
+        return {
+            "total_atoms": total_atoms,
+            "batch_size": batch_size,
+            "supercell_size": supercell_size,
+            "total_neighbors": 0,
+            "median_time_ms": float("inf"),
+            "peak_memory_mb": None,
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+        }
+
+
 def run_dftd3_torch_dftd_benchmark(
     supercell_size: int,
     cutoff: float,
@@ -842,6 +933,61 @@ def run_dftd3_torch_dftd_benchmark(
         }
 
 
+def _resolve_backend_type(cli_backend: str) -> BackendType:
+    """Map CLI backend string to BackendType.
+
+    Parameters
+    ----------
+    cli_backend : str
+        CLI backend choice ("nvalchemiops", "nvalchemiops_jax", "torch_dftd").
+
+    Returns
+    -------
+    BackendType
+        Framework-level backend type ("torch" or "jax").
+    """
+    match cli_backend:
+        case "torch" | "torch_dftd":
+            return "torch"
+        case "jax":
+            return "jax"
+        case _:
+            raise ValueError(f"Unknown backend: {cli_backend}")
+
+
+def _check_backend_available(cli_backend: str) -> None:
+    """Validate that the requested backend is installed.
+
+    Parameters
+    ----------
+    cli_backend : str
+        CLI backend choice.
+
+    Raises
+    ------
+    SystemExit
+        If the required backend is not available.
+    """
+    match cli_backend:
+        case "torch":
+            if not TORCH_AVAILABLE:
+                print(
+                    "ERROR: nvalchemiops (torch) backend requested but torch is not installed."
+                )
+                sys.exit(1)
+        case "jax":
+            if not JAX_AVAILABLE:
+                print(
+                    "ERROR: nvalchemiops_jax backend requested but JAX is not installed."
+                )
+                sys.exit(1)
+        case "torch_dftd":
+            if not TORCH_DFTD_AVAILABLE:
+                print("ERROR: torch-dftd backend requested but not installed.")
+                print("Install via: pip install torch-dftd")
+                sys.exit(1)
+
+
 def main():
     """Main entry point for the benchmark script."""
     parser = argparse.ArgumentParser(
@@ -859,9 +1005,9 @@ def main():
     parser.add_argument(
         "--backend",
         type=str,
-        choices=["nvalchemiops", "torch_dftd"],
-        default="nvalchemiops",
-        help="Backend to use for benchmarking (default: nvalchemiops)",
+        choices=["torch", "jax", "torch_dftd"],
+        default="torch",
+        help="Backend to use for benchmarking (default: torch)",
     )
     parser.add_argument(
         "--gpu-sku",
@@ -871,14 +1017,14 @@ def main():
 
     args = parser.parse_args()
 
-    # Check if torch_dftd is available when requested
-    if args.backend == "torch_dftd" and not TORCH_DFTD_AVAILABLE:
-        print("ERROR: torch-dftd backend requested but not installed.")
-        print("Install via: pip install torch-dftd")
-        sys.exit(1)
+    # Validate backend availability
+    _check_backend_available(args.backend)
 
     # Load config
     config = load_config(args.config)
+
+    # Resolve backend type
+    backend_type = _resolve_backend_type(args.backend)
 
     # Get parameters
     params = config["parameters"]
@@ -886,31 +1032,43 @@ def main():
     warmup = int(params["warmup_iterations"])
     timing = int(params["timing_iterations"])
     dtype_str = params["dtype"]
-    dtype = getattr(torch, dtype_str)
 
     dftd3_config = config["dftd3_parameters"]
 
-    # Setup device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    device_obj = torch.device(device)
+    # Backend-specific setup
+    device = "cpu"  # Default
+    match backend_type:
+        case "torch":
+            dtype = getattr(torch, dtype_str)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        case "jax":
+            dtype = None  # JAX uses dtype_str directly
+            try:
+                if any(d.platform == "gpu" for d in jax.local_devices()):
+                    device = "gpu"
+            except Exception:  # noqa: S110
+                pass
 
     # Get GPU SKU
-    gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku("torch")
+    gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku(backend_type)
 
     # Create output directory
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize timer
-    timer = BenchmarkTimer(warmup_runs=warmup, timing_runs=timing, backend="torch")
+    timer = BenchmarkTimer(warmup_runs=warmup, timing_runs=timing, backend=backend_type)
 
-    # Backend-specific setup
-    if args.backend == "nvalchemiops":
-        d3_params = create_d3_parameters("torch", device, dtype_str)
-        torch_dftd_params = None
-    else:  # torch_dftd
-        d3_params = None
-        torch_dftd_params = load_torch_dftd_parameters(device_obj, dtype)
+    # Backend-specific parameter setup
+    d3_params = None
+    torch_dftd_params = None
+    match args.backend:
+        case "torch":
+            d3_params = create_d3_parameters("torch", device, dtype_str)
+        case "jax":
+            d3_params = create_d3_parameters("jax", dtype_str=dtype_str)
+        case "torch_dftd":
+            torch_dftd_params = load_torch_dftd_parameters(torch.device(device), dtype)
 
     # Print configuration
     print("=" * 70)
@@ -950,9 +1108,7 @@ def main():
 
             for size in supercell_sizes:
                 # Reset peak memory stats before each configuration
-                if device == "cuda":
-                    torch.cuda.reset_peak_memory_stats()
-                    torch.cuda.empty_cache()
+                timer.clear_memory()
 
                 atoms_per_system = 2 * size**3
                 total_atoms = atoms_per_system * batch_size
@@ -971,30 +1127,42 @@ def main():
                     )
 
                 # Choose benchmark function based on backend
-                if args.backend == "nvalchemiops":
-                    result = run_dftd3_nvalchemiops_benchmark(
-                        size,
-                        cutoff,
-                        d3_params,
-                        dftd3_config,
-                        max_neighbors,
-                        timer,
-                        device,
-                        dtype,
-                        batch_size,
-                    )
-                else:  # torch_dftd
-                    result = run_dftd3_torch_dftd_benchmark(
-                        size,
-                        cutoff,
-                        torch_dftd_params,
-                        dftd3_config,
-                        max_neighbors,
-                        timer,
-                        device,
-                        dtype,
-                        batch_size,
-                    )
+                match args.backend:
+                    case "torch":
+                        result = run_dftd3_nvalchemiops_benchmark(
+                            size,
+                            cutoff,
+                            d3_params,
+                            dftd3_config,
+                            max_neighbors,
+                            timer,
+                            device,
+                            dtype,
+                            batch_size,
+                        )
+                    case "jax":
+                        result = run_dftd3_nvalchemiops_jax_benchmark(
+                            size,
+                            cutoff,
+                            d3_params,
+                            dftd3_config,
+                            max_neighbors,
+                            timer,
+                            dtype_str,
+                            batch_size,
+                        )
+                    case "torch_dftd":
+                        result = run_dftd3_torch_dftd_benchmark(
+                            size,
+                            cutoff,
+                            torch_dftd_params,
+                            dftd3_config,
+                            max_neighbors,
+                            timer,
+                            device,
+                            dtype,
+                            batch_size,
+                        )
 
                 # Add backend to result for CSV
                 result["backend"] = args.backend
