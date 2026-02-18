@@ -398,10 +398,13 @@ def _parse_dftd3_filename(filename: str, is_batched: bool) -> tuple[str, str] | 
     - Non-batched: dftd3_benchmark_<backend>_<gpu_sku>.csv
     - Batched: dftd3_benchmark_batch_<backend>_<gpu_sku>.csv
 
+    Valid backend names are: "torch", "jax", "torch_dftd".
+
     Backend names may contain underscores (e.g., "torch_dftd"), so we use
-    known backend names to parse correctly.
+    known backend names to parse correctly. The order matters: "torch_dftd"
+    must come before "torch" to ensure the longer name matches first.
     """
-    known_backends = ["nvalchemiops", "torch_dftd"]
+    known_backends = ["torch_dftd", "torch", "jax"]
 
     if is_batched:
         prefix = "dftd3_benchmark_batch_"

@@ -66,37 +66,74 @@ indicating that the backend has lower memory requirements.
 
 :::
 
-:::{tab-item} nvalchemiops
+:::{tab-item} nvalchemiops (Torch)
 
-Scaling of single and batched computation with the `nvalchemiops` backend.
+Scaling of single and batched computation with the `nvalchemiops` Torch backend.
 Shows how performance scales with different batch sizes.
 
 ### Time Scaling
 
-```{figure} _static/dftd3_scaling_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dftd3_scaling_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: DFT-D3 nvalchemiops time scaling
+:alt: DFT-D3 nvalchemiops (Torch) time scaling
 
 Execution time scaling for single and batched systems.
 ```
 
 ### Throughput
 
-```{figure} _static/dftd3_throughput_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dftd3_throughput_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: DFT-D3 nvalchemiops throughput
+:alt: DFT-D3 nvalchemiops (Torch) throughput
 
 Throughput (atoms/ms) for single and batched systems.
 ```
 
 ### Memory Usage
 
-```{figure} _static/dftd3_memory_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dftd3_memory_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: DFT-D3 nvalchemiops memory usage
+:alt: DFT-D3 nvalchemiops (Torch) memory usage
+
+Peak GPU memory consumption for single and batched systems.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (JAX)
+
+Scaling of single and batched computation with the `nvalchemiops` JAX backend.
+Shows how performance scales with different batch sizes.
+
+### Time Scaling
+
+```{figure} _static/dftd3_scaling_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: DFT-D3 nvalchemiops (JAX) time scaling
+
+Execution time scaling for single and batched systems.
+```
+
+### Throughput
+
+```{figure} _static/dftd3_throughput_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: DFT-D3 nvalchemiops (JAX) throughput
+
+Throughput (atoms/ms) for single and batched systems.
+```
+
+### Memory Usage
+
+```{figure} _static/dftd3_memory_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: DFT-D3 nvalchemiops (JAX) memory usage
 
 Peak GPU memory consumption for single and batched systems.
 ```
@@ -196,17 +233,27 @@ energy/force calculation.
 
 To generate benchmark results for your hardware:
 
-### `nvalchemiops` Backend (default)
+### `torch` Backend (default)
 
 ```bash
 cd benchmarks/interactions/dispersion
 python benchmark_dftd3.py \
     --config benchmark_config.yaml \
-    --backend warp \
+    --backend torch \
     --output-dir ../../../docs/benchmarks/benchmark_results
 ```
 
-### `torch-dftd` Backend
+### `jax` Backend
+
+```bash
+cd benchmarks/interactions/dispersion
+python benchmark_dftd3.py \
+    --config benchmark_config.yaml \
+    --backend jax \
+    --output-dir ../../../docs/benchmarks/benchmark_results
+```
+
+### `torch_dftd` Backend
 
 ```bash
 cd benchmarks/interactions/dispersion
@@ -218,8 +265,8 @@ python benchmark_dftd3.py \
 
 ### Options
 
-`--backend {warp,torch_dftd}`
-: Select backend (default: `warp`).
+`--backend {torch,jax,torch_dftd}`
+: Select backend (default: `torch`).
 
 `--gpu-sku <name>`
 : Override GPU SKU name for output files (default: auto-detect).
