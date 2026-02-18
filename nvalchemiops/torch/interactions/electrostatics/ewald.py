@@ -2938,6 +2938,7 @@ def ewald_summation(
     neighbor_matrix_shifts: torch.Tensor | None = None,
     mask_value: int | None = None,
     compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     accuracy: float = 1e-6,
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
@@ -2976,6 +2977,8 @@ def ewald_summation(
         Value indicating invalid entries. Defaults to N.
     compute_forces : bool, default=False
         Whether to compute explicit forces.
+    compute_charge_gradients : bool, default=False
+        Whether to compute charge gradients dE/dq_i.
     compute_virial : bool, default=False
         Whether to compute the virial tensor W = -dE/d(epsilon).
         Stress = virial / volume.
@@ -2988,13 +2991,15 @@ def ewald_summation(
         Per-atom total Ewald energy.
     forces : torch.Tensor, shape (N, 3), optional
         Forces (if compute_forces=True).
+    charge_gradients : torch.Tensor, shape (N,), optional
+        Charge gradients (if compute_charge_gradients=True).
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor (if compute_virial=True). Always last in the tuple.
 
     Note
     ----
     Energies are always float64 for numerical stability during accumulation.
-    Forces and virial match the input dtype (float32 or float64).
+    Forces, charge gradients, and virial match the input dtype (float32 or float64).
     """
     device = positions.device
     dtype = positions.dtype
@@ -3031,6 +3036,7 @@ def ewald_summation(
         mask_value=mask_value,
         batch_idx=batch_idx,
         compute_forces=compute_forces,
+        compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
     )
 
@@ -3043,6 +3049,7 @@ def ewald_summation(
         alpha=alpha_tensor,
         batch_idx=batch_idx,
         compute_forces=compute_forces,
+        compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
     )
 
