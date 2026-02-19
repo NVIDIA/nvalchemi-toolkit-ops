@@ -1,0 +1,13 @@
+total_atoms,batch_size,supercell_size,total_neighbors,median_time_ms,peak_memory_mb,memory_note,success,backend
+54,1,3,61452,4.967375993728638,1.599609375,torch:cuda.max_memory_allocated,True,torch
+128,1,4,145664,4.9302239418029785,2.95654296875,torch:cuda.max_memory_allocated,True,torch
+250,1,5,284500,5.477231979370117,5.20166015625,torch:cuda.max_memory_allocated,True,torch
+432,1,6,491616,6.090751886367798,8.552734375,torch:cuda.max_memory_allocated,True,torch
+1024,1,8,1165312,6.20196795463562,19.43798828125,torch:cuda.max_memory_allocated,True,torch
+2000,1,10,2276000,6.213232040405273,37.9267578125,torch:cuda.max_memory_allocated,True,torch
+3456,1,12,3932928,6.343807935714722,64.89208984375,torch:cuda.max_memory_allocated,True,torch
+6750,1,15,7681500,6.549216032028198,124.76806640625,torch:cuda.max_memory_allocated,True,torch
+16000,1,20,18208000,7.073487997055054,295.94482421875,torch:cuda.max_memory_allocated,True,torch
+31250,1,25,35562500,7.3252480030059814,577.22900390625,torch:cuda.max_memory_allocated,True,torch
+54000,1,30,61452000,8.792271614074707,995.13525390625,torch:cuda.max_memory_allocated,True,torch
+85750,1,35,97583500,13.475808143615723,1578.33203125,torch:cuda.max_memory_allocated,True,torch
