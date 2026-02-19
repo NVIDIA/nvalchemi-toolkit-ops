@@ -686,7 +686,7 @@ def _parse_electrostatics_filename(filename: str) -> tuple[str, str, str] | None
     Filenames follow the pattern: electrostatics_benchmark_<method>_<backend>_<gpu_sku>.csv
     """
     known_methods = ["ewald", "pme"]
-    known_backends = ["nvalchemiops", "torchpme"]
+    known_backends = ["torchpme", "torch", "jax"]
 
     prefix = "electrostatics_benchmark_"
     if not filename.startswith(prefix):

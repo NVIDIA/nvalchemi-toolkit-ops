@@ -31,76 +31,242 @@ The Ewald summation method splits the Coulomb interaction into real-space and
 reciprocal-space components. This is the traditional $O(N^{3/2})$ to $O(N^2)$ method
 depending on parameter choices.
 
-Scaling of single and batched Ewald computation with the `nvalchemiops` backend.
+::::{tab-set}
+
+:::{tab-item} Backend Comparison
+
+Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the supercell.
+
+### Time Scaling
+
+```{figure} _static/electrostatics_scaling_ewald_comparison_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Ewald backend time comparison
+
+Median execution time comparison between backends for single systems.
+```
+
+### Throughput
+
+```{figure} _static/electrostatics_throughput_ewald_comparison_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Ewald backend throughput comparison
+
+Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.
+```
+
+### Memory Usage
+
+```{figure} _static/electrostatics_memory_ewald_comparison_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Ewald backend memory comparison
+
+Peak GPU memory consumption comparison between backends. Lower is better,
+indicating that the backend has lower memory requirements.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (Torch)
+
+Scaling of single and batched Ewald computation with the `nvalchemiops` Torch backend.
 Shows how performance scales with different batch sizes.
 
 ### Time Scaling
 
-```{figure} _static/electrostatics_scaling_ewald_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/electrostatics_scaling_ewald_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: Ewald nvalchemiops time scaling
+:alt: Ewald nvalchemiops (Torch) time scaling
 
 Execution time scaling for single and batched systems.
 ```
 
 ### Throughput
 
-```{figure} _static/electrostatics_throughput_ewald_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/electrostatics_throughput_ewald_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: Ewald nvalchemiops throughput
+:alt: Ewald nvalchemiops (Torch) throughput
 
 Throughput (atoms/ms) for single and batched systems.
 ```
 
 ### Memory Usage
 
-```{figure} _static/electrostatics_memory_ewald_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/electrostatics_memory_ewald_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: Ewald nvalchemiops memory usage
+:alt: Ewald nvalchemiops (Torch) memory usage
 
 Peak GPU memory consumption for single and batched systems.
 ```
+
+:::
+
+:::{tab-item} nvalchemiops (JAX)
+
+Scaling of single and batched Ewald computation with the `nvalchemiops` JAX backend.
+Shows how performance scales with different batch sizes.
+
+### Time Scaling
+
+```{figure} _static/electrostatics_scaling_ewald_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Ewald nvalchemiops (JAX) time scaling
+
+Execution time scaling for single and batched systems.
+```
+
+### Throughput
+
+```{figure} _static/electrostatics_throughput_ewald_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Ewald nvalchemiops (JAX) throughput
+
+Throughput (atoms/ms) for single and batched systems.
+```
+
+### Memory Usage
+
+```{figure} _static/electrostatics_memory_ewald_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Ewald nvalchemiops (JAX) memory usage
+
+Peak GPU memory consumption for single and batched systems.
+```
+
+:::
+
+::::
 
 ## Particle Mesh Ewald (PME)
 
 PME achieves $O(N \log N)$ scaling by using FFTs for the reciprocal-space contribution.
 This is the recommended method for large systems.
 
-Scaling of single and batched PME computation with the `nvalchemiops` backend.
+::::{tab-set}
+
+:::{tab-item} Backend Comparison
+
+Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the supercell.
+
+### Time Scaling
+
+```{figure} _static/electrostatics_scaling_pme_comparison_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: PME backend time comparison
+
+Median execution time comparison between backends for single systems.
+```
+
+### Throughput
+
+```{figure} _static/electrostatics_throughput_pme_comparison_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: PME backend throughput comparison
+
+Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.
+```
+
+### Memory Usage
+
+```{figure} _static/electrostatics_memory_pme_comparison_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: PME backend memory comparison
+
+Peak GPU memory consumption comparison between backends. Lower is better,
+indicating that the backend has lower memory requirements.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (Torch)
+
+Scaling of single and batched PME computation with the `nvalchemiops` Torch backend.
 Shows how performance scales with different batch sizes.
 
 ### Time Scaling
 
-```{figure} _static/electrostatics_scaling_pme_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/electrostatics_scaling_pme_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: PME nvalchemiops time scaling
+:alt: PME nvalchemiops (Torch) time scaling
 
 Execution time scaling for single and batched systems.
 ```
 
 ### Throughput
 
-```{figure} _static/electrostatics_throughput_pme_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/electrostatics_throughput_pme_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: PME nvalchemiops throughput
+:alt: PME nvalchemiops (Torch) throughput
 
 Throughput (atoms/ms) for single and batched systems.
 ```
 
 ### Memory Usage
 
-```{figure} _static/electrostatics_memory_pme_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/electrostatics_memory_pme_torch_h100-80gb-hbm3.png
 :width: 90%
 :align: center
-:alt: PME nvalchemiops memory usage
+:alt: PME nvalchemiops (Torch) memory usage
 
 Peak GPU memory consumption for single and batched systems.
 ```
+
+:::
+
+:::{tab-item} nvalchemiops (JAX)
+
+Scaling of single and batched PME computation with the `nvalchemiops` JAX backend.
+Shows how performance scales with different batch sizes.
+
+### Time Scaling
+
+```{figure} _static/electrostatics_scaling_pme_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: PME nvalchemiops (JAX) time scaling
+
+Execution time scaling for single and batched systems.
+```
+
+### Throughput
+
+```{figure} _static/electrostatics_throughput_pme_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: PME nvalchemiops (JAX) throughput
+
+Throughput (atoms/ms) for single and batched systems.
+```
+
+### Memory Usage
+
+```{figure} _static/electrostatics_memory_pme_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: PME nvalchemiops (JAX) memory usage
+
+Peak GPU memory consumption for single and batched systems.
+```
+
+:::
+
+::::
 
 ## Hardware Information
 
@@ -141,7 +307,7 @@ targeting $10^{-6}$ relative accuracy:
 : The electrostatics method used (`ewald` or `pme`).
 
 `backend`
-: The computational backend (`nvalchemiops` or `torchpme`).
+: The computational backend (`torch`, `jax`, or `torchpme`).
 
 `component`
 : Which part of the calculation was benchmarked (`real`, `reciprocal`, or `full`).
@@ -164,19 +330,43 @@ for "full" mode). Neighbor list construction is excluded from timings.
 
 To generate benchmark results for your hardware:
 
+### `torch` Backend (default)
+
 ```bash
 cd benchmarks/interactions/electrostatics
 python benchmark_electrostatics.py \
     --config benchmark_config.yaml \
-    --backend nvalchemiops \
+    --backend torch \
+    --method both \
+    --output-dir ../../../docs/benchmarks/benchmark_results
+```
+
+### `jax` Backend
+
+```bash
+cd benchmarks/interactions/electrostatics
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend jax \
+    --method both \
+    --output-dir ../../../docs/benchmarks/benchmark_results
+```
+
+### `torchpme` Backend
+
+```bash
+cd benchmarks/interactions/electrostatics
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend torchpme \
     --method both \
     --output-dir ../../../docs/benchmarks/benchmark_results
 ```
 
 ### Options
 
-`--backend nvalchemiops`
-: Use the `nvalchemiops` backend (default).
+`--backend {torch,jax,torchpme}`
+: Select backend (default: `torch`).
 
 `--method {ewald,pme,both}`
 : Select electrostatics method (default: `both`).
