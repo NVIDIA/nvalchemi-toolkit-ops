@@ -616,6 +616,12 @@ def cell_list(
     """
     total_atoms = positions.shape[0]
     device = positions.device
+    if pbc is None:
+        raise ValueError(
+            "cell_list requires `pbc` to be specified. "
+            "Pass a boolean tensor of shape (3,) or (1, 3), "
+            "e.g. pbc=torch.tensor([True, True, True])."
+        )
     cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
     pbc = pbc.squeeze(0)
 

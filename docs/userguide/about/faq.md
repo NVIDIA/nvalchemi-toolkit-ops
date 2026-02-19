@@ -34,7 +34,7 @@ benefit the community, please start a discussion on Github [Issues][issues_].
 The two algorithm families have different computational complexity:
 
 - `cell_list()` uses spatial decomposition for O(N) scaling. It is optimized
-  for large systems (roughly >5000 atoms) where the cutoff is small relative
+  for large systems (roughly >2000 atoms) where the cutoff is small relative
   to the simulation box.
 - `naive_neighbor_list()` computes all pairwise distances for O(N²) scaling.
   It has lower overhead and can be faster for smaller systems.

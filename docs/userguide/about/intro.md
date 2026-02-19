@@ -77,7 +77,7 @@ Choose the right parameters based on your use case:
 :::{tab-item} Single + Large
 :sync: single-large
 
-Single system with >5000 atoms
+Single system with >2000 atoms
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -94,7 +94,7 @@ using spatial decomposition.
 :::{tab-item} Single + Small
 :sync: single-small
 
-Single system with <5000 atoms
+Single system with <2000 atoms
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -111,7 +111,7 @@ algorithm with lower overhead.
 :::{tab-item} Batch + Large
 :sync: batch-large
 
-Multiple systems with >5000 atoms each
+Multiple systems with >2000 atoms each
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -129,7 +129,7 @@ algorithm for heterogeneous batches.
 :::{tab-item} Batch + Small
 :sync: batch-small
 
-Multiple systems with <5000 atoms each
+Multiple systems with <2000 atoms each
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -148,7 +148,7 @@ O(N²) algorithm for batched small systems.
 
 ```{note}
 When `method` is not specified, `neighbor_list` automatically selects based on
-system size (≥5000 atoms → cell list) and whether `batch_idx` is provided.
+average system size (≥2000 atoms per system → cell list) and whether `batch_idx` is provided.
 ```
 
 For advanced workflows, {func}`~nvalchemiops.torch.neighbors.build_cell_list` and

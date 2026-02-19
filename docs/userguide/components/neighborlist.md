@@ -23,7 +23,7 @@ both single and batched inputs.
 Neighbor list construction can dominate runtime in atomistic foundation models:
 
 - **Naive algorithms scale as \(O(N^2)\)**: Checking all atom pairs becomes
-  prohibitive for systems with a large number of atoms (approx. 5000 atoms,
+  prohibitive for systems with a large number of atoms (approx. 2000 atoms,
   but depends on structure and hardware)
 - **Repeated construction**: Training loops and MD simulations rebuild neighbor
   lists frequently---every step or every few steps
@@ -45,7 +45,7 @@ size and whether batch indices are provided.
 :::{tab-item} Single + Large
 :sync: single-large
 
-Single system with >5000 atoms
+Single system with >2000 atoms
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -62,7 +62,7 @@ using spatial decomposition.
 :::{tab-item} Single + Small
 :sync: single-small
 
-Single system with <5000 atoms
+Single system with <2000 atoms
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -79,7 +79,7 @@ algorithm with lower overhead.
 :::{tab-item} Batch + Large
 :sync: batch-large
 
-Multiple systems with >5000 atoms each
+Multiple systems with >2000 atoms each
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -97,7 +97,7 @@ algorithm for heterogeneous batches.
 :::{tab-item} Batch + Small
 :sync: batch-small
 
-Multiple systems with <5000 atoms each
+Multiple systems with <2000 atoms each
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -116,7 +116,7 @@ Dispatches to {func}`~nvalchemiops.torch.neighbors.batched.batch_naive_neighbor_
 
 ```{note}
 When `method` is not specified, `neighbor_list` automatically selects based on
-system size (greater than 5000 atoms) and whether `batch_idx` is provided.
+average system size (greater than 2000 atoms per system) and whether `batch_idx` is provided.
 The crossover point depends on system density and cutoff radius---benchmark
 your workload to find the optimal threshold.
 ```
@@ -177,7 +177,7 @@ When `method=None`, {func}`~nvalchemiops.torch.neighbors.neighbor_list` selects
 an algorithm using the following logic:
 
 1. If `cutoff2` is provided, then dual cutoff method
-2. If `total_atoms >= 5000`, then `"cell_list"`
+2. If average atoms per system `>= 2000`, then `"cell_list"`
 3. Otherwise, `"naive"` ($N^2$ scaling algorithm)
 4. If `batch_idx` or `batch_ptr` is provided, then prepend `"batch_"` to the method
 
@@ -185,7 +185,7 @@ an algorithm using the following logic:
 
 | Method | Algorithm | Use Case |
 |--------|-----------|----------|
-| `"naive"` | \(O(N^2)\) pairwise | Small single systems (<5000 atoms) |
+| `"naive"` | \(O(N^2)\) pairwise | Small single systems (<2000 atoms) |
 | `"cell_list"` | \(O(N)\) spatial decomposition | Large single systems |
 | `"batch_naive"` | \(O(N^2)\) per system | Batched small systems |
 | `"batch_cell_list"` | \(O(N)\) per system | Batched large systems |
@@ -217,10 +217,10 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 
 `atomic_density`
 : Atomic density in atoms per unit volume, used by `estimate_max_neighbors()`.
-  Default is 0.5. Increase for dense systems to avoid truncated neighbor lists.
+  Default is 0.2. Increase for dense systems to avoid truncated neighbor lists.
 
 `safety_factor`
-: Multiplier applied to the neighbor estimate. Default is 5.0. Provides
+: Multiplier applied to the neighbor estimate. Default is 1.0. Provides
   headroom for density fluctuations.
 
 `max_nbins`
@@ -243,7 +243,7 @@ from nvalchemiops.torch.neighbors.unbatched import estimate_cell_list_sizes
 
 max_neighbors = estimate_max_neighbors(
     cutoff,
-    atomic_density=0.3,
+    atomic_density=0.15,
     safety_factor=1.0
 )
 
@@ -254,15 +254,15 @@ max_total_cells, neighbor_search_radius = estimate_cell_list_sizes(
 
 **Setting `atomic_density`**: This should reflect the expected atomic density of
 your system in atoms per unit volume (using the same length units as `cutoff`).
-If set too low, the neighbor matrix may be too narrow and neighbors will be
-silently truncated. If set too high, memory is wasted on unused columns.
+If set too low, the neighbor matrix may be too narrow and a
+`NeighborOverflowError` will be raised at runtime. If set too high, memory is
+wasted on unused columns.
 
 **Setting `safety_factor`**: This multiplier provides headroom for local density
-fluctuations (e.g., atoms clustering in one region). A value of 5.0 is
-conservative for most systems, but 1.0 is typically sufficient for "reasonable"
-structures/systems (e.g. in standard public datasets). Reduce it for
-memory-constrained scenarios where you are confident in uniform density;
-increase it for systems with significant density variation.
+fluctuations (e.g., atoms clustering in one region). The default of 1.0 is
+typically sufficient for systems with reasonably uniform density (e.g. standard
+public datasets). Increase it for systems with significant density variation
+where atoms may cluster in one region.
 
 ```{tip}
 Users should check the "convergence" of the neighbor list computation by checking
@@ -287,7 +287,7 @@ from nvalchemiops.torch.neighbors import neighbor_list
 from nvalchemiops.torch.neighbors.neighbor_utils import estimate_max_neighbors
 
 num_atoms = positions.shape[0]
-max_neighbors = estimate_max_neighbors(cutoff, atomic_density=1.0)
+max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.15)
 
 # Pre-allocate tensors
 neighbor_matrix = torch.full(
@@ -350,8 +350,8 @@ import torch
 from nvalchemiops.torch.neighbors import neighbor_list
 
 # Create atomic system
-positions = torch.rand(1000, 3, device="cuda") * 10.0
-cell = torch.eye(3, device="cuda").unsqueeze(0) * 10.0
+positions = torch.rand(1000, 3, device="cuda") * 20.0
+cell = torch.eye(3, device="cuda").unsqueeze(0) * 20.0
 pbc = torch.tensor([True, True, True], device="cuda")
 cutoff = 5.0
 

@@ -271,8 +271,8 @@ print("=" * 70)
 
 print("\n--- Automatic Method Selection ---")
 # The wrapper automatically chooses the best algorithm:
-# - Small systems (< 5000 atoms): naive algorithm
-# - Large systems (>= 5000 atoms): cell_list algorithm
+# - Small systems (< 2000 avg atoms per system): naive algorithm
+# - Large systems (>= 2000 avg atoms per system): cell_list algorithm
 # - If cutoff2 is provided: dual cutoff algorithms
 # - If batch_idx/batch_ptr is provided: batch algorithms
 

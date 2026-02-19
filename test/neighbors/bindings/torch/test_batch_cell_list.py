@@ -218,8 +218,17 @@ class TestBatchCellListAPI:
         pbc = torch.cat(pbcs_list, dim=0)
         batch_idx = torch.cat(batch_idx_list, dim=0)
 
+        max_neighbors = estimate_max_neighbors(
+            cutoff, atomic_density=0.35, safety_factor=5.0
+        )
         neighbor_list, _, u = batch_cell_list(
-            positions, cutoff, cell, pbc, batch_idx, return_neighbor_list=True
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            max_neighbors=max_neighbors,
+            return_neighbor_list=True,
         )
         i, j = neighbor_list
 
@@ -298,7 +307,9 @@ class TestBatchCellListAPI:
         cutoff = 3.0
 
         if preallocate:
-            max_neighbors = estimate_max_neighbors(cutoff)
+            max_neighbors = estimate_max_neighbors(
+                cutoff, atomic_density=0.35, safety_factor=5.0
+            )
             max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
                 cell, pbc, cutoff
             )
@@ -347,12 +358,16 @@ class TestBatchCellListAPI:
                 num_neighbors=num_neighbors,
             )
         else:
+            max_neighbors = estimate_max_neighbors(
+                cutoff, atomic_density=0.35, safety_factor=5.0
+            )
             results = batch_cell_list(
                 positions,
                 cutoff,
                 cell,
                 pbc,
                 batch_idx,
+                max_neighbors=max_neighbors,
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
             )

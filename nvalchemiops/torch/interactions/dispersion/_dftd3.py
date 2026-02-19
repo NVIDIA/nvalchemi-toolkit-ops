@@ -417,6 +417,17 @@ def _dftd3_matrix_op(
     energy_wp = wp.from_torch(energy, dtype=wp.float32, return_ctype=True)
     virial_wp = wp.from_torch(virial, dtype=wp.mat33f, return_ctype=True)
 
+    # Allocate scratch buffers
+    max_neighbors = neighbor_matrix.shape[1]
+    cartesian_shifts = torch.zeros(
+        num_atoms, max_neighbors, 3, dtype=positions.dtype, device=positions.device
+    )
+    cartesian_shifts_wp = wp.from_torch(
+        cartesian_shifts, dtype=vec_dtype, return_ctype=True
+    )
+    dE_dCN = torch.zeros(num_atoms, dtype=torch.float32, device=positions.device)
+    dE_dCN_wp = wp.from_torch(dE_dCN, dtype=wp.float32, return_ctype=True)
+
     # Call non-PBC warp launcher
     wp_dftd3_matrix(
         positions=positions_wp,
@@ -433,6 +444,9 @@ def _dftd3_matrix_op(
         forces=forces_wp,
         energy=energy_wp,
         virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
         wp_dtype=wp_dtype,
         device=device,
         k1=k1,
@@ -441,7 +455,6 @@ def _dftd3_matrix_op(
         s5_smoothing_on=s5_smoothing_on,
         s5_smoothing_off=s5_smoothing_off,
         fill_value=fill_value,
-        batch_idx=batch_idx_wp,
     )
 
 
@@ -651,6 +664,17 @@ def _dftd3_matrix_pbc_op(
     energy_wp = wp.from_torch(energy, dtype=wp.float32, return_ctype=True)
     virial_wp = wp.from_torch(virial, dtype=wp.mat33f, return_ctype=True)
 
+    # Allocate scratch buffers
+    max_neighbors = neighbor_matrix.shape[1]
+    cartesian_shifts = torch.zeros(
+        num_atoms, max_neighbors, 3, dtype=positions.dtype, device=positions.device
+    )
+    cartesian_shifts_wp = wp.from_torch(
+        cartesian_shifts, dtype=vec_dtype, return_ctype=True
+    )
+    dE_dCN = torch.zeros(num_atoms, dtype=torch.float32, device=positions.device)
+    dE_dCN_wp = wp.from_torch(dE_dCN, dtype=wp.float32, return_ctype=True)
+
     # Call PBC warp launcher
     wp_dftd3_matrix_pbc(
         positions=positions_wp,
@@ -669,6 +693,9 @@ def _dftd3_matrix_pbc_op(
         forces=forces_wp,
         energy=energy_wp,
         virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
         wp_dtype=wp_dtype,
         device=device,
         k1=k1,
@@ -677,7 +704,6 @@ def _dftd3_matrix_pbc_op(
         s5_smoothing_on=s5_smoothing_on,
         s5_smoothing_off=s5_smoothing_off,
         fill_value=fill_value,
-        batch_idx=batch_idx_wp,
         compute_virial=compute_virial,
     )
 
@@ -857,6 +883,16 @@ def _dftd3_op(
     energy_wp = wp.from_torch(energy, dtype=wp.float32, return_ctype=True)
     virial_wp = wp.from_torch(virial, dtype=wp.mat33f, return_ctype=True)
 
+    # Allocate scratch buffers
+    cartesian_shifts = torch.zeros(
+        num_edges, 3, dtype=positions.dtype, device=positions.device
+    )
+    cartesian_shifts_wp = wp.from_torch(
+        cartesian_shifts, dtype=vec_dtype, return_ctype=True
+    )
+    dE_dCN = torch.zeros(num_atoms, dtype=torch.float32, device=positions.device)
+    dE_dCN_wp = wp.from_torch(dE_dCN, dtype=wp.float32, return_ctype=True)
+
     # Call non-PBC warp launcher
     wp_dftd3(
         positions=positions_wp,
@@ -874,6 +910,9 @@ def _dftd3_op(
         forces=forces_wp,
         energy=energy_wp,
         virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
         wp_dtype=wp_dtype,
         device=device,
         k1=k1,
@@ -881,7 +920,6 @@ def _dftd3_op(
         s6=s6,
         s5_smoothing_on=s5_smoothing_on,
         s5_smoothing_off=s5_smoothing_off,
-        batch_idx=batch_idx_wp,
     )
 
 
@@ -1084,6 +1122,16 @@ def _dftd3_pbc_op(
     energy_wp = wp.from_torch(energy, dtype=wp.float32, return_ctype=True)
     virial_wp = wp.from_torch(virial, dtype=wp.mat33f, return_ctype=True)
 
+    # Allocate scratch buffers
+    cartesian_shifts = torch.zeros(
+        num_edges, 3, dtype=positions.dtype, device=positions.device
+    )
+    cartesian_shifts_wp = wp.from_torch(
+        cartesian_shifts, dtype=vec_dtype, return_ctype=True
+    )
+    dE_dCN = torch.zeros(num_atoms, dtype=torch.float32, device=positions.device)
+    dE_dCN_wp = wp.from_torch(dE_dCN, dtype=wp.float32, return_ctype=True)
+
     # Call PBC warp launcher
     wp_dftd3_pbc(
         positions=positions_wp,
@@ -1103,6 +1151,9 @@ def _dftd3_pbc_op(
         forces=forces_wp,
         energy=energy_wp,
         virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
         wp_dtype=wp_dtype,
         device=device,
         k1=k1,
@@ -1110,7 +1161,6 @@ def _dftd3_pbc_op(
         s6=s6,
         s5_smoothing_on=s5_smoothing_on,
         s5_smoothing_off=s5_smoothing_off,
-        batch_idx=batch_idx_wp,
         compute_virial=compute_virial,
     )
 
