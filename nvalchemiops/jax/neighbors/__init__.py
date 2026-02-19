@@ -143,45 +143,45 @@ def neighbor_list(
             Maximum number of neighbors per atom within cutoff2.
             Can be provided to aid in allocation for naive dual cutoff method.
         neighbor_matrix : jax.Array, optional
-            Pre-allocated tensor of shape (total_atoms, max_neighbors) for neighbor indices.
-            Can be provided to avoid reallocation for both naive and cell list methods.
+            Pre-shaped array of shape (total_atoms, max_neighbors) for neighbor indices.
+            Can be provided to hint buffer reuse to XLA for both naive and cell list methods.
         neighbor_matrix_shifts : jax.Array, optional
-            Pre-allocated tensor of shape (total_atoms, max_neighbors, 3) for shift vectors.
-            Can be provided to avoid reallocation for both naive and cell list methods.
+            Pre-shaped array of shape (total_atoms, max_neighbors, 3) for shift vectors.
+            Can be provided to hint buffer reuse to XLA for both naive and cell list methods.
         num_neighbors : jax.Array, optional
-            Pre-allocated tensor of shape (total_atoms,) for neighbor counts.
-            Can be provided to avoid reallocation for both naive and cell list methods.
+            Pre-shaped array of shape (total_atoms,) for neighbor counts.
+            Can be provided to hint buffer reuse to XLA for both naive and cell list methods.
         shift_range_per_dimension : jax.Array, optional
-            Pre-allocated tensor of shape (1, 3) for shift range in each dimension.
-            Can be provided to avoid reallocation for naive methods.
+            Pre-computed array of shape (1, 3) for shift range in each dimension.
+            Can be provided to avoid recomputation for naive methods.
         shift_offset : jax.Array, optional
-            Pre-allocated tensor of shape (2,) for cumulative sum of number of shifts
-            for each system. Can be provided to avoid reallocation for naive methods.
+            Pre-computed array of shape (2,) for cumulative sum of number of shifts
+            for each system. Can be provided to avoid recomputation for naive methods.
         total_shifts : int, optional
             Total number of shifts.
-            Can be provided to avoid reallocation for naive methods.
+            Can be provided to avoid recomputation for naive methods.
         cells_per_dimension : jax.Array, optional
-            Pre-allocated tensor of shape (3,) for number of cells in x, y, z directions.
-            Can be provided to avoid reallocation for cell list construction.
+            Pre-computed array of shape (3,) for number of cells in x, y, z directions.
+            Can be provided to hint buffer reuse to XLA for cell list construction.
         neighbor_search_radius : jax.Array, optional
-            Pre-allocated tensor of shape (3,) for radius of neighboring cells to search
-            in each dimension. Can be provided to avoid reallocation for cell list construction.
+            Pre-computed array of shape (3,) for radius of neighboring cells to search
+            in each dimension. Can be provided to hint buffer reuse to XLA for cell list construction.
         atom_periodic_shifts : jax.Array, optional
-            Pre-allocated tensor of shape (total_atoms, 3) for periodic boundary crossings
-            for each atom. Can be provided to avoid reallocation for cell list construction.
+            Pre-shaped array of shape (total_atoms, 3) for periodic boundary crossings
+            for each atom. Can be provided to hint buffer reuse to XLA for cell list construction.
         atom_to_cell_mapping : jax.Array, optional
-            Pre-allocated tensor of shape (total_atoms, 3) for cell coordinates for each atom.
-            Can be provided to avoid reallocation for cell list construction.
+            Pre-shaped array of shape (total_atoms, 3) for cell coordinates for each atom.
+            Can be provided to hint buffer reuse to XLA for cell list construction.
         atoms_per_cell_count : jax.Array, optional
-            Pre-allocated tensor of shape (max_total_cells,) for number of atoms in each cell.
-            Can be provided to avoid reallocation for cell list construction.
+            Pre-shaped array of shape (max_total_cells,) for number of atoms in each cell.
+            Can be provided to hint buffer reuse to XLA for cell list construction.
         cell_atom_start_indices : jax.Array, optional
-            Pre-allocated tensor of shape (max_total_cells,) for starting index in
-            cell_atom_list for each cell. Can be provided to avoid reallocation for
+            Pre-shaped array of shape (max_total_cells,) for starting index in
+            cell_atom_list for each cell. Can be provided to hint buffer reuse to XLA for
             cell list construction.
         cell_atom_list : jax.Array, optional
-            Pre-allocated tensor of shape (total_atoms,) for flattened list of atom
-            indices organized by cell. Can be provided to avoid reallocation for
+            Pre-shaped array of shape (total_atoms,) for flattened list of atom
+            indices organized by cell. Can be provided to hint buffer reuse to XLA for
             cell list construction.
         max_atoms_per_system : int, optional
             Maximum number of atoms per system. Used in batch naive implementation

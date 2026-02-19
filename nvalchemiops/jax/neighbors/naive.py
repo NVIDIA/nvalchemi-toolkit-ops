@@ -128,23 +128,26 @@ def naive_neighbor_list(
     fill_value : int, optional
         Value to fill the neighbor matrix with. Default is total_atoms.
     neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32, optional
-        Neighbor matrix to be filled. Pass in a pre-allocated tensor to avoid reallocation.
+        Neighbor matrix to be filled. Pass in a pre-shaped array to hint buffer reuse
+        to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
     neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional
-        Shift vectors for each neighbor relationship. Pass in a pre-allocated tensor to avoid reallocation.
+        Shift vectors for each neighbor relationship. Pass in a pre-shaped array to hint
+        buffer reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
     num_neighbors : jax.Array, shape (total_atoms,), dtype=int32, optional
-        Number of neighbors found for each atom. Pass in a pre-allocated tensor to avoid reallocation.
+        Number of neighbors found for each atom. Pass in a pre-shaped array to hint buffer
+        reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
     shift_range_per_dimension : jax.Array, shape (1, 3), dtype=int32, optional
         Shift range in each dimension for each system.
-        Pass in a pre-allocated tensor to avoid reallocation for pbc systems.
+        Pass in a pre-computed value to avoid recomputation for PBC systems.
     shift_offset : jax.Array, shape (2,), dtype=int32, optional
         Cumulative sum of number of shifts for each system.
-        Pass in a pre-allocated tensor to avoid reallocation for pbc systems.
+        Pass in a pre-computed value to avoid recomputation for PBC systems.
     total_shifts : int, optional
         Total number of shifts.
-        Pass in a pre-allocated tensor to avoid reallocation for pbc systems.
+        Pass in a pre-computed value to avoid recomputation for PBC systems.
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
