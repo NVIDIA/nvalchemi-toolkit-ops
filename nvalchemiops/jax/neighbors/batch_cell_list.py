@@ -411,6 +411,7 @@ def batch_query_cell_list(
     atom_to_cell_mapping: jax.Array | None = None,
     cell_atom_start_indices: jax.Array | None = None,
     cell_atom_list: jax.Array | None = None,
+    atoms_per_cell_count: jax.Array | None = None,
     neighbor_search_radius: jax.Array | None = None,
     max_neighbors: int | None = None,
     neighbor_matrix: jax.Array | None = None,
@@ -442,6 +443,8 @@ def batch_query_cell_list(
         Start indices.
     cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32, optional
         Cell atom list.
+    atoms_per_cell_count : jax.Array, shape (max_total_cells,), dtype=int32, optional
+        Number of atoms assigned to each cell. Output from ``batch_build_cell_list``.
     neighbor_search_radius : jax.Array, shape (num_systems, 3), dtype=int32, optional
         Search radius.
     max_neighbors : int, optional
@@ -508,9 +511,9 @@ def batch_query_cell_list(
         dtype=jnp.int32,
     )
 
-    # Compute atoms_per_cell_count (zeroed, will be filled by kernel)
-    max_total_cells = cell_atom_start_indices.shape[0]
-    atoms_per_cell_count = jnp.zeros(max_total_cells, dtype=jnp.int32)
+    if atoms_per_cell_count is None:
+        max_total_cells = cell_atom_start_indices.shape[0]
+        atoms_per_cell_count = jnp.zeros(max_total_cells, dtype=jnp.int32)
 
     # Compute cell_offsets from cells_per_dimension
     cells_per_system = jnp.prod(cells_per_dimension, axis=1)
@@ -638,6 +641,7 @@ def batch_cell_list(
         cells_per_dimension=cells_per_dimension,
         atom_periodic_shifts=atom_periodic_shifts,
         atom_to_cell_mapping=atom_to_cell_mapping,
+        atoms_per_cell_count=atoms_per_cell_count,
         cell_atom_start_indices=cell_atom_start_indices,
         cell_atom_list=cell_atom_list,
         neighbor_search_radius=neighbor_search_radius,
