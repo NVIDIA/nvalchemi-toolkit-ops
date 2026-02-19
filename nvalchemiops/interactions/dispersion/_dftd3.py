@@ -1721,6 +1721,9 @@ def dftd3_matrix(
     forces: wp.array,
     energy: wp.array,
     virial: wp.array,
+    batch_idx: wp.array,
+    cartesian_shifts: wp.array,
+    dE_dCN: wp.array,
     wp_dtype: type,
     device: str,
     k1: float = 16.0,
@@ -1729,7 +1732,6 @@ def dftd3_matrix(
     s5_smoothing_on: float = 0.0,
     s5_smoothing_off: float = 0.0,
     fill_value: int | None = None,
-    batch_idx: wp.array | None = None,
 ) -> None:
     """
     Launch DFT-D3(BJ) dispersion calculation using neighbor matrix format (non-periodic).
@@ -1780,6 +1782,16 @@ def dftd3_matrix(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor (not computed for non-periodic systems). Must be
         pre-allocated but will not be modified.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Values are not used for non-periodic systems, but the array must
+        still be provided with shape matching neighbor_matrix.
+        Must be pre-allocated by caller.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -1798,8 +1810,6 @@ def dftd3_matrix(
         Distance where S5 switching completes, in same units as positions. Default: 0.0
     fill_value : int or None, optional
         Value indicating padding in neighbor_matrix. If None, inferred from num_atoms.
-    batch_idx : wp.array(dtype=int32), shape [num_atoms], or None, optional
-        Batch indices. If None, all atoms are in a single system.
 
     Returns
     -------
@@ -1822,19 +1832,8 @@ def dftd3_matrix(
     dftd3 : Neighbor list (CSR) format, non-periodic
     dftd3_pbc : Neighbor list (CSR) format with PBC support
     """
-    # Derive vector dtype from scalar dtype
-    if wp_dtype == wp.float64:
-        vec_dtype = wp.vec3d
-    elif wp_dtype == wp.float32:
-        vec_dtype = wp.vec3f
-    else:
-        raise ValueError(
-            f"Unsupported wp_dtype: {wp_dtype}. Expected wp.float32 or wp.float64"
-        )
-
     # Get number of atoms from positions array
     num_atoms = positions.shape[0]
-    max_neighbors = neighbor_matrix.shape[1] if num_atoms > 0 else 0
 
     # Set fill_value if not provided
     if fill_value is None:
@@ -1844,26 +1843,13 @@ def dftd3_matrix(
     if num_atoms == 0:
         return
 
-    # Create default batch_idx if not provided (all atoms in single system)
-    if batch_idx is None:
-        batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-
     # Precompute inv_w for S5 switching
     if s5_smoothing_off > s5_smoothing_on:
         inv_w = 1.0 / (s5_smoothing_off - s5_smoothing_on)
     else:
         inv_w = 0.0
 
-    # Non-periodic: create zero shifts array (not used but need correct shape for kernel)
     periodic = False
-    cartesian_shifts = wp.zeros(
-        (num_atoms, max_neighbors),
-        dtype=vec_dtype,
-        device=device,
-    )
-
-    # Allocate dE_dCN array for chain rule computation (internal temporary)
-    dE_dCN = wp.zeros(num_atoms, dtype=wp.float32, device=device)  # NOSONAR (S125)
 
     # Pass 1: Compute coordination numbers
     wp.launch(
@@ -1953,6 +1939,9 @@ def dftd3_matrix_pbc(
     forces: wp.array,
     energy: wp.array,
     virial: wp.array,
+    batch_idx: wp.array,
+    cartesian_shifts: wp.array,
+    dE_dCN: wp.array,
     wp_dtype: type,
     device: str,
     k1: float = 16.0,
@@ -1961,7 +1950,6 @@ def dftd3_matrix_pbc(
     s5_smoothing_on: float = 0.0,
     s5_smoothing_off: float = 0.0,
     fill_value: int | None = None,
-    batch_idx: wp.array | None = None,
     compute_virial: bool = False,
 ) -> None:
     """
@@ -2020,6 +2008,15 @@ def dftd3_matrix_pbc(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor in energy units. Must be pre-allocated and zeroed.
         Only computed if compute_virial=True.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_atoms, max_neighbors]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Populated by Pass 0 from unit cell shifts. Must be pre-allocated
+        with shape matching neighbor_matrix.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -2038,8 +2035,6 @@ def dftd3_matrix_pbc(
         Distance where S5 switching completes, in same units as positions. Default: 0.0
     fill_value : int or None, optional
         Value indicating padding in neighbor_matrix. If None, inferred from num_atoms.
-    batch_idx : wp.array(dtype=int32), shape [num_atoms], or None, optional
-        Batch indices. If None, all atoms are in a single system.
     compute_virial : bool, optional
         If True, compute virial tensor. Default: False
 
@@ -2064,16 +2059,6 @@ def dftd3_matrix_pbc(
     dftd3 : Neighbor list (CSR) format, non-periodic
     dftd3_pbc : Neighbor list (CSR) format with PBC support
     """
-    # Derive vector dtype from scalar dtype
-    if wp_dtype == wp.float64:
-        vec_dtype = wp.vec3d
-    elif wp_dtype == wp.float32:
-        vec_dtype = wp.vec3f
-    else:
-        raise ValueError(
-            f"Unsupported wp_dtype: {wp_dtype}. Expected wp.float32 or wp.float64"
-        )
-
     # Get number of atoms from positions array
     num_atoms = positions.shape[0]
     max_neighbors = neighbor_matrix.shape[1] if num_atoms > 0 else 0
@@ -2086,10 +2071,6 @@ def dftd3_matrix_pbc(
     if num_atoms == 0:
         return
 
-    # Create default batch_idx if not provided (all atoms in single system)
-    if batch_idx is None:
-        batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-
     # Precompute inv_w for S5 switching
     if s5_smoothing_off > s5_smoothing_on:
         inv_w = 1.0 / (s5_smoothing_off - s5_smoothing_on)
@@ -2098,11 +2079,6 @@ def dftd3_matrix_pbc(
 
     # Pass 0: Compute cartesian shifts from unit cell shifts
     periodic = True
-    cartesian_shifts = wp.zeros(
-        (num_atoms, max_neighbors),
-        dtype=vec_dtype,
-        device=device,
-    )
 
     wp.launch(
         kernel=_compute_cartesian_shifts_matrix_overload[wp_dtype],
@@ -2117,9 +2093,6 @@ def dftd3_matrix_pbc(
         outputs=[cartesian_shifts],
         device=device,
     )
-
-    # Allocate dE_dCN array for chain rule computation (internal temporary)
-    dE_dCN = wp.zeros(num_atoms, dtype=wp.float32, device=device)  # NOSONAR (S125)
 
     # Pass 1: Compute coordination numbers
     wp.launch(
@@ -2207,6 +2180,9 @@ def dftd3(
     forces: wp.array,
     energy: wp.array,
     virial: wp.array,
+    batch_idx: wp.array,
+    cartesian_shifts: wp.array,
+    dE_dCN: wp.array,
     wp_dtype: type,
     device: str,
     k1: float = 16.0,
@@ -2214,7 +2190,6 @@ def dftd3(
     s6: float = 1.0,
     s5_smoothing_on: float = 0.0,
     s5_smoothing_off: float = 0.0,
-    batch_idx: wp.array | None = None,
 ) -> None:
     """
     Launch DFT-D3(BJ) dispersion calculation using neighbor list (CSR) format (non-periodic).
@@ -2268,6 +2243,16 @@ def dftd3(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor (not computed for non-periodic systems). Must be
         pre-allocated but will not be modified.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_edges]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Values are not used for non-periodic systems, but the array must
+        still be provided with length matching idx_j.
+        Must be pre-allocated by caller.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -2284,8 +2269,6 @@ def dftd3(
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
         Distance where S5 switching completes, in same units as positions. Default: 0.0
-    batch_idx : wp.array(dtype=int32), shape [num_atoms], or None, optional
-        Batch indices. If None, all atoms are in a single system.
 
     Returns
     -------
@@ -2310,16 +2293,6 @@ def dftd3(
     dftd3_matrix : Neighbor matrix format, non-periodic
     dftd3_matrix_pbc : Neighbor matrix format with PBC support
     """
-    # Derive vector dtype from scalar dtype
-    if wp_dtype == wp.float64:
-        vec_dtype = wp.vec3d
-    elif wp_dtype == wp.float32:
-        vec_dtype = wp.vec3f
-    else:
-        raise ValueError(
-            f"Unsupported wp_dtype: {wp_dtype}. Expected wp.float32 or wp.float64"
-        )
-
     # Get number of atoms and edges
     num_atoms = positions.shape[0]
     num_edges = idx_j.shape[0]
@@ -2328,26 +2301,13 @@ def dftd3(
     if num_atoms == 0 or num_edges == 0:
         return
 
-    # Create default batch_idx if not provided (all atoms in single system)
-    if batch_idx is None:
-        batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
-
     # Precompute inv_w for S5 switching
     if s5_smoothing_off > s5_smoothing_on:
         inv_w = 1.0 / (s5_smoothing_off - s5_smoothing_on)
     else:
         inv_w = 0.0
 
-    # Non-periodic: create zero shifts array (not used but need correct shape for kernel)
     periodic = False
-    cartesian_shifts = wp.zeros(
-        num_edges,
-        dtype=vec_dtype,
-        device=device,
-    )
-
-    # Allocate dE_dCN array for chain rule computation (internal temporary)
-    dE_dCN = wp.zeros(num_atoms, dtype=wp.float32, device=device)  # NOSONAR (S125)
 
     # Pass 1: Compute coordination numbers
     wp.launch(
@@ -2438,6 +2398,9 @@ def dftd3_pbc(
     forces: wp.array,
     energy: wp.array,
     virial: wp.array,
+    batch_idx: wp.array,
+    cartesian_shifts: wp.array,
+    dE_dCN: wp.array,
     wp_dtype: type,
     device: str,
     k1: float = 16.0,
@@ -2445,7 +2408,6 @@ def dftd3_pbc(
     s6: float = 1.0,
     s5_smoothing_on: float = 0.0,
     s5_smoothing_off: float = 0.0,
-    batch_idx: wp.array | None = None,
     compute_virial: bool = False,
 ) -> None:
     """
@@ -2507,6 +2469,15 @@ def dftd3_pbc(
     virial : wp.array(dtype=mat33f), shape [num_systems]
         OUTPUT: Virial tensor in energy units. Must be pre-allocated and zeroed.
         Only computed if compute_virial=True.
+    batch_idx : wp.array(dtype=int32), shape [num_atoms]
+        Batch indices mapping each atom to its system index.
+    cartesian_shifts : wp.array(dtype=vec3f or vec3d), shape [num_edges]
+        SCRATCH: Pre-allocated buffer for Cartesian shift vectors.
+        Populated by Pass 0 from unit cell shifts. Must be pre-allocated
+        with length matching idx_j.
+    dE_dCN : wp.array(dtype=float32), shape [num_atoms]
+        SCRATCH: Pre-allocated buffer for chain rule dE/dCN intermediate.
+        Must be pre-allocated and zeroed by caller.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64) matching positions dtype.
     device : str
@@ -2523,8 +2494,6 @@ def dftd3_pbc(
         Distance where S5 switching begins, in same units as positions. Default: 0.0
     s5_smoothing_off : float, optional
         Distance where S5 switching completes, in same units as positions. Default: 0.0
-    batch_idx : wp.array(dtype=int32), shape [num_atoms], or None, optional
-        Batch indices. If None, all atoms are in a single system.
     compute_virial : bool, optional
         If True, compute virial tensor. Default: False
 
@@ -2549,16 +2518,6 @@ def dftd3_pbc(
     dftd3_matrix : Neighbor matrix format, non-periodic
     dftd3_matrix_pbc : Neighbor matrix format with PBC support
     """
-    # Derive vector dtype from scalar dtype
-    if wp_dtype == wp.float64:
-        vec_dtype = wp.vec3d
-    elif wp_dtype == wp.float32:
-        vec_dtype = wp.vec3f
-    else:
-        raise ValueError(
-            f"Unsupported wp_dtype: {wp_dtype}. Expected wp.float32 or wp.float64"
-        )
-
     # Get number of atoms and edges
     num_atoms = positions.shape[0]
     num_edges = idx_j.shape[0]
@@ -2566,10 +2525,6 @@ def dftd3_pbc(
     # Handle empty case
     if num_atoms == 0 or num_edges == 0:
         return
-
-    # Create default batch_idx if not provided (all atoms in single system)
-    if batch_idx is None:
-        batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
 
     # Precompute inv_w for S5 switching
     if s5_smoothing_off > s5_smoothing_on:
@@ -2579,11 +2534,6 @@ def dftd3_pbc(
 
     # Pass 0: Compute cartesian shifts from unit cell shifts
     periodic = True
-    cartesian_shifts = wp.zeros(
-        num_edges,
-        dtype=vec_dtype,
-        device=device,
-    )
 
     wp.launch(
         kernel=_compute_cartesian_shifts_overload[wp_dtype],
@@ -2597,9 +2547,6 @@ def dftd3_pbc(
         outputs=[cartesian_shifts],
         device=device,
     )
-
-    # Allocate dE_dCN array for chain rule computation (internal temporary)
-    dE_dCN = wp.zeros(num_atoms, dtype=wp.float32, device=device)  # NOSONAR (S125)
 
     # Pass 1: Compute coordination numbers
     wp.launch(

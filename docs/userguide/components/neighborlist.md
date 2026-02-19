@@ -23,7 +23,7 @@ both single and batched inputs.
 Neighbor list construction can dominate runtime in atomistic foundation models:
 
 - **Naive algorithms scale as \(O(N^2)\)**: Checking all atom pairs becomes
-  prohibitive for systems with a large number of atoms (approx. 5000 atoms,
+  prohibitive for systems with a large number of atoms (approx. 2000 atoms,
   but depends on structure and hardware)
 - **Repeated construction**: Training loops and MD simulations rebuild neighbor
   lists frequently---every step or every few steps
@@ -45,7 +45,7 @@ size and whether batch indices are provided.
 :::{tab-item} Single + Large
 :sync: single-large
 
-Single system with >5000 atoms
+Single system with >2000 atoms
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -62,7 +62,7 @@ using spatial decomposition.
 :::{tab-item} Single + Small
 :sync: single-small
 
-Single system with <5000 atoms
+Single system with <2000 atoms
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -79,7 +79,7 @@ algorithm with lower overhead.
 :::{tab-item} Batch + Large
 :sync: batch-large
 
-Multiple systems with >5000 atoms each
+Multiple systems with >2000 atoms each
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -97,7 +97,7 @@ algorithm for heterogeneous batches.
 :::{tab-item} Batch + Small
 :sync: batch-small
 
-Multiple systems with <5000 atoms each
+Multiple systems with <2000 atoms each
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -116,7 +116,7 @@ Dispatches to {func}`~nvalchemiops.torch.neighbors.batched.batch_naive_neighbor_
 
 ```{note}
 When `method` is not specified, `neighbor_list` automatically selects based on
-system size (greater than 5000 atoms) and whether `batch_idx` is provided.
+average system size (greater than 2000 atoms per system) and whether `batch_idx` is provided.
 The crossover point depends on system density and cutoff radius---benchmark
 your workload to find the optimal threshold.
 ```
@@ -177,7 +177,7 @@ When `method=None`, {func}`~nvalchemiops.torch.neighbors.neighbor_list` selects
 an algorithm using the following logic:
 
 1. If `cutoff2` is provided, then dual cutoff method
-2. If `total_atoms >= 5000`, then `"cell_list"`
+2. If average atoms per system `>= 2000`, then `"cell_list"`
 3. Otherwise, `"naive"` ($N^2$ scaling algorithm)
 4. If `batch_idx` or `batch_ptr` is provided, then prepend `"batch_"` to the method
 
@@ -185,7 +185,7 @@ an algorithm using the following logic:
 
 | Method | Algorithm | Use Case |
 |--------|-----------|----------|
-| `"naive"` | \(O(N^2)\) pairwise | Small single systems (<5000 atoms) |
+| `"naive"` | \(O(N^2)\) pairwise | Small single systems (<2000 atoms) |
 | `"cell_list"` | \(O(N)\) spatial decomposition | Large single systems |
 | `"batch_naive"` | \(O(N^2)\) per system | Batched small systems |
 | `"batch_cell_list"` | \(O(N)\) per system | Batched large systems |
@@ -350,8 +350,8 @@ import torch
 from nvalchemiops.torch.neighbors import neighbor_list
 
 # Create atomic system
-positions = torch.rand(1000, 3, device="cuda") * 10.0
-cell = torch.eye(3, device="cuda").unsqueeze(0) * 10.0
+positions = torch.rand(1000, 3, device="cuda") * 20.0
+cell = torch.eye(3, device="cuda").unsqueeze(0) * 20.0
 pbc = torch.tensor([True, True, True], device="cuda")
 cutoff = 5.0
 

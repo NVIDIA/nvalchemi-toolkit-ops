@@ -149,7 +149,7 @@ def run_dftd3_matrix(
         batch_idx_wp = to_warp(batch_indices, wp.int32, device)
         num_systems = int(batch_indices.max()) + 1
     else:
-        batch_idx_wp = None  # Let launcher create default
+        batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
         num_systems = 1
 
     # Allocate outputs (pre-zeroed)
@@ -157,6 +157,11 @@ def run_dftd3_matrix(
     forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
     energy_wp = wp.zeros(num_systems, dtype=wp.float32, device=device)
     virial_wp = wp.zeros(num_systems, dtype=wp.mat33f, device=device)
+
+    # Allocate scratch buffers
+    max_neighbors = nbmat.shape[1] if B > 0 else 0
+    cartesian_shifts_wp = wp.zeros((B, max_neighbors), dtype=vec_dtype, device=device)
+    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
 
     # Call warp launcher
     dftd3_matrix(
@@ -174,12 +179,14 @@ def run_dftd3_matrix(
         forces=forces_wp,
         energy=energy_wp,
         virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
         wp_dtype=wp_dtype,
         device=device,
         k1=functional_params["k1"],
         k3=functional_params["k3"],
         s6=functional_params["s6"],
-        batch_idx=batch_idx_wp,
     )
 
     # Convert back to numpy
@@ -265,7 +272,7 @@ def run_dftd3(
         batch_idx_wp = to_warp(batch_indices, wp.int32, device)
         num_systems = int(batch_indices.max()) + 1
     else:
-        batch_idx_wp = None  # Let launcher create default
+        batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
         num_systems = 1
 
     # Allocate outputs (pre-zeroed)
@@ -273,6 +280,11 @@ def run_dftd3(
     forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
     energy_wp = wp.zeros(num_systems, dtype=wp.float32, device=device)
     virial_wp = wp.zeros(num_systems, dtype=wp.mat33f, device=device)
+
+    # Allocate scratch buffers
+    num_edges = idx_j.shape[0]
+    cartesian_shifts_wp = wp.zeros(num_edges, dtype=vec_dtype, device=device)
+    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
 
     # Call warp launcher
     dftd3(
@@ -291,12 +303,14 @@ def run_dftd3(
         forces=forces_wp,
         energy=energy_wp,
         virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
         wp_dtype=wp_dtype,
         device=device,
         k1=functional_params["k1"],
         k3=functional_params["k3"],
         s6=functional_params["s6"],
-        batch_idx=batch_idx_wp,
     )
 
     # Convert back to numpy
@@ -501,6 +515,8 @@ class TestWarpLauncherMatrix:
         energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
         virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
         batch_idx_wp = wp.zeros(0, dtype=wp.int32, device=device)
+        cartesian_shifts_wp = wp.zeros((0, 0), dtype=wp.vec3f, device=device)
+        dE_dCN_wp = wp.zeros(0, dtype=wp.float32, device=device)
 
         # Should not crash with empty system
         dftd3_matrix(
@@ -518,9 +534,11 @@ class TestWarpLauncherMatrix:
             forces=forces_wp,
             energy=energy_wp,
             virial=virial_wp,
+            batch_idx=batch_idx_wp,
+            cartesian_shifts=cartesian_shifts_wp,
+            dE_dCN=dE_dCN_wp,
             wp_dtype=wp.float32,
             device=device,
-            batch_idx=batch_idx_wp,
         )
 
         energy = from_warp(energy_wp)
@@ -1004,6 +1022,8 @@ class TestWarpLauncherList:
         energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
         virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
         batch_idx_wp = wp.zeros(0, dtype=wp.int32, device=device)
+        cartesian_shifts_wp = wp.zeros(0, dtype=wp.vec3f, device=device)
+        dE_dCN_wp = wp.zeros(0, dtype=wp.float32, device=device)
 
         # Should not crash with empty system
         dftd3(
@@ -1022,9 +1042,11 @@ class TestWarpLauncherList:
             forces=forces_wp,
             energy=energy_wp,
             virial=virial_wp,
+            batch_idx=batch_idx_wp,
+            cartesian_shifts=cartesian_shifts_wp,
+            dE_dCN=dE_dCN_wp,
             wp_dtype=wp.float32,
             device=device,
-            batch_idx=batch_idx_wp,
         )
 
         energy = from_warp(energy_wp)
