@@ -289,6 +289,7 @@ def _dftd3_nm_impl(
     cell: jax.Array | None = None,
     neighbor_matrix_shifts: jax.Array | None = None,
     compute_virial: bool = False,
+    num_systems: int | None = None,
 ) -> (
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
@@ -303,9 +304,10 @@ def _dftd3_nm_impl(
 
     # Handle empty case
     if num_atoms == 0:
-        num_systems = 1
-        if batch_idx is not None:
-            num_systems = int(jnp.max(batch_idx)) + 1
+        if num_systems is None:
+            num_systems = 1
+            if batch_idx is not None:
+                num_systems = int(jnp.max(batch_idx)) + 1
         empty_energy = jnp.zeros(num_systems, dtype=jnp.float32)
         empty_forces = jnp.zeros((0, 3), dtype=jnp.float32)
         empty_cn = jnp.zeros((0,), dtype=jnp.float32)
@@ -315,12 +317,13 @@ def _dftd3_nm_impl(
         return empty_energy, empty_forces, empty_cn
 
     # Determine number of systems
-    if cell is not None:
-        num_systems = cell.shape[0]
-    elif batch_idx is not None:
-        num_systems = int(jnp.max(batch_idx)) + 1
-    else:
-        num_systems = 1
+    if num_systems is None:
+        if cell is not None:
+            num_systems = cell.shape[0]
+        elif batch_idx is not None:
+            num_systems = int(jnp.max(batch_idx)) + 1
+        else:
+            num_systems = 1
 
     # Create batch indices if not provided
     if batch_idx is None:
@@ -481,6 +484,7 @@ def _dftd3_nl_impl(
     cell: jax.Array | None = None,
     unit_shifts: jax.Array | None = None,
     compute_virial: bool = False,
+    num_systems: int | None = None,
 ) -> (
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
@@ -491,9 +495,10 @@ def _dftd3_nl_impl(
 
     # Handle empty case
     if num_atoms == 0 or num_edges == 0:
-        num_systems = 1
-        if batch_idx is not None:
-            num_systems = int(jnp.max(batch_idx)) + 1
+        if num_systems is None:
+            num_systems = 1
+            if batch_idx is not None:
+                num_systems = int(jnp.max(batch_idx)) + 1
         empty_energy = jnp.zeros(num_systems, dtype=jnp.float32)
         empty_forces = jnp.zeros((0, 3), dtype=jnp.float32)
         empty_cn = jnp.zeros((0,), dtype=jnp.float32)
@@ -503,12 +508,13 @@ def _dftd3_nl_impl(
         return empty_energy, empty_forces, empty_cn
 
     # Determine number of systems
-    if cell is not None:
-        num_systems = cell.shape[0]
-    elif batch_idx is not None:
-        num_systems = int(jnp.max(batch_idx)) + 1
-    else:
-        num_systems = 1
+    if num_systems is None:
+        if cell is not None:
+            num_systems = cell.shape[0]
+        elif batch_idx is not None:
+            num_systems = int(jnp.max(batch_idx)) + 1
+        else:
+            num_systems = 1
 
     # Create batch indices if not provided
     if batch_idx is None:
@@ -950,6 +956,7 @@ def dftd3(
             cell=cell,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_virial=compute_virial,
+            num_systems=num_systems,
         )
     else:
         # Extract idx_j from neighbor_list (row 1 contains destination atoms)
@@ -976,4 +983,5 @@ def dftd3(
             cell=cell,
             unit_shifts=unit_shifts,
             compute_virial=compute_virial,
+            num_systems=num_systems,
         )

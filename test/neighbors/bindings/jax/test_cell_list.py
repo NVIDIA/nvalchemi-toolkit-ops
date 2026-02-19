@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors.cell_list import cell_list
+from nvalchemiops.jax.neighbors.cell_list import cell_list, estimate_cell_list_sizes
 
-from .conftest import requires_gpu
+from .conftest import requires_gpu, requires_vesin
 
 pytestmark = requires_gpu
 
@@ -218,3 +219,211 @@ class TestCellListJIT:
         assert num_neighbors.shape == (2,)
         assert shifts.shape[0] == 2
         assert shifts.shape[2] == 3
+
+
+class TestEstimateCellListSizes:
+    """Tests for estimate_cell_list_sizes neighbor_search_radius output."""
+
+    def test_search_radius_small_cell(self):
+        """When cutoff exceeds cell size, search radius must be > 1."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 2.0
+        pbc = jnp.array([[True, True, True]])
+
+        _, _, neighbor_search_radius = estimate_cell_list_sizes(
+            positions, cell, cutoff=5.0, pbc=pbc
+        )
+
+        # ceil(5.0 / 2.0) = 3 in each dimension
+        assert neighbor_search_radius.shape == (3,)
+        for i in range(3):
+            assert int(neighbor_search_radius[i]) >= 3, (
+                f"dim {i}: expected search radius >= 3, got {int(neighbor_search_radius[i])}"
+            )
+
+    def test_search_radius_large_cell(self):
+        """When cell size exceeds cutoff, search radius should be 1."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 10.0
+        pbc = jnp.array([[True, True, True]])
+
+        _, _, neighbor_search_radius = estimate_cell_list_sizes(
+            positions, cell, cutoff=2.0, pbc=pbc
+        )
+
+        assert neighbor_search_radius.shape == (3,)
+        for i in range(3):
+            assert int(neighbor_search_radius[i]) == 1, (
+                f"dim {i}: expected search radius == 1, got {int(neighbor_search_radius[i])}"
+            )
+
+    def test_search_radius_no_pbc(self):
+        """With no PBC and a single cell, search radius should be 0."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 5.0
+        pbc = jnp.array([[False, False, False]])
+
+        _, _, neighbor_search_radius = estimate_cell_list_sizes(
+            positions, cell, cutoff=10.0, pbc=pbc
+        )
+
+        assert neighbor_search_radius.shape == (3,)
+        for i in range(3):
+            assert int(neighbor_search_radius[i]) == 0, (
+                f"dim {i}: expected search radius == 0 with no PBC, "
+                f"got {int(neighbor_search_radius[i])}"
+            )
+
+    def test_search_radius_d3_scenario(self):
+        """D3 benchmark scenario: cell 12.42 A, cutoff 21.2 A -> radius 2."""
+        positions = jnp.array([[0.0, 0.0, 0.0]], dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 12.42
+        pbc = jnp.array([[True, True, True]])
+
+        _, _, neighbor_search_radius = estimate_cell_list_sizes(
+            positions, cell, cutoff=21.2, pbc=pbc
+        )
+
+        assert neighbor_search_radius.shape == (3,)
+        for i in range(3):
+            assert int(neighbor_search_radius[i]) == 2, (
+                f"dim {i}: expected search radius == 2, got {int(neighbor_search_radius[i])}"
+            )
+
+
+def _vesin_brute_force(positions_np, cell_np, pbc_np, cutoff):
+    """Compute reference neighbor list using vesin.
+
+    Returns numpy arrays (i, j, shifts) for a full (bidirectional) neighbor list.
+    """
+    from vesin import NeighborList
+
+    calculator = NeighborList(cutoff=cutoff, full_list=True, sorted=True)
+    i, j, shifts = calculator.compute(
+        points=positions_np, box=cell_np, periodic=pbc_np, quantities="ijS"
+    )
+    return i.astype(np.int32), j.astype(np.int32), shifts.astype(np.int32)
+
+
+class TestCellListCorrectnessVesin:
+    """Correctness tests comparing JAX cell_list against vesin reference.
+
+    These tests specifically exercise scenarios where cutoff > cell size,
+    requiring neighbor_search_radius > 1, to prevent regressions of the
+    hardcoded search radius bug.
+    """
+
+    @requires_vesin
+    @pytest.mark.parametrize(
+        "cell_size, cutoff",
+        [
+            (2.0, 5.0),
+            (4.0, 5.0),
+            (10.0, 5.0),
+            (12.42, 21.2),
+        ],
+        ids=[
+            "cutoff_2.5x_cell",
+            "cutoff_1.25x_cell",
+            "cutoff_lt_cell",
+            "d3_benchmark",
+        ],
+    )
+    def test_neighbor_count_matches_vesin(self, cell_size, cutoff):
+        """Total neighbor count from cell_list must match vesin reference."""
+        num_atoms = 8
+        n_side = 2
+        spacing = cell_size / n_side
+        coords = [
+            [ix * spacing, iy * spacing, iz * spacing]
+            for ix in range(n_side)
+            for iy in range(n_side)
+            for iz in range(n_side)
+        ]
+        positions_np = np.array(coords[:num_atoms], dtype=np.float64)
+        cell_np = np.eye(3, dtype=np.float64) * cell_size
+        pbc_np = np.array([True, True, True])
+
+        ref_i, ref_j, _ = _vesin_brute_force(positions_np, cell_np, pbc_np, cutoff)
+        ref_total = len(ref_i)
+
+        positions_jax = jnp.array(positions_np, dtype=jnp.float32)
+        cell_jax = jnp.array(cell_np, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc_jax = jnp.array([[True, True, True]])
+
+        _, num_neighbors, _ = cell_list(
+            positions_jax, cutoff, cell_jax, pbc_jax, max_neighbors=2000
+        )
+        jax_total = int(jnp.sum(num_neighbors))
+
+        assert jax_total == ref_total, (
+            f"Neighbor count mismatch: JAX cell_list={jax_total}, "
+            f"vesin reference={ref_total} "
+            f"(cell_size={cell_size}, cutoff={cutoff})"
+        )
+
+    @requires_vesin
+    @pytest.mark.parametrize(
+        "cell_size, cutoff",
+        [
+            (2.0, 5.0),
+            (4.0, 5.0),
+            (10.0, 5.0),
+            (12.42, 21.2),
+        ],
+        ids=[
+            "cutoff_2.5x_cell",
+            "cutoff_1.25x_cell",
+            "cutoff_lt_cell",
+            "d3_benchmark",
+        ],
+    )
+    def test_neighbor_pairs_match_vesin(self, cell_size, cutoff):
+        """Sorted (i, j, shift) triples from cell_list must match vesin."""
+        num_atoms = 8
+        n_side = 2
+        spacing = cell_size / n_side
+        coords = [
+            [ix * spacing, iy * spacing, iz * spacing]
+            for ix in range(n_side)
+            for iy in range(n_side)
+            for iz in range(n_side)
+        ]
+        positions_np = np.array(coords[:num_atoms], dtype=np.float64)
+        cell_np = np.eye(3, dtype=np.float64) * cell_size
+        pbc_np = np.array([True, True, True])
+
+        ref_i, ref_j, ref_shifts = _vesin_brute_force(
+            positions_np, cell_np, pbc_np, cutoff
+        )
+
+        positions_jax = jnp.array(positions_np, dtype=jnp.float32)
+        cell_jax = jnp.array(cell_np, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc_jax = jnp.array([[True, True, True]])
+
+        nl, ptr, shifts = cell_list(
+            positions_jax,
+            cutoff,
+            cell_jax,
+            pbc_jax,
+            max_neighbors=2000,
+            return_neighbor_list=True,
+        )
+
+        jax_i = np.asarray(nl[0])
+        jax_j = np.asarray(nl[1])
+        jax_shifts = np.asarray(shifts)
+
+        assert len(jax_i) == len(ref_i), (
+            f"Pair count mismatch: JAX={len(jax_i)}, vesin={len(ref_i)}"
+        )
+
+        def _sort_key(i_arr, j_arr, s_arr):
+            return np.lexsort([s_arr[:, 2], s_arr[:, 1], s_arr[:, 0], j_arr, i_arr])
+
+        jax_order = _sort_key(jax_i, jax_j, jax_shifts)
+        ref_order = _sort_key(ref_i, ref_j, ref_shifts)
+
+        np.testing.assert_array_equal(jax_i[jax_order], ref_i[ref_order])
+        np.testing.assert_array_equal(jax_j[jax_order], ref_j[ref_order])
+        np.testing.assert_array_equal(jax_shifts[jax_order], ref_shifts[ref_order])
