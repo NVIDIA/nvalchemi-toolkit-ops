@@ -305,9 +305,17 @@ def batch_naive_neighbor_list_dual_cutoff(
 
         # Compute max_atoms_per_system if needed
         if max_atoms_per_system is None:
-            # Compute from batch_ptr
-            atoms_per_system = batch_ptr[1:] - batch_ptr[:-1]
-            max_atoms_per_system = int(jnp.max(atoms_per_system))
+            try:
+                atoms_per_system = batch_ptr[1:] - batch_ptr[:-1]
+                max_atoms_per_system = int(jnp.max(atoms_per_system))
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ):
+                raise ValueError(
+                    "Cannot infer max_atoms_per_system inside jax.jit. "
+                    "Please provide max_atoms_per_system explicitly when using jax.jit."
+                ) from None
 
     if cutoff1 <= 0 and cutoff2 <= 0:
         if return_neighbor_list:
