@@ -377,6 +377,7 @@ class BenchmarkTimer:
                             "success": False,
                             "error": f"Out of Memory during warmup run {i + 1}",
                             "error_type": "OOM",
+                            "last_result": None,
                         }
                     except Exception as e:
                         return {
@@ -386,6 +387,7 @@ class BenchmarkTimer:
                             "success": False,
                             "error": f"Warmup run {i + 1} failed: {str(e)}",
                             "error_type": type(e).__name__,
+                            "last_result": None,
                         }
 
             # Reset peak memory stats before timing runs
@@ -393,6 +395,7 @@ class BenchmarkTimer:
 
             # Timing runs
             times = []
+            last_result = None
 
             # Start profiler (torch backend only)
             if self.backend == "torch" and self._cudart is not None:
@@ -413,7 +416,7 @@ class BenchmarkTimer:
                                     )
 
                                     start_event.record()
-                                    func(*args, **kwargs)
+                                    last_result = func(*args, **kwargs)
                                     end_event.record()
 
                                     self._torch.cuda.synchronize()
@@ -423,7 +426,7 @@ class BenchmarkTimer:
                                     times.append(elapsed_time)
                                 else:
                                     start_time = time.perf_counter()
-                                    func(*args, **kwargs)
+                                    last_result = func(*args, **kwargs)
                                     end_time = time.perf_counter()
                                     times.append(
                                         (end_time - start_time) * 1000.0
@@ -435,6 +438,7 @@ class BenchmarkTimer:
                                 # Block until computation is complete
                                 self._jax.block_until_ready(result)
                                 end_time = time.perf_counter()
+                                last_result = result
                                 times.append(
                                     (end_time - start_time) * 1000.0
                                 )  # Convert to ms
@@ -451,6 +455,7 @@ class BenchmarkTimer:
                         "success": False,
                         "error": f"Out of Memory during timing run {i + 1}/{self.timing_runs}",
                         "error_type": "OOM",
+                        "last_result": None,
                     }
                 except TimeoutError as e:
                     # Stop profiler (torch backend only)
@@ -463,6 +468,7 @@ class BenchmarkTimer:
                         "success": False,
                         "error": f"Timeout during timing run {i + 1}/{self.timing_runs}: {str(e)}",
                         "error_type": "Timeout",
+                        "last_result": None,
                     }
                 except Exception as e:
                     # Stop profiler (torch backend only)
@@ -475,6 +481,7 @@ class BenchmarkTimer:
                         "success": False,
                         "error": f"Timing run {i + 1} failed: {str(e)}",
                         "error_type": type(e).__name__,
+                        "last_result": None,
                     }
 
             # Stop profiler (torch backend only)
@@ -492,6 +499,7 @@ class BenchmarkTimer:
                     "success": False,
                     "error": "No successful timing runs",
                     "error_type": "NoData",
+                    "last_result": None,
                 }
 
             return {
@@ -499,6 +507,7 @@ class BenchmarkTimer:
                 "times": times,
                 "peak_memory_mb": peak_memory_mb,
                 "success": True,
+                "last_result": last_result,
             }
 
         except TimeoutError as e:
@@ -509,6 +518,7 @@ class BenchmarkTimer:
                 "success": False,
                 "error": f"Overall timeout: {str(e)}",
                 "error_type": "Timeout",
+                "last_result": None,
             }
         except Exception as e:
             return {
@@ -518,6 +528,7 @@ class BenchmarkTimer:
                 "success": False,
                 "error": f"Unexpected error: {str(e)}",
                 "error_type": type(e).__name__,
+                "last_result": None,
             }
 
 
