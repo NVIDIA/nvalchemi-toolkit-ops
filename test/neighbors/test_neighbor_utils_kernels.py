@@ -23,7 +23,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
     zero_array,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype
 
 from .test_utils import create_simple_cubic_system
 

@@ -111,7 +111,7 @@ from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
 from nvalchemiops.torch.interactions.electrostatics.parameters import (
     estimate_ewald_parameters,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "ewald_real_space",

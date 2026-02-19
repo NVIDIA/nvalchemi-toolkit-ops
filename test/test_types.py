@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """
-Unit tests for nvalchemiops.types module.
+Unit tests for nvalchemiops.torch.types module.
 
 This test suite validates the dtype conversion functions that map
 PyTorch dtypes to Warp dtypes.
@@ -30,7 +30,7 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 
 class TestGetWpDtype:

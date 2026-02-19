@@ -193,7 +193,7 @@ from nvalchemiops.torch.spline import (
     spline_gather_vec3,
     spline_spread,
 )
-from nvalchemiops.types import get_wp_dtype
+from nvalchemiops.torch.types import get_wp_dtype
 
 # Mathematical constants
 PI = math.pi

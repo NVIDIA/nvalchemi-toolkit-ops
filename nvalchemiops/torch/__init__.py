@@ -20,3 +20,15 @@ if importlib.util.find_spec("torch") is None:
         "PyTorch is required for `nvalchemiops.torch` namespace."
         " Please install via `pip install 'nvalchemiops[torch]'`."
     )
+
+from nvalchemiops.torch.types import (
+    get_wp_dtype,
+    get_wp_mat_dtype,
+    get_wp_vec_dtype,
+)
+
+__all__ = [
+    "get_wp_dtype",
+    "get_wp_mat_dtype",
+    "get_wp_vec_dtype",
+]
