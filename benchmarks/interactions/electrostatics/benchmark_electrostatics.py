@@ -1071,6 +1071,7 @@ def run_jax_pme(
     _compute_forces = compute_forces
     _compute_virial = compute_virial
     _spline_order = spline_order
+    _mesh_dimensions = mesh_dimensions
 
     @jax.jit
     def _jit_pme_real(
@@ -1102,7 +1103,6 @@ def run_jax_pme(
         charges,
         cell,
         alpha,
-        mesh_dimensions,
         k_vectors,
         k_squared,
         batch_idx,
@@ -1112,7 +1112,7 @@ def run_jax_pme(
             charges=charges,
             cell=cell,
             alpha=alpha,
-            mesh_dimensions=mesh_dimensions,
+            mesh_dimensions=_mesh_dimensions,
             spline_order=_spline_order,
             batch_idx=batch_idx,
             k_vectors=k_vectors,
@@ -1127,7 +1127,6 @@ def run_jax_pme(
         charges,
         cell,
         alpha,
-        mesh_dimensions,
         k_vectors,
         k_squared,
         neighbor_list,
@@ -1140,7 +1139,7 @@ def run_jax_pme(
             charges=charges,
             cell=cell,
             alpha=alpha,
-            mesh_dimensions=mesh_dimensions,
+            mesh_dimensions=_mesh_dimensions,
             spline_order=_spline_order,
             batch_idx=batch_idx,
             k_vectors=k_vectors,
@@ -1170,7 +1169,6 @@ def run_jax_pme(
             charges,
             cell,
             alpha,
-            mesh_dimensions,
             k_vectors_pme,
             k_squared_pme,
             batch_idx,
@@ -1181,7 +1179,6 @@ def run_jax_pme(
             charges,
             cell,
             alpha,
-            mesh_dimensions,
             k_vectors_pme,
             k_squared_pme,
             neighbor_list_data,
