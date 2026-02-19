@@ -304,6 +304,59 @@ def plot_memory(
     )
 
 
+def _parse_nl_filename(filename: str) -> tuple[str, str, str] | None:
+    """
+    Parse neighbor list benchmark filename to extract method, backend, and GPU SKU.
+
+    Parameters
+    ----------
+    filename
+        The filename stem (without extension).
+
+    Returns
+    -------
+    tuple[str, str, str] | None
+        Tuple of (method, backend, gpu_sku) or None if parsing fails.
+
+    Notes
+    -----
+    Filenames follow the pattern: neighbor_list_benchmark_<method>_<backend>_<gpu_sku>.csv
+
+    Valid backend names are: "torch", "jax".
+
+    Method names use hyphens (e.g., "cell-list", "batch-naive"), so they occupy
+    a single underscore-delimited token.
+    """
+    known_backends = ["torch", "jax"]
+
+    prefix = "neighbor_list_benchmark_"
+    if not filename.startswith(prefix):
+        return None
+
+    remainder = filename[len(prefix) :]
+
+    # Method names use hyphens, so the first underscore-delimited token is the method.
+    # Then try to match a known backend.
+    parts = remainder.split("_", 1)
+    if len(parts) < 2:
+        return None
+
+    method = parts[0]
+    rest = parts[1]
+
+    for backend in known_backends:
+        if rest.startswith(backend + "_"):
+            gpu_sku = rest[len(backend) + 1 :]
+            return method, backend, gpu_sku
+
+    # Fallback: no known backend matched — treat first token as backend
+    rest_parts = rest.split("_", 1)
+    if len(rest_parts) == 2:
+        return method, rest_parts[0], rest_parts[1]
+
+    return None
+
+
 def generate_nl_plots(results_dir: Path, output_dir: Path) -> None:
     """
     Generate all neighbor list benchmark plots.
@@ -324,56 +377,164 @@ def generate_nl_plots(results_dir: Path, output_dir: Path) -> None:
 
     print(f"\nFound {len(nl_csv_files)} neighbor list CSV files")
 
-    for csv_file in nl_csv_files:
-        # Extract method name from filename
-        # Format: neighbor_list_benchmark_<method>_<gpu_sku>.csv
-        parts = csv_file.stem.split("_")
-        benchmark_index = parts.index("benchmark")
-        method = parts[benchmark_index + 1]
-        # Get rest of parts as GPU SKU
-        gpu_sku = "_".join(parts[benchmark_index + 2 :])
+    # Group files by method and backend
+    # method -> backend -> csv_file
+    files_by_method: dict[str, dict[str, Path]] = {}
+    gpu_sku = None
 
-        # Load data
+    for csv_file in nl_csv_files:
+        parsed = _parse_nl_filename(csv_file.stem)
+        if parsed is None:
+            print(f"  Warning: Could not parse filename {csv_file.name}")
+            continue
+        method, backend, gpu_sku = parsed
+        if method not in files_by_method:
+            files_by_method[method] = {}
+        files_by_method[method][backend] = csv_file
+
+    if gpu_sku is None:
+        print("  Warning: Could not determine GPU SKU")
+        gpu_sku = "unknown"
+
+    for method, backend_files in files_by_method.items():
+        method_title = method.replace("-", " ").title()
+        print(f"\n  Generating plots for {method}...")
+
+        # 1. Backend comparison plots (batch_size=1 data only)
+        _generate_nl_comparison_plots(method, backend_files, gpu_sku, output_dir)
+
+        # 2. Per-backend plots (all batch sizes)
+        for backend, csv_file in backend_files.items():
+            _generate_nl_backend_plots(
+                method, backend, csv_file, gpu_sku, output_dir
+            )
+
+
+def _generate_nl_comparison_plots(
+    method: str,
+    backend_files: dict[str, Path],
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """
+    Generate comparison plots across backends for a given neighbor list method.
+
+    Only uses batch_size=1 data for fair comparison.
+    """
+    method_title = method.replace("-", " ").title()
+    comparison_time_series = {}
+    comparison_memory_series = {}
+
+    for backend, csv_file in backend_files.items():
         data = load_nl_csv(csv_file)
 
-        # Prepare series for plotting
-        time_series = {
-            f"batch={bs}": (d.total_atoms, d.median_time_ms) for bs, d in data.items()
-        }
-        memory_series = {
-            f"batch={bs}": (d.total_atoms, d.peak_memory_mb) for bs, d in data.items()
-        }
+        if 1 in data:
+            single_data = data[1]
+        else:
+            # Find the smallest batch size
+            min_batch = min(data.keys())
+            single_data = data[min_batch]
 
-        method_title = method.replace("-", " ").title()
-
-        # 1. Time scaling plot
-        output_path = output_dir / f"neighborlist_scaling_{method}_{gpu_sku}.png"
-        plot_series(
-            time_series,
-            output_path,
-            title=f"Neighbor List Scaling ({method_title})",
-            x_label="Number of atoms",
-            y_label="Median time (ms)",
+        comparison_time_series[backend] = (
+            single_data.total_atoms,
+            single_data.median_time_ms,
         )
-        print(f"  Generated: {output_path.name}")
-
-        # 2. Throughput plot
-        output_path = output_dir / f"neighborlist_throughput_{method}_{gpu_sku}.png"
-        plot_throughput(
-            time_series,
-            output_path,
-            title=f"Neighbor List Throughput ({method_title})",
+        comparison_memory_series[backend] = (
+            single_data.total_atoms,
+            single_data.peak_memory_mb,
         )
-        print(f"  Generated: {output_path.name}")
 
-        # 3. Memory utilization plot
-        output_path = output_dir / f"neighborlist_memory_{method}_{gpu_sku}.png"
-        plot_memory(
-            memory_series,
-            output_path,
-            title=f"Neighbor List Memory ({method_title})",
-        )
-        print(f"  Generated: {output_path.name}")
+    if not comparison_time_series:
+        return
+
+    # Time scaling comparison
+    output_path = (
+        output_dir / f"neighborlist_scaling_{method}_comparison_{gpu_sku}.png"
+    )
+    plot_series(
+        comparison_time_series,
+        output_path,
+        title=f"Neighbor List Scaling ({method_title}, Backend Comparison)",
+        x_label="Number of atoms",
+        y_label="Median time (ms)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Throughput comparison
+    output_path = (
+        output_dir / f"neighborlist_throughput_{method}_comparison_{gpu_sku}.png"
+    )
+    plot_throughput(
+        comparison_time_series,
+        output_path,
+        title=f"Neighbor List Throughput ({method_title}, Backend Comparison)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Memory comparison
+    output_path = (
+        output_dir / f"neighborlist_memory_{method}_comparison_{gpu_sku}.png"
+    )
+    plot_memory(
+        comparison_memory_series,
+        output_path,
+        title=f"Neighbor List Memory ({method_title}, Backend Comparison)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+
+def _generate_nl_backend_plots(
+    method: str,
+    backend: str,
+    csv_file: Path,
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """
+    Generate plots for a specific neighbor list method/backend combination.
+
+    Shows all batch sizes as separate series.
+    """
+    method_title = method.replace("-", " ").title()
+    data = load_nl_csv(csv_file)
+
+    time_series = {
+        f"batch={bs}": (d.total_atoms, d.median_time_ms) for bs, d in data.items()
+    }
+    memory_series = {
+        f"batch={bs}": (d.total_atoms, d.peak_memory_mb) for bs, d in data.items()
+    }
+
+    # Time scaling
+    output_path = output_dir / f"neighborlist_scaling_{method}_{backend}_{gpu_sku}.png"
+    plot_series(
+        time_series,
+        output_path,
+        title=f"Neighbor List Scaling ({method_title}, {backend})",
+        x_label="Number of atoms",
+        y_label="Median time (ms)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Throughput
+    output_path = (
+        output_dir / f"neighborlist_throughput_{method}_{backend}_{gpu_sku}.png"
+    )
+    plot_throughput(
+        time_series,
+        output_path,
+        title=f"Neighbor List Throughput ({method_title}, {backend})",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Memory
+    output_path = output_dir / f"neighborlist_memory_{method}_{backend}_{gpu_sku}.png"
+    plot_memory(
+        memory_series,
+        output_path,
+        title=f"Neighbor List Memory ({method_title}, {backend})",
+    )
+    print(f"    Generated: {output_path.name}")
 
 
 def _parse_dftd3_filename(filename: str, is_batched: bool) -> tuple[str, str] | None:
