@@ -316,13 +316,13 @@ def neighbor_list(
         case "batch_cell_list":
             # NOTE: JAX batch_cell_list does not yet support half_fill/fill_value
             # (unlike Torch). These parameters are silently ignored here.
-            # See JAX_FINAL.md for tracking.
             return batch_cell_list(
                 positions,
                 cutoff,
                 cell,
                 pbc,
                 batch_idx,
+                batch_ptr=batch_ptr,
                 return_neighbor_list=return_neighbor_list,
                 **kwargs,
             )
