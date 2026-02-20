@@ -468,7 +468,7 @@ def compute_neighbor_list(
     Returns
     -------
     tuple
-        (neighbor_list_data, neighbor_ptr, neighbor_shifts)
+        (neighbor_matrix, num_neighbors, neighbor_matrix_shifts)
     """
     _, neighbors_mod = _get_backend_modules(backend)
 
@@ -484,7 +484,7 @@ def compute_neighbor_list(
             cutoff,
             cell=cell,
             pbc=pbc,
-            return_neighbor_list=True,
+            return_neighbor_list=False,
         )
     else:
         # Batched system
@@ -495,7 +495,7 @@ def compute_neighbor_list(
             pbc=pbc,
             batch_idx=batch_idx,
             method="batch_naive",
-            return_neighbor_list=True,
+            return_neighbor_list=False,
         )
 
 
@@ -540,7 +540,7 @@ def prepare_single_system(
     params = compute_electrostatics_params(backend_data, "torch")
 
     # Step 4: Compute neighbor list
-    neighbor_list_data, neighbor_ptr, neighbor_shifts = compute_neighbor_list(
+    neighbor_matrix, num_neighbors, neighbor_matrix_shifts = compute_neighbor_list(
         backend_data, "torch", params["cutoff"]
     )
 
@@ -560,9 +560,9 @@ def prepare_single_system(
         "charges": backend_data["charges"],
         "cell": backend_data["cell"],
         "pbc": pbc,
-        "neighbor_list": neighbor_list_data,
-        "neighbor_ptr": neighbor_ptr,
-        "neighbor_shifts": neighbor_shifts,
+        "neighbor_matrix": neighbor_matrix,
+        "num_neighbors": num_neighbors,
+        "neighbor_matrix_shifts": neighbor_matrix_shifts,
         "total_atoms": backend_data["total_atoms"],
         "batch_idx": None,
         "alpha": params["alpha"],
@@ -620,7 +620,7 @@ def prepare_batch_system(
     params = compute_electrostatics_params(backend_data, "torch")
 
     # Step 4: Compute neighbor list
-    neighbor_list_data, neighbor_ptr, neighbor_shifts = compute_neighbor_list(
+    neighbor_matrix, num_neighbors, neighbor_matrix_shifts = compute_neighbor_list(
         backend_data, "torch", params["cutoff"]
     )
 
@@ -629,9 +629,9 @@ def prepare_batch_system(
         "charges": backend_data["charges"],
         "cell": backend_data["cell"],
         "pbc": backend_data["pbc"],
-        "neighbor_list": neighbor_list_data,
-        "neighbor_ptr": neighbor_ptr,
-        "neighbor_shifts": neighbor_shifts,
+        "neighbor_matrix": neighbor_matrix,
+        "num_neighbors": num_neighbors,
+        "neighbor_matrix_shifts": neighbor_matrix_shifts,
         "total_atoms": backend_data["total_atoms"],
         "batch_idx": backend_data["batch_idx"],
         "batch_size": batch_size,
@@ -666,9 +666,8 @@ def run_nvalchemiops_ewald(
     k_cutoff = system_data.get("k_cutoff")
     k_vectors = _torch_electrostatics.generate_k_vectors_ewald_summation(cell, k_cutoff)
 
-    neighbor_list_data = system_data.get("neighbor_list")
-    neighbor_ptr = system_data.get("neighbor_ptr")
-    neighbor_shifts = system_data.get("neighbor_shifts")
+    neighbor_matrix_data = system_data.get("neighbor_matrix")
+    neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
 
     if batch_idx is None:
         # Single system
@@ -679,9 +678,8 @@ def run_nvalchemiops_ewald(
                 charges=charges,
                 cell=cell,
                 alpha=alpha,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
             )
@@ -703,9 +701,8 @@ def run_nvalchemiops_ewald(
                 alpha=alpha,
                 k_cutoff=k_cutoff,
                 k_vectors=k_vectors,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
             )
@@ -718,9 +715,8 @@ def run_nvalchemiops_ewald(
                 cell=cell,
                 alpha=alpha,
                 batch_idx=batch_idx,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
             )
@@ -744,9 +740,8 @@ def run_nvalchemiops_ewald(
                 k_cutoff=k_cutoff,
                 k_vectors=k_vectors,
                 batch_idx=batch_idx,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
             )
@@ -769,9 +764,8 @@ def run_nvalchemiops_pme(
     k_vectors_pme = system_data.get("k_vectors_pme")
     k_squared_pme = system_data.get("k_squared_pme")
 
-    neighbor_list_data = system_data.get("neighbor_list")
-    neighbor_ptr = system_data.get("neighbor_ptr")
-    neighbor_shifts = system_data.get("neighbor_shifts")
+    neighbor_matrix_data = system_data.get("neighbor_matrix")
+    neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
 
     if batch_idx is None:
         # Single system
@@ -782,9 +776,8 @@ def run_nvalchemiops_pme(
                 charges=charges,
                 cell=cell,
                 alpha=alpha,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
             )
@@ -809,9 +802,8 @@ def run_nvalchemiops_pme(
                 alpha=alpha,
                 mesh_dimensions=mesh_dimensions,
                 spline_order=spline_order,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
                 k_vectors=k_vectors_pme,
@@ -827,9 +819,8 @@ def run_nvalchemiops_pme(
                 cell=cell,
                 alpha=alpha,
                 batch_idx=batch_idx,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
             )
@@ -856,9 +847,8 @@ def run_nvalchemiops_pme(
                 mesh_dimensions=mesh_dimensions,
                 spline_order=spline_order,
                 batch_idx=batch_idx,
-                neighbor_list=neighbor_list_data,
-                neighbor_ptr=neighbor_ptr,
-                neighbor_shifts=neighbor_shifts,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
                 k_vectors=k_vectors_pme,
@@ -889,9 +879,8 @@ def run_jax_ewald(
         - batch_idx: jax.Array of shape (N,) or None
         - alpha: jax.Array (scalar)
         - k_cutoff: float
-        - neighbor_list: jax.Array or None
-        - neighbor_ptr: jax.Array or None
-        - neighbor_shifts: jax.Array or None
+        - neighbor_matrix: jax.Array or None
+        - neighbor_matrix_shifts: jax.Array or None
     component : {"real", "reciprocal", "full"}
         Which component of Ewald summation to compute.
     compute_forces : bool
@@ -912,9 +901,8 @@ def run_jax_ewald(
     k_cutoff = system_data.get("k_cutoff")
     num_atoms_per_system = system_data.get("num_atoms_per_system")
 
-    neighbor_list_data = system_data.get("neighbor_list")
-    neighbor_ptr = system_data.get("neighbor_ptr")
-    neighbor_shifts = system_data.get("neighbor_shifts")
+    neighbor_matrix_data = system_data.get("neighbor_matrix")
+    neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
 
     # Precompute Miller index bounds eagerly (3 integers that determine k-vector
     # grid shape). These must be concrete Python ints for jnp.arange inside JIT.
@@ -934,9 +922,8 @@ def run_jax_ewald(
         charges,
         cell,
         alpha,
-        neighbor_list,
-        neighbor_ptr,
-        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
         batch_idx,
     ):
         return _jax_electrostatics.ewald_real_space(
@@ -944,9 +931,8 @@ def run_jax_ewald(
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
             compute_forces=_compute_forces,
             compute_virial=_compute_virial,
@@ -976,9 +962,8 @@ def run_jax_ewald(
         charges,
         cell,
         alpha,
-        neighbor_list,
-        neighbor_ptr,
-        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
         batch_idx,
     ):
         # Pass miller_bounds so ewald_summation generates k-vectors inside JIT
@@ -992,9 +977,8 @@ def run_jax_ewald(
             miller_bounds=_miller_bounds,
             batch_idx=batch_idx,
             max_atoms_per_system=num_atoms_per_system,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=_compute_forces,
             compute_virial=_compute_virial,
         )
@@ -1006,9 +990,8 @@ def run_jax_ewald(
             charges,
             cell,
             alpha,
-            neighbor_list_data,
-            neighbor_ptr,
-            neighbor_shifts,
+            neighbor_matrix_data,
+            neighbor_matrix_shifts,
             batch_idx,
         )
     elif component == "reciprocal":
@@ -1019,9 +1002,8 @@ def run_jax_ewald(
             charges,
             cell,
             alpha,
-            neighbor_list_data,
-            neighbor_ptr,
-            neighbor_shifts,
+            neighbor_matrix_data,
+            neighbor_matrix_shifts,
             batch_idx,
         )
 
@@ -1047,9 +1029,8 @@ def run_jax_pme(
         - spline_order: int
         - k_vectors_pme: jax.Array
         - k_squared_pme: jax.Array
-        - neighbor_list: jax.Array or None
-        - neighbor_ptr: jax.Array or None
-        - neighbor_shifts: jax.Array or None
+        - neighbor_matrix: jax.Array or None
+        - neighbor_matrix_shifts: jax.Array or None
     component : {"real", "reciprocal", "full"}
         Which component of PME to compute.
     compute_forces : bool
@@ -1070,9 +1051,8 @@ def run_jax_pme(
     mesh_dimensions = system_data.get("mesh_dimensions")
     spline_order = system_data.get("spline_order")
 
-    neighbor_list_data = system_data.get("neighbor_list")
-    neighbor_ptr = system_data.get("neighbor_ptr")
-    neighbor_shifts = system_data.get("neighbor_shifts")
+    neighbor_matrix_data = system_data.get("neighbor_matrix")
+    neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
 
     # Capture booleans and scalars in closure (concrete under JIT)
     _compute_forces = compute_forces
@@ -1086,9 +1066,8 @@ def run_jax_pme(
         charges,
         cell,
         alpha,
-        neighbor_list,
-        neighbor_ptr,
-        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
         batch_idx,
     ):
         return _jax_electrostatics.ewald_real_space(
@@ -1096,9 +1075,8 @@ def run_jax_pme(
             charges=charges,
             cell=cell,
             alpha=alpha,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             batch_idx=batch_idx,
             compute_forces=_compute_forces,
             compute_virial=_compute_virial,
@@ -1134,9 +1112,8 @@ def run_jax_pme(
         charges,
         cell,
         alpha,
-        neighbor_list,
-        neighbor_ptr,
-        neighbor_shifts,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
         batch_idx,
     ):
         # Pass k_vectors=None, k_squared=None so particle_mesh_ewald generates
@@ -1151,9 +1128,8 @@ def run_jax_pme(
             batch_idx=batch_idx,
             k_vectors=None,
             k_squared=None,
-            neighbor_list=neighbor_list,
-            neighbor_ptr=neighbor_ptr,
-            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
             compute_forces=_compute_forces,
             compute_virial=_compute_virial,
         )
@@ -1165,9 +1141,8 @@ def run_jax_pme(
             charges,
             cell,
             alpha,
-            neighbor_list_data,
-            neighbor_ptr,
-            neighbor_shifts,
+            neighbor_matrix_data,
+            neighbor_matrix_shifts,
             batch_idx,
         )
     elif component == "reciprocal":
@@ -1184,9 +1159,8 @@ def run_jax_pme(
             charges,
             cell,
             alpha,
-            neighbor_list_data,
-            neighbor_ptr,
-            neighbor_shifts,
+            neighbor_matrix_data,
+            neighbor_matrix_shifts,
             batch_idx,
         )
 
@@ -1199,23 +1173,43 @@ def run_jax_pme(
 def prepare_torchpme_neighbors(
     system_data: dict,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Prepare neighbor data in torchpme format."""
+    """Prepare neighbor data in torchpme format.
+
+    Converts dense padded neighbor_matrix format to COO format required by torchpme.
+    """
     positions = system_data["positions"]
     cell = system_data["cell"]
     batch_idx = system_data.get("batch_idx")
 
     if batch_idx is None:
         # Single system
-        neighbor_list_data = system_data.get("neighbor_list")
-        neighbor_shifts = system_data.get("neighbor_shifts")
+        neighbor_matrix_data = system_data.get("neighbor_matrix")
+        neighbor_matrix_shifts_data = system_data.get("neighbor_matrix_shifts")
 
-        if neighbor_list_data is not None:
-            neighbor_indices = neighbor_list_data.T
+        if neighbor_matrix_data is not None:
+            total_atoms_val = positions.shape[0]
+            # Build COO pairs from dense matrix
+            # neighbor_matrix is (N, max_neighbors), fill_value=total_atoms
+            # Create row indices
+            row_idx = torch.arange(total_atoms_val, device=positions.device)
+            row_idx = row_idx.unsqueeze(1).expand_as(neighbor_matrix_data)
+            # Mask valid neighbors
+            valid = neighbor_matrix_data < total_atoms_val
+            src = row_idx[valid]
+            dst = neighbor_matrix_data[valid]
+            neighbor_indices = torch.stack([src, dst], dim=0).T  # (num_pairs, 2)
+            # Compute shifts for valid pairs
+            if neighbor_matrix_shifts_data is not None:
+                shifts = neighbor_matrix_shifts_data[valid]  # (num_pairs, 3)
+            else:
+                shifts = torch.zeros(
+                    src.shape[0], 3, dtype=torch.int32, device=positions.device
+                )
             cell_2d = cell.squeeze(0)
             neighbor_distances = torch.norm(
-                positions[neighbor_list_data[1]]
-                - positions[neighbor_list_data[0]]
-                + neighbor_shifts.to(dtype=positions.dtype) @ cell_2d,
+                positions[dst]
+                - positions[src]
+                + shifts.to(dtype=positions.dtype) @ cell_2d,
                 dim=1,
             )
         else:
@@ -1647,8 +1641,10 @@ def main():
                             np_data, "jax", dtype_str=dtype_str
                         )
                         params_data = compute_electrostatics_params(backend_data, "jax")
-                        nl_data, nl_ptr, nl_shifts = compute_neighbor_list(
-                            backend_data, "jax", params_data["cutoff"]
+                        nl_matrix, nl_num_neighbors, nl_matrix_shifts = (
+                            compute_neighbor_list(
+                                backend_data, "jax", params_data["cutoff"]
+                            )
                         )
                         # Assemble system_data dict matching the expected format
                         system_data = {
@@ -1656,9 +1652,9 @@ def main():
                             "charges": backend_data["charges"],
                             "cell": backend_data["cell"],
                             "pbc": backend_data["pbc"],
-                            "neighbor_list": nl_data,
-                            "neighbor_ptr": nl_ptr,
-                            "neighbor_shifts": nl_shifts,
+                            "neighbor_matrix": nl_matrix,
+                            "num_neighbors": nl_num_neighbors,
+                            "neighbor_matrix_shifts": nl_matrix_shifts,
                             "total_atoms": backend_data["total_atoms"],
                             "num_atoms_per_system": backend_data[
                                 "num_atoms_per_system"
@@ -1744,17 +1740,19 @@ def main():
                             np_data, "jax", dtype_str=dtype_str
                         )
                         params_data = compute_electrostatics_params(backend_data, "jax")
-                        nl_data, nl_ptr, nl_shifts = compute_neighbor_list(
-                            backend_data, "jax", params_data["cutoff"]
+                        nl_matrix, nl_num_neighbors, nl_matrix_shifts = (
+                            compute_neighbor_list(
+                                backend_data, "jax", params_data["cutoff"]
+                            )
                         )
                         system_data = {
                             "positions": backend_data["positions"],
                             "charges": backend_data["charges"],
                             "cell": backend_data["cell"],
                             "pbc": backend_data["pbc"],
-                            "neighbor_list": nl_data,
-                            "neighbor_ptr": nl_ptr,
-                            "neighbor_shifts": nl_shifts,
+                            "neighbor_matrix": nl_matrix,
+                            "num_neighbors": nl_num_neighbors,
+                            "neighbor_matrix_shifts": nl_matrix_shifts,
                             "total_atoms": backend_data["total_atoms"],
                             "num_atoms_per_system": backend_data[
                                 "num_atoms_per_system"
