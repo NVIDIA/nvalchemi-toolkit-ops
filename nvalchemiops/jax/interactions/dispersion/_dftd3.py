@@ -307,7 +307,16 @@ def _dftd3_nm_impl(
         if num_systems is None:
             num_systems = 1
             if batch_idx is not None:
-                num_systems = int(jnp.max(batch_idx)) + 1
+                try:
+                    num_systems = int(jnp.max(batch_idx)) + 1
+                except (
+                    jax.errors.ConcretizationTypeError,
+                    jax.errors.TracerIntegerConversionError,
+                ):
+                    raise ValueError(
+                        "Cannot infer num_systems inside jax.jit. "
+                        "Please provide num_systems explicitly when using jax.jit."
+                    ) from None
         empty_energy = jnp.zeros(num_systems, dtype=jnp.float32)
         empty_forces = jnp.zeros((0, 3), dtype=jnp.float32)
         empty_cn = jnp.zeros((0,), dtype=jnp.float32)
@@ -321,7 +330,16 @@ def _dftd3_nm_impl(
         if cell is not None:
             num_systems = cell.shape[0]
         elif batch_idx is not None:
-            num_systems = int(jnp.max(batch_idx)) + 1
+            try:
+                num_systems = int(jnp.max(batch_idx)) + 1
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ):
+                raise ValueError(
+                    "Cannot infer num_systems inside jax.jit. "
+                    "Please provide num_systems explicitly when using jax.jit."
+                ) from None
         else:
             num_systems = 1
 
@@ -498,7 +516,16 @@ def _dftd3_nl_impl(
         if num_systems is None:
             num_systems = 1
             if batch_idx is not None:
-                num_systems = int(jnp.max(batch_idx)) + 1
+                try:
+                    num_systems = int(jnp.max(batch_idx)) + 1
+                except (
+                    jax.errors.ConcretizationTypeError,
+                    jax.errors.TracerIntegerConversionError,
+                ):
+                    raise ValueError(
+                        "Cannot infer num_systems inside jax.jit. "
+                        "Please provide num_systems explicitly when using jax.jit."
+                    ) from None
         empty_energy = jnp.zeros(num_systems, dtype=jnp.float32)
         empty_forces = jnp.zeros((0, 3), dtype=jnp.float32)
         empty_cn = jnp.zeros((0,), dtype=jnp.float32)
@@ -512,7 +539,16 @@ def _dftd3_nl_impl(
         if cell is not None:
             num_systems = cell.shape[0]
         elif batch_idx is not None:
-            num_systems = int(jnp.max(batch_idx)) + 1
+            try:
+                num_systems = int(jnp.max(batch_idx)) + 1
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ):
+                raise ValueError(
+                    "Cannot infer num_systems inside jax.jit. "
+                    "Please provide num_systems explicitly when using jax.jit."
+                ) from None
         else:
             num_systems = 1
 
@@ -931,7 +967,16 @@ def dftd3(
         elif cell is not None:
             num_systems = cell.shape[0]
         else:
-            num_systems = int(jnp.max(batch_idx)) + 1
+            try:
+                num_systems = int(jnp.max(batch_idx)) + 1
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ):
+                raise ValueError(
+                    "Cannot infer num_systems inside jax.jit. "
+                    "Please provide num_systems explicitly when using jax.jit."
+                ) from None
 
     # Dispatch to appropriate implementation based on neighbor format
     if neighbor_matrix is not None:

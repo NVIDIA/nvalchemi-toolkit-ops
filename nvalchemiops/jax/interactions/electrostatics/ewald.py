@@ -350,7 +350,9 @@ def _prepare_alpha_array(
         raise TypeError(f"alpha must be float or jax.Array, got {type(alpha)}")
 
 
-def _compute_total_charge(charges: jax.Array, batch_idx: jax.Array | None) -> jax.Array:
+def _compute_total_charge(
+    charges: jax.Array, batch_idx: jax.Array | None, num_systems: int = 1
+) -> jax.Array:
     """Compute total charge (per system if batched).
 
     Parameters
@@ -359,6 +361,9 @@ def _compute_total_charge(charges: jax.Array, batch_idx: jax.Array | None) -> ja
         Atomic charges.
     batch_idx : jax.Array | None, shape (N,)
         Batch indices.
+    num_systems : int, optional
+        Number of systems in the batch. Only used when batch_idx is not None.
+        Default is 1.
 
     Returns
     -------
@@ -368,7 +373,6 @@ def _compute_total_charge(charges: jax.Array, batch_idx: jax.Array | None) -> ja
     if batch_idx is None:
         return jnp.array([charges.sum()], dtype=jnp.float64)
     else:
-        num_systems = int(batch_idx.max()) + 1
         total_charges = jnp.zeros(num_systems, dtype=jnp.float64)
         total_charges = total_charges.at[batch_idx].add(charges)
         return total_charges
@@ -478,11 +482,9 @@ def ewald_real_space(
     if mask_value is None:
         mask_value = num_atoms
 
-    # Expand cell to (B, 3, 3) if only (1, 3, 3) was given for a batch
+    # Derive num_systems from cell shape (cell is always (B, 3, 3) by caller convention)
     if is_batched:
-        num_systems_from_idx = int(batch_idx.max()) + 1
-        if cell_cast.shape[0] == 1 and num_systems_from_idx > 1:
-            cell_cast = jnp.tile(cell_cast, (num_systems_from_idx, 1, 1))
+        num_systems = cell_cast.shape[0]
 
     # Prepare alpha
     alpha_arr = _prepare_alpha_array(alpha, cell_cast.shape[0], dtype=dtype)
@@ -503,7 +505,6 @@ def ewald_real_space(
 
         if is_batched:
             batch_idx_i32 = batch_idx.astype(jnp.int32)
-            num_systems_batch = int(batch_idx.max()) + 1
 
             # Determine if we need the force kernel (for forces or virial)
             need_force_kernel = compute_forces or compute_virial
@@ -511,7 +512,7 @@ def ewald_real_space(
             if compute_charge_gradients:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
                 charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
-                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
                 (energies, forces, charge_grads, virial) = (
                     _jax_batch_ewald_real_space_energy_forces_charge_grad_list[dtype](
                         positions_cast,
@@ -532,7 +533,7 @@ def ewald_real_space(
                 )
             elif need_force_kernel:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
-                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
                 (energies, forces, virial) = (
                     _jax_batch_ewald_real_space_energy_forces_list[dtype](
                         positions_cast,
@@ -629,7 +630,6 @@ def ewald_real_space(
 
         if is_batched:
             batch_idx_i32 = batch_idx.astype(jnp.int32)
-            num_systems_batch = int(batch_idx.max()) + 1
 
             # Determine if we need the force kernel (for forces or virial)
             need_force_kernel = compute_forces or compute_virial
@@ -637,7 +637,7 @@ def ewald_real_space(
             if compute_charge_gradients:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
                 charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
-                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
                 (energies, forces, charge_grads, virial) = (
                     _jax_batch_ewald_real_space_energy_forces_charge_grad_matrix[dtype](
                         positions_cast,
@@ -658,7 +658,7 @@ def ewald_real_space(
                 )
             elif need_force_kernel:
                 forces = jnp.zeros((num_atoms, 3), dtype=dtype)
-                virial = jnp.zeros((num_systems_batch, 3, 3), dtype=dtype)
+                virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
                 (energies, forces, virial) = (
                     _jax_batch_ewald_real_space_energy_forces_matrix[dtype](
                         positions_cast,
@@ -835,26 +835,22 @@ def ewald_reciprocal_space(
     num_atoms = positions_cast.shape[0]
     is_batched = batch_idx is not None
 
-    # Expand cell to (B, 3, 3) if only (1, 3, 3) was given for a batch
-    if is_batched:
-        num_systems_from_idx = int(batch_idx.max()) + 1
-        if cell_cast.shape[0] == 1 and num_systems_from_idx > 1:
-            cell_cast = jnp.tile(cell_cast, (num_systems_from_idx, 1, 1))
-
     # Prepare alpha
     alpha_arr = _prepare_alpha_array(alpha, cell_cast.shape[0], dtype=dtype)
 
     # Compute total charge (always float64)
-    total_charge = _compute_total_charge(charges_cast, batch_idx)
+    # num_systems is derived from cell shape (cell is always (B, 3, 3) by caller convention)
+    total_charge = _compute_total_charge(
+        charges_cast, batch_idx, num_systems=cell_cast.shape[0]
+    )
 
     # Determine k-vector dimensions
     if is_batched:
         # k_vectors should be (B, K, 3); expand from (K, 3) if necessary
         if k_vectors_cast.ndim == 2:
-            num_systems = int(batch_idx.max()) + 1
             k_vectors_cast = jnp.tile(
                 k_vectors_cast[jnp.newaxis, :, :],
-                (num_systems, 1, 1),
+                (cell_cast.shape[0], 1, 1),
             )
         num_k = k_vectors_cast.shape[1]
         num_systems = k_vectors_cast.shape[0]

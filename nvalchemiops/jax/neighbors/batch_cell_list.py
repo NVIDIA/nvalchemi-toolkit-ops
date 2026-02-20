@@ -416,6 +416,7 @@ def batch_query_cell_list(
     max_neighbors: int | None = None,
     neighbor_matrix: jax.Array | None = None,
     num_neighbors: jax.Array | None = None,
+    neighbor_matrix_shifts: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Query batch cell lists to find neighbors.
 
@@ -453,6 +454,9 @@ def batch_query_cell_list(
         Pre-allocated neighbor matrix.
     num_neighbors : jax.Array, shape (total_atoms,), dtype=int32, optional
         Pre-allocated neighbors count array.
+    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional
+        Pre-allocated shift vectors array. Pass in a pre-shaped array to hint buffer
+        reuse to XLA; note that JAX returns a new array rather than mutating the input.
 
     Returns
     -------
@@ -505,11 +509,13 @@ def batch_query_cell_list(
 
     total_atoms = positions.shape[0]
 
-    # Allocate neighbor_matrix_shifts
-    neighbor_matrix_shifts = jnp.zeros(
-        (total_atoms, max_neighbors, 3),
-        dtype=jnp.int32,
-    )
+    if neighbor_matrix_shifts is None:
+        neighbor_matrix_shifts = jnp.zeros(
+            (total_atoms, max_neighbors, 3),
+            dtype=jnp.int32,
+        )
+    else:
+        neighbor_matrix_shifts = neighbor_matrix_shifts.at[:].set(0)
 
     if atoms_per_cell_count is None:
         max_total_cells = cell_atom_start_indices.shape[0]
@@ -557,6 +563,7 @@ def batch_cell_list(
     batch_ptr: jax.Array | None = None,
     max_neighbors: int | None = None,
     max_total_cells: int | None = None,
+    neighbor_matrix_shifts: jax.Array | None = None,
     return_neighbor_list: bool = False,
 ) -> tuple[jax.Array, jax.Array] | tuple[jax.Array, jax.Array, tuple]:
     """Build and query spatial cell lists for batch of systems.
@@ -579,6 +586,10 @@ def batch_cell_list(
         Maximum number of neighbors per atom. If None, will be estimated.
     max_total_cells : int, optional
         Maximum number of cells to allocate. If None, will be estimated.
+    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional
+        Pre-allocated shift vectors array. If None, will be allocated internally.
+        Pass in a pre-shaped array to hint buffer reuse to XLA; note that JAX returns
+        a new array rather than mutating the input.
     return_neighbor_list : bool, optional
         If True, convert result to COO neighbor list format. Default is False.
 
@@ -646,6 +657,7 @@ def batch_cell_list(
         cell_atom_list=cell_atom_list,
         neighbor_search_radius=neighbor_search_radius,
         max_neighbors=max_neighbors,
+        neighbor_matrix_shifts=neighbor_matrix_shifts,
     )
 
     if return_neighbor_list:
