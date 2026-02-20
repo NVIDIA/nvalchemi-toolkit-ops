@@ -827,12 +827,11 @@ def run_single_benchmark(
             if "batch" in method
             else num_atoms_per_system,
             "atoms_per_system": num_atoms_per_system,
-            "total_neighbors": 0,  # Changed from None to 0
+            "total_neighbors": 0,
             "batch_size": batch_size,
             "backend": backend,
-            "median_time_us": float("inf"),  # Changed from None to inf
+            "median_time_ms": float("inf"),
             "success": False,
-            "error": timing_results.get("error", "Unknown error"),
             "error_type": timing_results.get("error_type", "Unknown"),
             "peak_memory_mb": timing_results.get("peak_memory_mb"),
         }
