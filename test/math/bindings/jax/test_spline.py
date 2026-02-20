@@ -269,6 +269,7 @@ class TestSplineRegressionValues:
     both float32 and float64 outputs.
     """
 
+    @pytest.mark.slow
     def test_spread_regression(self, simple_system):
         """Regression test for spline_spread with expected values."""
         positions = simple_system["positions"]
