@@ -169,7 +169,7 @@ def compute_torchpme_reciprocal(positions_np, charges_np, cell_np, k_cutoff, alp
         Reciprocal space energy per atom
     """
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda"
     dtype = torch.float64
     positions_torch = torch.tensor(positions_np, dtype=dtype, device=device)
     charges_torch = torch.tensor(charges_np, dtype=dtype, device=device)
@@ -214,7 +214,7 @@ def compute_torchpme_real_space(
         Real space energy per atom
     """
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda"
     dtype = torch.float64
     charges_torch = torch.tensor(charges_np, dtype=dtype, device=device)
     neighbor_indices_torch = torch.tensor(
