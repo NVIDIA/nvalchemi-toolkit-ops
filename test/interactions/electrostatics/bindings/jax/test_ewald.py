@@ -1344,6 +1344,47 @@ class TestEwaldJIT:
         assert energies.shape == (4,)
         assert jnp.all(jnp.isfinite(energies))
 
+    def test_jit_batched_reciprocal_space(self):
+        """Test ewald_reciprocal_space works under jax.jit with batched inputs."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)  # (2, 3, 3)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        alpha = jnp.array([0.3, 0.3], dtype=jnp.float64)
+
+        # k_vectors must be computed eagerly (dynamic shape)
+        k_vectors = generate_k_vectors_ewald_summation(cell_single, k_cutoff=8.0)
+
+        @jax.jit
+        def jitted_batched_reciprocal(
+            positions, charges, cell, k_vectors, alpha, batch_idx
+        ):
+            return ewald_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                k_vectors=k_vectors,
+                alpha=alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=2,
+            )
+
+        energies = jitted_batched_reciprocal(
+            positions, charges, cell, k_vectors, alpha, batch_idx
+        )
+
+        assert energies.shape == (4,)
+        assert jnp.all(jnp.isfinite(energies))
+
 
 # ==============================================================================
 # Virial Test Classes

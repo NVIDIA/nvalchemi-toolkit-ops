@@ -778,6 +778,7 @@ def ewald_reciprocal_space(
     k_vectors: jax.Array,
     alpha: float | jax.Array,
     batch_idx: jax.Array | None = None,
+    max_atoms_per_system: int | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
@@ -801,6 +802,10 @@ def ewald_reciprocal_space(
         Ewald splitting parameter. Can be a float or array of shape (1,) or (B,).
     batch_idx : jax.Array | None, shape (N,)
         System index for each atom.
+    max_atoms_per_system : int | None, optional
+        Maximum number of atoms in any single system in the batch.
+        Required when using ``jax.jit`` with batched inputs. If None,
+        inferred from data (fails under JIT).
     compute_forces : bool, default=False
         Whether to compute explicit forces.
     compute_charge_gradients : bool, default=False
@@ -883,7 +888,18 @@ def ewald_reciprocal_space(
         atom_counts = jnp.bincount(batch_idx_i32, length=num_systems)
         atom_end = jnp.cumsum(atom_counts).astype(jnp.int32)
         atom_start = jnp.concatenate([jnp.zeros(1, dtype=jnp.int32), atom_end[:-1]])
-        max_atoms_per_system = int(atom_counts.max())
+        if max_atoms_per_system is None:
+            try:
+                max_atoms_per_system = int(atom_counts.max())
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ):
+                raise ValueError(
+                    "Cannot infer max_atoms_per_system inside jax.jit. "
+                    "Please provide max_atoms_per_system explicitly when "
+                    "using jax.jit."
+                ) from None
         max_blocks_per_system = (
             max_atoms_per_system + BATCH_BLOCK_SIZE - 1
         ) // BATCH_BLOCK_SIZE
@@ -1106,6 +1122,7 @@ def ewald_summation(
     k_vectors: jax.Array | None = None,
     k_cutoff: float | jax.Array | None = None,
     batch_idx: jax.Array | None = None,
+    max_atoms_per_system: int | None = None,
     neighbor_list: jax.Array | None = None,
     neighbor_ptr: jax.Array | None = None,
     neighbor_shifts: jax.Array | None = None,
@@ -1138,6 +1155,10 @@ def ewald_summation(
         K-space cutoff. Used only if k_vectors is None.
     batch_idx : jax.Array | None, shape (N,)
         System index for each atom.
+    max_atoms_per_system : int | None, optional
+        Maximum number of atoms in any single system in the batch.
+        Required when using ``jax.jit`` with batched inputs. If None,
+        inferred from data (fails under JIT).
     neighbor_list : jax.Array | None, shape (2, M)
         Neighbor list in COO format.
     neighbor_ptr : jax.Array | None, shape (N+1,)
@@ -1233,6 +1254,7 @@ def ewald_summation(
         k_vectors=k_vectors,
         alpha=alpha,
         batch_idx=batch_idx,
+        max_atoms_per_system=max_atoms_per_system,
         compute_forces=compute_forces,
         compute_charge_gradients=False,
         compute_virial=compute_virial,
