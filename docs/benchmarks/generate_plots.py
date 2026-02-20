@@ -397,7 +397,6 @@ def generate_nl_plots(results_dir: Path, output_dir: Path) -> None:
         gpu_sku = "unknown"
 
     for method, backend_files in files_by_method.items():
-        method_title = method.replace("-", " ").title()
         print(f"\n  Generating plots for {method}...")
 
         # 1. Backend comparison plots (batch_size=1 data only)
@@ -405,9 +404,7 @@ def generate_nl_plots(results_dir: Path, output_dir: Path) -> None:
 
         # 2. Per-backend plots (all batch sizes)
         for backend, csv_file in backend_files.items():
-            _generate_nl_backend_plots(
-                method, backend, csv_file, gpu_sku, output_dir
-            )
+            _generate_nl_backend_plots(method, backend, csv_file, gpu_sku, output_dir)
 
 
 def _generate_nl_comparison_plots(
@@ -448,9 +445,7 @@ def _generate_nl_comparison_plots(
         return
 
     # Time scaling comparison
-    output_path = (
-        output_dir / f"neighborlist_scaling_{method}_comparison_{gpu_sku}.png"
-    )
+    output_path = output_dir / f"neighborlist_scaling_{method}_comparison_{gpu_sku}.png"
     plot_series(
         comparison_time_series,
         output_path,
@@ -472,9 +467,7 @@ def _generate_nl_comparison_plots(
     print(f"    Generated: {output_path.name}")
 
     # Memory comparison
-    output_path = (
-        output_dir / f"neighborlist_memory_{method}_comparison_{gpu_sku}.png"
-    )
+    output_path = output_dir / f"neighborlist_memory_{method}_comparison_{gpu_sku}.png"
     plot_memory(
         comparison_memory_series,
         output_path,
