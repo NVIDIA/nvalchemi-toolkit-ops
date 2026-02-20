@@ -2220,6 +2220,51 @@ class TestPMEJIT:
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
 
+    def test_jit_equivalence(self):
+        """Test PME results from JIT vs not is equivalent"""
+        positions = jnp.array(
+            [[4.0, 5.0, 5.0], [6.0, 5.0, 5.0], [5.0, 4.0, 5.0], [5.0, 6.0, 5.0]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 0.5, -0.5], dtype=jnp.float64)
+        cell = cubic_cell_jax(10.0)
+        pbc = jnp.array([[True, True, True]])
+
+        # Build neighbor list eagerly (it uses .devices().pop() internally)
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        bare_func = partial(
+            particle_mesh_ewald,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            compute_forces=True,
+        )
+        jitted_func = jax.jit(bare_func)
+
+        bare_energy, bare_forces = bare_func(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        jit_energy, jit_forces = jitted_func(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+
+        assert jnp.allclose(bare_energy, jit_energy, atol=1e-5, rtol=1e-5), (
+            "Energy difference!"
+        )
+        assert jnp.allclose(bare_forces, jit_forces, atol=1e-5, rtol=1e-5), (
+            "Force difference!"
+        )
+
 
 ###########################################################################################
 ########################### PME Virial Tests ##############################################
