@@ -916,8 +916,12 @@ def run_jax_ewald(
     neighbor_ptr = system_data.get("neighbor_ptr")
     neighbor_shifts = system_data.get("neighbor_shifts")
 
-    # Pre-generate k_vectors outside JIT (depends on cell which is an array)
-    k_vectors = _jax_electrostatics.generate_k_vectors_ewald_summation(cell, k_cutoff)
+    # Precompute Miller index bounds eagerly (3 integers that determine k-vector
+    # grid shape). These must be concrete Python ints for jnp.arange inside JIT.
+    # The k-vector grid construction and reciprocal-cell matmul run inside JIT.
+    cell_for_miller = cell if cell.ndim == 3 else cell[None, ...]
+    _bounds = _jax_electrostatics.generate_miller_indices(cell_for_miller, k_cutoff)
+    _miller_bounds = (int(_bounds[0]), int(_bounds[1]), int(_bounds[2]))
 
     # Capture booleans and scalars in closure (concrete under JIT)
     _compute_forces = compute_forces
@@ -949,7 +953,11 @@ def run_jax_ewald(
         )
 
     @jax.jit
-    def _jit_ewald_reciprocal(positions, charges, cell, k_vectors, alpha, batch_idx):
+    def _jit_ewald_reciprocal(positions, charges, cell, alpha, batch_idx):
+        # Generate k-vectors inside JIT using precomputed Miller bounds
+        k_vectors = _jax_electrostatics.generate_k_vectors_ewald_summation(
+            cell, _k_cutoff, miller_bounds=_miller_bounds
+        )
         return _jax_electrostatics.ewald_reciprocal_space(
             positions=positions,
             charges=charges,
@@ -968,19 +976,20 @@ def run_jax_ewald(
         charges,
         cell,
         alpha,
-        k_vectors,
         neighbor_list,
         neighbor_ptr,
         neighbor_shifts,
         batch_idx,
     ):
+        # Pass miller_bounds so ewald_summation generates k-vectors inside JIT
         return _jax_electrostatics.ewald_summation(
             positions=positions,
             charges=charges,
             cell=cell,
             alpha=alpha,
             k_cutoff=_k_cutoff,
-            k_vectors=k_vectors,
+            k_vectors=None,
+            miller_bounds=_miller_bounds,
             batch_idx=batch_idx,
             max_atoms_per_system=num_atoms_per_system,
             neighbor_list=neighbor_list,
@@ -1003,16 +1012,13 @@ def run_jax_ewald(
             batch_idx,
         )
     elif component == "reciprocal":
-        return _jit_ewald_reciprocal(
-            positions, charges, cell, k_vectors, alpha, batch_idx
-        )
+        return _jit_ewald_reciprocal(positions, charges, cell, alpha, batch_idx)
     else:  # full
         return _jit_ewald_full(
             positions,
             charges,
             cell,
             alpha,
-            k_vectors,
             neighbor_list_data,
             neighbor_ptr,
             neighbor_shifts,
@@ -1063,8 +1069,6 @@ def run_jax_pme(
     alpha = system_data.get("alpha")
     mesh_dimensions = system_data.get("mesh_dimensions")
     spline_order = system_data.get("spline_order")
-    k_vectors_pme = system_data.get("k_vectors_pme")
-    k_squared_pme = system_data.get("k_squared_pme")
 
     neighbor_list_data = system_data.get("neighbor_list")
     neighbor_ptr = system_data.get("neighbor_ptr")
@@ -1106,10 +1110,10 @@ def run_jax_pme(
         charges,
         cell,
         alpha,
-        k_vectors,
-        k_squared,
         batch_idx,
     ):
+        # Pass k_vectors=None, k_squared=None so pme_reciprocal_space generates
+        # them inside JIT boundary for fair benchmark comparison
         return _jax_electrostatics.pme_reciprocal_space(
             positions=positions,
             charges=charges,
@@ -1118,8 +1122,8 @@ def run_jax_pme(
             mesh_dimensions=_mesh_dimensions,
             spline_order=_spline_order,
             batch_idx=batch_idx,
-            k_vectors=k_vectors,
-            k_squared=k_squared,
+            k_vectors=None,
+            k_squared=None,
             compute_forces=_compute_forces,
             compute_virial=_compute_virial,
         )
@@ -1130,13 +1134,13 @@ def run_jax_pme(
         charges,
         cell,
         alpha,
-        k_vectors,
-        k_squared,
         neighbor_list,
         neighbor_ptr,
         neighbor_shifts,
         batch_idx,
     ):
+        # Pass k_vectors=None, k_squared=None so particle_mesh_ewald generates
+        # them inside JIT boundary for fair benchmark comparison
         return _jax_electrostatics.particle_mesh_ewald(
             positions=positions,
             charges=charges,
@@ -1145,8 +1149,8 @@ def run_jax_pme(
             mesh_dimensions=_mesh_dimensions,
             spline_order=_spline_order,
             batch_idx=batch_idx,
-            k_vectors=k_vectors,
-            k_squared=k_squared,
+            k_vectors=None,
+            k_squared=None,
             neighbor_list=neighbor_list,
             neighbor_ptr=neighbor_ptr,
             neighbor_shifts=neighbor_shifts,
@@ -1172,8 +1176,6 @@ def run_jax_pme(
             charges,
             cell,
             alpha,
-            k_vectors_pme,
-            k_squared_pme,
             batch_idx,
         )
     else:  # full
@@ -1182,8 +1184,6 @@ def run_jax_pme(
             charges,
             cell,
             alpha,
-            k_vectors_pme,
-            k_squared_pme,
             neighbor_list_data,
             neighbor_ptr,
             neighbor_shifts,
