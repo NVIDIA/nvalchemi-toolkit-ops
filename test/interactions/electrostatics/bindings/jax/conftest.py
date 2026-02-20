@@ -55,7 +55,7 @@ def device():
 # ==============================================================================
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def simple_pair_system(device):  # noqa: ARG001
     """
     Two-atom system for basic tests using neighbor_matrix (dense) format.
@@ -88,7 +88,7 @@ def simple_pair_system(device):  # noqa: ARG001
     return positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def batched_dipole_system(device):  # noqa: ARG001
     """Two independent dipole systems in a single batch (4 atoms total).
 

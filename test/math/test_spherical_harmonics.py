@@ -52,7 +52,7 @@ from nvalchemiops.math.spherical_harmonics import (
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def device():
     """Get the compute device."""
     if torch.cuda.is_available():
@@ -60,7 +60,7 @@ def device():
     return torch.device("cpu")
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def random_positions(device):
     """Generate random unit vectors for testing."""
     torch.manual_seed(42)
@@ -72,7 +72,7 @@ def random_positions(device):
     return positions
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def axis_positions(device):
     """Positions along coordinate axes."""
     return torch.tensor(

@@ -61,7 +61,7 @@ from nvalchemiops.math.spline import (
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def simple_system():
     """Simple 4-atom system in a 10A cubic cell for testing.
 
@@ -93,7 +93,7 @@ def simple_system():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def batch_system():
     """Batched 2-system test setup.
 

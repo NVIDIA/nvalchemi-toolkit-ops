@@ -60,7 +60,7 @@ from nvalchemiops.jax.spline import (  # noqa: E402
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def simple_system():
     """Simple 4-atom system in a 10A cubic cell for testing.
 
@@ -90,7 +90,7 @@ def simple_system():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def batch_system():
     """Batched 2-system test setup.
 

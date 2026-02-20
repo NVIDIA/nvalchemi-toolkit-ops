@@ -26,13 +26,13 @@ from nvalchemiops.torch.interactions.electrostatics import (
 from nvalchemiops.torch.neighbors import neighbor_list as neighbor_list_fn
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def device():
     """Get available device."""
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def simple_pair_system(device):
     """Two-atom system for basic tests."""
     positions = torch.tensor(
