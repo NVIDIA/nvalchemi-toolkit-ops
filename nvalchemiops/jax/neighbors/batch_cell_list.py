@@ -606,7 +606,10 @@ def batch_cell_list(
         If ``return_neighbor_list=True``: ``neighbor_ptr`` with shape
         (total_atoms + 1,), dtype int32.
     shift_data : jax.Array
-        ``neighbor_matrix_shifts`` with shape (total_atoms, max_neighbors, 3), dtype int32.
+        If ``return_neighbor_list=False`` (default): ``neighbor_matrix_shifts`` with shape
+        (total_atoms, max_neighbors, 3), dtype int32.
+        If ``return_neighbor_list=True``: ``neighbor_list_shifts`` with shape
+        (num_pairs, 3), dtype int32.
         Periodic shift vectors for each neighbor relationship.
 
     See Also
@@ -661,11 +664,14 @@ def batch_cell_list(
     )
 
     if return_neighbor_list:
-        neighbor_list, neighbor_ptr = get_neighbor_list_from_neighbor_matrix(
-            neighbor_matrix,
-            num_neighbors=num_neighbors,
-            fill_value=positions.shape[0],
+        neighbor_list, neighbor_ptr, neighbor_list_shifts = (
+            get_neighbor_list_from_neighbor_matrix(
+                neighbor_matrix,
+                num_neighbors=num_neighbors,
+                neighbor_shift_matrix=neighbor_matrix_shifts,
+                fill_value=positions.shape[0],
+            )
         )
-        return neighbor_list, neighbor_ptr, neighbor_matrix_shifts
+        return neighbor_list, neighbor_ptr, neighbor_list_shifts
     else:
         return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
