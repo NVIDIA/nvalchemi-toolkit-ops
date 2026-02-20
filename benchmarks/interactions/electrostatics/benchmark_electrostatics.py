@@ -910,6 +910,7 @@ def run_jax_ewald(
     batch_idx = system_data.get("batch_idx")
     alpha = system_data.get("alpha")
     k_cutoff = system_data.get("k_cutoff")
+    num_atoms_per_system = system_data.get("num_atoms_per_system")
 
     neighbor_list_data = system_data.get("neighbor_list")
     neighbor_ptr = system_data.get("neighbor_ptr")
@@ -956,6 +957,7 @@ def run_jax_ewald(
             k_vectors=k_vectors,
             alpha=alpha,
             batch_idx=batch_idx,
+            max_atoms_per_system=num_atoms_per_system,
             compute_forces=_compute_forces,
             compute_virial=_compute_virial,
         )
@@ -980,6 +982,7 @@ def run_jax_ewald(
             k_cutoff=_k_cutoff,
             k_vectors=k_vectors,
             batch_idx=batch_idx,
+            max_atoms_per_system=num_atoms_per_system,
             neighbor_list=neighbor_list,
             neighbor_ptr=neighbor_ptr,
             neighbor_shifts=neighbor_shifts,
@@ -1657,6 +1660,9 @@ def main():
                             "neighbor_ptr": nl_ptr,
                             "neighbor_shifts": nl_shifts,
                             "total_atoms": backend_data["total_atoms"],
+                            "num_atoms_per_system": backend_data[
+                                "num_atoms_per_system"
+                            ],
                             "batch_idx": None,
                             "alpha": params_data["alpha"],
                             "k_cutoff": params_data["k_cutoff"],
@@ -1750,6 +1756,9 @@ def main():
                             "neighbor_ptr": nl_ptr,
                             "neighbor_shifts": nl_shifts,
                             "total_atoms": backend_data["total_atoms"],
+                            "num_atoms_per_system": backend_data[
+                                "num_atoms_per_system"
+                            ],
                             "batch_idx": backend_data["batch_idx"],
                             "batch_size": batch_size,
                             "alpha": params_data["alpha"],
