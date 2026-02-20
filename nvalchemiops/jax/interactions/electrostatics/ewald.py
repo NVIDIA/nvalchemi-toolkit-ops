@@ -1121,6 +1121,7 @@ def ewald_summation(
     alpha: float | jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_cutoff: float | jax.Array | None = None,
+    miller_bounds: tuple[int, int, int] | None = None,
     batch_idx: jax.Array | None = None,
     max_atoms_per_system: int | None = None,
     neighbor_list: jax.Array | None = None,
@@ -1153,6 +1154,12 @@ def ewald_summation(
         Shape (K, 3) for single system, (B, K, 3) for batch.
     k_cutoff : float | None
         K-space cutoff. Used only if k_vectors is None.
+    miller_bounds : tuple[int, int, int] | None, optional
+        Precomputed maximum Miller indices (M_h, M_k, M_l). Forwarded to
+        :func:`generate_k_vectors_ewald_summation` when ``k_vectors`` is ``None``.
+        When provided, makes k-vector generation compatible with ``jax.jit``.
+        Use :func:`generate_miller_indices` to precompute. Ignored when
+        ``k_vectors`` is explicitly provided.
     batch_idx : jax.Array | None, shape (N,)
         System index for each atom.
     max_atoms_per_system : int | None, optional
@@ -1226,6 +1233,7 @@ def ewald_summation(
         k_vectors = generate_k_vectors_ewald_summation(
             cell=cell_3d,
             k_cutoff=k_cutoff,
+            miller_bounds=miller_bounds,
         )
 
     # Compute real-space component

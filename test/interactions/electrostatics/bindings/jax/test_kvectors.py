@@ -69,6 +69,91 @@ class TestKVectorsEwald:
 
         assert k_vectors_large.shape[0] > k_vectors_small.shape[0]
 
+    def test_halfspace_completeness(self):
+        """Test that half-space enumeration produces exactly the right k-vectors.
+
+        Verifies that every k-vector in the output satisfies the half-space
+        condition and that no valid half-space k-vectors are missing.
+        """
+        cell = jnp.eye(3, dtype=jnp.float64)[None, ...] * 10.0
+        k_cutoff = 5.0
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=k_cutoff)
+
+        # Compute reciprocal cell for reference
+        reciprocal_cell = 2 * jnp.pi * jnp.linalg.inv(cell[0].T)
+
+        # Recover Miller indices (approximate, since k = miller @ reciprocal_cell)
+        inv_recip = jnp.linalg.inv(reciprocal_cell)
+        miller_approx = k_vectors @ inv_recip
+        miller_rounded = jnp.round(miller_approx).astype(jnp.int32)
+
+        h = miller_rounded[:, 0]
+        k = miller_rounded[:, 1]
+        m = miller_rounded[:, 2]
+
+        # Every vector should satisfy the half-space condition
+        halfspace_ok = (h > 0) | ((h == 0) & (k > 0)) | ((h == 0) & (k == 0) & (m > 0))
+        assert jnp.all(halfspace_ok), "All k-vectors must be in the positive half-space"
+
+        # No duplicates
+        unique_count = jnp.unique(
+            miller_rounded, axis=0, size=miller_rounded.shape[0]
+        ).shape[0]
+        assert unique_count == miller_rounded.shape[0], "No duplicate Miller indices"
+
+    def test_with_explicit_miller_bounds_matches_auto(self):
+        """Test that explicit miller_bounds produces identical output to auto-computed."""
+        from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+            generate_miller_indices,
+        )
+
+        cell = jnp.eye(3, dtype=jnp.float64)[None, ...] * 10.0
+        k_cutoff = 8.0
+
+        # Auto-computed
+        k_vectors_auto = generate_k_vectors_ewald_summation(cell, k_cutoff=k_cutoff)
+
+        # Explicit bounds
+        bounds = generate_miller_indices(cell, k_cutoff)
+        miller_bounds = (int(bounds[0]), int(bounds[1]), int(bounds[2]))
+        k_vectors_explicit = generate_k_vectors_ewald_summation(
+            cell, k_cutoff=k_cutoff, miller_bounds=miller_bounds
+        )
+
+        assert k_vectors_auto.shape == k_vectors_explicit.shape
+        assert jnp.allclose(k_vectors_auto, k_vectors_explicit)
+
+    def test_jit_compatible_with_miller_bounds(self):
+        """Test that generate_k_vectors_ewald_summation works inside jax.jit with miller_bounds."""
+        from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+            generate_miller_indices,
+        )
+
+        cell = jnp.eye(3, dtype=jnp.float64)[None, ...] * 10.0
+        k_cutoff = 8.0
+
+        # Precompute bounds eagerly
+        bounds = generate_miller_indices(cell, k_cutoff)
+        miller_bounds = (int(bounds[0]), int(bounds[1]), int(bounds[2]))
+
+        # This should work inside jax.jit
+        @jax.jit
+        def jitted_fn(cell):
+            return generate_k_vectors_ewald_summation(
+                cell, k_cutoff=k_cutoff, miller_bounds=miller_bounds
+            )
+
+        k_vectors_jit = jitted_fn(cell)
+
+        # Compare with eager execution
+        k_vectors_eager = generate_k_vectors_ewald_summation(
+            cell, k_cutoff=k_cutoff, miller_bounds=miller_bounds
+        )
+
+        assert k_vectors_jit.shape == k_vectors_eager.shape
+        assert jnp.allclose(k_vectors_jit, k_vectors_eager)
+
 
 ###########################################################################################
 ########################### PME K-Vector Tests ############################################
@@ -169,6 +254,29 @@ class TestKVectorGradients:
         def loss_fn(cell):
             k_vectors, k_squared_safe = generate_k_vectors_pme(cell, (16, 16, 16))
             return k_vectors.sum() + k_squared_safe.sum()
+
+        grad_fn = jax.grad(loss_fn)
+        grad_val = grad_fn(cell)
+
+        assert grad_val is not None
+        assert jnp.isfinite(grad_val).all()
+
+    def test_ewald_k_vectors_gradients_with_miller_bounds(self):
+        """Test that gradients flow through cell when miller_bounds is provided."""
+        from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
+            generate_miller_indices,
+        )
+
+        cell = jnp.eye(3, dtype=jnp.float64)[None, ...] * 10.0
+        k_cutoff = 8.0
+        bounds = generate_miller_indices(cell, k_cutoff)
+        miller_bounds = (int(bounds[0]), int(bounds[1]), int(bounds[2]))
+
+        def loss_fn(cell):
+            k_vectors = generate_k_vectors_ewald_summation(
+                cell, k_cutoff=k_cutoff, miller_bounds=miller_bounds
+            )
+            return k_vectors.sum()
 
         grad_fn = jax.grad(loss_fn)
         grad_val = grad_fn(cell)

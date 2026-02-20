@@ -21,14 +21,18 @@ import jax.numpy as jnp
 PI = math.pi
 TWOPI = 2.0 * PI
 
-__all__ = ["generate_k_vectors_ewald_summation", "generate_k_vectors_pme"]
+__all__ = [
+    "generate_k_vectors_ewald_summation",
+    "generate_k_vectors_pme",
+    "generate_miller_indices",
+]
 
 
-def _generate_miller_indices(
+def generate_miller_indices(
     cell: jax.Array,
     k_cutoff: float | jax.Array,
-) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Generate Miller indices for Ewald summation.
+) -> jax.Array:
+    """Generate Miller index bounds for Ewald summation.
 
     Parameters
     ----------
@@ -37,9 +41,15 @@ def _generate_miller_indices(
     k_cutoff : float | jax.Array
         Maximum magnitude of k-vectors to include in reciprocal summation.
 
+    Returns
+    -------
+    jax.Array
+        Array of shape (3,) containing the maximum Miller indices (M_h, M_k, M_l)
+        for each lattice direction.
+
     Notes
     -----
-    if cell represents a single system, return max_h, max_k, max_l
+    If cell represents a single system, returns max_h, max_k, max_l
     computed by taking the maximum reciprocal cell_lengths over the entire batch of systems.
     """
     cell_lengths = (jnp.linalg.norm(cell, axis=-1).max(axis=0)) / (
@@ -48,9 +58,14 @@ def _generate_miller_indices(
     return jnp.ceil(k_cutoff * cell_lengths).astype(jnp.int32)
 
 
+# Backwards-compatible alias
+_generate_miller_indices = generate_miller_indices
+
+
 def generate_k_vectors_ewald_summation(
     cell: jax.Array,
     k_cutoff: float | jax.Array,
+    miller_bounds: tuple[int, int, int] | None = None,
 ) -> jax.Array:
     """Generate reciprocal lattice vectors for Ewald summation (half-space).
 
@@ -102,6 +117,14 @@ def generate_k_vectors_ewald_summation(
         Maximum magnitude of k-vectors to include (:math:`|\\mathbf{k}| \\leq k_{\\text{cutoff}}`).
         Typical values: 8-12 :math:`\\text{\\AA}^{-1}` for molecular systems.
         Higher values increase accuracy but also computational cost.
+    miller_bounds : tuple[int, int, int] | None, optional
+        Precomputed maximum Miller indices (M_h, M_k, M_l) for each lattice
+        direction. When provided, the function skips the internal computation
+        of bounds from ``cell`` and ``k_cutoff``, making it compatible with
+        ``jax.jit`` (which requires static array shapes).
+        Use :func:`generate_miller_indices` to compute these bounds eagerly
+        before entering a JIT context. When ``None`` (default), bounds are
+        computed automatically from ``cell`` and ``k_cutoff``.
 
     Returns
     -------
@@ -125,43 +148,76 @@ def generate_k_vectors_ewald_summation(
         >>> params = estimate_ewald_parameters(positions, cell)
         >>> k_vectors = generate_k_vectors_ewald_summation(cell, params.reciprocal_space_cutoff)
 
+    JIT-compatible usage with precomputed bounds::
+
+        >>> from nvalchemiops.jax.interactions.electrostatics import generate_miller_indices
+        >>> cell = jnp.eye(3, dtype=jnp.float64)[None, ...] * 10.0
+        >>> bounds = generate_miller_indices(cell, k_cutoff=8.0)
+        >>> miller_bounds = (int(bounds[0]), int(bounds[1]), int(bounds[2]))
+        >>> # This can now be called inside @jax.jit
+        >>> k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0, miller_bounds=miller_bounds)
+
     Notes
     -----
     - The k=0 vector is always excluded (causes division by zero in Green's function).
     - For batch mode, the same set of Miller indices is used for all systems but
       transformed using each system's reciprocal cell.
     - The number of k-vectors K scales as O(k_cutoff³ · V) where V is the cell volume.
+    - When using inside ``jax.jit``, you **must** provide ``miller_bounds``
+      as a concrete ``tuple[int, int, int]``. The bounds determine array shapes
+      (via ``jnp.arange``), which must be statically known at trace time.
 
     See Also
     --------
     ewald_reciprocal_space : Uses these k-vectors for reciprocal space energy.
     estimate_ewald_parameters : Automatic parameter estimation including k_cutoff.
+    generate_miller_indices : Compute Miller bounds for JIT-compatible usage.
     """
     if cell.ndim == 2:
         cell = cell[None, ...]
     dtype = cell.dtype
 
-    max_h, max_k, max_l = 2 * _generate_miller_indices(cell, k_cutoff) + 1
+    # Get max Miller indices per direction: M_h, M_k, M_l
+    if miller_bounds is not None:
+        M_h, M_k, M_l = miller_bounds
+    else:
+        _bounds = generate_miller_indices(cell, k_cutoff)
+        M_h = int(_bounds[0])
+        M_k = int(_bounds[1])
+        M_l = int(_bounds[2])
 
-    # Generate all combinations of Miller indices
-    h_range = jnp.fft.fftfreq(max_h, dtype=dtype) * max_h
-    k_range = jnp.fft.fftfreq(max_k, dtype=dtype) * max_k
-    l_range = jnp.fft.fftfreq(max_l, dtype=dtype) * max_l
-
-    h_grid, k_grid, l_grid = jnp.meshgrid(h_range, k_range, l_range, indexing="ij")
-    miller_indices = jnp.stack(
-        [h_grid.flatten(), k_grid.flatten(), l_grid.flatten()], axis=1
+    # Build half-space Miller indices directly (no boolean masking)
+    # Block 1: h in [1, M_h], k in [-M_k, M_k], l in [-M_l, M_l]
+    h1 = jnp.arange(1, M_h + 1, dtype=dtype)
+    k1 = jnp.arange(-M_k, M_k + 1, dtype=dtype)
+    l1 = jnp.arange(-M_l, M_l + 1, dtype=dtype)
+    h1_grid, k1_grid, l1_grid = jnp.meshgrid(h1, k1, l1, indexing="ij")
+    block1 = jnp.stack(
+        [h1_grid.reshape(-1), k1_grid.reshape(-1), l1_grid.reshape(-1)], axis=1
     )
 
-    # Apply half-space filter: keep only one of each +-k pair
-    # Condition: h > 0 OR (h == 0 AND k > 0) OR (h == 0 AND k == 0 AND l > 0)
-    h = miller_indices[:, 0]
-    k = miller_indices[:, 1]
-    m = miller_indices[:, 2]  # Using 'm' instead of 'l' to avoid E741 ambiguity
+    # Block 2: h = 0, k in [1, M_k], l in [-M_l, M_l]
+    k2 = jnp.arange(1, M_k + 1, dtype=dtype)
+    l2 = jnp.arange(-M_l, M_l + 1, dtype=dtype)
+    k2_grid, l2_grid = jnp.meshgrid(k2, l2, indexing="ij")
+    block2 = jnp.stack(
+        [
+            jnp.zeros(k2_grid.size, dtype=dtype),
+            k2_grid.reshape(-1),
+            l2_grid.reshape(-1),
+        ],
+        axis=1,
+    )
 
-    halfspace_mask = (h > 0) | ((h == 0) & (k > 0)) | ((h == 0) & (k == 0) & (m > 0))
+    # Block 3: h = 0, k = 0, l in [1, M_l]
+    l3 = jnp.arange(1, M_l + 1, dtype=dtype)
+    block3 = jnp.stack(
+        [jnp.zeros(l3.size, dtype=dtype), jnp.zeros(l3.size, dtype=dtype), l3],
+        axis=1,
+    )
 
-    miller_indices = miller_indices[halfspace_mask]
+    # Concatenate all blocks
+    miller_indices = jnp.concatenate([block1, block2, block3], axis=0)
 
     # Compute reciprocal lattice vectors (2π times reciprocal of direct lattice)
     reciprocal_cell = TWOPI * jnp.linalg.inv(

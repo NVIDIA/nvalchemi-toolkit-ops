@@ -41,6 +41,7 @@ from nvalchemiops.jax.interactions.electrostatics.ewald import (
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
+    generate_miller_indices,
 )
 from nvalchemiops.jax.interactions.electrostatics.parameters import (
     EwaldParameters,
@@ -76,6 +77,7 @@ __all__ = [
     # K-vectors
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",
+    "generate_miller_indices",
     # Parameters
     "EwaldParameters",
     "PMEParameters",
