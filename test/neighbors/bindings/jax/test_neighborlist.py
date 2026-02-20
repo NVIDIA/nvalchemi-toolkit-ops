@@ -43,7 +43,6 @@ def create_random_system_jax(
     num_atoms: int,
     cell_size: float,
     dtype=jnp.float32,
-    device: str = "cpu",
     seed: int = 42,
 ):
     """Create a random system with JAX arrays (positions inside a box)."""
