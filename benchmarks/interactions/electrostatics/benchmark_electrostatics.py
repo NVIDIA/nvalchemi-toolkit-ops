@@ -861,26 +861,23 @@ def run_nvalchemiops_pme(
 # ==============================================================================
 
 
-def run_jax_ewald(
+def prepare_jax_ewald(
     system_data: dict,
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
     compute_virial: bool = False,
-) -> tuple:
-    """Run Ewald summation using JAX backend with JIT compilation.
+):
+    """Prepare a JIT-compiled Ewald callable for benchmarking.
+
+    Creates the ``@jax.jit`` function **once** and returns a zero-argument
+    callable that executes it.  This avoids re-tracing and recompilation on
+    every timing iteration (JAX's JIT cache is keyed on function-object
+    identity, so recreating the decorator inside a loop defeats the cache).
 
     Parameters
     ----------
     system_data : dict
-        Dictionary containing system data with JAX arrays:
-        - positions: jax.Array of shape (N, 3)
-        - charges: jax.Array of shape (N,)
-        - cell: jax.Array of shape (1, 3, 3) or (B, 3, 3)
-        - batch_idx: jax.Array of shape (N,) or None
-        - alpha: jax.Array (scalar)
-        - k_cutoff: float
-        - neighbor_matrix: jax.Array or None
-        - neighbor_matrix_shifts: jax.Array or None
+        Dictionary containing system data with JAX arrays.
     component : {"real", "reciprocal", "full"}
         Which component of Ewald summation to compute.
     compute_forces : bool
@@ -890,8 +887,9 @@ def run_jax_ewald(
 
     Returns
     -------
-    tuple
-        (energy, forces) where forces is None if compute_forces=False.
+    callable
+        A zero-argument function that runs the JIT-compiled Ewald computation
+        and returns ``(energy, forces)`` (forces is ``None`` when disabled).
     """
     positions = system_data["positions"]
     charges = system_data["charges"]
@@ -916,121 +914,126 @@ def run_jax_ewald(
     _compute_virial = compute_virial
     _k_cutoff = k_cutoff
 
-    @jax.jit
-    def _jit_ewald_real(
-        positions,
-        charges,
-        cell,
-        alpha,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        batch_idx,
-    ):
-        return _jax_electrostatics.ewald_real_space(
-            positions=positions,
-            charges=charges,
-            cell=cell,
-            alpha=alpha,
-            neighbor_matrix=neighbor_matrix,
-            neighbor_matrix_shifts=neighbor_matrix_shifts,
-            batch_idx=batch_idx,
-            compute_forces=_compute_forces,
-            compute_virial=_compute_virial,
-        )
+    # --- Define JIT functions ONCE (cached across all timing iterations) ------
 
-    @jax.jit
-    def _jit_ewald_reciprocal(positions, charges, cell, alpha, batch_idx):
-        # Generate k-vectors inside JIT using precomputed Miller bounds
-        k_vectors = _jax_electrostatics.generate_k_vectors_ewald_summation(
-            cell, _k_cutoff, miller_bounds=_miller_bounds
-        )
-        return _jax_electrostatics.ewald_reciprocal_space(
-            positions=positions,
-            charges=charges,
-            cell=cell,
-            k_vectors=k_vectors,
-            alpha=alpha,
-            batch_idx=batch_idx,
-            max_atoms_per_system=num_atoms_per_system,
-            compute_forces=_compute_forces,
-            compute_virial=_compute_virial,
-        )
-
-    @jax.jit
-    def _jit_ewald_full(
-        positions,
-        charges,
-        cell,
-        alpha,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        batch_idx,
-    ):
-        # Pass miller_bounds so ewald_summation generates k-vectors inside JIT
-        return _jax_electrostatics.ewald_summation(
-            positions=positions,
-            charges=charges,
-            cell=cell,
-            alpha=alpha,
-            k_cutoff=_k_cutoff,
-            k_vectors=None,
-            miller_bounds=_miller_bounds,
-            batch_idx=batch_idx,
-            max_atoms_per_system=num_atoms_per_system,
-            neighbor_matrix=neighbor_matrix,
-            neighbor_matrix_shifts=neighbor_matrix_shifts,
-            compute_forces=_compute_forces,
-            compute_virial=_compute_virial,
-        )
-
-    # Select the right jitted function based on component
     if component == "real":
-        return _jit_ewald_real(
+
+        @jax.jit
+        def _jit_fn(
             positions,
             charges,
             cell,
             alpha,
-            neighbor_matrix_data,
+            neighbor_matrix,
             neighbor_matrix_shifts,
             batch_idx,
-        )
+        ):
+            return _jax_electrostatics.ewald_real_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                batch_idx=batch_idx,
+                compute_forces=_compute_forces,
+                compute_virial=_compute_virial,
+            )
+
+        def call():
+            return _jit_fn(
+                positions,
+                charges,
+                cell,
+                alpha,
+                neighbor_matrix_data,
+                neighbor_matrix_shifts,
+                batch_idx,
+            )
+
     elif component == "reciprocal":
-        return _jit_ewald_reciprocal(positions, charges, cell, alpha, batch_idx)
+
+        @jax.jit
+        def _jit_fn(positions, charges, cell, alpha, batch_idx):
+            # Generate k-vectors inside JIT using precomputed Miller bounds
+            k_vectors = _jax_electrostatics.generate_k_vectors_ewald_summation(
+                cell, _k_cutoff, miller_bounds=_miller_bounds
+            )
+            return _jax_electrostatics.ewald_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                k_vectors=k_vectors,
+                alpha=alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=num_atoms_per_system,
+                compute_forces=_compute_forces,
+                compute_virial=_compute_virial,
+            )
+
+        def call():
+            return _jit_fn(positions, charges, cell, alpha, batch_idx)
+
     else:  # full
-        return _jit_ewald_full(
+
+        @jax.jit
+        def _jit_fn(
             positions,
             charges,
             cell,
             alpha,
-            neighbor_matrix_data,
+            neighbor_matrix,
             neighbor_matrix_shifts,
             batch_idx,
-        )
+        ):
+            # Pass miller_bounds so ewald_summation generates k-vectors inside JIT
+            return _jax_electrostatics.ewald_summation(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                k_cutoff=_k_cutoff,
+                k_vectors=None,
+                miller_bounds=_miller_bounds,
+                batch_idx=batch_idx,
+                max_atoms_per_system=num_atoms_per_system,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=_compute_forces,
+                compute_virial=_compute_virial,
+            )
+
+        def call():
+            return _jit_fn(
+                positions,
+                charges,
+                cell,
+                alpha,
+                neighbor_matrix_data,
+                neighbor_matrix_shifts,
+                batch_idx,
+            )
+
+    return call
 
 
-def run_jax_pme(
+def prepare_jax_pme(
     system_data: dict,
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
     compute_virial: bool = False,
-) -> tuple:
-    """Run PME using JAX backend with JIT compilation.
+):
+    """Prepare a JIT-compiled PME callable for benchmarking.
+
+    Creates the ``@jax.jit`` function **once** and returns a zero-argument
+    callable that executes it.  This avoids re-tracing and recompilation on
+    every timing iteration (JAX's JIT cache is keyed on function-object
+    identity, so recreating the decorator inside a loop defeats the cache).
 
     Parameters
     ----------
     system_data : dict
-        Dictionary containing system data with JAX arrays:
-        - positions: jax.Array of shape (N, 3)
-        - charges: jax.Array of shape (N,)
-        - cell: jax.Array of shape (1, 3, 3) or (B, 3, 3)
-        - batch_idx: jax.Array of shape (N,) or None
-        - alpha: jax.Array (scalar)
-        - mesh_dimensions: jax.Array
-        - spline_order: int
-        - k_vectors_pme: jax.Array
-        - k_squared_pme: jax.Array
-        - neighbor_matrix: jax.Array or None
-        - neighbor_matrix_shifts: jax.Array or None
+        Dictionary containing system data with JAX arrays.
     component : {"real", "reciprocal", "full"}
         Which component of PME to compute.
     compute_forces : bool
@@ -1040,8 +1043,9 @@ def run_jax_pme(
 
     Returns
     -------
-    tuple
-        (energy, forces) where forces is None if compute_forces=False.
+    callable
+        A zero-argument function that runs the JIT-compiled PME computation
+        and returns ``(energy, forces)`` (forces is ``None`` when disabled).
     """
     positions = system_data["positions"]
     charges = system_data["charges"]
@@ -1060,109 +1064,120 @@ def run_jax_pme(
     _spline_order = spline_order
     _mesh_dimensions = mesh_dimensions
 
-    @jax.jit
-    def _jit_pme_real(
-        positions,
-        charges,
-        cell,
-        alpha,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        batch_idx,
-    ):
-        return _jax_electrostatics.ewald_real_space(
-            positions=positions,
-            charges=charges,
-            cell=cell,
-            alpha=alpha,
-            neighbor_matrix=neighbor_matrix,
-            neighbor_matrix_shifts=neighbor_matrix_shifts,
-            batch_idx=batch_idx,
-            compute_forces=_compute_forces,
-            compute_virial=_compute_virial,
-        )
+    # --- Define JIT functions ONCE (cached across all timing iterations) ------
 
-    @jax.jit
-    def _jit_pme_reciprocal(
-        positions,
-        charges,
-        cell,
-        alpha,
-        batch_idx,
-    ):
-        # Pass k_vectors=None, k_squared=None so pme_reciprocal_space generates
-        # them inside JIT boundary for fair benchmark comparison
-        return _jax_electrostatics.pme_reciprocal_space(
-            positions=positions,
-            charges=charges,
-            cell=cell,
-            alpha=alpha,
-            mesh_dimensions=_mesh_dimensions,
-            spline_order=_spline_order,
-            batch_idx=batch_idx,
-            k_vectors=None,
-            k_squared=None,
-            compute_forces=_compute_forces,
-            compute_virial=_compute_virial,
-        )
-
-    @jax.jit
-    def _jit_pme_full(
-        positions,
-        charges,
-        cell,
-        alpha,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        batch_idx,
-    ):
-        # Pass k_vectors=None, k_squared=None so particle_mesh_ewald generates
-        # them inside JIT boundary for fair benchmark comparison
-        return _jax_electrostatics.particle_mesh_ewald(
-            positions=positions,
-            charges=charges,
-            cell=cell,
-            alpha=alpha,
-            mesh_dimensions=_mesh_dimensions,
-            spline_order=_spline_order,
-            batch_idx=batch_idx,
-            k_vectors=None,
-            k_squared=None,
-            neighbor_matrix=neighbor_matrix,
-            neighbor_matrix_shifts=neighbor_matrix_shifts,
-            compute_forces=_compute_forces,
-            compute_virial=_compute_virial,
-        )
-
-    # Select the right jitted function based on component
     if component == "real":
-        return _jit_pme_real(
+
+        @jax.jit
+        def _jit_fn(
             positions,
             charges,
             cell,
             alpha,
-            neighbor_matrix_data,
+            neighbor_matrix,
             neighbor_matrix_shifts,
             batch_idx,
-        )
+        ):
+            return _jax_electrostatics.ewald_real_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                batch_idx=batch_idx,
+                compute_forces=_compute_forces,
+                compute_virial=_compute_virial,
+            )
+
+        def call():
+            return _jit_fn(
+                positions,
+                charges,
+                cell,
+                alpha,
+                neighbor_matrix_data,
+                neighbor_matrix_shifts,
+                batch_idx,
+            )
+
     elif component == "reciprocal":
-        return _jit_pme_reciprocal(
+
+        @jax.jit
+        def _jit_fn(
             positions,
             charges,
             cell,
             alpha,
             batch_idx,
-        )
+        ):
+            # Pass k_vectors=None, k_squared=None so pme_reciprocal_space generates
+            # them inside JIT boundary for fair benchmark comparison
+            return _jax_electrostatics.pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=_mesh_dimensions,
+                spline_order=_spline_order,
+                batch_idx=batch_idx,
+                k_vectors=None,
+                k_squared=None,
+                compute_forces=_compute_forces,
+                compute_virial=_compute_virial,
+            )
+
+        def call():
+            return _jit_fn(
+                positions,
+                charges,
+                cell,
+                alpha,
+                batch_idx,
+            )
+
     else:  # full
-        return _jit_pme_full(
+
+        @jax.jit
+        def _jit_fn(
             positions,
             charges,
             cell,
             alpha,
-            neighbor_matrix_data,
+            neighbor_matrix,
             neighbor_matrix_shifts,
             batch_idx,
-        )
+        ):
+            # Pass k_vectors=None, k_squared=None so particle_mesh_ewald generates
+            # them inside JIT boundary for fair benchmark comparison
+            return _jax_electrostatics.particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=_mesh_dimensions,
+                spline_order=_spline_order,
+                batch_idx=batch_idx,
+                k_vectors=None,
+                k_squared=None,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=_compute_forces,
+                compute_virial=_compute_virial,
+            )
+
+        def call():
+            return _jit_fn(
+                positions,
+                charges,
+                cell,
+                alpha,
+                neighbor_matrix_data,
+                neighbor_matrix_shifts,
+                batch_idx,
+            )
+
+    return call
 
 
 # ==============================================================================
@@ -1400,24 +1415,22 @@ def run_benchmark(
                         effective_virial,
                     )
         elif backend == "jax":
+            # Create JIT function ONCE; bench_fn just executes the
+            # pre-compiled function on every iteration (no retrace).
             if method == "ewald":
-
-                def bench_fn():
-                    return run_jax_ewald(
-                        system_data,
-                        component,
-                        compute_forces,
-                        effective_virial,
-                    )
+                bench_fn = prepare_jax_ewald(
+                    system_data,
+                    component,
+                    compute_forces,
+                    effective_virial,
+                )
             else:  # pme
-
-                def bench_fn():
-                    return run_jax_pme(
-                        system_data,
-                        component,
-                        compute_forces,
-                        effective_virial,
-                    )
+                bench_fn = prepare_jax_pme(
+                    system_data,
+                    component,
+                    compute_forces,
+                    effective_virial,
+                )
         else:  # torchpme
             if system_data.get("batch_idx") is not None:
                 return {
