@@ -37,6 +37,8 @@ autograd (enable_backward=False). Tests that call kernels require GPU.
 
 from __future__ import annotations
 
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -577,7 +579,8 @@ class TestPMECorrectnessTorchPME:
 
     @pytest.mark.parametrize("alpha", [0.3, 0.5, 1.0])
     @pytest.mark.parametrize("mesh_spacing", [0.3, 0.5])
-    def test_reciprocal_energy_matches_torchpme(self, device, alpha, mesh_spacing):
+    @pytest.mark.parametrize("jit", [False, True])
+    def test_reciprocal_energy_matches_torchpme(self, device, alpha, mesh_spacing, jit):
         """Test that reciprocal energy matches torchpme."""
         positions, charges, cell = create_dipole_system(dtype=jnp.float64)
 
@@ -588,15 +591,20 @@ class TestPMECorrectnessTorchPME:
             int(np.ceil(length / mesh_spacing)) for length in cell_lengths
         )
 
-        # Our implementation
-        our_energy = pme_reciprocal_space(
-            positions=positions,
-            charges=charges,
-            cell=cell,
+        func = partial(
+            pme_reciprocal_space,
             alpha=jnp.array([alpha]),
             mesh_dimensions=mesh_dims,
             spline_order=4,
             compute_forces=False,
+        )
+        if jit:
+            func = jax.jit(func)
+        # Our implementation
+        our_energy = func(
+            positions=positions,
+            charges=charges,
+            cell=cell,
         )
 
         # TorchPME reference
@@ -616,7 +624,10 @@ class TestPMECorrectnessTorchPME:
     @pytest.mark.parametrize("size", [1, 2])
     @pytest.mark.parametrize("crystal_type", ["cscl", "wurtzite", "zincblende"])
     @pytest.mark.parametrize("alpha", [0.3, 0.5])
-    def test_crystal_systems_match_torchpme(self, size, crystal_type, alpha, device):
+    @pytest.mark.parametrize("jit", [False, True])
+    def test_crystal_systems_match_torchpme(
+        self, size, crystal_type, alpha, device, jit
+    ):
         """Test PME on crystal systems against torchpme."""
         positions, charges, cell = make_crystal_system_jax(crystal_type, size=size)
         positions_np = np.array(positions)
@@ -629,15 +640,20 @@ class TestPMECorrectnessTorchPME:
             int(np.ceil(length / mesh_spacing)) for length in cell_lengths
         )
 
-        # Our implementation
-        our_energy = pme_reciprocal_space(
-            positions=positions,
-            charges=charges,
-            cell=cell,
+        func = partial(
+            pme_reciprocal_space,
             alpha=jnp.array([alpha]),
             mesh_dimensions=mesh_dims,
             spline_order=4,
             compute_forces=False,
+        )
+        if jit:
+            func = jax.jit(func)
+        # Our implementation
+        our_energy = func(
+            positions=positions,
+            charges=charges,
+            cell=cell,
         )
 
         # TorchPME reference
@@ -646,7 +662,7 @@ class TestPMECorrectnessTorchPME:
         )
 
         assert jnp.allclose(
-            our_energy.sum(), torchpme_energy.sum(), rtol=1e-2, atol=1e-3
+            our_energy.sum(), torchpme_energy.sum(), rtol=1e-5, atol=1e-3
         ), (
             f"{crystal_type} size={size} alpha={alpha}: "
             f"ours={float(our_energy.sum()):.6f}, torchpme={torchpme_energy.sum():.6f}"
