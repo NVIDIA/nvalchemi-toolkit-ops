@@ -934,7 +934,7 @@ def ewald_reciprocal_space(
                 sin_k_dot_r,
                 real_sf,
                 imag_sf,
-                launch_dims=(num_k, num_atoms),
+                launch_dims=(num_k,),
             )
         )
 
