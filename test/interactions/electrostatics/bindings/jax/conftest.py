@@ -28,7 +28,7 @@ import numpy as np
 import pytest
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def device():
     """
     GPU device fixture. Skips tests when no CUDA device is available.
