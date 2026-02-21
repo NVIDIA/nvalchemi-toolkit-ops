@@ -212,7 +212,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          make pytest
+          make coverage
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
