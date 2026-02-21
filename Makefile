@@ -86,7 +86,7 @@ pytest:  ## Run pytest with coverage
 coverage: pytest
 	@echo "Ran coverage"
 	rm -f nvalchemiops.coverage.xml; \
-	coverage xml --fail-under=70
+	uv run coverage xml --fail-under=70
 
 .PHONY: coverage-html
 coverage-html:  ## Generate HTML coverage report
