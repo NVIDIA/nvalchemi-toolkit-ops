@@ -1727,16 +1727,39 @@ def run_torch_dsf(
     compute_forces: bool,
     compute_virial: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
-    """Run DSF using pure PyTorch reference (torch.compile)."""
+    """Run DSF using pure PyTorch reference (torch.compile).
+
+    Supports both CSR (neighbor_list) and matrix (neighbor_matrix) formats.
+    When matrix format is provided, it is converted to COO on-the-fly since
+    the reference implementation only accepts COO neighbor lists.
+    """
     positions = system_data["positions"]
     charges = system_data["charges"]
     cell = system_data["cell"]
     batch_idx = system_data.get("batch_idx")
     cutoff = system_data["cutoff"]
     alpha = system_data["alpha"]
-    neighbor_list_data = system_data["neighbor_list"]
-    neighbor_shifts = system_data["neighbor_shifts"]
     num_systems = system_data.get("batch_size", 1)
+
+    if "neighbor_list" in system_data:
+        neighbor_list_data = system_data["neighbor_list"]
+        neighbor_shifts = system_data["neighbor_shifts"]
+    elif "neighbor_matrix" in system_data:
+        neighbor_matrix = system_data["neighbor_matrix"]
+        fill_value = system_data["fill_value"]
+        N, M = neighbor_matrix.shape
+        atom_idx = torch.arange(N, device=positions.device).unsqueeze(1).expand(-1, M)
+        mask = neighbor_matrix != fill_value
+        idx_i = atom_idx[mask]
+        idx_j = neighbor_matrix[mask]
+        neighbor_list_data = torch.stack([idx_i, idx_j], dim=0).to(torch.int32)
+        nm_shifts = system_data.get("neighbor_matrix_shifts")
+        if nm_shifts is not None:
+            neighbor_shifts = nm_shifts[mask]
+        else:
+            neighbor_shifts = None
+    else:
+        raise KeyError("system_data must contain 'neighbor_list' or 'neighbor_matrix'")
 
     return dsf_torch_compiled(
         positions=positions,

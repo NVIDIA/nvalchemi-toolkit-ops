@@ -48,7 +48,7 @@ Available Methods
    - Pairwise :math:`O(N)` electrostatic summation
    - Both potential and forces smoothly vanish at cutoff
    - Supports geometry-dependent charges (MLIP)
-   - Warp launchers: ``dsf()``, ``dsf_pbc()``, ``dsf_matrix()``, ``dsf_matrix_pbc()``
+   - Warp launchers: ``dsf_csr()``, ``dsf_matrix()``
    - PyTorch API: ``nvalchemiops.torch.interactions.electrostatics.dsf``
 
 """
@@ -110,18 +110,14 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
 
 # DSF - Warp launchers (framework-agnostic)
 from .dsf import (
-    dsf,
+    dsf_csr,
     dsf_matrix,
-    dsf_matrix_pbc,
-    dsf_pbc,
 )
 
 __all__ = [
     # DSF - Warp launchers
-    "dsf",
-    "dsf_pbc",
+    "dsf_csr",
     "dsf_matrix",
-    "dsf_matrix_pbc",
     # Coulomb - Warp launchers
     "coulomb_energy",
     "coulomb_energy_forces",

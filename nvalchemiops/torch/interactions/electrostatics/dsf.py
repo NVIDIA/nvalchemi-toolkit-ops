@@ -71,16 +71,10 @@ import torch
 import warp as wp
 
 from nvalchemiops.interactions.electrostatics.dsf import (
-    dsf as wp_dsf,
+    dsf_csr as wp_dsf_csr,
 )
 from nvalchemiops.interactions.electrostatics.dsf import (
     dsf_matrix as wp_dsf_matrix,
-)
-from nvalchemiops.interactions.electrostatics.dsf import (
-    dsf_matrix_pbc as wp_dsf_matrix_pbc,
-)
-from nvalchemiops.interactions.electrostatics.dsf import (
-    dsf_pbc as wp_dsf_pbc,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
@@ -95,10 +89,10 @@ __all__ = [
 
 
 @torch.library.custom_op(
-    "nvalchemiops::dsf_op",
+    "nvalchemiops::dsf_csr_op",
     mutates_args=("energy", "forces", "virial", "charge_grad"),
 )
-def _dsf_op(
+def _dsf_csr_op(
     positions: torch.Tensor,
     charges: torch.Tensor,
     idx_j: torch.Tensor,
@@ -112,110 +106,12 @@ def _dsf_op(
     compute_forces: bool = True,
     compute_virial: bool = False,
     compute_charge_grad: bool = False,
+    cell: torch.Tensor | None = None,
+    unit_shifts: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     device: str | None = None,
 ) -> None:
-    """Internal custom op: DSF with CSR neighbor list (non-PBC)."""
-    num_atoms = positions.size(0)
-    if num_atoms == 0:
-        return
-
-    if device is None:
-        device = str(positions.device)
-
-    # Zero outputs (only non-empty tensors)
-    energy.zero_()
-    if compute_forces:
-        forces.zero_()
-    if compute_charge_grad:
-        charge_grad.zero_()
-
-    # Create batch indices if not provided
-    if batch_idx is None:
-        batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=positions.device)
-
-    # Determine Warp types from input precision
-    input_dtype = positions.dtype
-    wp_scalar = get_wp_dtype(input_dtype)
-    wp_vec = get_wp_vec_dtype(input_dtype)
-    wp_mat = get_wp_mat_dtype(input_dtype)
-
-    # Convert to Warp arrays (no dtype casts)
-    positions_wp = wp.from_torch(positions.detach(), dtype=wp_vec, return_ctype=True)
-    charges_wp = wp.from_torch(charges.detach(), dtype=wp_scalar, return_ctype=True)
-    idx_j_wp = wp.from_torch(idx_j, dtype=wp.int32, return_ctype=True)
-    neighbor_ptr_wp = wp.from_torch(neighbor_ptr, dtype=wp.int32, return_ctype=True)
-    batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
-
-    energy_wp = wp.from_torch(energy, dtype=wp.float64, return_ctype=True)
-    forces_wp = wp.from_torch(forces, dtype=wp_vec, return_ctype=True)
-    virial_wp = wp.from_torch(virial, dtype=wp_mat, return_ctype=True)
-    charge_grad_wp = wp.from_torch(charge_grad, dtype=wp_scalar, return_ctype=True)
-
-    wp_dsf(
-        positions=positions_wp,
-        charges=charges_wp,
-        idx_j=idx_j_wp,
-        neighbor_ptr=neighbor_ptr_wp,
-        cutoff=cutoff,
-        alpha=alpha,
-        energy=energy_wp,
-        forces=forces_wp,
-        virial=virial_wp,
-        charge_grad=charge_grad_wp,
-        device=device,
-        batch_idx=batch_idx_wp,
-        compute_forces=compute_forces,
-        compute_charge_grad=compute_charge_grad,
-        wp_scalar_type=wp_scalar,
-    )
-
-
-@_dsf_op.register_fake
-def _dsf_op_fake(
-    positions: torch.Tensor,
-    charges: torch.Tensor,
-    idx_j: torch.Tensor,
-    neighbor_ptr: torch.Tensor,
-    cutoff: float,
-    alpha: float,
-    energy: torch.Tensor,
-    forces: torch.Tensor,
-    virial: torch.Tensor,
-    charge_grad: torch.Tensor,
-    compute_forces: bool = True,
-    compute_virial: bool = False,
-    compute_charge_grad: bool = False,
-    batch_idx: torch.Tensor | None = None,
-    device: str | None = None,
-) -> None:
-    pass
-
-
-@torch.library.custom_op(
-    "nvalchemiops::dsf_pbc_op",
-    mutates_args=("energy", "forces", "virial", "charge_grad"),
-)
-def _dsf_pbc_op(
-    positions: torch.Tensor,
-    charges: torch.Tensor,
-    cell: torch.Tensor,
-    idx_j: torch.Tensor,
-    neighbor_ptr: torch.Tensor,
-    unit_shifts: torch.Tensor,
-    cutoff: float,
-    alpha: float,
-    energy: torch.Tensor,
-    forces: torch.Tensor,
-    virial: torch.Tensor,
-    charge_grad: torch.Tensor,
-    compute_forces: bool = True,
-    compute_virial: bool = False,
-    compute_charge_grad: bool = False,
-    batch_idx: torch.Tensor | None = None,
-    device: str | None = None,
-) -> None:
-    """Internal custom op: DSF with CSR neighbor list (PBC)."""
+    """Internal custom op: DSF with CSR neighbor list (optional PBC)."""
     num_atoms = positions.size(0)
     if num_atoms == 0:
         return
@@ -231,10 +127,6 @@ def _dsf_pbc_op(
     if compute_charge_grad:
         charge_grad.zero_()
 
-    if batch_idx is None:
-        batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=positions.device)
-
-    # Determine Warp types from input precision
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
     wp_vec = get_wp_vec_dtype(input_dtype)
@@ -242,30 +134,38 @@ def _dsf_pbc_op(
 
     positions_wp = wp.from_torch(positions.detach(), dtype=wp_vec, return_ctype=True)
     charges_wp = wp.from_torch(charges.detach(), dtype=wp_scalar, return_ctype=True)
-    cell_wp = wp.from_torch(cell.detach(), dtype=wp_mat, return_ctype=True)
     idx_j_wp = wp.from_torch(idx_j, dtype=wp.int32, return_ctype=True)
     neighbor_ptr_wp = wp.from_torch(neighbor_ptr, dtype=wp.int32, return_ctype=True)
-    unit_shifts_wp = wp.from_torch(unit_shifts, dtype=wp.vec3i, return_ctype=True)
-    batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
 
     energy_wp = wp.from_torch(energy, dtype=wp.float64, return_ctype=True)
     forces_wp = wp.from_torch(forces, dtype=wp_vec, return_ctype=True)
     virial_wp = wp.from_torch(virial, dtype=wp_mat, return_ctype=True)
     charge_grad_wp = wp.from_torch(charge_grad, dtype=wp_scalar, return_ctype=True)
 
-    wp_dsf_pbc(
+    cell_wp = None
+    unit_shifts_wp = None
+    if cell is not None:
+        cell_wp = wp.from_torch(cell.detach(), dtype=wp_mat, return_ctype=True)
+    if unit_shifts is not None:
+        unit_shifts_wp = wp.from_torch(unit_shifts, dtype=wp.vec3i, return_ctype=True)
+
+    batch_idx_wp = None
+    if batch_idx is not None:
+        batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
+
+    wp_dsf_csr(
         positions=positions_wp,
         charges=charges_wp,
-        cell=cell_wp,
         idx_j=idx_j_wp,
         neighbor_ptr=neighbor_ptr_wp,
-        unit_shifts=unit_shifts_wp,
         cutoff=cutoff,
         alpha=alpha,
         energy=energy_wp,
         forces=forces_wp,
         virial=virial_wp,
         charge_grad=charge_grad_wp,
+        cell=cell_wp,
+        unit_shifts=unit_shifts_wp,
         device=device,
         batch_idx=batch_idx_wp,
         compute_forces=compute_forces,
@@ -275,14 +175,12 @@ def _dsf_pbc_op(
     )
 
 
-@_dsf_pbc_op.register_fake
-def _dsf_pbc_op_fake(
+@_dsf_csr_op.register_fake
+def _dsf_csr_op_fake(
     positions: torch.Tensor,
     charges: torch.Tensor,
-    cell: torch.Tensor,
     idx_j: torch.Tensor,
     neighbor_ptr: torch.Tensor,
-    unit_shifts: torch.Tensor,
     cutoff: float,
     alpha: float,
     energy: torch.Tensor,
@@ -292,6 +190,8 @@ def _dsf_pbc_op_fake(
     compute_forces: bool = True,
     compute_virial: bool = False,
     compute_charge_grad: bool = False,
+    cell: torch.Tensor | None = None,
+    unit_shifts: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     device: str | None = None,
 ) -> None:
@@ -316,10 +216,12 @@ def _dsf_matrix_op(
     compute_forces: bool = True,
     compute_virial: bool = False,
     compute_charge_grad: bool = False,
+    cell: torch.Tensor | None = None,
+    neighbor_matrix_shifts: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     device: str | None = None,
 ) -> None:
-    """Internal custom op: DSF with neighbor matrix (non-PBC)."""
+    """Internal custom op: DSF with neighbor matrix (optional PBC)."""
     num_atoms = positions.size(0)
     if num_atoms == 0:
         return
@@ -330,13 +232,11 @@ def _dsf_matrix_op(
     energy.zero_()
     if compute_forces:
         forces.zero_()
+    if compute_virial:
+        virial.zero_()
     if compute_charge_grad:
         charge_grad.zero_()
 
-    if batch_idx is None:
-        batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=positions.device)
-
-    # Determine Warp types from input precision
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
     wp_vec = get_wp_vec_dtype(input_dtype)
@@ -347,12 +247,24 @@ def _dsf_matrix_op(
     neighbor_matrix_wp = wp.from_torch(
         neighbor_matrix, dtype=wp.int32, return_ctype=True
     )
-    batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
 
     energy_wp = wp.from_torch(energy, dtype=wp.float64, return_ctype=True)
     forces_wp = wp.from_torch(forces, dtype=wp_vec, return_ctype=True)
     virial_wp = wp.from_torch(virial, dtype=wp_mat, return_ctype=True)
     charge_grad_wp = wp.from_torch(charge_grad, dtype=wp_scalar, return_ctype=True)
+
+    cell_wp = None
+    neighbor_matrix_shifts_wp = None
+    if cell is not None:
+        cell_wp = wp.from_torch(cell.detach(), dtype=wp_mat, return_ctype=True)
+    if neighbor_matrix_shifts is not None:
+        neighbor_matrix_shifts_wp = wp.from_torch(
+            neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+        )
+
+    batch_idx_wp = None
+    if batch_idx is not None:
+        batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
 
     wp_dsf_matrix(
         positions=positions_wp,
@@ -365,9 +277,12 @@ def _dsf_matrix_op(
         forces=forces_wp,
         virial=virial_wp,
         charge_grad=charge_grad_wp,
+        cell=cell_wp,
+        neighbor_matrix_shifts=neighbor_matrix_shifts_wp,
         device=device,
         batch_idx=batch_idx_wp,
         compute_forces=compute_forces,
+        compute_virial=compute_virial,
         compute_charge_grad=compute_charge_grad,
         wp_scalar_type=wp_scalar,
     )
@@ -388,115 +303,8 @@ def _dsf_matrix_op_fake(
     compute_forces: bool = True,
     compute_virial: bool = False,
     compute_charge_grad: bool = False,
-    batch_idx: torch.Tensor | None = None,
-    device: str | None = None,
-) -> None:
-    pass
-
-
-@torch.library.custom_op(
-    "nvalchemiops::dsf_matrix_pbc_op",
-    mutates_args=("energy", "forces", "virial", "charge_grad"),
-)
-def _dsf_matrix_pbc_op(
-    positions: torch.Tensor,
-    charges: torch.Tensor,
-    cell: torch.Tensor,
-    neighbor_matrix: torch.Tensor,
-    neighbor_matrix_shifts: torch.Tensor,
-    cutoff: float,
-    alpha: float,
-    fill_value: int,
-    energy: torch.Tensor,
-    forces: torch.Tensor,
-    virial: torch.Tensor,
-    charge_grad: torch.Tensor,
-    compute_forces: bool = True,
-    compute_virial: bool = False,
-    compute_charge_grad: bool = False,
-    batch_idx: torch.Tensor | None = None,
-    device: str | None = None,
-) -> None:
-    """Internal custom op: DSF with neighbor matrix (PBC)."""
-    num_atoms = positions.size(0)
-    if num_atoms == 0:
-        return
-
-    if device is None:
-        device = str(positions.device)
-
-    energy.zero_()
-    if compute_forces:
-        forces.zero_()
-    if compute_virial:
-        virial.zero_()
-    if compute_charge_grad:
-        charge_grad.zero_()
-
-    if batch_idx is None:
-        batch_idx = torch.zeros(num_atoms, dtype=torch.int32, device=positions.device)
-
-    # Determine Warp types from input precision
-    input_dtype = positions.dtype
-    wp_scalar = get_wp_dtype(input_dtype)
-    wp_vec = get_wp_vec_dtype(input_dtype)
-    wp_mat = get_wp_mat_dtype(input_dtype)
-
-    positions_wp = wp.from_torch(positions.detach(), dtype=wp_vec, return_ctype=True)
-    charges_wp = wp.from_torch(charges.detach(), dtype=wp_scalar, return_ctype=True)
-    cell_wp = wp.from_torch(cell.detach(), dtype=wp_mat, return_ctype=True)
-    neighbor_matrix_wp = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
-    )
-    neighbor_matrix_shifts_wp = wp.from_torch(
-        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
-    )
-    batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
-
-    energy_wp = wp.from_torch(energy, dtype=wp.float64, return_ctype=True)
-    forces_wp = wp.from_torch(forces, dtype=wp_vec, return_ctype=True)
-    virial_wp = wp.from_torch(virial, dtype=wp_mat, return_ctype=True)
-    charge_grad_wp = wp.from_torch(charge_grad, dtype=wp_scalar, return_ctype=True)
-
-    wp_dsf_matrix_pbc(
-        positions=positions_wp,
-        charges=charges_wp,
-        cell=cell_wp,
-        neighbor_matrix=neighbor_matrix_wp,
-        neighbor_matrix_shifts=neighbor_matrix_shifts_wp,
-        cutoff=cutoff,
-        alpha=alpha,
-        fill_value=fill_value,
-        energy=energy_wp,
-        forces=forces_wp,
-        virial=virial_wp,
-        charge_grad=charge_grad_wp,
-        device=device,
-        batch_idx=batch_idx_wp,
-        compute_forces=compute_forces,
-        compute_virial=compute_virial,
-        compute_charge_grad=compute_charge_grad,
-        wp_scalar_type=wp_scalar,
-    )
-
-
-@_dsf_matrix_pbc_op.register_fake
-def _dsf_matrix_pbc_op_fake(
-    positions: torch.Tensor,
-    charges: torch.Tensor,
-    cell: torch.Tensor,
-    neighbor_matrix: torch.Tensor,
-    neighbor_matrix_shifts: torch.Tensor,
-    cutoff: float,
-    alpha: float,
-    fill_value: int,
-    energy: torch.Tensor,
-    forces: torch.Tensor,
-    virial: torch.Tensor,
-    charge_grad: torch.Tensor,
-    compute_forces: bool = True,
-    compute_virial: bool = False,
-    compute_charge_grad: bool = False,
+    cell: torch.Tensor | None = None,
+    neighbor_matrix_shifts: torch.Tensor | None = None,
     batch_idx: torch.Tensor | None = None,
     device: str | None = None,
 ) -> None:
@@ -712,96 +520,52 @@ def dsf_coulomb(
     else:
         virial_out = torch.empty((0, 3, 3), dtype=input_dtype, device=dev)
 
-    # Dispatch to appropriate custom op
+    # Dispatch to appropriate custom op (2-way: by neighbor format)
     if neighbor_matrix is not None:
-        # Neighbor matrix format
         if fill_value is None:
             fill_value = num_atoms
 
-        if cell is not None:
-            # PBC (neighbor_matrix_shifts guaranteed by validation)
-            _dsf_matrix_pbc_op(
-                positions=positions,
-                charges=charges,
-                cell=cell,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
-                cutoff=cutoff,
-                alpha=alpha,
-                fill_value=fill_value,
-                energy=energy,
-                forces=forces_out,
-                virial=virial_out,
-                charge_grad=charge_grad_out,
-                compute_forces=compute_forces,
-                compute_virial=compute_virial,
-                compute_charge_grad=compute_charge_grad,
-                batch_idx=batch_idx,
-                device=device,
-            )
-        else:
-            # Non-PBC
-            _dsf_matrix_op(
-                positions=positions,
-                charges=charges,
-                neighbor_matrix=neighbor_matrix,
-                cutoff=cutoff,
-                alpha=alpha,
-                fill_value=fill_value,
-                energy=energy,
-                forces=forces_out,
-                virial=virial_out,
-                charge_grad=charge_grad_out,
-                compute_forces=compute_forces,
-                compute_virial=compute_virial,
-                compute_charge_grad=compute_charge_grad,
-                batch_idx=batch_idx,
-                device=device,
-            )
+        _dsf_matrix_op(
+            positions=positions,
+            charges=charges,
+            neighbor_matrix=neighbor_matrix,
+            cutoff=cutoff,
+            alpha=alpha,
+            fill_value=fill_value,
+            energy=energy,
+            forces=forces_out,
+            virial=virial_out,
+            charge_grad=charge_grad_out,
+            compute_forces=compute_forces,
+            compute_virial=compute_virial,
+            compute_charge_grad=compute_charge_grad,
+            cell=cell,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            batch_idx=batch_idx,
+            device=device,
+        )
     else:
-        # CSR neighbor list format
         idx_j = neighbor_list[1].contiguous()
 
-        if cell is not None:
-            # PBC (unit_shifts guaranteed by validation)
-            _dsf_pbc_op(
-                positions=positions,
-                charges=charges,
-                cell=cell,
-                idx_j=idx_j,
-                neighbor_ptr=neighbor_ptr,
-                unit_shifts=unit_shifts,
-                cutoff=cutoff,
-                alpha=alpha,
-                energy=energy,
-                forces=forces_out,
-                virial=virial_out,
-                charge_grad=charge_grad_out,
-                compute_forces=compute_forces,
-                compute_virial=compute_virial,
-                compute_charge_grad=compute_charge_grad,
-                batch_idx=batch_idx,
-                device=device,
-            )
-        else:
-            # Non-PBC
-            _dsf_op(
-                positions=positions,
-                charges=charges,
-                idx_j=idx_j,
-                neighbor_ptr=neighbor_ptr,
-                cutoff=cutoff,
-                alpha=alpha,
-                energy=energy,
-                forces=forces_out,
-                virial=virial_out,
-                charge_grad=charge_grad_out,
-                compute_forces=compute_forces,
-                compute_virial=compute_virial,
-                compute_charge_grad=compute_charge_grad,
-                batch_idx=batch_idx,
-                device=device,
-            )
+        _dsf_csr_op(
+            positions=positions,
+            charges=charges,
+            idx_j=idx_j,
+            neighbor_ptr=neighbor_ptr,
+            cutoff=cutoff,
+            alpha=alpha,
+            energy=energy,
+            forces=forces_out,
+            virial=virial_out,
+            charge_grad=charge_grad_out,
+            compute_forces=compute_forces,
+            compute_virial=compute_virial,
+            compute_charge_grad=compute_charge_grad,
+            cell=cell,
+            unit_shifts=unit_shifts,
+            batch_idx=batch_idx,
+            device=device,
+        )
 
     # Charge gradient support via straight-through trick
     # This makes energy differentiable w.r.t. charges without Warp tape.

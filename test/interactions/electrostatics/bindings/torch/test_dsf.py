@@ -2183,3 +2183,626 @@ class TestMatrixPBCVirial:
         torch.testing.assert_close(energy_mat, energy_csr, atol=1e-10, rtol=0.0)
         torch.testing.assert_close(forces_mat, forces_csr, atol=1e-10, rtol=0.0)
         torch.testing.assert_close(virial_mat, virial_csr, atol=1e-10, rtol=0.0)
+
+
+# ==============================================================================
+# Test Batch + PBC
+# ==============================================================================
+
+
+class TestBatchPBC:
+    """Test batched calculations with periodic boundary conditions."""
+
+    def test_batch_pbc_energy_matches_individual(self, device):
+        """Batched PBC energy per system matches individual computation."""
+        pos_single = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float64, device=device
+        )
+        charges_single = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell_single = torch.tensor(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl_single = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=device)
+        ptr_single = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        shifts_single = torch.zeros((2, 3), dtype=torch.int32, device=device)
+
+        energy_single, forces_single = dsf_coulomb(
+            pos_single,
+            charges_single,
+            cutoff=10.0,
+            alpha=0.2,
+            cell=cell_single,
+            neighbor_list=nl_single,
+            neighbor_ptr=ptr_single,
+            unit_shifts=shifts_single,
+        )
+
+        positions_batch = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [50.0, 0.0, 0.0], [53.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges_batch = torch.tensor(
+            [1.0, -1.0, 1.0, -1.0], dtype=torch.float64, device=device
+        )
+        cell_batch = torch.tensor(
+            [
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl_batch = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        ptr_batch = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        shifts_batch = torch.zeros((4, 3), dtype=torch.int32, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        energy_batch, forces_batch = dsf_coulomb(
+            positions_batch,
+            charges_batch,
+            cutoff=10.0,
+            alpha=0.2,
+            cell=cell_batch,
+            neighbor_list=nl_batch,
+            neighbor_ptr=ptr_batch,
+            unit_shifts=shifts_batch,
+            batch_idx=batch_idx,
+            num_systems=2,
+        )
+
+        assert energy_batch.shape == (2,)
+        torch.testing.assert_close(
+            energy_batch[0], energy_single[0], atol=1e-10, rtol=0.0
+        )
+        torch.testing.assert_close(
+            energy_batch[1], energy_single[0], atol=1e-10, rtol=0.0
+        )
+
+    def test_batch_pbc_matches_reference(self, device):
+        """Batched PBC results match reference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [50.0, 0.0, 0.0], [53.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [1.0, -1.0, 1.0, -1.0], dtype=torch.float64, device=device
+        )
+        cell = torch.tensor(
+            [
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        shifts = torch.zeros((4, 3), dtype=torch.int32, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        ref = dsf_reference(
+            positions,
+            charges,
+            10.0,
+            0.2,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            cell=cell,
+            unit_shifts=shifts,
+            batch_idx=batch_idx,
+            num_systems=2,
+        )
+        energy, forces = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=10.0,
+            alpha=0.2,
+            cell=cell,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            unit_shifts=shifts,
+            batch_idx=batch_idx,
+            num_systems=2,
+        )
+        torch.testing.assert_close(energy, ref["energy"], atol=1e-6, rtol=1e-6)
+        torch.testing.assert_close(forces, ref["forces"], atol=1e-6, rtol=1e-6)
+
+
+# ==============================================================================
+# Test Matrix Autograd
+# ==============================================================================
+
+
+class TestMatrixAutograd:
+    """Test charge gradient autograd support with matrix neighbor format."""
+
+    def test_matrix_charge_grad_matches_reference(self, device):
+        """Matrix format charge gradient matches reference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float64, device=device
+        )
+        charges_val = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        neighbor_matrix = torch.tensor(
+            [[1, 999], [0, 999]], dtype=torch.int32, device=device
+        )
+        cutoff = 10.0
+        alpha = 0.2
+
+        ref = dsf_reference(
+            positions,
+            charges_val,
+            cutoff,
+            alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+        )
+
+        charges = charges_val.clone().requires_grad_(True)
+        (energy,) = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+            compute_forces=False,
+        )
+        energy.sum().backward()
+        torch.testing.assert_close(
+            charges.grad, ref["charge_grad"], atol=1e-6, rtol=1e-6
+        )
+
+    def test_matrix_charge_grad_finite_difference(self, device):
+        """Matrix format charge gradient matches finite difference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 3.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        neighbor_matrix = torch.tensor(
+            [[1, 2, 999], [0, 2, 999], [0, 1, 999]], dtype=torch.int32, device=device
+        )
+        cutoff = 10.0
+        alpha = 0.2
+        delta = 1e-5
+
+        charges_base = torch.tensor(
+            [1.0, -0.5, 0.8], dtype=torch.float64, device=device
+        )
+        fd_grad = torch.zeros(3, dtype=torch.float64, device=device)
+        for atom in range(3):
+            for sign, coeff in [(-1.0, -1.0), (1.0, 1.0)]:
+                q = charges_base.clone()
+                q[atom] += sign * delta
+                (e,) = dsf_coulomb(
+                    positions,
+                    q,
+                    cutoff=cutoff,
+                    alpha=alpha,
+                    neighbor_matrix=neighbor_matrix,
+                    fill_value=999,
+                    compute_forces=False,
+                )
+                fd_grad[atom] += coeff * e.item()
+            fd_grad[atom] /= 2 * delta
+
+        charges = charges_base.clone().requires_grad_(True)
+        (energy,) = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+            compute_forces=False,
+        )
+        energy.sum().backward()
+
+        torch.testing.assert_close(charges.grad, fd_grad, atol=1e-4, rtol=1e-4)
+
+
+# ==============================================================================
+# Test Batch Autograd
+# ==============================================================================
+
+
+class TestBatchAutograd:
+    """Test charge gradient autograd support in batched mode."""
+
+    def test_batch_charge_grad_matches_reference(self, device):
+        """Batched charge gradient matches reference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [50.0, 0.0, 0.0], [53.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges_val = torch.tensor(
+            [1.0, -1.0, 0.5, -0.5], dtype=torch.float64, device=device
+        )
+        nl = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        ref = dsf_reference(
+            positions,
+            charges_val,
+            10.0,
+            0.2,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            batch_idx=batch_idx,
+            num_systems=2,
+        )
+
+        charges = charges_val.clone().requires_grad_(True)
+        (energy,) = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=10.0,
+            alpha=0.2,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            batch_idx=batch_idx,
+            num_systems=2,
+            compute_forces=False,
+        )
+        energy.sum().backward()
+        torch.testing.assert_close(
+            charges.grad, ref["charge_grad"], atol=1e-6, rtol=1e-6
+        )
+
+
+# ==============================================================================
+# Test Matrix Float32
+# ==============================================================================
+
+
+class TestMatrixFloat32:
+    """Test matrix format with float32 precision."""
+
+    def test_matrix_float32_energy_matches_reference(self, device):
+        """Matrix float32 energy matches reference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float32, device=device
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float32, device=device)
+        neighbor_matrix = torch.tensor(
+            [[1, 999], [0, 999]], dtype=torch.int32, device=device
+        )
+        cutoff = 10.0
+        alpha = 0.2
+
+        ref = dsf_reference(
+            positions,
+            charges,
+            cutoff,
+            alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+        )
+        (energy,) = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+            compute_forces=False,
+        )
+        torch.testing.assert_close(
+            energy,
+            ref["energy"].to(torch.float64),
+            atol=1e-4,
+            rtol=1e-4,
+        )
+
+    def test_matrix_float32_forces_match_reference(self, device):
+        """Matrix float32 forces match reference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float32, device=device
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float32, device=device)
+        neighbor_matrix = torch.tensor(
+            [[1, 999], [0, 999]], dtype=torch.int32, device=device
+        )
+        cutoff = 10.0
+        alpha = 0.2
+
+        ref = dsf_reference(
+            positions,
+            charges,
+            cutoff,
+            alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+        )
+        energy, forces = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+        )
+        assert forces.dtype == torch.float32
+        torch.testing.assert_close(forces, ref["forces"], atol=1e-4, rtol=1e-4)
+
+
+# ==============================================================================
+# Test PBC Autograd
+# ==============================================================================
+
+
+class TestPBCAutograd:
+    """Test charge gradient autograd support with PBC."""
+
+    def test_pbc_charge_grad_matches_reference(self, device):
+        """PBC charge gradient matches reference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float64, device=device
+        )
+        charges_val = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell = torch.tensor(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=device)
+        ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        shifts = torch.zeros((2, 3), dtype=torch.int32, device=device)
+
+        ref = dsf_reference(
+            positions,
+            charges_val,
+            10.0,
+            0.2,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            cell=cell,
+            unit_shifts=shifts,
+        )
+
+        charges = charges_val.clone().requires_grad_(True)
+        (energy,) = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=10.0,
+            alpha=0.2,
+            cell=cell,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            unit_shifts=shifts,
+            compute_forces=False,
+        )
+        energy.sum().backward()
+        torch.testing.assert_close(
+            charges.grad, ref["charge_grad"], atol=1e-6, rtol=1e-6
+        )
+
+    def test_pbc_nonzero_shift_charge_grad_matches_reference(self, device):
+        """PBC with non-zero shifts: charge gradient matches reference."""
+        positions = torch.tensor(
+            [[0.5, 0.0, 0.0], [9.5, 0.0, 0.0]], dtype=torch.float64, device=device
+        )
+        charges_val = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=device)
+        ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        unit_shifts = torch.tensor(
+            [[-1, 0, 0], [1, 0, 0]], dtype=torch.int32, device=device
+        )
+
+        ref = dsf_reference(
+            positions,
+            charges_val,
+            5.0,
+            0.2,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            cell=cell,
+            unit_shifts=unit_shifts,
+        )
+
+        charges = charges_val.clone().requires_grad_(True)
+        (energy,) = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=5.0,
+            alpha=0.2,
+            cell=cell,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            unit_shifts=unit_shifts,
+            compute_forces=False,
+        )
+        energy.sum().backward()
+        torch.testing.assert_close(
+            charges.grad, ref["charge_grad"], atol=1e-6, rtol=1e-6
+        )
+
+
+# ==============================================================================
+# Test Matrix torch.compile
+# ==============================================================================
+
+
+class TestMatrixTorchCompile:
+    """Smoke tests for torch.compile compatibility with matrix format."""
+
+    def test_compile_matrix_energy_forces(self, device):
+        """torch.compile should produce same results as eager mode (matrix)."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float64, device=device
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        neighbor_matrix = torch.tensor(
+            [[1, 999], [0, 999]], dtype=torch.int32, device=device
+        )
+        cutoff = 10.0
+        alpha = 0.2
+
+        energy_eager, forces_eager = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+        )
+
+        dsf_compiled = torch.compile(dsf_coulomb)
+        energy_compiled, forces_compiled = dsf_compiled(
+            positions,
+            charges,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_matrix=neighbor_matrix,
+            fill_value=999,
+        )
+
+        torch.testing.assert_close(energy_compiled, energy_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(forces_compiled, forces_eager, atol=1e-10, rtol=0.0)
+
+
+# ==============================================================================
+# Test Batch Virial
+# ==============================================================================
+
+
+class TestBatchVirial:
+    """Test virial computation in batched mode with PBC."""
+
+    def test_batch_virial_matches_individual(self, device):
+        """Batched virial per system matches individual computation."""
+        pos_single = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float64, device=device
+        )
+        charges_single = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell_single = torch.tensor(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl_single = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=device)
+        ptr_single = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        shifts_single = torch.zeros((2, 3), dtype=torch.int32, device=device)
+
+        energy_s, forces_s, virial_s = dsf_coulomb(
+            pos_single,
+            charges_single,
+            cutoff=10.0,
+            alpha=0.2,
+            cell=cell_single,
+            neighbor_list=nl_single,
+            neighbor_ptr=ptr_single,
+            unit_shifts=shifts_single,
+            compute_virial=True,
+        )
+
+        positions_batch = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [50.0, 0.0, 0.0], [53.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges_batch = torch.tensor(
+            [1.0, -1.0, 1.0, -1.0], dtype=torch.float64, device=device
+        )
+        cell_batch = torch.tensor(
+            [
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl_batch = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        ptr_batch = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        shifts_batch = torch.zeros((4, 3), dtype=torch.int32, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        energy_b, forces_b, virial_b = dsf_coulomb(
+            positions_batch,
+            charges_batch,
+            cutoff=10.0,
+            alpha=0.2,
+            cell=cell_batch,
+            neighbor_list=nl_batch,
+            neighbor_ptr=ptr_batch,
+            unit_shifts=shifts_batch,
+            batch_idx=batch_idx,
+            num_systems=2,
+            compute_virial=True,
+        )
+
+        assert virial_b.shape == (2, 3, 3)
+        torch.testing.assert_close(virial_b[0], virial_s[0], atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(virial_b[1], virial_s[0], atol=1e-10, rtol=0.0)
+
+    def test_batch_virial_matches_reference(self, device):
+        """Batched virial matches reference."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [50.0, 0.0, 0.0], [53.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [1.0, -1.0, 1.0, -1.0], dtype=torch.float64, device=device
+        )
+        cell = torch.tensor(
+            [
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        nl = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        shifts = torch.zeros((4, 3), dtype=torch.int32, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        ref = dsf_reference(
+            positions,
+            charges,
+            10.0,
+            0.2,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            cell=cell,
+            unit_shifts=shifts,
+            batch_idx=batch_idx,
+            num_systems=2,
+            compute_virial=True,
+        )
+        energy, forces, virial = dsf_coulomb(
+            positions,
+            charges,
+            cutoff=10.0,
+            alpha=0.2,
+            cell=cell,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            unit_shifts=shifts,
+            batch_idx=batch_idx,
+            num_systems=2,
+            compute_virial=True,
+        )
+        torch.testing.assert_close(virial, ref["virial"], atol=1e-6, rtol=1e-6)

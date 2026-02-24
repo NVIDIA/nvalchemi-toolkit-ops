@@ -38,10 +38,8 @@ import pytest
 import warp as wp
 
 from nvalchemiops.interactions.electrostatics.dsf import (
-    dsf,
+    dsf_csr,
     dsf_matrix,
-    dsf_matrix_pbc,
-    dsf_pbc,
 )
 
 # Mathematical constants for reference computations
@@ -304,7 +302,7 @@ class TestDSFEnergyCsr:
         cutoff = 10.0
         alpha = 0.2
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -329,7 +327,7 @@ class TestDSFEnergyCsr:
         cutoff = 10.0
         alpha = 0.2
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -368,7 +366,7 @@ class TestDSFEnergyCsr:
         expected = 1.0 * (-1.0) * v_pair + self_coeff * (1.0**2 + (-1.0) ** 2)
 
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -404,7 +402,7 @@ class TestDSFEnergyCsr:
         }
         cutoff = 10.0
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -444,7 +442,7 @@ class TestDSFSelfEnergy:
         expected = self_coeff * q**2
 
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -485,7 +483,7 @@ class TestDSFForces:
         cutoff = 10.0
         alpha = 0.2
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -512,7 +510,7 @@ class TestDSFForces:
         cutoff = 10.0
         alpha = 0.2
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -546,7 +544,7 @@ class TestDSFForces:
         expected_Fx_0 = qi * qj * A_force / r * (-r)
 
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -567,7 +565,7 @@ class TestDSFForces:
         """Forces should be zero in y and z for atoms along x-axis."""
         sys = two_charge_system
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -604,7 +602,7 @@ class TestDSFChargeGrad:
         expected = 2.0 * self_coeff * q
 
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -639,7 +637,7 @@ class TestDSFChargeGrad:
             mod_sys = dict(sys)
             mod_sys["charges"] = charges_mod
             w = _make_warp_system(mod_sys, device)
-            dsf(
+            dsf_csr(
                 positions=w["positions"],
                 charges=w["charges"],
                 idx_j=w["idx_j"],
@@ -659,7 +657,7 @@ class TestDSFChargeGrad:
 
         # Compute analytical charge grad
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -700,7 +698,7 @@ class TestDSFAlphaZero:
         expected = qi * qj * v_pair + self_coeff * (qi**2 + qj**2)
 
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -735,7 +733,7 @@ class TestDSFMatrix:
 
         # CSR format
         w_csr = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w_csr["positions"],
             charges=w_csr["charges"],
             idx_j=w_csr["idx_j"],
@@ -790,7 +788,7 @@ class TestDSFBatch:
 
         # Single system
         w_single = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w_single["positions"],
             charges=w_single["charges"],
             idx_j=w_single["idx_j"],
@@ -831,7 +829,7 @@ class TestDSFBatch:
             "num_systems": 2,
         }
         w_batch = _make_warp_system(batch_sys, device)
-        dsf(
+        dsf_csr(
             positions=w_batch["positions"],
             charges=w_batch["charges"],
             idx_j=w_batch["idx_j"],
@@ -871,7 +869,7 @@ class TestDSFPBC:
 
         # Non-PBC
         w_np = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w_np["positions"],
             charges=w_np["charges"],
             idx_j=w_np["idx_j"],
@@ -890,7 +888,7 @@ class TestDSFPBC:
         w_pbc = _make_warp_system(sys, device)
         cell_wp = wp.array(cell, dtype=wp.mat33d, device=device)
         unit_shifts_wp = wp.array(sys["unit_shifts"], dtype=wp.vec3i, device=device)
-        dsf_pbc(
+        dsf_csr(
             positions=w_pbc["positions"],
             charges=w_pbc["charges"],
             cell=cell_wp,
@@ -939,7 +937,7 @@ class TestDSFEdgeCases:
             "num_atoms": 2,
         }
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -973,7 +971,7 @@ class TestDSFEdgeCases:
         cutoff = 10.0
         alpha = 0.2
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -1015,7 +1013,7 @@ class TestCPUGPUConsistency:
         results = {}
         for dev in ["cpu", "cuda:0"]:
             w = _make_warp_system(sys, dev)
-            dsf(
+            dsf_csr(
                 positions=w["positions"],
                 charges=w["charges"],
                 idx_j=w["idx_j"],
@@ -1080,7 +1078,7 @@ class TestDSFRegression:
             "num_atoms": 2,
         }
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -1112,7 +1110,7 @@ class TestDSFForceConservation:
         """Sum of forces on two atoms should be zero."""
         sys = two_charge_system
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -1134,7 +1132,7 @@ class TestDSFForceConservation:
         """Sum of forces on three atoms should be zero."""
         sys = three_atom_system
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -1184,7 +1182,7 @@ class TestDSFThreeAtomForces:
                 expected_forces[i] += charges[i] * charges[j] * ff / r * r_ij
 
         w = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -1222,7 +1220,7 @@ class TestDSFVirial:
         w = _make_warp_system(sys, device)
         cell_wp = wp.array(cell, dtype=wp.mat33d, device=device)
         unit_shifts_wp = wp.array(sys["unit_shifts"], dtype=wp.vec3i, device=device)
-        dsf_pbc(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             cell=cell_wp,
@@ -1258,7 +1256,7 @@ class TestDSFVirial:
         w = _make_warp_system(sys, device)
         cell_wp = wp.array(cell, dtype=wp.mat33d, device=device)
         unit_shifts_wp = wp.array(sys["unit_shifts"], dtype=wp.vec3i, device=device)
-        dsf_pbc(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             cell=cell_wp,
@@ -1343,7 +1341,7 @@ class TestDSFPBCNonZeroShifts:
         cell_wp = wp.array(cell, dtype=wp.mat33d, device=device)
         unit_shifts_wp = wp.array(unit_shifts, dtype=wp.vec3i, device=device)
 
-        dsf_pbc(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             cell=cell_wp,
@@ -1398,7 +1396,7 @@ class TestDSFPBCNonZeroShifts:
         cell_wp = wp.array(cell, dtype=wp.mat33d, device=device)
         unit_shifts_wp = wp.array(unit_shifts, dtype=wp.vec3i, device=device)
 
-        dsf_pbc(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             cell=cell_wp,
@@ -1457,7 +1455,7 @@ class TestDSFFloat32:
         virial = wp.zeros(1, dtype=wp.mat33f, device=device)
         charge_grad = wp.zeros(2, dtype=wp.float32, device=device)
 
-        dsf(
+        dsf_csr(
             positions=positions,
             charges=charges,
             idx_j=idx_j,
@@ -1493,7 +1491,7 @@ class TestDSFFloat32:
         virial = wp.zeros(1, dtype=wp.mat33f, device=device)
         charge_grad = wp.zeros(2, dtype=wp.float32, device=device)
 
-        dsf(
+        dsf_csr(
             positions=positions,
             charges=charges,
             idx_j=idx_j,
@@ -1530,7 +1528,7 @@ class TestDSFFloat32:
         virial = wp.zeros(1, dtype=wp.mat33f, device=device)
         charge_grad = wp.zeros(2, dtype=wp.float32, device=device)
 
-        dsf(
+        dsf_csr(
             positions=positions,
             charges=charges,
             idx_j=idx_j,
@@ -1567,7 +1565,7 @@ class TestDSFMatrixExtended:
 
         # CSR
         w_csr = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w_csr["positions"],
             charges=w_csr["charges"],
             idx_j=w_csr["idx_j"],
@@ -1617,7 +1615,7 @@ class TestDSFMatrixExtended:
         w_csr = _make_warp_system(sys, device)
         cell_wp = wp.array(cell, dtype=wp.mat33d, device=device)
         unit_shifts_wp = wp.array(sys["unit_shifts"], dtype=wp.vec3i, device=device)
-        dsf_pbc(
+        dsf_csr(
             positions=w_csr["positions"],
             charges=w_csr["charges"],
             cell=cell_wp,
@@ -1640,12 +1638,10 @@ class TestDSFMatrixExtended:
         neighbor_shifts_wp = wp.array(
             sys["neighbor_shifts"], dtype=wp.vec3i, device=device
         )
-        dsf_matrix_pbc(
+        dsf_matrix(
             positions=w_mat["positions"],
             charges=w_mat["charges"],
-            cell=cell_wp,
             neighbor_matrix=w_mat["neighbor_matrix"],
-            neighbor_matrix_shifts=neighbor_shifts_wp,
             cutoff=cutoff,
             alpha=alpha,
             fill_value=sys["fill_value"],
@@ -1653,6 +1649,8 @@ class TestDSFMatrixExtended:
             forces=w_mat["forces"],
             virial=w_mat["virial"],
             charge_grad=w_mat["charge_grad"],
+            cell=cell_wp,
+            neighbor_matrix_shifts=neighbor_shifts_wp,
             device=device,
             batch_idx=w_mat["batch_idx"],
             compute_forces=False,
@@ -1670,7 +1668,7 @@ class TestDSFMatrixExtended:
 
         # CSR
         w_csr = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w_csr["positions"],
             charges=w_csr["charges"],
             idx_j=w_csr["idx_j"],
@@ -1732,7 +1730,7 @@ class TestDSFBatchExtended:
 
         # Single system
         w_single = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w_single["positions"],
             charges=w_single["charges"],
             idx_j=w_single["idx_j"],
@@ -1770,7 +1768,7 @@ class TestDSFBatchExtended:
             "num_systems": 2,
         }
         w_batch = _make_warp_system(batch_sys, device)
-        dsf(
+        dsf_csr(
             positions=w_batch["positions"],
             charges=w_batch["charges"],
             idx_j=w_batch["idx_j"],
@@ -1796,7 +1794,7 @@ class TestDSFBatchExtended:
 
         # Single system
         w_single = _make_warp_system(sys, device)
-        dsf(
+        dsf_csr(
             positions=w_single["positions"],
             charges=w_single["charges"],
             idx_j=w_single["idx_j"],
@@ -1836,7 +1834,7 @@ class TestDSFBatchExtended:
             "num_systems": 2,
         }
         w_batch = _make_warp_system(batch_sys, device)
-        dsf(
+        dsf_csr(
             positions=w_batch["positions"],
             charges=w_batch["charges"],
             idx_j=w_batch["idx_j"],
@@ -1894,7 +1892,7 @@ class TestDSF3DGeometry:
         }
         w = _make_warp_system(sys, device)
 
-        dsf(
+        dsf_csr(
             positions=w["positions"],
             charges=w["charges"],
             idx_j=w["idx_j"],
@@ -1948,3 +1946,461 @@ class TestDSF3DGeometry:
             self_coeff = _dsf_self_energy_coeff_ref(cutoff, alpha)
             expected_cg += 2.0 * self_coeff * charges[i]
             assert cg[i] == pytest.approx(expected_cg, abs=1e-6)
+
+
+def _make_two_system_batch(sys, device, offset=50.0):
+    """Helper: create a 2-system batch from a single system definition."""
+    positions_batch = np.concatenate(
+        [sys["positions"], sys["positions"] + [offset, 0.0, 0.0]]
+    )
+    charges_batch = np.concatenate([sys["charges"], sys["charges"]])
+    n = sys["num_atoms"]
+    batch_idx_batch = np.concatenate(
+        [np.zeros(n, dtype=np.int32), np.ones(n, dtype=np.int32)]
+    )
+    return positions_batch, charges_batch, batch_idx_batch, n
+
+
+class TestDSFMatrixBatch:
+    """Matrix format + batched mode."""
+
+    def test_matrix_batched_energy_matches_individual(self, two_charge_system, device):
+        sys = two_charge_system
+        cutoff = 10.0
+        alpha = 0.2
+
+        w_single = _make_warp_system(sys, device)
+        dsf_csr(
+            positions=w_single["positions"],
+            charges=w_single["charges"],
+            idx_j=w_single["idx_j"],
+            neighbor_ptr=w_single["neighbor_ptr"],
+            cutoff=cutoff,
+            alpha=alpha,
+            energy=w_single["energy"],
+            forces=w_single["forces"],
+            virial=w_single["virial"],
+            charge_grad=w_single["charge_grad"],
+            device=device,
+            compute_forces=False,
+        )
+        single_energy = w_single["energy"].numpy()[0]
+
+        positions_batch, charges_batch, batch_idx_batch, n = _make_two_system_batch(
+            sys, device
+        )
+        neighbor_matrix = np.full((2 * n, 2 * n), 2 * n, dtype=np.int32)
+        for i in range(n):
+            col = 0
+            for j in range(n):
+                if i != j:
+                    neighbor_matrix[i, col] = j
+                    col += 1
+        for i in range(n):
+            col = 0
+            for j in range(n):
+                if i != j:
+                    neighbor_matrix[n + i, col] = n + j
+                    col += 1
+
+        mat_sys = {
+            "positions": positions_batch,
+            "charges": charges_batch,
+            "neighbor_matrix": neighbor_matrix,
+            "batch_idx": batch_idx_batch,
+            "num_atoms": 2 * n,
+            "num_systems": 2,
+        }
+        w_mat = _make_warp_matrix_system(mat_sys, device)
+        dsf_matrix(
+            positions=w_mat["positions"],
+            charges=w_mat["charges"],
+            neighbor_matrix=w_mat["neighbor_matrix"],
+            cutoff=cutoff,
+            alpha=alpha,
+            fill_value=2 * n,
+            energy=w_mat["energy"],
+            forces=w_mat["forces"],
+            virial=w_mat["virial"],
+            charge_grad=w_mat["charge_grad"],
+            device=device,
+            batch_idx=w_mat["batch_idx"],
+            compute_forces=False,
+        )
+        batch_energies = w_mat["energy"].numpy()
+        assert batch_energies[0] == pytest.approx(single_energy, abs=1e-10)
+        assert batch_energies[1] == pytest.approx(single_energy, abs=1e-10)
+
+
+class TestDSFBatchPBC:
+    """Batched + PBC combinations."""
+
+    def test_batched_pbc_energy_matches_individual(self, two_charge_system, device):
+        sys = two_charge_system
+        cutoff = 10.0
+        alpha = 0.2
+        cell_np = np.array(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=np.float64,
+        )
+
+        w_single = _make_warp_system(sys, device)
+        unit_shifts_single = np.zeros((len(sys["idx_j"]), 3), dtype=np.int32)
+        cell_wp = wp.array(cell_np, dtype=wp.mat33d, device=device)
+        shifts_wp = wp.array(unit_shifts_single, dtype=wp.vec3i, device=device)
+        dsf_csr(
+            positions=w_single["positions"],
+            charges=w_single["charges"],
+            idx_j=w_single["idx_j"],
+            neighbor_ptr=w_single["neighbor_ptr"],
+            cutoff=cutoff,
+            alpha=alpha,
+            energy=w_single["energy"],
+            forces=w_single["forces"],
+            virial=w_single["virial"],
+            charge_grad=w_single["charge_grad"],
+            cell=cell_wp,
+            unit_shifts=shifts_wp,
+            device=device,
+            compute_forces=False,
+        )
+        single_energy = w_single["energy"].numpy()[0]
+
+        positions_batch, charges_batch, batch_idx_batch, n = _make_two_system_batch(
+            sys, device
+        )
+        idx_j_2 = sys["idx_j"] + n
+        idx_j_batch = np.concatenate([sys["idx_j"], idx_j_2])
+        offset = sys["neighbor_ptr"][-1]
+        neighbor_ptr_2 = sys["neighbor_ptr"][1:] + offset
+        neighbor_ptr_batch = np.concatenate([sys["neighbor_ptr"], neighbor_ptr_2])
+        unit_shifts_batch = np.zeros((len(idx_j_batch), 3), dtype=np.int32)
+        cell_batch = np.tile(cell_np, (2, 1, 1))
+
+        batch_sys = {
+            "positions": positions_batch,
+            "charges": charges_batch,
+            "idx_j": idx_j_batch,
+            "neighbor_ptr": neighbor_ptr_batch,
+            "batch_idx": batch_idx_batch,
+            "num_atoms": 2 * n,
+            "num_systems": 2,
+        }
+        w_batch = _make_warp_system(batch_sys, device)
+        cell_batch_wp = wp.array(cell_batch, dtype=wp.mat33d, device=device)
+        shifts_batch_wp = wp.array(unit_shifts_batch, dtype=wp.vec3i, device=device)
+        dsf_csr(
+            positions=w_batch["positions"],
+            charges=w_batch["charges"],
+            idx_j=w_batch["idx_j"],
+            neighbor_ptr=w_batch["neighbor_ptr"],
+            cutoff=cutoff,
+            alpha=alpha,
+            energy=w_batch["energy"],
+            forces=w_batch["forces"],
+            virial=w_batch["virial"],
+            charge_grad=w_batch["charge_grad"],
+            cell=cell_batch_wp,
+            unit_shifts=shifts_batch_wp,
+            device=device,
+            batch_idx=w_batch["batch_idx"],
+            compute_forces=False,
+        )
+        batch_energies = w_batch["energy"].numpy()
+        assert batch_energies[0] == pytest.approx(single_energy, abs=1e-10)
+        assert batch_energies[1] == pytest.approx(single_energy, abs=1e-10)
+
+
+class TestDSFMatrixFloat32:
+    """Matrix format + float32 precision."""
+
+    def test_matrix_float32_energy(self, two_charge_system, device):
+        sys = two_charge_system
+        cutoff = 10.0
+        alpha = 0.2
+
+        positions_f32 = sys["positions"].astype(np.float32)
+        charges_f32 = sys["charges"].astype(np.float32)
+        n = sys["num_atoms"]
+        fill_value = n
+        neighbor_matrix = np.full((n, n), fill_value, dtype=np.int32)
+        for i in range(n):
+            col = 0
+            for j in range(n):
+                if i != j:
+                    neighbor_matrix[i, col] = j
+                    col += 1
+
+        pos_wp = wp.array(positions_f32, dtype=wp.vec3f, device=device)
+        ch_wp = wp.array(charges_f32, dtype=wp.float32, device=device)
+        nm_wp = wp.array(neighbor_matrix, dtype=wp.int32, device=device)
+        energy_wp = wp.zeros(1, dtype=wp.float64, device=device)
+        forces_wp = wp.zeros(n, dtype=wp.vec3f, device=device)
+        virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
+        cg_wp = wp.zeros(n, dtype=wp.float32, device=device)
+
+        dsf_matrix(
+            positions=pos_wp,
+            charges=ch_wp,
+            neighbor_matrix=nm_wp,
+            cutoff=cutoff,
+            alpha=alpha,
+            fill_value=fill_value,
+            energy=energy_wp,
+            forces=forces_wp,
+            virial=virial_wp,
+            charge_grad=cg_wp,
+            device=device,
+            compute_forces=False,
+        )
+        energy_f32 = energy_wp.numpy()[0]
+
+        r = sys["distance"]
+        v_pair = _dsf_pair_potential_ref(r, cutoff, alpha)
+        self_coeff = _dsf_self_energy_coeff_ref(cutoff, alpha)
+        expected = sys["charges"][0] * sys["charges"][1] * v_pair + self_coeff * (
+            sys["charges"][0] ** 2 + sys["charges"][1] ** 2
+        )
+        assert energy_f32 == pytest.approx(expected, abs=1e-3)
+
+
+class TestDSFMatrixChargeGrad:
+    """Matrix format + charge gradients."""
+
+    def test_matrix_charge_grad_finite_difference(self, device):
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 3.0, 0.0]], dtype=np.float64
+        )
+        charges = np.array([1.0, -0.5, 0.8], dtype=np.float64)
+        num_atoms = 3
+        cutoff = 10.0
+        alpha = 0.2
+        fill_value = num_atoms
+        neighbor_matrix = np.full((num_atoms, num_atoms), fill_value, dtype=np.int32)
+        for i in range(num_atoms):
+            col = 0
+            for j in range(num_atoms):
+                if i != j:
+                    neighbor_matrix[i, col] = j
+                    col += 1
+
+        def compute_energy(q):
+            pos_wp = wp.array(positions, dtype=wp.vec3d, device=device)
+            ch_wp = wp.array(q, dtype=wp.float64, device=device)
+            nm_wp = wp.array(neighbor_matrix, dtype=wp.int32, device=device)
+            e_wp = wp.zeros(1, dtype=wp.float64, device=device)
+            f_wp = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+            v_wp = wp.zeros(1, dtype=wp.mat33d, device=device)
+            cg_wp = wp.zeros(num_atoms, dtype=wp.float64, device=device)
+            dsf_matrix(
+                positions=pos_wp,
+                charges=ch_wp,
+                neighbor_matrix=nm_wp,
+                cutoff=cutoff,
+                alpha=alpha,
+                fill_value=fill_value,
+                energy=e_wp,
+                forces=f_wp,
+                virial=v_wp,
+                charge_grad=cg_wp,
+                device=device,
+                compute_forces=False,
+                compute_charge_grad=True,
+            )
+            return e_wp.numpy()[0], cg_wp.numpy()
+
+        _, cg = compute_energy(charges)
+
+        eps = 1e-6
+        for i in range(num_atoms):
+            q_plus = charges.copy()
+            q_minus = charges.copy()
+            q_plus[i] += eps
+            q_minus[i] -= eps
+            e_plus, _ = compute_energy(q_plus)
+            e_minus, _ = compute_energy(q_minus)
+            fd_cg = (e_plus - e_minus) / (2 * eps)
+            assert cg[i] == pytest.approx(fd_cg, abs=1e-4)
+
+
+class TestDSFBatchVirial:
+    """Batched + virial."""
+
+    def test_batched_virial_matches_individual(self, two_charge_system, device):
+        sys = two_charge_system
+        cutoff = 10.0
+        alpha = 0.2
+        cell_np = np.array(
+            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            dtype=np.float64,
+        )
+
+        w_single = _make_warp_system(sys, device)
+        unit_shifts_single = np.zeros((len(sys["idx_j"]), 3), dtype=np.int32)
+        cell_wp = wp.array(cell_np, dtype=wp.mat33d, device=device)
+        shifts_wp = wp.array(unit_shifts_single, dtype=wp.vec3i, device=device)
+        dsf_csr(
+            positions=w_single["positions"],
+            charges=w_single["charges"],
+            idx_j=w_single["idx_j"],
+            neighbor_ptr=w_single["neighbor_ptr"],
+            cutoff=cutoff,
+            alpha=alpha,
+            energy=w_single["energy"],
+            forces=w_single["forces"],
+            virial=w_single["virial"],
+            charge_grad=w_single["charge_grad"],
+            cell=cell_wp,
+            unit_shifts=shifts_wp,
+            device=device,
+            compute_virial=True,
+        )
+        single_virial = w_single["virial"].numpy()[0]
+
+        positions_batch, charges_batch, batch_idx_batch, n = _make_two_system_batch(
+            sys, device
+        )
+        idx_j_2 = sys["idx_j"] + n
+        idx_j_batch = np.concatenate([sys["idx_j"], idx_j_2])
+        offset = sys["neighbor_ptr"][-1]
+        neighbor_ptr_2 = sys["neighbor_ptr"][1:] + offset
+        neighbor_ptr_batch = np.concatenate([sys["neighbor_ptr"], neighbor_ptr_2])
+        unit_shifts_batch = np.zeros((len(idx_j_batch), 3), dtype=np.int32)
+        cell_batch = np.tile(cell_np, (2, 1, 1))
+
+        batch_sys = {
+            "positions": positions_batch,
+            "charges": charges_batch,
+            "idx_j": idx_j_batch,
+            "neighbor_ptr": neighbor_ptr_batch,
+            "batch_idx": batch_idx_batch,
+            "num_atoms": 2 * n,
+            "num_systems": 2,
+        }
+        w_batch = _make_warp_system(batch_sys, device)
+        cell_batch_wp = wp.array(cell_batch, dtype=wp.mat33d, device=device)
+        shifts_batch_wp = wp.array(unit_shifts_batch, dtype=wp.vec3i, device=device)
+        dsf_csr(
+            positions=w_batch["positions"],
+            charges=w_batch["charges"],
+            idx_j=w_batch["idx_j"],
+            neighbor_ptr=w_batch["neighbor_ptr"],
+            cutoff=cutoff,
+            alpha=alpha,
+            energy=w_batch["energy"],
+            forces=w_batch["forces"],
+            virial=w_batch["virial"],
+            charge_grad=w_batch["charge_grad"],
+            cell=cell_batch_wp,
+            unit_shifts=shifts_batch_wp,
+            device=device,
+            batch_idx=w_batch["batch_idx"],
+            compute_virial=True,
+        )
+        batch_virials = w_batch["virial"].numpy()
+        np.testing.assert_allclose(batch_virials[0], single_virial, atol=1e-10)
+        np.testing.assert_allclose(batch_virials[1], single_virial, atol=1e-10)
+
+
+class TestDSFAlphaZeroMatrix:
+    """Matrix + alpha=0."""
+
+    def test_matrix_energy_alpha_zero(self, two_charge_system, device):
+        sys = two_charge_system
+        cutoff = 10.0
+        alpha = 0.0
+        n = sys["num_atoms"]
+        fill_value = n
+        neighbor_matrix = np.full((n, n), fill_value, dtype=np.int32)
+        for i in range(n):
+            col = 0
+            for j in range(n):
+                if i != j:
+                    neighbor_matrix[i, col] = j
+                    col += 1
+
+        mat_sys = {
+            "positions": sys["positions"],
+            "charges": sys["charges"],
+            "neighbor_matrix": neighbor_matrix,
+            "num_atoms": n,
+        }
+        w_mat = _make_warp_matrix_system(mat_sys, device)
+        dsf_matrix(
+            positions=w_mat["positions"],
+            charges=w_mat["charges"],
+            neighbor_matrix=w_mat["neighbor_matrix"],
+            cutoff=cutoff,
+            alpha=alpha,
+            fill_value=fill_value,
+            energy=w_mat["energy"],
+            forces=w_mat["forces"],
+            virial=w_mat["virial"],
+            charge_grad=w_mat["charge_grad"],
+            device=device,
+            compute_forces=False,
+        )
+
+        w_csr = _make_warp_system(sys, device)
+        dsf_csr(
+            positions=w_csr["positions"],
+            charges=w_csr["charges"],
+            idx_j=w_csr["idx_j"],
+            neighbor_ptr=w_csr["neighbor_ptr"],
+            cutoff=cutoff,
+            alpha=alpha,
+            energy=w_csr["energy"],
+            forces=w_csr["forces"],
+            virial=w_csr["virial"],
+            charge_grad=w_csr["charge_grad"],
+            device=device,
+            compute_forces=False,
+        )
+        e_mat = w_mat["energy"].numpy()[0]
+        e_csr = w_csr["energy"].numpy()[0]
+        assert e_mat == pytest.approx(e_csr, abs=1e-10)
+
+
+class TestDSFForceConservationMatrix:
+    """Matrix force conservation (Newton's 3rd law)."""
+
+    def test_matrix_force_sum_zero(self, device):
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [0.0, 3.0, 0.0]], dtype=np.float64
+        )
+        charges = np.array([1.0, -0.5, 0.8], dtype=np.float64)
+        num_atoms = 3
+        cutoff = 10.0
+        alpha = 0.2
+        fill_value = num_atoms
+        neighbor_matrix = np.full((num_atoms, num_atoms), fill_value, dtype=np.int32)
+        for i in range(num_atoms):
+            col = 0
+            for j in range(num_atoms):
+                if i != j:
+                    neighbor_matrix[i, col] = j
+                    col += 1
+
+        mat_sys = {
+            "positions": positions,
+            "charges": charges,
+            "neighbor_matrix": neighbor_matrix,
+            "num_atoms": num_atoms,
+        }
+        w_mat = _make_warp_matrix_system(mat_sys, device)
+        dsf_matrix(
+            positions=w_mat["positions"],
+            charges=w_mat["charges"],
+            neighbor_matrix=w_mat["neighbor_matrix"],
+            cutoff=cutoff,
+            alpha=alpha,
+            fill_value=fill_value,
+            energy=w_mat["energy"],
+            forces=w_mat["forces"],
+            virial=w_mat["virial"],
+            charge_grad=w_mat["charge_grad"],
+            device=device,
+        )
+        forces = w_mat["forces"].numpy()
+        force_sum = np.sum(forces, axis=0)
+        np.testing.assert_allclose(force_sum, [0.0, 0.0, 0.0], atol=1e-10)
