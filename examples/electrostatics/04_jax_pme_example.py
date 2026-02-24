@@ -41,6 +41,8 @@ In this example you will learn:
 
 from __future__ import annotations
 
+import time
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -389,8 +391,8 @@ shift_range, shift_offset, total_shifts = compute_naive_num_shifts(
 )
 
 
-# Define a jitted function that builds neighbors and computes PME
-@jax.jit
+# Define a function that builds neighbors and computes PME
+# We will compare the performance of the jitted and non-jitted versions.
 def compute_pme_energy_forces(
     positions: jax.Array,
     charges: jax.Array,
@@ -433,11 +435,43 @@ def compute_pme_energy_forces(
     return energies, forces
 
 
+jit_compute_pme_energy_forces = jax.jit(compute_pme_energy_forces)
+
+# %%
+# Run the non-jitted function:
+energies, forces = compute_pme_energy_forces(
+    jit_positions, jit_charges, jit_cell, jit_pbc, jit_alpha
+)
+total_energy = float(energies.sum())
+max_force = float(jnp.linalg.norm(forces, axis=1).max())
+print(f"  Non-jitted total energy: {total_energy:.6f}")
+print(f"  Non-jitted max force: {max_force:.6f}")
+
+# Calculate Performance
+# Warmup measurements
+for _ in range(10):
+    energies, forces = compute_pme_energy_forces(
+        jit_positions, jit_charges, jit_cell, jit_pbc, jit_alpha
+    )
+energies.block_until_ready()
+forces.block_until_ready()
+
+# Timed measurements
+start_time = time.time()
+for _ in range(50):
+    energies, forces = compute_pme_energy_forces(
+        jit_positions, jit_charges, jit_cell, jit_pbc, jit_alpha
+    )
+energies.block_until_ready()
+forces.block_until_ready()
+total_time = time.time() - start_time
+print(f"  Non-jitted average time per call: {total_time / 50:.6f} seconds")
+
 # %%
 # Run the jitted function:
 
 print("\nCompiling and running jitted PME pipeline...")
-jit_energies, jit_forces = compute_pme_energy_forces(
+jit_energies, jit_forces = jit_compute_pme_energy_forces(
     jit_positions, jit_charges, jit_cell, jit_pbc, jit_alpha
 )
 
@@ -447,21 +481,31 @@ jit_max_force = float(jnp.linalg.norm(jit_forces, axis=1).max())
 print(f"  JIT total energy: {jit_total_energy:.6f}")
 print(f"  JIT max force: {jit_max_force:.6f}")
 
+# Calculate Performance
+# Warmup measurements
+for _ in range(10):
+    jit_energies, jit_forces = jit_compute_pme_energy_forces(
+        jit_positions, jit_charges, jit_cell, jit_pbc, jit_alpha
+    )
+jit_energies.block_until_ready()
+jit_forces.block_until_ready()
+
+# Timed measurements
+start_time = time.time()
+for _ in range(50):
+    jit_energies, jit_forces = jit_compute_pme_energy_forces(
+        jit_positions, jit_charges, jit_cell, jit_pbc, jit_alpha
+    )
+jit_energies.block_until_ready()
+jit_forces.block_until_ready()
+total_time = time.time() - start_time
+print(f"  JIT average time per call: {total_time / 50:.6f} seconds")
+
 # Compare with non-jitted result (note: may differ slightly due to different
 # accuracy settings or neighbor list truncation from max_neighbors)
 energy_diff_jit = abs(jit_total_energy - total_energy)
 print(f"  Difference vs non-jitted (different accuracy): {energy_diff_jit:.2e}")
 
-# Second call should be fast (already compiled)
-print("\nRunning jitted function again (should reuse compiled code)...")
-jit_energies_2, jit_forces_2 = compute_pme_energy_forces(
-    jit_positions, jit_charges, jit_cell, jit_pbc, jit_alpha
-)
-print(f"  JIT total energy (2nd call): {float(jit_energies_2.sum()):.6f}")
-print(
-    "  (Minor variations between calls are expected due to GPU "
-    "floating-point non-determinism)"
-)
 
 # %%
 # Summary
