@@ -14,50 +14,59 @@
 # limitations under the License.
 
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
     hooks:
-    - id: check-added-large-files
-      args: [--maxkb=10000]
-      exclude: |
-            (?x)^(
-                frontend/package-lock.json |
-                .licenses/details.json |
-            )$
-    - id: trailing-whitespace
-    - id: end-of-file-fixer
-    - id: check-yaml
-      exclude: .gitlab-ci.yml
-    - id: debug-statements
+      - id: check-added-large-files
+        args: [--maxkb=10000]
+        exclude: |
+          (?x)^(
+              frontend/package-lock.json |
+              .licenses/details.json |
+          )$
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        exclude: .gitlab-ci.yml
+      - id: debug-statements
 
--   repo: https://github.com/asottile/pyupgrade
+  - repo: https://github.com/asottile/pyupgrade
     rev: v3.15.2
     hooks:
-    -   id: pyupgrade
+      - id: pyupgrade
         args: [--py310-plus]
 
--   repo: https://github.com/astral-sh/ruff-pre-commit
+  - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.13
     hooks:
-    - id: ruff-check
-      args: [--fix]
-      types_or: [ python, pyi ]
-    - id: ruff-format
-      types_or: [ python, pyi ]
+      - id: ruff-check
+        args: [--fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
 
--   repo: https://github.com/econchick/interrogate
+  - repo: https://github.com/econchick/interrogate
     rev: 1.7.0
     hooks:
-    - id: interrogate
-      exclude: ^(setup.py|test/|.ci/)
-      args: [--config=pyproject.toml]
+      - id: interrogate
+        exclude: ^(setup.py|test/|.ci/)
+        args: [--config=pyproject.toml]
 
--   repo: https://github.com/igorshubovych/markdownlint-cli
+  - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.35.0
     hooks:
-    - id: markdownlint
-      exclude: |
-            (?x)^(.licenses |
-            .ci |
-            nim)
-      args: [--disable=MD024]
+      - id: markdownlint
+        exclude: |
+          (?x)^(.licenses |
+          .ci |
+          nim)
+        args: [--disable=MD024]
+
+  - repo: local
+    hooks:
+      - id: license
+        name: license
+        entry: python test/_license/header_check.py
+        language: python
+        files: \.(py|yaml|ci|release)$|Dockerfile$
+        exclude: ^(docs/)
