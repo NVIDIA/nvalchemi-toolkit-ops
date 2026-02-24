@@ -33,7 +33,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = ["batch_naive_neighbor_list"]
 

@@ -28,153 +28,480 @@ Memory
 
 Select a method to view detailed benchmark data and scaling plots:
 
-::::{tab-set}
-
-:::{tab-item} Naive
+### Naive
 
 Brute-force $O(N^2)$ algorithm. Best for very small systems where the overhead of
 cell list construction exceeds the computational savings.
 
-### Time Scaling
+::::{tab-set}
 
-```{figure} _static/neighborlist_scaling_naive_h100-80gb-hbm3.png
-:width: 80%
+:::{tab-item} Backend Comparison
+
+Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_naive_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Naive algorithm time scaling
+:alt: Naive algorithm backend time comparison
 
-Median execution time vs. system size. The $O(N^2)$ scaling becomes apparent for larger systems.
+Median execution time comparison between backends. The $O(N^2)$ scaling becomes apparent for larger systems.
 ```
 
-### Throughput
+#### Throughput
 
-```{figure} _static/neighborlist_throughput_naive_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_throughput_naive_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Naive algorithm throughput
+:alt: Naive algorithm backend throughput comparison
 
-Throughput (atoms/ms) vs. system size. Throughput decreases as system size grows due to
-$O(N^2)$ scaling.
+Throughput (atoms/ms) comparison between backends.
 ```
 
-### Memory Usage
+#### Memory Usage
 
-```{figure} _static/neighborlist_memory_naive_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_memory_naive_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Naive algorithm memory usage
+:alt: Naive algorithm backend memory comparison
 
-Peak GPU memory consumption vs. system size.
+Peak GPU memory consumption comparison between backends.
 ```
 
 :::
 
-:::{tab-item} Cell List
+:::{tab-item} nvalchemiops (Torch)
+
+Scaling of the naive algorithm with the `nvalchemiops` Torch backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_naive_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Naive algorithm Torch time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_naive_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Naive algorithm Torch throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_naive_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Naive algorithm Torch memory usage
+
+Peak GPU memory consumption for different batch sizes.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (JAX)
+
+Scaling of the naive algorithm with the `nvalchemiops` JAX backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_naive_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Naive algorithm JAX time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_naive_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Naive algorithm JAX throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_naive_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Naive algorithm JAX memory usage
+
+Peak GPU memory consumption for different batch sizes.
+```
+
+:::
+
+::::
+
+### Cell List
 
 Spatial hashing $O(N)$ algorithm. Recommended for medium to large systems where
 computational efficiency is critical.
 
-### Time Scaling
+::::{tab-set}
 
-```{figure} _static/neighborlist_scaling_cell-list_h100-80gb-hbm3.png
-:width: 80%
+:::{tab-item} Backend Comparison
+
+Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_cell-list_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Cell list algorithm time scaling
+:alt: Cell list algorithm backend time comparison
 
-Median execution time vs. system size. Shows near-linear $O(N)$ scaling for large systems.
+Median execution time comparison between backends. Shows near-linear $O(N)$ scaling for large systems.
 ```
 
-### Throughput
+#### Throughput
 
-```{figure} _static/neighborlist_throughput_cell-list_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_throughput_cell-list_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Cell list algorithm throughput
+:alt: Cell list algorithm backend throughput comparison
 
-Throughput (atoms/ms) vs. system size. Maintains high throughput even for very large systems.
+Throughput (atoms/ms) comparison between backends.
 ```
 
-### Memory Usage
+#### Memory Usage
 
-```{figure} _static/neighborlist_memory_cell-list_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_memory_cell-list_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Cell list algorithm memory usage
+:alt: Cell list algorithm backend memory comparison
 
-Peak GPU memory consumption vs. system size.
+Peak GPU memory consumption comparison between backends.
 ```
 
 :::
 
-:::{tab-item} Batch Naive
+:::{tab-item} nvalchemiops (Torch)
+
+Scaling of the cell list algorithm with the `nvalchemiops` Torch backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_cell-list_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Cell list algorithm Torch time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_cell-list_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Cell list algorithm Torch throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_cell-list_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Cell list algorithm Torch memory usage
+
+Peak GPU memory consumption for different batch sizes.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (JAX)
+
+Scaling of the cell list algorithm with the `nvalchemiops` JAX backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_cell-list_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Cell list algorithm JAX time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_cell-list_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Cell list algorithm JAX throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_cell-list_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Cell list algorithm JAX memory usage
+
+Peak GPU memory consumption for different batch sizes.
+```
+
+:::
+
+::::
+
+### Batch Naive
 
 Batched brute-force algorithm for processing multiple small systems
 simultaneously. Useful for ML workflows with many small molecules.
 
-### Time Scaling
+::::{tab-set}
 
-```{figure} _static/neighborlist_scaling_batch-naive_h100-80gb-hbm3.png
-:width: 80%
+:::{tab-item} Backend Comparison
+
+Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_batch-naive_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Batch naive algorithm time scaling
+:alt: Batch naive algorithm backend time comparison
 
-Median execution time vs. total atoms across all batched systems.
+Median execution time comparison between backends.
 ```
 
-### Throughput
+#### Throughput
 
-```{figure} _static/neighborlist_throughput_batch-naive_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_throughput_batch-naive_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Batch naive algorithm throughput
+:alt: Batch naive algorithm backend throughput comparison
 
-Throughput (atoms/ms) for batched processing. Different lines show different batch sizes.
+Throughput (atoms/ms) comparison between backends.
 ```
 
-### Memory Usage
+#### Memory Usage
 
-```{figure} _static/neighborlist_memory_batch-naive_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_memory_batch-naive_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Batch naive algorithm memory usage
+:alt: Batch naive algorithm backend memory comparison
 
-Peak GPU memory consumption for batched systems.
+Peak GPU memory consumption comparison between backends.
 ```
 
 :::
 
-:::{tab-item} Batch Cell List
+:::{tab-item} nvalchemiops (Torch)
+
+Scaling of the batched naive algorithm with the `nvalchemiops` Torch backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_batch-naive_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch naive algorithm Torch time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_batch-naive_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch naive algorithm Torch throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_batch-naive_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch naive algorithm Torch memory usage
+
+Peak GPU memory consumption for different batch sizes.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (JAX)
+
+Scaling of the batched naive algorithm with the `nvalchemiops` JAX backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_batch-naive_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch naive algorithm JAX time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_batch-naive_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch naive algorithm JAX throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_batch-naive_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch naive algorithm JAX memory usage
+
+Peak GPU memory consumption for different batch sizes.
+```
+
+:::
+
+::::
+
+### Batch Cell List
 
 Batched spatial hashing algorithm for processing multiple systems
 simultaneously with O(N) scaling per system.
 
-### Time Scaling
+::::{tab-set}
 
-```{figure} _static/neighborlist_scaling_batch-cell-list_h100-80gb-hbm3.png
-:width: 80%
+:::{tab-item} Backend Comparison
+
+Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_batch-cell-list_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Batch cell list algorithm time scaling
+:alt: Batch cell list algorithm backend time comparison
 
-Median execution time vs. total atoms across all batched systems.
+Median execution time comparison between backends.
 ```
 
-### Throughput
+#### Throughput
 
-```{figure} _static/neighborlist_throughput_batch-cell-list_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_throughput_batch-cell-list_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Batch cell list algorithm throughput
+:alt: Batch cell list algorithm backend throughput comparison
 
-Throughput (atoms/ms) for batched processing. Different lines show different batch sizes.
+Throughput (atoms/ms) comparison between backends.
 ```
 
-### Memory Usage
+#### Memory Usage
 
-```{figure} _static/neighborlist_memory_batch-cell-list_h100-80gb-hbm3.png
-:width: 80%
+```{figure} _static/neighborlist_memory_batch-cell-list_comparison_h100-80gb-hbm3.png
+:width: 90%
 :align: center
-:alt: Batch cell list algorithm memory usage
+:alt: Batch cell list algorithm backend memory comparison
 
-Peak GPU memory consumption for batched systems.
+Peak GPU memory consumption comparison between backends.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (Torch)
+
+Scaling of the batched cell list algorithm with the `nvalchemiops` Torch backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_batch-cell-list_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch cell list algorithm Torch time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_batch-cell-list_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch cell list algorithm Torch throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_batch-cell-list_torch_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch cell list algorithm Torch memory usage
+
+Peak GPU memory consumption for different batch sizes.
+```
+
+:::
+
+:::{tab-item} nvalchemiops (JAX)
+
+Scaling of the batched cell list algorithm with the `nvalchemiops` JAX backend.
+Shows how performance scales with different batch sizes.
+
+#### Time Scaling
+
+```{figure} _static/neighborlist_scaling_batch-cell-list_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch cell list algorithm JAX time scaling
+
+Execution time scaling for different batch sizes.
+```
+
+#### Throughput
+
+```{figure} _static/neighborlist_throughput_batch-cell-list_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch cell list algorithm JAX throughput
+
+Throughput (atoms/ms) for different batch sizes.
+```
+
+#### Memory Usage
+
+```{figure} _static/neighborlist_memory_batch-cell-list_jax_h100-80gb-hbm3.png
+:width: 90%
+:align: center
+:alt: Batch cell list algorithm JAX memory usage
+
+Peak GPU memory consumption for different batch sizes.
 ```
 
 :::

@@ -28,7 +28,7 @@ from nvalchemiops.neighbors.rebuild_detection import (
     check_cell_list_rebuild,
     check_neighbor_list_rebuild,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "cell_list_needs_rebuild",

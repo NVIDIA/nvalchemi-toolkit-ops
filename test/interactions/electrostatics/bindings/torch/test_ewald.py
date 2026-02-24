@@ -1,3 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Unified Test Suite for Ewald Summation Implementation
 ======================================================
@@ -42,18 +57,21 @@ except ModuleNotFoundError:
     EwaldCalculator = None
     CoulombPotential = None
 
-# Import test utilities for crystal structure generation
-from .test_utils import (
+# Crystal structure generators from shared electrostatics conftest
+# Virial test utilities from torch-specific test_utils
+from test.interactions.electrostatics.bindings.torch.test_utils import (
     VIRIAL_DTYPE,
-    create_cscl_supercell,
-    create_wurtzite_system,
-    create_zincblende_system,
     fd_virial_full,
     get_virial_neighbor_data,
     make_non_neutral_system,
     make_virial_batch_cscl_system,
     make_virial_crystal_system,
     make_virial_cscl_system,
+)
+from test.interactions.electrostatics.conftest import (
+    create_cscl_supercell,
+    create_wurtzite_system,
+    create_zincblende_system,
 )
 
 # Tolerances
@@ -4269,6 +4287,152 @@ class TestReciprocalSpaceEmptyReturns:
         energies.sum().backward()
         assert positions.grad is not None
         assert torch.isfinite(positions.grad).all()
+
+
+class TestEwaldSummationChargeGradients:
+    """Test ewald_summation compute_charge_gradients parameter."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_charge_gradients_only(self, device):
+        """Test compute_charge_gradients=True without forces."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
+            create_dipole_system(device)
+        )
+
+        result = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_charge_gradients=True,
+        )
+
+        assert isinstance(result, tuple)
+        energies, charge_grads = result
+        assert energies.shape == (2,)
+        assert charge_grads.shape == (2,)
+        assert torch.isfinite(charge_grads).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_forces_and_charge_gradients(self, device):
+        """Test compute_forces=True and compute_charge_gradients=True together."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
+            create_dipole_system(device)
+        )
+
+        result = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True,
+            compute_charge_gradients=True,
+        )
+
+        assert isinstance(result, tuple)
+        energies, forces, charge_grads = result
+        assert energies.shape == (2,)
+        assert forces.shape == (2, 3)
+        assert charge_grads.shape == (2,)
+        assert torch.isfinite(charge_grads).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_charge_gradients_match_autograd(self, device):
+        """Verify charge gradients match torch.autograd."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts = (
+            create_dipole_system(device)
+        )
+        charges = charges.clone().requires_grad_(True)
+
+        result = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_charge_gradients=True,
+        )
+
+        energies, charge_grads = result
+
+        # Autograd reference
+        autograd_grads = torch.autograd.grad(
+            energies.sum(), charges, create_graph=False
+        )[0]
+
+        torch.testing.assert_close(charge_grads, autograd_grads, rtol=1e-4, atol=1e-6)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_charge_gradients(self, device):
+        """Test charge gradients with batch systems."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0], [3.0, 5.0, 5.0], [7.0, 5.0, 5.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [1.0, -1.0, 1.0, -1.0], dtype=torch.float64, device=device
+        )
+        cell = (
+            torch.eye(3, dtype=torch.float64, device=device)
+            .unsqueeze(0)
+            .expand(2, -1, -1)
+            .contiguous()
+            * 10.0
+        )
+        alpha = torch.tensor([0.3, 0.3], dtype=torch.float64, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        neighbor_list = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros((2, 3), dtype=torch.int32, device=device)
+
+        result = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_cutoff=8.0,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_charge_gradients=True,
+        )
+
+        assert isinstance(result, tuple)
+        energies, forces, charge_grads = result
+        assert charge_grads.shape == (4,)
+        assert torch.isfinite(charge_grads).all()
 
 
 class TestEwaldSummationAutoParameters:

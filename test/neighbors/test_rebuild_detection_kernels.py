@@ -26,7 +26,7 @@ from nvalchemiops.neighbors.rebuild_detection import (
 )
 from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 from nvalchemiops.torch.neighbors.neighbor_utils import allocate_cell_list
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 from .test_utils import create_simple_cubic_system
 

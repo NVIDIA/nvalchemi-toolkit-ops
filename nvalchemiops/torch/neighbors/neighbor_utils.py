@@ -30,7 +30,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
 from nvalchemiops.neighbors.neighbor_utils import (
     compute_naive_num_shifts as wp_compute_naive_num_shifts,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype
 
 __all__ = [
     "compute_naive_num_shifts",
@@ -337,7 +337,6 @@ def allocate_cell_list(
     # Detect number of systems from neighbor_search_radius shape
     is_batched = neighbor_search_radius.ndim == 2
     num_systems = neighbor_search_radius.shape[0] if is_batched else 1
-
     cells_per_dimension = torch.zeros(
         (3,) if not is_batched else (num_systems, 3),
         dtype=torch.int32,

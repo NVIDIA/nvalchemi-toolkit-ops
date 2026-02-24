@@ -31,7 +31,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
     get_neighbor_list_from_neighbor_matrix,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "estimate_cell_list_sizes",
@@ -616,6 +616,12 @@ def cell_list(
     """
     total_atoms = positions.shape[0]
     device = positions.device
+    if pbc is None:
+        raise ValueError(
+            "cell_list requires `pbc` to be specified. "
+            "Pass a boolean tensor of shape (3,) or (1, 3), "
+            "e.g. pbc=torch.tensor([True, True, True])."
+        )
     cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
     pbc = pbc.squeeze(0)
 

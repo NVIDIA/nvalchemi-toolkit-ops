@@ -237,20 +237,35 @@ def neighbor_list(
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
     """
+    if cell is not None and pbc is None:
+        raise ValueError(
+            "`pbc` is required when `cell` is provided. "
+            "Pass a boolean tensor of shape (3,) or (num_systems, 3), "
+            "e.g. pbc=torch.tensor([True, True, True])."
+        )
+
     if method is None:
         total_atoms = positions.shape[0]
+
+        # Compute average atoms per system for method selection.
+        num_systems = 1
+        if cell is not None and cell.ndim == 3:
+            # cell shape is (num_systems, 3, 3)
+            num_systems = cell.shape[0]
+        elif batch_ptr is not None:
+            # batch_ptr shape is (num_systems + 1,)
+            num_systems = batch_ptr.shape[0] - 1
+        elif batch_idx is not None:
+            # NOTE: reading batch_idx[-1] triggers a GPU-to-CPU sync
+            # assume sorted batch_idx
+            num_systems = max(1, batch_idx[-1].item() + 1)
+        avg_atoms = total_atoms // num_systems
+
         if cutoff2 is not None:
             method = "naive_dual_cutoff"
 
-        elif total_atoms >= 5000:
+        elif avg_atoms >= 2000:
             method = "cell_list"
-            if cell is None or pbc is None:
-                cell = torch.eye(
-                    3, dtype=positions.dtype, device=positions.device
-                ).reshape(1, 3, 3)
-                pbc = torch.tensor(
-                    [False, False, False], dtype=torch.bool, device=positions.device
-                )
         else:
             method = "naive"
 
@@ -272,6 +287,15 @@ def neighbor_list(
                 **kwargs,
             )
         case "cell_list":
+            if cell is None:
+                pos_min = positions.min(dim=0).values
+                positions = positions - pos_min
+                pos_max = positions.max(dim=0).values
+                cell_lengths = pos_max + 0.1 * cutoff
+                cell = torch.diag(cell_lengths).reshape(1, 3, 3)
+                pbc = torch.tensor(
+                    [False, False, False], dtype=torch.bool, device=positions.device
+                )
             return cell_list(
                 positions,
                 cutoff,
@@ -296,6 +320,36 @@ def neighbor_list(
                 **kwargs,
             )
         case "batch_cell_list":
+            if batch_idx is None or batch_ptr is None:
+                batch_idx, batch_ptr = prepare_batch_idx_ptr(
+                    batch_idx, batch_ptr, positions.shape[0], positions.device
+                )
+            if cell is None:
+                num_systems = batch_ptr.shape[0] - 1
+                expanded_idx = batch_idx.unsqueeze(1).expand_as(positions)
+                pos_min = torch.full(
+                    (num_systems, 3),
+                    float("inf"),
+                    dtype=positions.dtype,
+                    device=positions.device,
+                )
+                pos_min.scatter_reduce_(0, expanded_idx, positions, reduce="amin")
+                pos_max = torch.full(
+                    (num_systems, 3),
+                    float("-inf"),
+                    dtype=positions.dtype,
+                    device=positions.device,
+                )
+                pos_max.scatter_reduce_(0, expanded_idx, positions, reduce="amax")
+                # TODO: switch to segment_ops once #17 is merged
+                positions = positions - torch.index_select(pos_min, 0, batch_idx)
+                cell_lengths = pos_max - pos_min + 0.1 * cutoff
+                cell = torch.diag_embed(cell_lengths)
+                pbc = torch.zeros(
+                    (num_systems, 3),
+                    dtype=torch.bool,
+                    device=positions.device,
+                )
             return batch_cell_list(
                 positions,
                 cutoff,

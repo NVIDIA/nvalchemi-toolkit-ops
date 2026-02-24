@@ -41,7 +41,7 @@ dtypes = [torch.float32, torch.float64]
 class TestRebuildDetection:
     """Test rebuild detection functionality."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def simple_system(self):
         """Create a simple test system."""
         return create_simple_cubic_system(num_atoms=8, cell_size=2.0)

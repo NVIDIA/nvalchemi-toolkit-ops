@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,13 +37,13 @@ spline
     Warp kernels and launcher functions.
 """
 
-from .math import (
+from nvalchemiops.math.math import (
     wp_erfc,
     wp_exp_kernel,
     wp_safe_divide,
     wpdivmod,
 )
-from .spherical_harmonics import (
+from nvalchemiops.math.spherical_harmonics import (
     eval_all_spherical_harmonics,
     # Vectorized evaluators
     eval_spherical_harmonics_l0,
@@ -139,7 +139,7 @@ __all__ = [
     "batch_spline_gather_gradient",
 ]
 
-from .gto import (
+from nvalchemiops.math.gto import (
     # PyTorch wrappers
     eval_gto_density_pytorch,
     eval_gto_fourier_pytorch,
@@ -161,7 +161,7 @@ from .gto import (
     gto_normalization,
     gto_self_overlap,
 )
-from .spline import (
+from nvalchemiops.math.spline import (
     # Warp launchers
     batch_spline_gather,
     batch_spline_gather_gradient,

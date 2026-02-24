@@ -12,7 +12,7 @@ operations critical to atomistic workflows.
 - Ewald, particle mesh Ewald (PME), and damped shifted force (DSF)
   methods for electrostatic calculations
 - Batch processing for multiple systems with heterogeneous parameters
-- Native PyTorch tensor support with `torch.compile` compatibility
+- Native PyTorch tensor and JAX array support with `torch.compile` and `jax.jit` compatibility
 - Dense or sparse COO output formats for graph neural networks
 
 ## Who Is This For?

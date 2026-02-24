@@ -53,6 +53,16 @@ num_neighbors = neighbor_ptr[1:] - neighbor_ptr[:-1]
 print(f"Average neighbors per atom: {num_neighbors.float().mean():.1f}")
 ```
 
+### JAX Bindings
+
+JAX bindings are also available for all core components. Install with:
+
+```bash
+$ pip install 'nvalchemi-toolkit-ops[jax]'
+```
+
+See the [JAX API Reference](../modules/jax/neighbors.rst) for the full API documentation.
+
 ## About
 
 - [Install](about/install)
@@ -63,6 +73,7 @@ print(f"Average neighbors per atom: {num_neighbors.float().mean():.1f}")
 - [NeighborLists](components/neighborlist)
 - [Electrostatics](components/electrostatics)
 - [Dispersion Corrections](components/dispersion)
+- [Dynamics](components/dynamics)
 
 ## Advanced Usage
 
@@ -86,6 +97,7 @@ about/faq
 components/neighborlist
 components/electrostatics
 components/dispersion
+components/dynamics
 ```
 
 ```{toctree}

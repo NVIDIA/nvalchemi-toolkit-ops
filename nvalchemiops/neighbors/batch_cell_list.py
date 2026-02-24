@@ -698,6 +698,7 @@ def batch_build_cell_list(
     batch_idx: wp.array,
     cells_per_dimension: wp.array,
     cell_offsets: wp.array,
+    cells_per_system: wp.array,
     atom_periodic_shifts: wp.array,
     atom_to_cell_mapping: wp.array,
     atoms_per_cell_count: wp.array,
@@ -729,6 +730,10 @@ def batch_build_cell_list(
     cell_offsets : wp.array, shape (num_systems,), dtype=wp.int32
         OUTPUT: Starting index in global cell arrays for each system.
         Computed internally via exclusive scan of cells_per_dimension products.
+    cells_per_system : wp.array, shape (num_systems,), dtype=wp.int32
+        SCRATCH: Temporary buffer for total cells per system.
+        Used as input to exclusive scan for computing cell_offsets.
+        Must be pre-allocated by caller.
     atom_periodic_shifts : wp.array, shape (total_atoms, 3), dtype=wp.vec3i
         OUTPUT: Periodic boundary crossings for each atom.
     atom_to_cell_mapping : wp.array, shape (total_atoms, 3), dtype=wp.vec3i
@@ -780,7 +785,6 @@ def batch_build_cell_list(
 
     # Compute cell_offsets from cells_per_dimension (exclusive scan of products)
     # This must happen after construct_bin_size fills cells_per_dimension
-    cells_per_system = wp.zeros(num_systems, dtype=wp.int32, device=device)
     wp.launch(
         _compute_cells_per_system,
         dim=num_systems,

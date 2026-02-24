@@ -578,4 +578,4 @@ calculations (C6 interpolation, damping, energy/force accumulation) use
 
 ## API Reference
 
-For detailed API documentation, see the [PyTorch API](../../modules/torch/dispersion) and [Warp API](../../modules/warp/dispersion) references.
+For detailed API documentation, see the [PyTorch API](../../modules/torch/dispersion), [JAX API](../../modules/jax/dispersion), and [Warp API](../../modules/warp/dispersion) references.
