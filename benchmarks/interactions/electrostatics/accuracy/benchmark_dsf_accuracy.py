@@ -106,7 +106,6 @@ def load_config(config_path: Path) -> dict:
     return config
 
 
-
 def compute_min_perpendicular_width(cell: np.ndarray) -> float:
     """Compute the minimum perpendicular width of a unit cell.
 
