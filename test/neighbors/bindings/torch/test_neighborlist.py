@@ -460,11 +460,9 @@ class TestNeighborListBatchProcessing:
         cutoff = 5.0
 
         # Combine into batch
-        positions = torch.cat([positions1, positions2], dim=0).to(device=device)
-        cell = torch.stack([cell1.squeeze(0), cell2.squeeze(0)], dim=0).to(
-            device=device
-        )
-        pbc = torch.stack([pbc1.squeeze(0), pbc2.squeeze(0)], dim=0).to(device=device)
+        positions = torch.cat([positions1, positions2], dim=0)
+        cell = torch.stack([cell1.squeeze(0), cell2.squeeze(0)], dim=0)
+        pbc = torch.stack([pbc1.squeeze(0), pbc2.squeeze(0)], dim=0)
         batch_idx = torch.cat(
             [
                 torch.zeros(200, dtype=torch.int32, device=device),

@@ -35,19 +35,82 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 import yaml
 from pymatgen.core import Lattice, Structure
 
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from benchmarks.utils import BenchmarkTimer
-from nvalchemiops.torch.interactions.dispersion import (
-    D3Parameters,
-    dftd3,
-)
-from nvalchemiops.torch.neighbors import neighbor_list
+from benchmarks.utils import BackendType, BenchmarkTimer
+
+# Guarded torch imports
+try:
+    import torch
+
+    from nvalchemiops.torch.interactions.dispersion import (
+        D3Parameters as TorchD3Parameters,
+    )
+    from nvalchemiops.torch.interactions.dispersion import (
+        dftd3 as torch_dftd3,
+    )
+    from nvalchemiops.torch.neighbors import neighbor_list as torch_neighbor_list
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None  # type: ignore
+    TorchD3Parameters = None  # type: ignore
+    torch_dftd3 = None  # type: ignore
+    torch_neighbor_list = None  # type: ignore
+
+# JAX globals — populated lazily by _import_jax() so that env vars
+# (XLA allocator mode) can be configured before the first import.
+JAX_AVAILABLE = False
+jax = None  # type: ignore
+jnp = None  # type: ignore
+JaxD3Parameters = None  # type: ignore
+jax_dftd3 = None  # type: ignore
+jax_neighbor_list = None  # type: ignore
+
+
+def _setup_jax_allocator(mode: str) -> None:
+    """Configure XLA memory allocator before JAX is imported.
+
+    Parameters
+    ----------
+    mode : str
+        ``"throughput"`` uses XLA's default preallocator (fast).
+        ``"memory"`` uses the platform allocator (accurate memory accounting).
+    """
+    if mode == "memory":
+        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+        os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
+
+def _import_jax() -> None:
+    """Import JAX and nvalchemiops JAX bindings, setting module globals."""
+    global JAX_AVAILABLE, jax, jnp, JaxD3Parameters, jax_dftd3, jax_neighbor_list
+    try:
+        import jax as _jax
+        import jax.numpy as _jnp
+
+        from nvalchemiops.jax.interactions.dispersion import (
+            D3Parameters as _JaxD3Parameters,
+        )
+        from nvalchemiops.jax.interactions.dispersion import (
+            dftd3 as _jax_dftd3,
+        )
+        from nvalchemiops.jax.neighbors import neighbor_list as _jax_neighbor_list
+
+        jax = _jax
+        jnp = _jnp
+        JaxD3Parameters = _JaxD3Parameters
+        jax_dftd3 = _jax_dftd3
+        jax_neighbor_list = _jax_neighbor_list
+        JAX_AVAILABLE = True
+    except ImportError:
+        pass
+
 
 # Optional torch-dftd imports (only needed for torch_dftd backend)
 try:
@@ -66,19 +129,44 @@ except ImportError:
 ANGSTROM_TO_BOHR = 1.88973
 
 
-def get_gpu_sku() -> str:
-    """Get GPU SKU name for filename generation."""
-    if not torch.cuda.is_available():
+def get_gpu_sku(backend: BackendType) -> str:
+    """Get GPU SKU name for filename generation.
+
+    Uses NVML for reliable, backend-agnostic GPU name detection.
+    Falls back to "cpu" if no GPU is available.
+
+    Parameters
+    ----------
+    backend : BackendType
+        Backend in use (used to check GPU availability).
+
+    Returns
+    -------
+    str
+        Cleaned GPU SKU string suitable for filenames (e.g., "h100-80gb-hbm3").
+    """
+    # First check if we even have a GPU based on the backend
+    has_gpu = False
+    match backend:
+        case "torch":
+            has_gpu = torch is not None and torch.cuda.is_available()
+        case "jax":
+            try:
+                has_gpu = jax is not None and any(
+                    d.platform == "gpu" for d in jax.local_devices()
+                )
+            except Exception:
+                has_gpu = False
+        case "warp":
+            has_gpu = False  # Will be implemented later
+
+    if not has_gpu:
         return "cpu"
 
-    try:
-        gpu_name = torch.cuda.get_device_name(0)
-        # Clean up GPU name for filename
-        sku = gpu_name.replace(" ", "-").replace("_", "-")
-        sku = sku.replace("NVIDIA-", "").replace("GeForce-", "")
-        return sku.lower()
-    except Exception:
-        return "unknown_gpu"
+    # Use NVML for reliable GPU name detection
+    from benchmarks.utils import _nvml_get_gpu_sku
+
+    return _nvml_get_gpu_sku()
 
 
 def load_config(config_path: Path) -> dict:
@@ -105,34 +193,320 @@ def create_cscl_supercell(size: int) -> Structure:
     return base_unitcell
 
 
-def create_d3_parameters(
-    device: torch.device, dtype: torch.dtype = torch.float32
-) -> D3Parameters:
-    """Create simplified D3 parameters for Cs and Cl."""
-    # Covalent radii (Bohr)
-    rcov = torch.zeros(56, dtype=dtype, device=device)
+def _create_d3_parameters_numpy(dtype_str: str = "float32") -> dict:
+    """Create simplified D3 parameters for Cs and Cl as numpy arrays.
+
+    Parameters
+    ----------
+    dtype_str : str, default="float32"
+        Dtype string (e.g., "float32", "float64").
+
+    Returns
+    -------
+    dict
+        Dictionary with keys "rcov", "r4r2", "c6ab", "cn_ref" as numpy arrays.
+    """
+    dtype = getattr(np, dtype_str)
+
+    rcov = np.zeros(56, dtype=dtype)
     rcov[17] = 1.88  # Cl
     rcov[55] = 4.91  # Cs
 
-    # r4r2 expectation values
-    r4r2 = torch.zeros(56, dtype=dtype, device=device)
+    r4r2 = np.zeros(56, dtype=dtype)
     r4r2[17] = 8.0  # Cl
     r4r2[55] = 18.0  # Cs
 
-    # C6 reference values (simplified 5x5 grid)
-    c6ab = torch.zeros(56, 56, 5, 5, dtype=dtype, device=device)
+    c6ab = np.zeros((56, 56, 5, 5), dtype=dtype)
     c6ab[17, 17, :, :] = 50.0  # Cl-Cl
     c6ab[17, 55, :, :] = 200.0  # Cl-Cs
     c6ab[55, 17, :, :] = 200.0  # Cs-Cl
     c6ab[55, 55, :, :] = 800.0  # Cs-Cs
 
-    # CN reference grids
-    cn_ref = torch.zeros(56, 56, 5, 5, dtype=dtype, device=device)
+    cn_ref = np.zeros((56, 56, 5, 5), dtype=dtype)
     for i in range(5):
         for j in range(5):
             cn_ref[:, :, i, j] = i * 0.5
 
-    return D3Parameters(rcov=rcov, r4r2=r4r2, c6ab=c6ab, cn_ref=cn_ref)
+    return {"rcov": rcov, "r4r2": r4r2, "c6ab": c6ab, "cn_ref": cn_ref}
+
+
+def create_d3_parameters(
+    backend: BackendType,
+    device: str = "cuda",
+    dtype_str: str = "float32",
+):
+    """Create simplified D3 parameters for Cs and Cl using the specified backend.
+
+    Core data is built once as numpy arrays, then converted to the target backend.
+    """
+    np_params = _create_d3_parameters_numpy(dtype_str)
+
+    match backend:
+        case "torch":
+            dtype = getattr(torch, dtype_str)
+            device_obj = torch.device(device)
+            return TorchD3Parameters(
+                rcov=torch.tensor(np_params["rcov"], dtype=dtype, device=device_obj),
+                r4r2=torch.tensor(np_params["r4r2"], dtype=dtype, device=device_obj),
+                c6ab=torch.tensor(np_params["c6ab"], dtype=dtype, device=device_obj),
+                cn_ref=torch.tensor(
+                    np_params["cn_ref"], dtype=dtype, device=device_obj
+                ),
+            )
+        case "jax":
+            dtype = getattr(jnp, dtype_str)
+            return JaxD3Parameters(
+                rcov=jnp.array(np_params["rcov"], dtype=dtype),
+                r4r2=jnp.array(np_params["r4r2"], dtype=dtype),
+                c6ab=jnp.array(np_params["c6ab"], dtype=dtype),
+                cn_ref=jnp.array(np_params["cn_ref"], dtype=dtype),
+            )
+        case "warp":
+            raise NotImplementedError("warp backend D3 parameters not yet supported")
+
+
+def prepare_system_numpy(
+    supercell_size: int,
+    batch_size: int = 1,
+) -> dict:
+    """
+    Create supercell(s) and prepare numpy arrays (no framework dependency).
+
+    Parameters
+    ----------
+    supercell_size : int
+        Linear size of the supercell (creates 2*size³ atoms per system).
+    batch_size : int, default=1
+        Number of systems to batch together.
+
+    Returns
+    -------
+    dict
+        Dictionary containing numpy arrays:
+        - positions_bohr: Positions in Bohr (N_total, 3) float64
+        - numbers: Atomic numbers (N_total,) int32
+        - coords_angstrom: Positions in Angstroms (N_total, 3) float64
+        - cell: Cell vectors. Shape (batch_size, 3, 3) if batched, else (3, 3) float64
+        - pbc: PBC flags. Shape (batch_size, 3) if batched, else (3,) bool
+        - batch_idx: Batch indices (N_total,) int32 or None if single system
+        - batch_ptr: Batch pointer (batch_size+1,) int32 or None if single system
+        - total_atoms: Total number of atoms
+    """
+    is_batched = batch_size > 1
+
+    if is_batched:
+        # Create multiple systems
+        all_structures = [
+            create_cscl_supercell(supercell_size) for _ in range(batch_size)
+        ]
+
+        # Concatenate all systems
+        all_positions = []
+        all_numbers = []
+        all_coords = []
+        all_cells = []
+        all_pbc = []
+        ptr = [0]
+
+        for structure in all_structures:
+            all_positions.append(structure.cart_coords * ANGSTROM_TO_BOHR)
+            all_numbers.append(
+                np.array([site.specie.Z for site in structure], dtype=np.int32)
+            )
+            all_coords.append(structure.cart_coords)
+            all_cells.append(structure.lattice.matrix)
+            all_pbc.append(np.array([True, True, True]))
+            ptr.append(ptr[-1] + len(structure))
+
+        positions_bohr = np.concatenate(all_positions, axis=0)
+        numbers = np.concatenate(all_numbers, axis=0)
+        coords_angstrom = np.concatenate(all_coords, axis=0)
+        cell = np.stack(all_cells, axis=0)
+        pbc = np.stack(all_pbc, axis=0)
+        batch_ptr = np.array(ptr, dtype=np.int32)
+
+        # Create batch_idx
+        total_atoms = coords_angstrom.shape[0]
+        batch_idx = np.zeros(total_atoms, dtype=np.int32)
+        for i in range(batch_size):
+            batch_idx[batch_ptr[i] : batch_ptr[i + 1]] = i
+    else:
+        # Single system
+        structure = create_cscl_supercell(supercell_size)
+        total_atoms = len(structure)
+
+        positions_bohr = structure.cart_coords * ANGSTROM_TO_BOHR
+        numbers = np.array([site.specie.Z for site in structure], dtype=np.int32)
+        coords_angstrom = structure.cart_coords.copy()
+        cell = structure.lattice.matrix.copy()
+        pbc = np.array([True, True, True])
+        batch_idx = None
+        batch_ptr = None
+
+    return {
+        "positions_bohr": positions_bohr,
+        "numbers": numbers,
+        "coords_angstrom": coords_angstrom,
+        "cell": cell,
+        "pbc": pbc,
+        "batch_idx": batch_idx,
+        "batch_ptr": batch_ptr,
+        "total_atoms": total_atoms,
+    }
+
+
+def convert_to_backend(
+    np_data: dict,
+    backend: BackendType,
+    device: str = "cuda",
+    dtype_str: str = "float32",
+) -> dict:
+    """
+    Convert numpy arrays to backend-specific arrays.
+
+    Core data structure is defined once as numpy arrays in ``np_data``
+    (from :func:`prepare_system_numpy`), then converted to the target
+    backend's array type.
+
+    Parameters
+    ----------
+    np_data : dict
+        Dictionary from prepare_system_numpy().
+    backend : BackendType
+        Target backend ("torch", "jax", "warp").
+    device : str
+        Device string (used by torch backend).
+    dtype_str : str
+        Dtype string like "float32".
+
+    Returns
+    -------
+    dict
+        Dictionary with backend-specific arrays, same keys as input
+        plus the converted arrays.
+    """
+    # Define conversion specs once: (source_key, target_key)
+    float_keys = [
+        ("positions_bohr", "positions"),
+        ("coords_angstrom", "coord"),
+        ("cell", "cell"),
+    ]
+    int_keys = [
+        ("numbers", "numbers"),
+    ]
+    bool_keys = [
+        ("pbc", "pbc"),
+    ]
+    optional_int_keys = [
+        ("batch_idx", "batch_idx"),
+        ("batch_ptr", "batch_ptr"),
+    ]
+
+    result = {"total_atoms": np_data["total_atoms"]}
+
+    match backend:
+        case "torch":
+            dtype = getattr(torch, dtype_str)
+            for src, dst in float_keys:
+                result[dst] = torch.tensor(np_data[src], dtype=dtype, device=device)
+            for src, dst in int_keys:
+                result[dst] = torch.tensor(
+                    np_data[src], dtype=torch.int32, device=device
+                )
+            for src, dst in bool_keys:
+                result[dst] = torch.tensor(
+                    np_data[src], dtype=torch.bool, device=device
+                )
+            for src, dst in optional_int_keys:
+                result[dst] = (
+                    torch.tensor(np_data[src], dtype=torch.int32, device=device)
+                    if np_data[src] is not None
+                    else None
+                )
+        case "jax":
+            dtype = getattr(jnp, dtype_str)
+            for src, dst in float_keys:
+                arr = jnp.array(np_data[src], dtype=dtype)
+                # JAX dftd3() derives num_systems from cell.shape[0],
+                # so cell must always be (batch, 3, 3) even for single systems.
+                if dst == "cell" and arr.ndim == 2:
+                    arr = arr[jnp.newaxis, :, :]
+                result[dst] = arr
+            for src, dst in int_keys:
+                result[dst] = jnp.array(np_data[src], dtype=jnp.int32)
+            for src, dst in bool_keys:
+                arr = jnp.array(np_data[src], dtype=jnp.bool_)
+                # Keep pbc shape consistent with cell: (batch, 3).
+                if dst == "pbc" and arr.ndim == 1:
+                    arr = arr[jnp.newaxis, :]
+                result[dst] = arr
+            for src, dst in optional_int_keys:
+                result[dst] = (
+                    jnp.array(np_data[src], dtype=jnp.int32)
+                    if np_data[src] is not None
+                    else None
+                )
+        case "warp":
+            raise NotImplementedError("warp backend array conversion not yet supported")
+
+    return result
+
+
+def compute_neighbor_list(
+    backend_data: dict,
+    backend: BackendType,
+    cutoff: float,
+    max_neighbors: int,
+    return_neighbor_list: bool = False,
+) -> tuple:
+    """
+    Compute neighbor list using the appropriate backend.
+
+    Parameters
+    ----------
+    backend_data : dict
+        Dictionary from convert_to_backend().
+    backend : BackendType
+        Target backend ("torch", "jax", "warp").
+    cutoff : float
+        Cutoff distance in Angstroms for neighbor list.
+    max_neighbors : int
+        Maximum number of neighbors per atom.
+    return_neighbor_list : bool, default=False
+        If True, return neighbor list in COO format (2, num_pairs) instead of
+        neighbor matrix (N_total, max_neighbors).
+
+    Returns
+    -------
+    tuple
+        (neighbor_data, num_neighbor_data, shifts_or_none)
+        Where neighbor_data format depends on return_neighbor_list flag.
+    """
+    is_batched = backend_data["batch_idx"] is not None
+    if is_batched:
+        method = "batch_cell_list"
+    else:
+        method = "cell_list"
+
+    dispatch_func = None
+    match backend:
+        case "torch":
+            dispatch_func = torch_neighbor_list
+        case "jax":
+            dispatch_func = jax_neighbor_list
+        case "warp":
+            raise NotImplementedError("warp backend neighbor list not yet supported")
+    return dispatch_func(
+        backend_data["coord"],
+        cutoff,
+        cell=backend_data["cell"],
+        pbc=backend_data["pbc"],
+        batch_idx=backend_data["batch_idx"],
+        batch_ptr=backend_data["batch_ptr"],
+        method=method,
+        max_neighbors=max_neighbors,
+        return_neighbor_list=return_neighbor_list,
+    )
 
 
 def prepare_system_and_neighborlist(
@@ -140,12 +514,15 @@ def prepare_system_and_neighborlist(
     cutoff: float,
     max_neighbors: int,
     device: str,
-    dtype: torch.dtype,
+    dtype: "torch.dtype",
     batch_size: int = 1,
     return_neighbor_list: bool = False,
 ) -> dict:
     """
     Create supercell(s), prepare tensors, and build neighbor list.
+
+    This function preserves backward compatibility by wrapping the new
+    numpy-based data preparation and backend dispatch functions.
 
     Parameters
     ----------
@@ -183,93 +560,17 @@ def prepare_system_and_neighborlist(
         - total_atoms: Total number of atoms across all systems
         - total_neighbors: Total number of neighbor pairs
     """
-    is_batched = batch_size > 1
+    # Step 1: Prepare numpy data
+    np_data = prepare_system_numpy(supercell_size, batch_size)
 
-    if is_batched:
-        # Create multiple systems
-        all_structures = [
-            create_cscl_supercell(supercell_size) for _ in range(batch_size)
-        ]
+    # Step 2: Convert to torch backend (this function is only used by torch runners)
+    dtype_str = str(dtype).split(".")[-1]  # "torch.float32" -> "float32"
+    backend_data = convert_to_backend(np_data, "torch", device, dtype_str)
 
-        # Concatenate all systems
-        all_positions = []
-        all_numbers = []
-        all_coords = []
-        all_cells = []
-        all_pbc = []
-        ptr = [0]
-
-        for structure in all_structures:
-            all_positions.append(structure.cart_coords * ANGSTROM_TO_BOHR)
-            all_numbers.append(
-                np.array([site.specie.Z for site in structure], dtype=np.int32)
-            )
-            all_coords.append(structure.cart_coords)
-            all_cells.append(structure.lattice.matrix)
-            all_pbc.append(np.array([True, True, True]))
-            ptr.append(ptr[-1] + len(structure))
-
-        positions = torch.tensor(
-            np.concatenate(all_positions, axis=0), dtype=dtype, device=device
-        )
-        numbers = torch.tensor(
-            np.concatenate(all_numbers, axis=0), dtype=torch.int32, device=device
-        )
-        coord = torch.tensor(
-            np.concatenate(all_coords, axis=0), dtype=dtype, device=device
-        )
-        cell = torch.tensor(np.stack(all_cells, axis=0), dtype=dtype, device=device)
-        pbc = torch.tensor(np.stack(all_pbc, axis=0), dtype=torch.bool, device=device)
-        ptr = torch.tensor(ptr, dtype=torch.int32, device=device)
-
-        # Create batch_idx
-        batch_idx = torch.zeros(coord.shape[0], dtype=torch.int32, device=device)
-        for i in range(batch_size):
-            batch_idx[ptr[i] : ptr[i + 1]] = i
-
-        total_atoms = coord.shape[0]
-
-        # Build neighbor list
-        neighbor_data, num_neighbor_data, _ = neighbor_list(
-            coord,
-            cutoff,
-            cell=cell,
-            pbc=pbc,
-            batch_idx=batch_idx,
-            batch_ptr=ptr,
-            method="batch_cell_list",
-            max_neighbors=max_neighbors,
-            return_neighbor_list=return_neighbor_list,
-        )
-    else:
-        # Single system
-        structure = create_cscl_supercell(supercell_size)
-        total_atoms = len(structure)
-
-        positions = torch.tensor(
-            structure.cart_coords * ANGSTROM_TO_BOHR, dtype=dtype, device=device
-        )
-        numbers = torch.tensor(
-            np.array([site.specie.Z for site in structure], dtype=np.int32),
-            dtype=torch.int32,
-            device=device,
-        )
-        coord = torch.tensor(structure.cart_coords, dtype=dtype, device=device)
-        cell = torch.tensor(structure.lattice.matrix, dtype=dtype, device=device)
-        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
-
-        neighbor_data, num_neighbor_data, _ = neighbor_list(
-            coord,
-            cutoff,
-            cell=cell,
-            pbc=pbc,
-            method="cell_list",
-            max_neighbors=max_neighbors,
-            return_neighbor_list=return_neighbor_list,
-        )
-
-        batch_idx = None
-        ptr = None
+    # Step 3: Compute neighbor list
+    neighbor_data, num_neighbor_data, _ = compute_neighbor_list(
+        backend_data, "torch", cutoff, max_neighbors, return_neighbor_list
+    )
 
     # Calculate total neighbors
     if return_neighbor_list:
@@ -280,28 +581,34 @@ def prepare_system_and_neighborlist(
         total_neighbors = num_neighbor_data.sum().item()
 
     return {
-        "positions": positions,
-        "numbers": numbers,
-        "coord": coord,
-        "cell": cell,
-        "pbc": pbc,
+        "positions": backend_data["positions"],
+        "numbers": backend_data["numbers"],
+        "coord": backend_data["coord"],
+        "cell": backend_data["cell"],
+        "pbc": backend_data["pbc"],
         "neighbor_data": neighbor_data,
         "num_neighbor_data": num_neighbor_data,
-        "batch_idx": batch_idx,
-        "batch_ptr": ptr,
-        "total_atoms": total_atoms,
+        "batch_idx": backend_data["batch_idx"],
+        "batch_ptr": backend_data["batch_ptr"],
+        "total_atoms": backend_data["total_atoms"],
         "total_neighbors": total_neighbors,
     }
 
 
 def load_torch_dftd_parameters(
-    device: torch.device, dtype: torch.dtype = torch.float32
+    device: "torch.device", dtype: "torch.dtype" = None
 ) -> dict:
-    """Load DFT-D3 parameters from torch-dftd package."""
+    """Load DFT-D3 parameters from torch-dftd package.
+
+    Note: dtype defaults to torch.float32 if not provided.
+    """
     if not TORCH_DFTD_AVAILABLE:
         raise ImportError(
             "torch-dftd not installed. Install via: pip install torch-dftd"
         )
+
+    if dtype is None:
+        dtype = torch.float32
 
     # Load parameters from torch_dftd
     d3_filepath = str(
@@ -331,12 +638,12 @@ def load_torch_dftd_parameters(
 def run_dftd3_nvalchemiops_benchmark(
     supercell_size: int,
     cutoff: float,
-    d3_params: D3Parameters,
+    d3_params: "TorchD3Parameters",
     dftd3_config: dict,
     max_neighbors: int,
     timer: BenchmarkTimer,
     device: str,
-    dtype: torch.dtype,
+    dtype: "torch.dtype",
     batch_size: int = 1,
 ) -> dict:
     """Run DFT-D3 benchmark using nvalchemiops backend (single or batched)."""
@@ -361,7 +668,7 @@ def run_dftd3_nvalchemiops_benchmark(
 
         # Define the function to benchmark
         def dftd3_call():
-            return dftd3(
+            return torch_dftd3(
                 positions=positions,
                 numbers=numbers,
                 d3_params=d3_params,
@@ -390,6 +697,7 @@ def run_dftd3_nvalchemiops_benchmark(
                 "total_neighbors": 0,
                 "median_time_ms": float("inf"),
                 "peak_memory_mb": timing_results.get("peak_memory_mb"),
+                "memory_note": "torch:cuda.max_memory_allocated",
                 "success": False,
                 "error": timing_results.get("error", "Unknown error"),
                 "error_type": timing_results.get("error_type", "Unknown"),
@@ -405,6 +713,7 @@ def run_dftd3_nvalchemiops_benchmark(
             "total_neighbors": total_neighbors,
             "median_time_ms": float(median_time_ms),
             "peak_memory_mb": peak_memory_mb,
+            "memory_note": "torch:cuda.max_memory_allocated",
             "success": True,
         }
 
@@ -417,6 +726,148 @@ def run_dftd3_nvalchemiops_benchmark(
             "total_neighbors": 0,
             "median_time_ms": float("inf"),
             "peak_memory_mb": None,
+            "memory_note": "torch:cuda.max_memory_allocated",
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+        }
+
+
+def run_dftd3_nvalchemiops_jax_benchmark(
+    supercell_size: int,
+    cutoff: float,
+    d3_params: "JaxD3Parameters",
+    dftd3_config: dict,
+    max_neighbors: int,
+    timer: BenchmarkTimer,
+    dtype_str: str = "float32",
+    batch_size: int = 1,
+) -> dict:
+    """Run DFT-D3 benchmark using nvalchemiops JAX backend (single or batched)."""
+    try:
+        # Prepare system data as numpy, then convert to JAX
+        np_data = prepare_system_numpy(supercell_size, batch_size)
+        backend_data = convert_to_backend(np_data, "jax", dtype_str=dtype_str)
+
+        # Compute neighbor list with JAX backend
+        neighbor_data, num_neighbor_data, _ = compute_neighbor_list(
+            backend_data, "jax", cutoff, max_neighbors, return_neighbor_list=False
+        )
+
+        positions = backend_data["positions"]
+        numbers = backend_data["numbers"]
+        neighbor_matrix = neighbor_data
+        total_atoms = backend_data["total_atoms"]
+        total_neighbors = int(jnp.sum(num_neighbor_data))
+        batch_idx = backend_data["batch_idx"]
+        cell = backend_data["cell"]
+
+        # Closure-captured scalars stay concrete under JIT (not traced).
+        # This is required for Warp FFI compatibility.
+        a1_val = dftd3_config["a1"]
+        a2_val = dftd3_config["a2"]
+        s6_val = dftd3_config["s6"]
+        s8_val = dftd3_config["s8"]
+        k1_val = dftd3_config["k1"]
+        k3_val = dftd3_config["k3"]
+        s5_on_val = dftd3_config["s5_smoothing_on"]
+        s5_off_val = dftd3_config["s5_smoothing_off"]
+        fill_val = total_atoms
+
+        @jax.jit
+        def jitted_dftd3(
+            positions,
+            numbers,
+            neighbor_matrix,
+            batch_idx,
+            cell,
+            rcov,
+            r4r2,
+            c6ab,
+            cn_ref,
+        ):
+            params = JaxD3Parameters(
+                rcov=rcov,
+                r4r2=r4r2,
+                c6ab=c6ab,
+                cn_ref=cn_ref,
+            )
+            return jax_dftd3(
+                positions=positions,
+                numbers=numbers,
+                d3_params=params,
+                neighbor_matrix=neighbor_matrix,
+                fill_value=fill_val,
+                a1=a1_val,
+                a2=a2_val,
+                s6=s6_val,
+                s8=s8_val,
+                k1=k1_val,
+                k3=k3_val,
+                batch_idx=batch_idx,
+                cell=cell,
+                s5_smoothing_on=s5_on_val,
+                s5_smoothing_off=s5_off_val,
+            )
+
+        def dftd3_call():
+            return jitted_dftd3(
+                positions,
+                numbers,
+                neighbor_matrix,
+                batch_idx,
+                cell,
+                d3_params.rcov,
+                d3_params.r4r2,
+                d3_params.c6ab,
+                d3_params.cn_ref,
+            )
+
+        # Time the function
+        timing_results = timer.time_function(dftd3_call)
+        compile_ms = timing_results.get("compile_ms")
+
+        if not timing_results["success"]:
+            return {
+                "total_atoms": total_atoms,
+                "batch_size": batch_size,
+                "supercell_size": supercell_size,
+                "total_neighbors": 0,
+                "compile_ms": compile_ms,
+                "median_time_ms": float("inf"),
+                "peak_memory_mb": timing_results.get("peak_memory_mb"),
+                "memory_note": "jax:nvml_process_used",
+                "success": False,
+                "error": timing_results.get("error", "Unknown error"),
+                "error_type": timing_results.get("error_type", "Unknown"),
+            }
+
+        median_time_ms = timing_results["median"]
+        peak_memory_mb = timing_results.get("peak_memory_mb")
+
+        return {
+            "total_atoms": total_atoms,
+            "batch_size": batch_size,
+            "supercell_size": supercell_size,
+            "total_neighbors": total_neighbors,
+            "compile_ms": compile_ms,
+            "median_time_ms": float(median_time_ms),
+            "peak_memory_mb": peak_memory_mb,
+            "memory_note": "jax:nvml_process_used",
+            "success": True,
+        }
+
+    except Exception as e:
+        total_atoms = 2 * supercell_size**3 * batch_size
+        return {
+            "total_atoms": total_atoms,
+            "batch_size": batch_size,
+            "supercell_size": supercell_size,
+            "total_neighbors": 0,
+            "compile_ms": None,
+            "median_time_ms": float("inf"),
+            "peak_memory_mb": None,
+            "memory_note": "jax:nvml_process_used",
             "success": False,
             "error": str(e),
             "error_type": type(e).__name__,
@@ -431,7 +882,7 @@ def run_dftd3_torch_dftd_benchmark(
     max_neighbors: int,
     timer: BenchmarkTimer,
     device: str,
-    dtype: torch.dtype,
+    dtype: "torch.dtype",
     batch_size: int = 1,
 ) -> dict:
     """Run DFT-D3 benchmark using torch-dftd backend (single or batched)."""
@@ -571,6 +1022,61 @@ def run_dftd3_torch_dftd_benchmark(
         }
 
 
+def _resolve_backend_type(cli_backend: str) -> BackendType:
+    """Map CLI backend string to BackendType.
+
+    Parameters
+    ----------
+    cli_backend : str
+        CLI backend choice ("nvalchemiops", "nvalchemiops_jax", "torch_dftd").
+
+    Returns
+    -------
+    BackendType
+        Framework-level backend type ("torch" or "jax").
+    """
+    match cli_backend:
+        case "torch" | "torch_dftd":
+            return "torch"
+        case "jax":
+            return "jax"
+        case _:
+            raise ValueError(f"Unknown backend: {cli_backend}")
+
+
+def _check_backend_available(cli_backend: str) -> None:
+    """Validate that the requested backend is installed.
+
+    Parameters
+    ----------
+    cli_backend : str
+        CLI backend choice.
+
+    Raises
+    ------
+    SystemExit
+        If the required backend is not available.
+    """
+    match cli_backend:
+        case "torch":
+            if not TORCH_AVAILABLE:
+                print(
+                    "ERROR: nvalchemiops (torch) backend requested but torch is not installed."
+                )
+                sys.exit(1)
+        case "jax":
+            if not JAX_AVAILABLE:
+                print(
+                    "ERROR: nvalchemiops_jax backend requested but JAX is not installed."
+                )
+                sys.exit(1)
+        case "torch_dftd":
+            if not TORCH_DFTD_AVAILABLE:
+                print("ERROR: torch-dftd backend requested but not installed.")
+                print("Install via: pip install torch-dftd")
+                sys.exit(1)
+
+
 def main():
     """Main entry point for the benchmark script."""
     parser = argparse.ArgumentParser(
@@ -588,26 +1094,42 @@ def main():
     parser.add_argument(
         "--backend",
         type=str,
-        choices=["nvalchemiops", "torch_dftd"],
-        default="nvalchemiops",
-        help="Backend to use for benchmarking (default: nvalchemiops)",
+        choices=["torch", "jax", "torch_dftd"],
+        default="torch",
+        help="Backend to use for benchmarking (default: torch)",
     )
     parser.add_argument(
         "--gpu-sku",
         type=str,
         help="Override GPU SKU name for output files (default: auto-detect)",
     )
+    parser.add_argument(
+        "--jax-allocator",
+        type=str,
+        choices=["throughput", "memory"],
+        default="throughput",
+        help=(
+            "JAX XLA memory allocator mode (default: throughput). "
+            "'throughput' uses XLA's preallocator for fast steady-state timing. "
+            "'memory' uses the platform allocator for accurate memory accounting."
+        ),
+    )
 
     args = parser.parse_args()
 
-    # Check if torch_dftd is available when requested
-    if args.backend == "torch_dftd" and not TORCH_DFTD_AVAILABLE:
-        print("ERROR: torch-dftd backend requested but not installed.")
-        print("Install via: pip install torch-dftd")
-        sys.exit(1)
+    # Configure JAX allocator and import JAX (env vars must precede import)
+    if args.backend == "jax":
+        _setup_jax_allocator(args.jax_allocator)
+    _import_jax()
+
+    # Validate backend availability
+    _check_backend_available(args.backend)
 
     # Load config
     config = load_config(args.config)
+
+    # Resolve backend type
+    backend_type = _resolve_backend_type(args.backend)
 
     # Get parameters
     params = config["parameters"]
@@ -615,31 +1137,43 @@ def main():
     warmup = int(params["warmup_iterations"])
     timing = int(params["timing_iterations"])
     dtype_str = params["dtype"]
-    dtype = getattr(torch, dtype_str)
 
     dftd3_config = config["dftd3_parameters"]
 
-    # Setup device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    device_obj = torch.device(device)
+    # Backend-specific setup
+    device = "cpu"  # Default
+    match backend_type:
+        case "torch":
+            dtype = getattr(torch, dtype_str)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        case "jax":
+            dtype = None  # JAX uses dtype_str directly
+            try:
+                if any(d.platform == "gpu" for d in jax.local_devices()):
+                    device = "gpu"
+            except Exception:  # noqa: S110
+                pass
 
     # Get GPU SKU
-    gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku()
+    gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku(backend_type)
 
     # Create output directory
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize timer
-    timer = BenchmarkTimer(device_obj, warmup_runs=warmup, timing_runs=timing)
+    timer = BenchmarkTimer(warmup_runs=warmup, timing_runs=timing, backend=backend_type)
 
-    # Backend-specific setup
-    if args.backend == "nvalchemiops":
-        d3_params = create_d3_parameters(device_obj, dtype)
-        torch_dftd_params = None
-    else:  # torch_dftd
-        d3_params = None
-        torch_dftd_params = load_torch_dftd_parameters(device_obj, dtype)
+    # Backend-specific parameter setup
+    d3_params = None
+    torch_dftd_params = None
+    match args.backend:
+        case "torch":
+            d3_params = create_d3_parameters("torch", device, dtype_str)
+        case "jax":
+            d3_params = create_d3_parameters("jax", dtype_str=dtype_str)
+        case "torch_dftd":
+            torch_dftd_params = load_torch_dftd_parameters(torch.device(device), dtype)
 
     # Print configuration
     print("=" * 70)
@@ -652,7 +1186,13 @@ def main():
     print(f"Dtype: {dtype}")
     print(f"Warmup iterations: {warmup}")
     print(f"Timing iterations: {timing}")
+    if args.backend == "jax":
+        print(f"JAX allocator mode: {args.jax_allocator}")
     print(f"Output directory: {output_dir}")
+    print(
+        f"Memory metric: "
+        f"{'torch.cuda.max_memory_allocated (allocator peak)' if args.backend in ('torch', 'torch_dftd') else 'NVML used_memory (process-wide, not directly comparable to Torch)'}"
+    )
 
     # Run benchmarks for each system configuration
     for system_config in config["systems"]:
@@ -679,9 +1219,7 @@ def main():
 
             for size in supercell_sizes:
                 # Reset peak memory stats before each configuration
-                if device == "cuda":
-                    torch.cuda.reset_peak_memory_stats()
-                    torch.cuda.empty_cache()
+                timer.clear_memory()
 
                 atoms_per_system = 2 * size**3
                 total_atoms = atoms_per_system * batch_size
@@ -700,30 +1238,42 @@ def main():
                     )
 
                 # Choose benchmark function based on backend
-                if args.backend == "nvalchemiops":
-                    result = run_dftd3_nvalchemiops_benchmark(
-                        size,
-                        cutoff,
-                        d3_params,
-                        dftd3_config,
-                        max_neighbors,
-                        timer,
-                        device,
-                        dtype,
-                        batch_size,
-                    )
-                else:  # torch_dftd
-                    result = run_dftd3_torch_dftd_benchmark(
-                        size,
-                        cutoff,
-                        torch_dftd_params,
-                        dftd3_config,
-                        max_neighbors,
-                        timer,
-                        device,
-                        dtype,
-                        batch_size,
-                    )
+                match args.backend:
+                    case "torch":
+                        result = run_dftd3_nvalchemiops_benchmark(
+                            size,
+                            cutoff,
+                            d3_params,
+                            dftd3_config,
+                            max_neighbors,
+                            timer,
+                            device,
+                            dtype,
+                            batch_size,
+                        )
+                    case "jax":
+                        result = run_dftd3_nvalchemiops_jax_benchmark(
+                            size,
+                            cutoff,
+                            d3_params,
+                            dftd3_config,
+                            max_neighbors,
+                            timer,
+                            dtype_str,
+                            batch_size,
+                        )
+                    case "torch_dftd":
+                        result = run_dftd3_torch_dftd_benchmark(
+                            size,
+                            cutoff,
+                            torch_dftd_params,
+                            dftd3_config,
+                            max_neighbors,
+                            timer,
+                            device,
+                            dtype,
+                            batch_size,
+                        )
 
                 # Add backend to result for CSV
                 result["backend"] = args.backend
@@ -738,9 +1288,15 @@ def main():
                     mem_str = ""
                     if result.get("peak_memory_mb") is not None:
                         mem_str = f" | {result['peak_memory_mb']:.1f} MB"
+                    compile_str = ""
+                    if result.get("compile_ms") is not None:
+                        compile_str = f" | warmup {result['compile_ms']:.0f} ms"
+                    neighbor_str = ""
+                    if result.get("total_neighbors"):
+                        neighbor_str = f" | {result['total_neighbors']:,d} neighbors"
                     print(
                         f"{result['median_time_ms']:.3f} ms "
-                        f"({throughput:.1f} atoms/s){mem_str}"
+                        f"({throughput:.1f} atoms/s){mem_str}{compile_str}{neighbor_str}"
                     )
                 else:
                     print(f"FAILED ({error_type}): {error}")

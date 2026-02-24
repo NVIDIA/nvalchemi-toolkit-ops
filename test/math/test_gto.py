@@ -50,7 +50,7 @@ from nvalchemiops.math.gto import (
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def device():
     """Get the compute device."""
     if torch.cuda.is_available():
@@ -58,7 +58,7 @@ def device():
     return torch.device("cpu")
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def random_positions(device):
     """Generate random positions for testing."""
     torch.manual_seed(42)
@@ -68,7 +68,7 @@ def random_positions(device):
     return positions
 
 
-@pytest.fixture
+@pytest.fixture(scope="class")
 def grid_positions(device):
     """Generate a 3D grid of positions for integration."""
     # Create a cubic grid from -5 to 5 with spacing 0.5

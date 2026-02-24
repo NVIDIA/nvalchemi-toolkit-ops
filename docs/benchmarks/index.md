@@ -13,6 +13,7 @@ systems, and so on.
 neighborlist
 electrostatics
 dftd3
+dynamics
 ```
 
 ## About These Benchmarks

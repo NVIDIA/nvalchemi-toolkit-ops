@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Comprehensive tests for naive neighbor list routines and utilities."""
 
 from importlib import import_module
@@ -36,7 +37,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 from .test_utils import (
     create_simple_cubic_system,

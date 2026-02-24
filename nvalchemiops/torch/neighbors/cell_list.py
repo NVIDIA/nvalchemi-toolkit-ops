@@ -31,7 +31,7 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
     get_neighbor_list_from_neighbor_matrix,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "estimate_cell_list_sizes",

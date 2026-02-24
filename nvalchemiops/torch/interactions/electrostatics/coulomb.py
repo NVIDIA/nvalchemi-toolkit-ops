@@ -73,7 +73,7 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
-from nvalchemiops.types import get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_vec_dtype
 
 __all__ = [
     "coulomb_energy",

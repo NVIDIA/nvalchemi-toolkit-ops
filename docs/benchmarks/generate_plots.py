@@ -304,6 +304,59 @@ def plot_memory(
     )
 
 
+def _parse_nl_filename(filename: str) -> tuple[str, str, str] | None:
+    """
+    Parse neighbor list benchmark filename to extract method, backend, and GPU SKU.
+
+    Parameters
+    ----------
+    filename
+        The filename stem (without extension).
+
+    Returns
+    -------
+    tuple[str, str, str] | None
+        Tuple of (method, backend, gpu_sku) or None if parsing fails.
+
+    Notes
+    -----
+    Filenames follow the pattern: neighbor_list_benchmark_<method>_<backend>_<gpu_sku>.csv
+
+    Valid backend names are: "torch", "jax".
+
+    Method names use hyphens (e.g., "cell-list", "batch-naive"), so they occupy
+    a single underscore-delimited token.
+    """
+    known_backends = ["torch", "jax"]
+
+    prefix = "neighbor_list_benchmark_"
+    if not filename.startswith(prefix):
+        return None
+
+    remainder = filename[len(prefix) :]
+
+    # Method names use hyphens, so the first underscore-delimited token is the method.
+    # Then try to match a known backend.
+    parts = remainder.split("_", 1)
+    if len(parts) < 2:
+        return None
+
+    method = parts[0]
+    rest = parts[1]
+
+    for backend in known_backends:
+        if rest.startswith(backend + "_"):
+            gpu_sku = rest[len(backend) + 1 :]
+            return method, backend, gpu_sku
+
+    # Fallback: no known backend matched — treat first token as backend
+    rest_parts = rest.split("_", 1)
+    if len(rest_parts) == 2:
+        return method, rest_parts[0], rest_parts[1]
+
+    return None
+
+
 def generate_nl_plots(results_dir: Path, output_dir: Path) -> None:
     """
     Generate all neighbor list benchmark plots.
@@ -324,56 +377,157 @@ def generate_nl_plots(results_dir: Path, output_dir: Path) -> None:
 
     print(f"\nFound {len(nl_csv_files)} neighbor list CSV files")
 
-    for csv_file in nl_csv_files:
-        # Extract method name from filename
-        # Format: neighbor_list_benchmark_<method>_<gpu_sku>.csv
-        parts = csv_file.stem.split("_")
-        benchmark_index = parts.index("benchmark")
-        method = parts[benchmark_index + 1]
-        # Get rest of parts as GPU SKU
-        gpu_sku = "_".join(parts[benchmark_index + 2 :])
+    # Group files by method and backend
+    # method -> backend -> csv_file
+    files_by_method: dict[str, dict[str, Path]] = {}
+    gpu_sku = None
 
-        # Load data
+    for csv_file in nl_csv_files:
+        parsed = _parse_nl_filename(csv_file.stem)
+        if parsed is None:
+            print(f"  Warning: Could not parse filename {csv_file.name}")
+            continue
+        method, backend, gpu_sku = parsed
+        if method not in files_by_method:
+            files_by_method[method] = {}
+        files_by_method[method][backend] = csv_file
+
+    if gpu_sku is None:
+        print("  Warning: Could not determine GPU SKU")
+        gpu_sku = "unknown"
+
+    for method, backend_files in files_by_method.items():
+        print(f"\n  Generating plots for {method}...")
+
+        # 1. Backend comparison plots (batch_size=1 data only)
+        _generate_nl_comparison_plots(method, backend_files, gpu_sku, output_dir)
+
+        # 2. Per-backend plots (all batch sizes)
+        for backend, csv_file in backend_files.items():
+            _generate_nl_backend_plots(method, backend, csv_file, gpu_sku, output_dir)
+
+
+def _generate_nl_comparison_plots(
+    method: str,
+    backend_files: dict[str, Path],
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """
+    Generate comparison plots across backends for a given neighbor list method.
+
+    Only uses batch_size=1 data for fair comparison.
+    """
+    method_title = method.replace("-", " ").title()
+    comparison_time_series = {}
+    comparison_memory_series = {}
+
+    for backend, csv_file in backend_files.items():
         data = load_nl_csv(csv_file)
 
-        # Prepare series for plotting
-        time_series = {
-            f"batch={bs}": (d.total_atoms, d.median_time_ms) for bs, d in data.items()
-        }
-        memory_series = {
-            f"batch={bs}": (d.total_atoms, d.peak_memory_mb) for bs, d in data.items()
-        }
+        if 1 in data:
+            single_data = data[1]
+        else:
+            # Find the smallest batch size
+            min_batch = min(data.keys())
+            single_data = data[min_batch]
 
-        method_title = method.replace("-", " ").title()
-
-        # 1. Time scaling plot
-        output_path = output_dir / f"neighborlist_scaling_{method}_{gpu_sku}.png"
-        plot_series(
-            time_series,
-            output_path,
-            title=f"Neighbor List Scaling ({method_title})",
-            x_label="Number of atoms",
-            y_label="Median time (ms)",
+        comparison_time_series[backend] = (
+            single_data.total_atoms,
+            single_data.median_time_ms,
         )
-        print(f"  Generated: {output_path.name}")
-
-        # 2. Throughput plot
-        output_path = output_dir / f"neighborlist_throughput_{method}_{gpu_sku}.png"
-        plot_throughput(
-            time_series,
-            output_path,
-            title=f"Neighbor List Throughput ({method_title})",
+        comparison_memory_series[backend] = (
+            single_data.total_atoms,
+            single_data.peak_memory_mb,
         )
-        print(f"  Generated: {output_path.name}")
 
-        # 3. Memory utilization plot
-        output_path = output_dir / f"neighborlist_memory_{method}_{gpu_sku}.png"
-        plot_memory(
-            memory_series,
-            output_path,
-            title=f"Neighbor List Memory ({method_title})",
-        )
-        print(f"  Generated: {output_path.name}")
+    if not comparison_time_series:
+        return
+
+    # Time scaling comparison
+    output_path = output_dir / f"neighborlist_scaling_{method}_comparison_{gpu_sku}.png"
+    plot_series(
+        comparison_time_series,
+        output_path,
+        title=f"Neighbor List Scaling ({method_title}, Backend Comparison)",
+        x_label="Number of atoms",
+        y_label="Median time (ms)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Throughput comparison
+    output_path = (
+        output_dir / f"neighborlist_throughput_{method}_comparison_{gpu_sku}.png"
+    )
+    plot_throughput(
+        comparison_time_series,
+        output_path,
+        title=f"Neighbor List Throughput ({method_title}, Backend Comparison)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Memory comparison
+    output_path = output_dir / f"neighborlist_memory_{method}_comparison_{gpu_sku}.png"
+    plot_memory(
+        comparison_memory_series,
+        output_path,
+        title=f"Neighbor List Memory ({method_title}, Backend Comparison)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+
+def _generate_nl_backend_plots(
+    method: str,
+    backend: str,
+    csv_file: Path,
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """
+    Generate plots for a specific neighbor list method/backend combination.
+
+    Shows all batch sizes as separate series.
+    """
+    method_title = method.replace("-", " ").title()
+    data = load_nl_csv(csv_file)
+
+    time_series = {
+        f"batch={bs}": (d.total_atoms, d.median_time_ms) for bs, d in data.items()
+    }
+    memory_series = {
+        f"batch={bs}": (d.total_atoms, d.peak_memory_mb) for bs, d in data.items()
+    }
+
+    # Time scaling
+    output_path = output_dir / f"neighborlist_scaling_{method}_{backend}_{gpu_sku}.png"
+    plot_series(
+        time_series,
+        output_path,
+        title=f"Neighbor List Scaling ({method_title}, {backend})",
+        x_label="Number of atoms",
+        y_label="Median time (ms)",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Throughput
+    output_path = (
+        output_dir / f"neighborlist_throughput_{method}_{backend}_{gpu_sku}.png"
+    )
+    plot_throughput(
+        time_series,
+        output_path,
+        title=f"Neighbor List Throughput ({method_title}, {backend})",
+    )
+    print(f"    Generated: {output_path.name}")
+
+    # Memory
+    output_path = output_dir / f"neighborlist_memory_{method}_{backend}_{gpu_sku}.png"
+    plot_memory(
+        memory_series,
+        output_path,
+        title=f"Neighbor List Memory ({method_title}, {backend})",
+    )
+    print(f"    Generated: {output_path.name}")
 
 
 def _parse_dftd3_filename(filename: str, is_batched: bool) -> tuple[str, str] | None:
@@ -398,10 +552,13 @@ def _parse_dftd3_filename(filename: str, is_batched: bool) -> tuple[str, str] | 
     - Non-batched: dftd3_benchmark_<backend>_<gpu_sku>.csv
     - Batched: dftd3_benchmark_batch_<backend>_<gpu_sku>.csv
 
+    Valid backend names are: "torch", "jax", "torch_dftd".
+
     Backend names may contain underscores (e.g., "torch_dftd"), so we use
-    known backend names to parse correctly.
+    known backend names to parse correctly. The order matters: "torch_dftd"
+    must come before "torch" to ensure the longer name matches first.
     """
-    known_backends = ["nvalchemiops", "torch_dftd"]
+    known_backends = ["torch_dftd", "torch", "jax"]
 
     if is_batched:
         prefix = "dftd3_benchmark_batch_"
@@ -683,7 +840,7 @@ def _parse_electrostatics_filename(filename: str) -> tuple[str, str, str] | None
     Filenames follow the pattern: electrostatics_benchmark_<method>_<backend>_<gpu_sku>.csv
     """
     known_methods = ["ewald", "pme"]
-    known_backends = ["nvalchemiops", "torchpme"]
+    known_backends = ["torchpme", "torch", "jax"]
 
     prefix = "electrostatics_benchmark_"
     if not filename.startswith(prefix):
@@ -996,6 +1153,285 @@ def _generate_dftd3_per_backend_plots(
         print(f"  Generated: {output_path.name}")
 
 
+def load_dynamics_csv(filepath: Path) -> pd.DataFrame:
+    """
+    Load dynamics benchmark results from CSV file.
+
+    Parameters
+    ----------
+    filepath
+        Path to the CSV file.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with dynamics benchmark data.
+        Detects single-system vs batched based on presence of batch_size column.
+    """
+    df = pd.read_csv(filepath)
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    return df
+
+
+def _parse_dynamics_filename(filename: str) -> dict[str, str]:
+    """
+    Parse dynamics benchmark filename.
+
+    Expected format: dynamics_{md|opt}_{single|batch}_{backend}_{gpu_sku}.csv
+
+    Parameters
+    ----------
+    filename
+        CSV filename.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys: benchmark_type, system_type, backend, gpu_sku
+    """
+    parts = filename.replace(".csv", "").split("_")
+    if len(parts) < 5 or parts[0] != "dynamics":
+        return {}
+
+    return {
+        "benchmark_type": parts[1],  # md or opt
+        "system_type": parts[2],  # single or batch
+        "backend": parts[3],  # nvalchemiops, ase, torchsim
+        "gpu_sku": "_".join(parts[4:]),  # rest is GPU SKU
+    }
+
+
+def generate_dynamics_plots(results_dir: Path, output_dir: Path) -> None:
+    """
+    Generate plots for dynamics benchmarks.
+
+    Creates plots for:
+    - Single-system MD benchmarks
+    - Single-system optimization benchmarks
+    - Batched MD benchmarks
+    - Batched optimization benchmarks
+
+    Parameters
+    ----------
+    results_dir
+        Directory containing benchmark CSV files.
+    output_dir
+        Directory to save plots.
+    """
+    print("\nGenerating dynamics benchmark plots...")
+
+    # Find all dynamics CSV files
+    dynamics_files = list(results_dir.glob("dynamics_*.csv"))
+    if not dynamics_files:
+        print("  No dynamics benchmark results found")
+        return
+
+    # Group files by benchmark type and system type
+    files_by_category = {}
+    for filepath in dynamics_files:
+        info = _parse_dynamics_filename(filepath.name)
+        if not info:
+            continue
+
+        category = f"{info['benchmark_type']}_{info['system_type']}"
+        if category not in files_by_category:
+            files_by_category[category] = {}
+
+        backend = info["backend"]
+        if backend not in files_by_category[category]:
+            files_by_category[category][backend] = {}
+
+        files_by_category[category][backend] = {
+            "path": filepath,
+            "gpu_sku": info["gpu_sku"],
+        }
+
+    # Generate plots for each category
+    for category, backends in files_by_category.items():
+        benchmark_type, system_type = category.split("_")
+        print(f"\n  Processing {benchmark_type.upper()} {system_type} benchmarks...")
+
+        is_batched = system_type == "batch"
+
+        # Load data from all backends
+        all_data = {}
+        gpu_sku = "unknown"
+        for backend, file_info in backends.items():
+            df = load_dynamics_csv(file_info["path"])
+            all_data[backend] = df
+            gpu_sku = file_info["gpu_sku"]
+
+        # Generate comparison plots (all backends on one plot)
+        if len(all_data) > 1:
+            print("    Creating comparison plots...")
+            _generate_dynamics_comparison_plots(
+                all_data, benchmark_type, system_type, is_batched, gpu_sku, output_dir
+            )
+
+        # Generate per-backend detail plots
+        for backend, df in all_data.items():
+            print(f"    Creating {backend} detail plots...")
+            _generate_dynamics_backend_plots(
+                df,
+                backend,
+                benchmark_type,
+                system_type,
+                is_batched,
+                gpu_sku,
+                output_dir,
+            )
+
+
+def _generate_dynamics_comparison_plots(
+    data_by_backend: dict[str, pd.DataFrame],
+    benchmark_type: str,
+    system_type: str,
+    is_batched: bool,
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """Generate comparison plots across backends."""
+    # Scaling plot: num_atoms vs avg_step_time_ms
+    series = {}
+    for backend, df in data_by_backend.items():
+        if is_batched:
+            # For batched, average across batch sizes for each num_atoms
+            grouped = df.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+        else:
+            # For single-system, average across methods for each num_atoms
+            grouped = df.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+
+    output_path = (
+        output_dir
+        / f"dynamics_{benchmark_type}_{system_type}_scaling_comparison_{gpu_sku}.png"
+    )
+    plot_series(
+        series,
+        output_path,
+        title=f"{benchmark_type.upper()} {system_type.title()} Scaling Comparison",
+        x_label="Number of atoms",
+        y_label="Avg step time (ms)",
+    )
+    print(f"      Generated: {output_path.name}")
+
+    # Throughput plot: num_atoms vs throughput_atom_steps_per_s
+    series = {}
+    for backend, df in data_by_backend.items():
+        if is_batched:
+            grouped = df.groupby("num_atoms")["throughput_atom_steps_per_s"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+        else:
+            grouped = df.groupby("num_atoms")["throughput_atom_steps_per_s"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+
+    output_path = (
+        output_dir
+        / f"dynamics_{benchmark_type}_{system_type}_throughput_comparison_{gpu_sku}.png"
+    )
+    plot_series(
+        series,
+        output_path,
+        title=f"{benchmark_type.upper()} {system_type.title()} Throughput Comparison",
+        x_label="Number of atoms",
+        y_label="Atom-steps/us",
+    )
+    print(f"      Generated: {output_path.name}")
+
+    # For batched: batch scaling plot
+    if is_batched and "batch_throughput_system_steps_per_s" in df.columns:
+        series = {}
+        for backend, df in data_by_backend.items():
+            # Average across num_atoms for each batch_size
+            grouped = df.groupby("batch_size")[
+                "batch_throughput_system_steps_per_us"
+            ].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+
+        output_path = (
+            output_dir
+            / f"dynamics_{benchmark_type}_{system_type}_batch_scaling_comparison_{gpu_sku}.png"
+        )
+        plot_series(
+            series,
+            output_path,
+            title=f"{benchmark_type.upper()} Batch Scaling Comparison",
+            x_label="Batch size",
+            y_label="System-steps/us",
+        )
+        print(f"      Generated: {output_path.name}")
+
+
+def _generate_dynamics_backend_plots(
+    df: pd.DataFrame,
+    backend: str,
+    benchmark_type: str,
+    system_type: str,
+    is_batched: bool,
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """Generate per-backend detail plots."""
+    # Plot per method
+    methods = df["method"].unique()
+
+    # Scaling per method
+    series = {}
+    for method in methods:
+        df_method = df[df["method"] == method]
+        if is_batched:
+            # Average across batch sizes
+            grouped = df_method.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[method] = (grouped.index.values, grouped.values)
+        else:
+            grouped = df_method.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[method] = (grouped.index.values, grouped.values)
+
+    if series:
+        output_path = (
+            output_dir
+            / f"dynamics_{benchmark_type}_{system_type}_{backend}_scaling_{gpu_sku}.png"
+        )
+        plot_series(
+            series,
+            output_path,
+            title=f"{benchmark_type.upper()} {system_type.title()} Scaling ({backend})",
+            x_label="Number of atoms",
+            y_label="Avg step time (ms)",
+        )
+        print(f"      Generated: {output_path.name}")
+
+    # Throughput per method
+    series = {}
+    for method in methods:
+        df_method = df[df["method"] == method]
+        if is_batched:
+            grouped = df_method.groupby("num_atoms")[
+                "throughput_atom_steps_per_us"
+            ].mean()
+            series[method] = (grouped.index.values, grouped.values)
+        else:
+            grouped = df_method.groupby("num_atoms")[
+                "throughput_atom_steps_per_us"
+            ].mean()
+            series[method] = (grouped.index.values, grouped.values)
+
+    if series:
+        output_path = (
+            output_dir
+            / f"dynamics_{benchmark_type}_{system_type}_{backend}_throughput_{gpu_sku}.png"
+        )
+        plot_series(
+            series,
+            output_path,
+            title=f"{benchmark_type.upper()} {system_type.title()} Throughput ({backend})",
+            x_label="Number of atoms",
+            y_label="Atom-steps/us",
+        )
+        print(f"      Generated: {output_path.name}")
+
+
 def main() -> None:
     """Generate all plots from benchmark results."""
     print("Generating benchmark plots...")
@@ -1014,6 +1450,7 @@ def main() -> None:
     generate_nl_plots(results_dir, output_dir)
     generate_dftd3_plots(results_dir, output_dir)
     generate_electrostatics_plots(results_dir, output_dir)
+    generate_dynamics_plots(results_dir, output_dir)
 
     print("\nPlot generation complete!")
 

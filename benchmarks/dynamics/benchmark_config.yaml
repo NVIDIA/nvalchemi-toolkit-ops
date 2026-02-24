@@ -1,0 +1,339 @@
+# Dynamics Benchmark Configuration
+# =================================
+#
+# This configuration file controls the restructured benchmark suite with
+# 4 separate benchmark types:
+#   - md_single: Single-system MD benchmarks (nvalchemiops vs ASE)
+#   - opt_single: Single-system optimization benchmarks (nvalchemiops vs ASE)
+#   - md_batch: Batched MD benchmarks (nvalchemiops vs torch-sim)
+#   - opt_batch: Batched optimization benchmarks (nvalchemiops vs torch-sim)
+
+# Single-System MD Benchmarks
+# ---------------------------
+md_single:
+  enabled: true
+
+  # System sizes to benchmark
+  system_sizes: [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
+
+  # MD integrators to benchmark
+  integrators:
+    velocity_verlet:
+      enabled: true
+      steps: 1000
+      dt: 0.001  # fs
+      warmup_steps: 100
+
+    langevin:
+      enabled: true
+      steps: 1000
+      dt: 0.001  # fs
+      warmup_steps: 100
+      temperature: 94.4  # K
+      friction: 0.01  # 1/fs
+
+    npt:
+      enabled: true
+      steps: 1000
+      dt: 0.001  # fs
+      warmup_steps: 100
+      temperature: 94.4  # K
+      pressure: 1.0  # bar
+      tau_t: 500.0  # fs (thermostat)
+      tau_p: 5000.0  # fs (barostat)
+      chain_length: 3
+
+    nph:
+      enabled: true
+      steps: 1000
+      dt: 0.001  # fs
+      warmup_steps: 100
+      temperature: 94.4  # K
+      pressure: 1.0  # bar
+      tau_p: 5000.0  # fs (barostat)
+
+  # Logging interval
+  log_interval: 100
+
+# Single-System Optimization Benchmarks
+# -------------------------------------
+opt_single:
+  enabled: true
+
+  # System sizes to benchmark
+  system_sizes: [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768]
+
+  # Optimizers to benchmark
+  optimizers:
+    fire:
+      enabled: true
+      max_steps: 1000
+      force_tolerance: 0.01  # eV/Å
+      dt_start: 1.0  # fs
+      dt_max: 10.0  # fs
+      dt_min: 0.001  # fs
+      alpha_start: 0.1
+      n_min: 5
+      f_inc: 1.1
+      f_dec: 0.5
+      f_alpha: 0.99
+      maxstep: 0.2  # Å
+
+    fire2:
+      enabled: true
+      max_steps: 1000
+      force_tolerance: 0.01  # eV/Å
+      dt_start: 0.045  # fs
+      tmax: 0.10  # fs
+      tmin: 0.005  # fs
+      delaystep: 50
+      dtgrow: 1.09
+      dtshrink: 0.95
+      alpha0: 0.20
+      alphashrink: 0.985
+      maxstep: 0.25  # Å
+      warmup_steps: 100
+      log_interval: 100
+      check_interval: 20
+
+# Batched MD Benchmarks
+# ---------------------
+md_batch:
+  enabled: true
+
+  # System sizes to benchmark (atoms per system)
+  system_sizes: [16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+
+  # Batch sizes to benchmark (number of independent systems)
+  batch_sizes: [1, 4, 16, 64, 256, 1024]
+
+  # MD integrators to benchmark
+  integrators:
+    velocity_verlet:
+      enabled: false
+      steps: 1000
+      dt: 0.001  # fs
+      warmup_steps: 100
+
+    langevin:
+      enabled: false
+      steps: 1000
+      dt: 0.001  # fs
+      warmup_steps: 100
+      temperature: 94.4  # K
+      friction: 0.01  # 1/fs
+
+    npt:
+      enabled: true
+      steps: 1000
+      dt: 0.0001  # fs
+      warmup_steps: 100
+      temperature: 10.0  # K
+      pressure: 1.0  # bar
+      tau_t: 500.0  # fs (thermostat)
+      tau_p: 1000.0  # fs (barostat)
+      chain_length: 3
+
+    nph:
+      enabled: false
+      steps: 1000
+      dt: 0.001  # fs
+      warmup_steps: 100
+      pressure: 1.0  # bar
+      tau_p: 1000.0  # fs (barostat)
+      temperature: 10.0  # K
+
+  # Logging interval
+  log_interval: 100
+
+# Batched Optimization Benchmarks
+# -------------------------------
+opt_batch:
+  enabled: true
+
+  # System sizes to benchmark (atoms per system)
+  system_sizes: [16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+
+  # Batch sizes to benchmark (number of independent systems)
+  batch_sizes: [1, 4, 16, 64, 256, 1024]
+
+  # Optimizers to benchmark
+  optimizers:
+    fire:
+      enabled: true
+      max_steps: 1000
+      force_tolerance: 0.01  # eV/Å
+      dt_start: 0.05  # fs
+      dt_max:  0.08 # fs
+      dt_min: 0.005  # fs
+      alpha_start: 0.090
+      n_min: 5
+      f_inc: 1.05
+      f_dec: 0.75
+      f_alpha: 0.985
+      maxstep: 0.1  # Å
+
+    fire2:
+      enabled: true
+      max_steps: 1000
+      force_tolerance: 0.01  # eV/Å
+      dt_start: 0.045  # fs
+      tmax: 0.08  # fs
+      tmin: 0.005  # fs
+      delaystep: 5
+      dtgrow: 1.05
+      dtshrink: 0.75
+      alpha0: 0.09
+      alphashrink: 0.985
+      maxstep: 0.1  # Å
+      warmup_steps: 100
+      log_interval: 100
+      check_interval: 20
+
+
+# FIRE2 Kernel Performance Benchmark
+# -----------------------------------
+# Measures raw per-step GPU time using CUDA events.
+# Benchmarks FIRE2 vs FIRE1 vs PyTorch across N/M sweeps.
+fire2_perf:
+  enabled: true
+
+  # Total number of atoms to sweep
+  total_atoms: [1000, 10000, 100000, 1000000]
+
+  # Number of systems (batches) to sweep
+  num_systems: [1, 10, 100]
+
+  # Timing parameters
+  warmup: 10
+  runs: 50
+
+  # Data types to benchmark
+  dtypes: [float32, float64]
+
+  # Methods to benchmark (toggle on/off)
+  methods:
+    warp_fire2: true
+    warp_fire1: true
+    torch_adapter: true
+    torch_reference: true
+
+  # FIRE2 hyperparameters
+  hyperparameters:
+    delaystep: 5
+    dtgrow: 1.05
+    dtshrink: 0.75
+    alphashrink: 0.985
+    alpha0: 0.09
+    tmax: 0.08
+    tmin: 0.005
+    maxstep: 0.1
+
+# FIRE1 vs FIRE2 Accuracy Comparison
+# -----------------------------------
+# Full optimization runs comparing convergence and wall-clock time.
+fire_compare:
+  enabled: true
+
+  # RNG seed for reproducible initial perturbations
+  seed: 42
+
+  # System sizes (number of atoms)
+  system_sizes: [256, 512, 1024, 2048]
+
+  # Convergence criteria
+  force_tolerance: 0.01   # eV/Å
+  pressure_tolerance: 0.3  # kBar (variable-cell only)
+  max_steps: 2000
+  check_interval: 10
+
+  # Fixed-cell optimization (coordinate-only)
+  fixed_cell:
+    enabled: true
+    perturbation: 0.1  # Å
+
+  # Variable-cell optimization (extended arrays with cell DOFs)
+  variable_cell:
+    enabled: true
+    perturbation: 0.1  # Å
+
+  # FIRE1 hyperparameters
+  fire1:
+    dt_start: 1.0
+    dt_max: 10.0
+    dt_min: 0.001
+    alpha_start: 0.1
+    n_min: 5
+    f_inc: 1.1
+    f_dec: 0.5
+    f_alpha: 0.99
+    maxstep: 0.2
+
+  # FIRE2 hyperparameters
+  fire2:
+    dt_start: 0.045
+    tmax: 0.10
+    tmin: 0.005
+    delaystep: 50
+    dtgrow: 1.09
+    dtshrink: 0.95
+    alpha0: 0.20
+    alphashrink: 0.985
+    maxstep: 0.25
+
+# System Configuration (shared across all benchmarks)
+# ---------------------------------------------------
+system:
+  # Atom type for LJ parameters
+  atom_type: "Ar"  # Argon
+
+  # Crystal structure
+  structure: "fcc"
+
+  # Lattice parameter (Å)
+  # For argon: 5.26 Å gives density ~1.4 g/cm³
+  lattice_constant: 5.26
+
+  # Initial temperature (K) for velocity initialization
+  temperature: 94.4
+
+  # Periodic boundary conditions
+  pbc: [true, true, true]
+
+  # Data type
+  dtype: "float64"  # float64 recommended for stability
+
+# LJ Potential Parameters (shared across all benchmarks)
+# ------------------------------------------------------
+potential:
+  # Energy parameter (eV)
+  epsilon: 0.0104
+
+  # Length parameter (Å)
+  sigma: 3.40
+
+  # Cutoff distance (Å)
+  cutoff: 8.5
+
+  # Neighbor list skin (Å)
+  skin: 1.0
+
+  # Neighbor list rebuild interval (steps)
+  # 0 = displacement-based rebuilding
+  # >0 = fixed interval rebuilding (recommended for benchmarks)
+  neighbor_rebuild_interval: 10
+
+# Hardware Configuration
+# ----------------------
+hardware:
+  # GPU device index
+  gpu_device: 0
+
+# Output Configuration
+# --------------------
+output:
+  # Output directory for CSV results
+  results_dir: "../docs/benchmarks/benchmark_results"
+
+  # Whether to save detailed timing data
+  save_timing: true

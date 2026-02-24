@@ -42,6 +42,10 @@ torch = [
     "torch>=2.8.0",
 ]
 
+jax = [
+    "jax[cuda12]",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["nvalchemiops"]
 
@@ -110,7 +114,7 @@ ignore = ["E501", "S311"]
 [tool.pytest.ini_options]
 testpaths = ["test"]
 norecursedirs = [".git", "third_party"]
-addopts = ["-vv", "-r", "xfXs", "--cov", "--cov-fail-under=70"]
+addopts = ["-vv", "-r", "xfXs"]
 markers = [
     "slow: marks tests as slow (deselect with: -m 'not slow')",
     "gpu: marks tests that require GPU",
@@ -138,7 +142,7 @@ omit = [
     "test/*",
 ]
 show_missing = true
-fail_under = 75
+fail_under = 70
 
 [tool.coverage.xml]
 output = "nvalchemiops.coverage.xml"

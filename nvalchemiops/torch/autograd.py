@@ -42,7 +42,7 @@ from typing import Any
 import torch
 import warp as wp
 
-from nvalchemiops.types import get_wp_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_vec_dtype
 
 # =============================================================================
 # Dtype Resolution Helper

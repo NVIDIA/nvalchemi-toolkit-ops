@@ -109,7 +109,7 @@ import math
 
 import warp as wp
 
-from .spherical_harmonics import (
+from nvalchemiops.math.spherical_harmonics import (
     Y00_COEFF,
     Y1_COEFF,
     Y2_0_COEFF,

@@ -527,4 +527,4 @@ cutoff1, cutoff2 = 3.0, 6.0
 This concludes the high-level documentation for neighbor lists: you should now
 be able to integrate `nvalchemiops` routines for your neighbor list requirements,
 and consult the API reference for [PyTorch](../../modules/torch/neighbors)
-and [Warp](../../modules/warp/neighbors) for further details.
+, [JAX](../../modules/jax/neighbors), and [Warp](../../modules/warp/neighbors) for further details.

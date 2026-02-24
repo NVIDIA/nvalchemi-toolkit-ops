@@ -32,7 +32,7 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
 from nvalchemiops.interactions.dispersion._dftd3 import (
     dftd3_pbc as wp_dftd3_pbc,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "D3Parameters",
