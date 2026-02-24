@@ -1153,6 +1153,285 @@ def _generate_dftd3_per_backend_plots(
         print(f"  Generated: {output_path.name}")
 
 
+def load_dynamics_csv(filepath: Path) -> pd.DataFrame:
+    """
+    Load dynamics benchmark results from CSV file.
+
+    Parameters
+    ----------
+    filepath
+        Path to the CSV file.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with dynamics benchmark data.
+        Detects single-system vs batched based on presence of batch_size column.
+    """
+    df = pd.read_csv(filepath)
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    return df
+
+
+def _parse_dynamics_filename(filename: str) -> dict[str, str]:
+    """
+    Parse dynamics benchmark filename.
+
+    Expected format: dynamics_{md|opt}_{single|batch}_{backend}_{gpu_sku}.csv
+
+    Parameters
+    ----------
+    filename
+        CSV filename.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys: benchmark_type, system_type, backend, gpu_sku
+    """
+    parts = filename.replace(".csv", "").split("_")
+    if len(parts) < 5 or parts[0] != "dynamics":
+        return {}
+
+    return {
+        "benchmark_type": parts[1],  # md or opt
+        "system_type": parts[2],  # single or batch
+        "backend": parts[3],  # nvalchemiops, ase, torchsim
+        "gpu_sku": "_".join(parts[4:]),  # rest is GPU SKU
+    }
+
+
+def generate_dynamics_plots(results_dir: Path, output_dir: Path) -> None:
+    """
+    Generate plots for dynamics benchmarks.
+
+    Creates plots for:
+    - Single-system MD benchmarks
+    - Single-system optimization benchmarks
+    - Batched MD benchmarks
+    - Batched optimization benchmarks
+
+    Parameters
+    ----------
+    results_dir
+        Directory containing benchmark CSV files.
+    output_dir
+        Directory to save plots.
+    """
+    print("\nGenerating dynamics benchmark plots...")
+
+    # Find all dynamics CSV files
+    dynamics_files = list(results_dir.glob("dynamics_*.csv"))
+    if not dynamics_files:
+        print("  No dynamics benchmark results found")
+        return
+
+    # Group files by benchmark type and system type
+    files_by_category = {}
+    for filepath in dynamics_files:
+        info = _parse_dynamics_filename(filepath.name)
+        if not info:
+            continue
+
+        category = f"{info['benchmark_type']}_{info['system_type']}"
+        if category not in files_by_category:
+            files_by_category[category] = {}
+
+        backend = info["backend"]
+        if backend not in files_by_category[category]:
+            files_by_category[category][backend] = {}
+
+        files_by_category[category][backend] = {
+            "path": filepath,
+            "gpu_sku": info["gpu_sku"],
+        }
+
+    # Generate plots for each category
+    for category, backends in files_by_category.items():
+        benchmark_type, system_type = category.split("_")
+        print(f"\n  Processing {benchmark_type.upper()} {system_type} benchmarks...")
+
+        is_batched = system_type == "batch"
+
+        # Load data from all backends
+        all_data = {}
+        gpu_sku = "unknown"
+        for backend, file_info in backends.items():
+            df = load_dynamics_csv(file_info["path"])
+            all_data[backend] = df
+            gpu_sku = file_info["gpu_sku"]
+
+        # Generate comparison plots (all backends on one plot)
+        if len(all_data) > 1:
+            print("    Creating comparison plots...")
+            _generate_dynamics_comparison_plots(
+                all_data, benchmark_type, system_type, is_batched, gpu_sku, output_dir
+            )
+
+        # Generate per-backend detail plots
+        for backend, df in all_data.items():
+            print(f"    Creating {backend} detail plots...")
+            _generate_dynamics_backend_plots(
+                df,
+                backend,
+                benchmark_type,
+                system_type,
+                is_batched,
+                gpu_sku,
+                output_dir,
+            )
+
+
+def _generate_dynamics_comparison_plots(
+    data_by_backend: dict[str, pd.DataFrame],
+    benchmark_type: str,
+    system_type: str,
+    is_batched: bool,
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """Generate comparison plots across backends."""
+    # Scaling plot: num_atoms vs avg_step_time_ms
+    series = {}
+    for backend, df in data_by_backend.items():
+        if is_batched:
+            # For batched, average across batch sizes for each num_atoms
+            grouped = df.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+        else:
+            # For single-system, average across methods for each num_atoms
+            grouped = df.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+
+    output_path = (
+        output_dir
+        / f"dynamics_{benchmark_type}_{system_type}_scaling_comparison_{gpu_sku}.png"
+    )
+    plot_series(
+        series,
+        output_path,
+        title=f"{benchmark_type.upper()} {system_type.title()} Scaling Comparison",
+        x_label="Number of atoms",
+        y_label="Avg step time (ms)",
+    )
+    print(f"      Generated: {output_path.name}")
+
+    # Throughput plot: num_atoms vs throughput_atom_steps_per_s
+    series = {}
+    for backend, df in data_by_backend.items():
+        if is_batched:
+            grouped = df.groupby("num_atoms")["throughput_atom_steps_per_s"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+        else:
+            grouped = df.groupby("num_atoms")["throughput_atom_steps_per_s"].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+
+    output_path = (
+        output_dir
+        / f"dynamics_{benchmark_type}_{system_type}_throughput_comparison_{gpu_sku}.png"
+    )
+    plot_series(
+        series,
+        output_path,
+        title=f"{benchmark_type.upper()} {system_type.title()} Throughput Comparison",
+        x_label="Number of atoms",
+        y_label="Atom-steps/us",
+    )
+    print(f"      Generated: {output_path.name}")
+
+    # For batched: batch scaling plot
+    if is_batched and "batch_throughput_system_steps_per_s" in df.columns:
+        series = {}
+        for backend, df in data_by_backend.items():
+            # Average across num_atoms for each batch_size
+            grouped = df.groupby("batch_size")[
+                "batch_throughput_system_steps_per_us"
+            ].mean()
+            series[backend] = (grouped.index.values, grouped.values)
+
+        output_path = (
+            output_dir
+            / f"dynamics_{benchmark_type}_{system_type}_batch_scaling_comparison_{gpu_sku}.png"
+        )
+        plot_series(
+            series,
+            output_path,
+            title=f"{benchmark_type.upper()} Batch Scaling Comparison",
+            x_label="Batch size",
+            y_label="System-steps/us",
+        )
+        print(f"      Generated: {output_path.name}")
+
+
+def _generate_dynamics_backend_plots(
+    df: pd.DataFrame,
+    backend: str,
+    benchmark_type: str,
+    system_type: str,
+    is_batched: bool,
+    gpu_sku: str,
+    output_dir: Path,
+) -> None:
+    """Generate per-backend detail plots."""
+    # Plot per method
+    methods = df["method"].unique()
+
+    # Scaling per method
+    series = {}
+    for method in methods:
+        df_method = df[df["method"] == method]
+        if is_batched:
+            # Average across batch sizes
+            grouped = df_method.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[method] = (grouped.index.values, grouped.values)
+        else:
+            grouped = df_method.groupby("num_atoms")["avg_step_time_ms"].mean()
+            series[method] = (grouped.index.values, grouped.values)
+
+    if series:
+        output_path = (
+            output_dir
+            / f"dynamics_{benchmark_type}_{system_type}_{backend}_scaling_{gpu_sku}.png"
+        )
+        plot_series(
+            series,
+            output_path,
+            title=f"{benchmark_type.upper()} {system_type.title()} Scaling ({backend})",
+            x_label="Number of atoms",
+            y_label="Avg step time (ms)",
+        )
+        print(f"      Generated: {output_path.name}")
+
+    # Throughput per method
+    series = {}
+    for method in methods:
+        df_method = df[df["method"] == method]
+        if is_batched:
+            grouped = df_method.groupby("num_atoms")[
+                "throughput_atom_steps_per_us"
+            ].mean()
+            series[method] = (grouped.index.values, grouped.values)
+        else:
+            grouped = df_method.groupby("num_atoms")[
+                "throughput_atom_steps_per_us"
+            ].mean()
+            series[method] = (grouped.index.values, grouped.values)
+
+    if series:
+        output_path = (
+            output_dir
+            / f"dynamics_{benchmark_type}_{system_type}_{backend}_throughput_{gpu_sku}.png"
+        )
+        plot_series(
+            series,
+            output_path,
+            title=f"{benchmark_type.upper()} {system_type.title()} Throughput ({backend})",
+            x_label="Number of atoms",
+            y_label="Atom-steps/us",
+        )
+        print(f"      Generated: {output_path.name}")
+
+
 def main() -> None:
     """Generate all plots from benchmark results."""
     print("Generating benchmark plots...")
@@ -1171,6 +1450,7 @@ def main() -> None:
     generate_nl_plots(results_dir, output_dir)
     generate_dftd3_plots(results_dir, output_dir)
     generate_electrostatics_plots(results_dir, output_dir)
+    generate_dynamics_plots(results_dir, output_dir)
 
     print("\nPlot generation complete!")
 

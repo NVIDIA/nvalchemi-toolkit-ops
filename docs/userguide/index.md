@@ -73,6 +73,7 @@ See the [JAX API Reference](../modules/jax/neighbors.rst) for the full API docum
 - [NeighborLists](components/neighborlist)
 - [Electrostatics](components/electrostatics)
 - [Dispersion Corrections](components/dispersion)
+- [Dynamics](components/dynamics)
 
 ## Advanced Usage
 
@@ -96,6 +97,7 @@ about/faq
 components/neighborlist
 components/electrostatics
 components/dispersion
+components/dynamics
 ```
 
 ```{toctree}

@@ -47,7 +47,7 @@ Available Methods
 """
 
 # Coulomb - Warp launchers (framework-agnostic)
-from .coulomb import (
+from nvalchemiops.interactions.electrostatics.coulomb import (
     batch_coulomb_energy,
     batch_coulomb_energy_forces,
     batch_coulomb_energy_forces_matrix,
@@ -62,7 +62,7 @@ from .coulomb import (
 # Use nvalchemiops.torch.interactions.electrostatics.ewald instead
 # Handled via __getattr__ below for lazy import with deprecation warning
 # Ewald - Warp launchers (framework-agnostic)
-from .ewald_kernels import (
+from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     # Real-space batch
     batch_ewald_real_space_energy,
     batch_ewald_real_space_energy_forces,
@@ -92,7 +92,7 @@ from .ewald_kernels import (
 )
 
 # PME - Warp launchers (framework-agnostic)
-from .pme_kernels import (
+from nvalchemiops.interactions.electrostatics.pme_kernels import (
     batch_pme_energy_corrections,
     batch_pme_energy_corrections_with_charge_grad,
     batch_pme_green_structure_factor,

@@ -13,6 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+PyTorch Adapters for nvalchemiops
+=================================
+
+Thin wrappers that convert PyTorch tensors to Warp arrays, call the
+Warp-first core API, and manage scratch buffer allocation via
+PyTorch's CUDA caching allocator.
+
+Submodules
+----------
+fire2
+    PyTorch adapter for the FIRE2 optimizer
+    (coordinate-only and variable-cell).
+"""
+
 import importlib
 
 if importlib.util.find_spec("torch") is None:
@@ -21,6 +36,11 @@ if importlib.util.find_spec("torch") is None:
         " Please install via `pip install 'nvalchemiops[torch]'`."
     )
 
+from nvalchemiops.torch.fire2 import (
+    fire2_step_coord,
+    fire2_step_coord_cell,
+    fire2_step_extended,
+)
 from nvalchemiops.torch.types import (
     get_wp_dtype,
     get_wp_mat_dtype,
@@ -31,4 +51,7 @@ __all__ = [
     "get_wp_dtype",
     "get_wp_mat_dtype",
     "get_wp_vec_dtype",
+    "fire2_step_coord",
+    "fire2_step_coord_cell",
+    "fire2_step_extended",
 ]

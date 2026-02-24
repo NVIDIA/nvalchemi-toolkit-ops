@@ -12,6 +12,7 @@ alone may not provide sufficient information.
 torch/neighbors.rst
 torch/dispersion.rst
 torch/electrostatics.rst
+torch/dynamics.rst
 ```
 
 ## JAX Reference
@@ -32,5 +33,6 @@ jax/electrostatics.rst
 warp/neighbors.rst
 warp/dispersion.rst
 warp/electrostatics.rst
+warp/dynamics.rst
 utilities.rst
 ```

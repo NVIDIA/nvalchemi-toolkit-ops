@@ -129,7 +129,7 @@ sphinx_gallery_conf = {
     "gallery_dirs": ["examples"],
     "plot_gallery": plot_gallery,
     "filename_pattern": filename_pattern,
-    "ignore_pattern": r"(utils\.py)",  # Exclude utility files and old benchmarks
+    "ignore_pattern": r"(^_|utils\.py$)",  # Exclude files starting with _ or ending with utils.py
     "image_srcset": ["1x"],
     "within_subsection_order": FileNameSortKey,
     "run_stale_examples": run_stale_examples,

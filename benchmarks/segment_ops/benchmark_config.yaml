@@ -1,0 +1,45 @@
+# Segment Operations Benchmark Configuration
+# ============================================
+#
+# Benchmarks all segmented operations (Warp) against PyTorch equivalents.
+# Uses CUDA events for accurate GPU-only timing.
+
+parameters:
+  warmup: 5
+  runs: 50
+
+# Sweep configuration
+sweep:
+  # Total number of elements (N)
+  total_elements: [1000, 10000, 100000, 1000000]
+
+  # Average segment lengths (L); M = N / L segments
+  avg_segment_lengths: [10, 100, 1000, 10000]
+
+# Operations to benchmark (toggle on/off)
+operations:
+  segmented_sum:
+    enabled: true
+    # Dtype variants to benchmark
+    dtypes: [float32, float64, vec3f, vec3d]
+
+  segmented_component_sum:
+    enabled: true
+
+  segmented_dot:
+    enabled: true
+    dtypes: [float32, float64, vec3f, vec3d]
+
+  segmented_max_norm:
+    enabled: true
+
+  segmented_mul:
+    enabled: true
+    dtypes: [float32, vec3f_scalar]
+
+  segmented_add:
+    enabled: true
+    dtypes: [float32, vec3f_scalar]
+
+  segmented_matvec:
+    enabled: true

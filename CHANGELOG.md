@@ -21,6 +21,21 @@ release.
 - JAX bindings in `nvalchemiops.jax.*` that wrap the Warp kernels, providing
   support for neighbor lists, DFT-D3 dispersion, electrostatics (Coulomb, Ewald,
   PME), and splines with `jax.jit` compatibility.
+- GPU-accelerated molecular dynamics integrators with single-system and batched modes:
+Velocity Verlet (NVE), Langevin (NVT), Nosé-Hoover Chain (NVT), NPT, NPH, and
+Velocity Rescaling
+- FIRE (Fast Inertial Relaxation Engine) geometry optimizer with adaptive timestep,
+variable cell optimization, and cell filtering for constrained optimization
+- Lennard-Jones potential with GPU-accelerated energy, force, and virial computation
+integrated with neighbor lists
+- Batch processing utilities (`nvalchemiops.batch_utils`) with support for both
+`batch_idx` (ragged arrays) and `atom_ptr` (CSR format) including operations:
+`batch_sum`, `batch_mean`, `batch_max`, `batch_min`, `batch_scale`,
+`batch_normalize`, `batch_gather`, `batch_scatter`
+- Cell manipulation utilities including volume calculation, inverse, wrapping,
+alignment, and transformation
+- SHAKE and RATTLE constraint algorithms for bond length constraints and rigid
+molecules
 
 ## 0.2.0 - 2025-12-19
 
