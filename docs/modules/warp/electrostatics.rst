@@ -35,10 +35,8 @@ DSF Kernels
 
 Damped Shifted Force (DSF) pairwise electrostatic summation.
 
-.. autofunction:: dsf
-.. autofunction:: dsf_pbc
+.. autofunction:: dsf_csr
 .. autofunction:: dsf_matrix
-.. autofunction:: dsf_matrix_pbc
 
 Ewald Kernels
 ^^^^^^^^^^^^^

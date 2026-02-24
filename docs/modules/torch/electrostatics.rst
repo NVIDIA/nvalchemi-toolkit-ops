@@ -6,6 +6,8 @@
 The electrostatics module provides GPU-accelerated implementations of
 long-range electrostatic interactions for molecular simulations with **PyTorch** bindings.
 These functions accept standard ``torch.Tensor`` inputs and support automatic differentiation.
+Ewald and PME support full autograd for positions, charges, and cell parameters.
+DSF supports charge gradients via autograd; forces and virials are computed analytically.
 
 .. tip::
     For the underlying framework-agnostic Warp kernels, see :doc:`../warp/electrostatics`.

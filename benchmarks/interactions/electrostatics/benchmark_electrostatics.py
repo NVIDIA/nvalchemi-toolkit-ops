@@ -1997,8 +1997,8 @@ def main():
         default="torch",
         help=(
             "Backend to use for benchmarking (default: torch). "
-            "'both' dispatches per-method: torchpme for ewald/pme, "
-            "torch_dsf for dsf."
+            "'both' dispatches per-method: torch + torchpme for ewald/pme, "
+            "torch + torch_dsf for dsf."
         ),
     )
     parser.add_argument(

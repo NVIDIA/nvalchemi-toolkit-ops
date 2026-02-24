@@ -390,14 +390,14 @@ python benchmark_electrostatics.py \
 
 `--backend {torch,jax,torchpme,torch_dsf,both}`
 : Computational backend (default: `torch`). `both` dispatches per-method:
-  `torchpme` for Ewald/PME, `torch_dsf` for DSF.
+  `torch` + `torchpme` for Ewald/PME, `torch` + `torch_dsf` for DSF.
 
 `--method {ewald,pme,dsf,both,all}`
 : Electrostatics method (default: `both`). `both` = Ewald + PME (backward
   compatible). `all` = Ewald + PME + DSF.
 
 `--neighbor-format {list,matrix,both}`
-: Neighbor format for DSF benchmarks (default: `list`). Ewald/PME always use list.
+: Neighbor format for DSF benchmarks (default: `list`). Ewald/PME always use matrix.
 
 `--dtype {float32,float64}`
 : Override dtype from config file.

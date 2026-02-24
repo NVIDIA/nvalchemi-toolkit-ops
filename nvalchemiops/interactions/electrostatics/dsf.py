@@ -956,6 +956,11 @@ def dsf_csr(
     mat_type = _VEC_TO_MAT[vec_dtype]
 
     use_pbc = cell is not None
+    if use_pbc and unit_shifts is None:
+        raise ValueError(
+            "unit_shifts is required when cell is provided "
+            "(periodic boundary conditions)"
+        )
     if not use_pbc:
         cell = wp.empty(shape=(0,), dtype=mat_type, device=device)
         unit_shifts = wp.empty(shape=(0,), dtype=wp.vec3i, device=device)
@@ -1077,6 +1082,11 @@ def dsf_matrix(
     mat_type = _VEC_TO_MAT[vec_dtype]
 
     use_pbc = cell is not None
+    if use_pbc and neighbor_matrix_shifts is None:
+        raise ValueError(
+            "neighbor_matrix_shifts is required when cell is provided "
+            "(periodic boundary conditions)"
+        )
     if not use_pbc:
         cell = wp.empty(shape=(0,), dtype=mat_type, device=device)
         neighbor_matrix_shifts = wp.empty(shape=(0, 0), dtype=wp.vec3i, device=device)

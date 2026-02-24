@@ -9,8 +9,10 @@ In periodic systems, the $1/r$ potential decays slowly, requiring special techni
 to handle the conditionally convergent lattice sum. ALCHEMI Toolkit-Ops provides
 GPU-accelerated implementations of Ewald summation, Particle Mesh Ewald (PME), and
 Damped Shifted Force (DSF) electrostatics
-via [NVIDIA Warp](https://nvidia.github.io/warp/), with full PyTorch autograd support
-for machine learning applications.
+via [NVIDIA Warp](https://nvidia.github.io/warp/), with PyTorch autograd support
+for machine learning applications (Ewald and PME support full position/charge/cell
+autograd; DSF provides charge gradients via autograd and computes forces/virials
+analytically).
 
 ```{tip}
 For periodic systems, start with {func}`~nvalchemiops.torch.interactions.electrostatics.ewald_summation`
@@ -987,8 +989,10 @@ energy_per_system.scatter_add_(0, batch_idx.long(), energies)
 
 ## Autograd Support
 
-All electrostatics functions support automatic differentiation for gradients
-with respect to positions, charges, and cell parameters. This enables:
+Ewald and PME support automatic differentiation for gradients with respect to
+positions, charges, and cell parameters. DSF supports autograd for charge
+gradients only; forces and virials are computed analytically by the Warp kernel
+(see the DSF Coulomb section above for details). This enables:
 
 - Geometry and lattice parameter optimization
 - Integration (and training) with machine learning force fields
