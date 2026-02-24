@@ -82,7 +82,7 @@ from nvalchemiops.interactions.electrostatics.dsf import (
 from nvalchemiops.interactions.electrostatics.dsf import (
     dsf_pbc as wp_dsf_pbc,
 )
-from nvalchemiops.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "dsf_coulomb",
