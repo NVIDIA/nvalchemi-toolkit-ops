@@ -189,7 +189,7 @@ conventional units more commonly encountered in computational chemistry
 and materials science:
 
 | Quantity | Unit | Common conversions |
-|----------|------|-------------------|
+| -------- | ---- | ----------------- |
 | Positions | Bohr | $(\text{Å} \times 1.8897259886)$ |
 | Energy (output) | Hartree | $(\times 27.211 \rightarrow \text{eV})$ |
 | Forces (output) | Hartree/Bohr | $(\times 51.422 \rightarrow \text{eV/Å})$ |
@@ -209,7 +209,7 @@ Use `scipy.constants` for precise conversions:
 ### Data Types
 
 | Tensor | Dtype | Notes |
-|--------|-------|-------|
+| ------ | ----- | ----- |
 | Positions | `float32` or `float64` | FP64 used for distance vectors only |
 | Cell | `float32` or `float64` | Same format as Positions |
 | Atomic numbers | `int32` | |
@@ -300,7 +300,7 @@ See `examples/dispersion/utils.py` for loading utilities.
 Common BJ damping parameters (`a1`, `a2`, `s8`):
 
 | Functional | a1 | a2 (Bohr) | s8 |
-|------------|----|-----------|----|
+| ---------- | -- | --------- | -- |
 | PBE | 0.4289 | 4.4407 | 0.7875 |
 | PBE0 | 0.4145 | 4.8593 | 1.2177 |
 | B3LYP | 0.3981 | 4.4211 | 1.9889 |

@@ -47,7 +47,8 @@ where we scale up the size of the system.
 :align: center
 :alt: Naive algorithm backend time comparison
 
-Median execution time comparison between backends. The $O(N^2)$ scaling becomes apparent for larger systems.
+Median execution time comparison between backends.
+The $O(N^2)$ scaling becomes apparent for larger systems.
 ```
 
 #### Throughput
@@ -167,7 +168,8 @@ where we scale up the size of the system.
 :align: center
 :alt: Cell list algorithm backend time comparison
 
-Median execution time comparison between backends. Shows near-linear $O(N)$ scaling for large systems.
+Median execution time comparison between backends.
+Shows near-linear $O(N)$ scaling for large systems.
 ```
 
 #### Throughput
@@ -515,7 +517,7 @@ Peak GPU memory consumption for different batch sizes.
 ## Benchmark Configuration
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | Cutoff | 5.0 Å |
 | System Type | FCC crystal lattice |
 | Warmup Iterations | 3 |
