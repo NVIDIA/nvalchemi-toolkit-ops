@@ -197,7 +197,7 @@ neighbors, neighbor_ptr, _ = neighbor_list(
 # Compute D3 correction (PBE functional)
 energy, forces, coord_num = dftd3(
     positions, numbers, neighbor_list=neighbors,
-    a1=0.3981, a2=4.4211, s8=0.7875, d3_params=d3_params
+    a1=0.4289, a2=4.4407, s8=0.7875, d3_params=d3_params
 )
 
 ```
@@ -221,7 +221,7 @@ neighbors, neighbor_ptr, shifts = neighbor_list(
 # Compute D3 correction with periodic shifts
 energy, forces, coord_num = dftd3(
     positions, numbers, neighbor_list=neighbors,
-    a1=0.3981, a2=4.4211, s8=0.7875, d3_params=d3_params,
+    a1=0.4289, a2=4.4407, s8=0.7875, d3_params=d3_params,
     cell=cell, unit_shifts=shifts
 )
 ```
@@ -246,7 +246,7 @@ neighbors, neighbor_ptr, shifts = neighbor_list(
 # Compute D3 correction for all systems
 energy, forces, coord_num = dftd3(
     positions, numbers, neighbor_list=neighbors,
-    a1=0.3981, a2=4.4211, s8=0.7875, d3_params=d3_params,
+    a1=0.4289, a2=4.4407, s8=0.7875, d3_params=d3_params,
     cell=cells, unit_shifts=shifts, batch_idx=batch_idx
 )
 ```

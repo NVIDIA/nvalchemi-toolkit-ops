@@ -1344,3 +1344,188 @@ class TestCPUGPUConsistencyList:
             rtol=1e-6,
             atol=1e-6,
         )
+
+
+# ==============================================================================
+# Padding Atom Tests
+# ==============================================================================
+
+
+class TestPaddingAtoms:
+    """Tests verifying that padding atoms (atomic number 0) are handled correctly."""
+
+    @pytest.mark.usefixtures("element_tables", "functional_params", "device")
+    def test_padding_atom_zero_energy(self, request):
+        """Test that a system containing only padding atoms produces zero energy."""
+        element_tables = request.getfixturevalue("element_tables")
+        functional_params = request.getfixturevalue("functional_params")
+        device = request.getfixturevalue("device")
+
+        B, M = 3, 5
+        coord = np.array(
+            [0.0, 0.0, 0.0, 1.4, 0.0, 0.0, 0.0, 1.4, 0.0],
+            dtype=np.float32,
+        )
+        numbers = np.array([0, 0, 0], dtype=np.int32)
+        nbmat = np.full((B, M), B, dtype=np.int32)
+        nbmat[0, 0] = 1
+        nbmat[0, 1] = 2
+        nbmat[1, 0] = 0
+        nbmat[1, 1] = 2
+        nbmat[2, 0] = 0
+        nbmat[2, 1] = 1
+
+        system = {"coord": coord, "numbers": numbers, "nbmat": nbmat, "B": B, "M": M}
+
+        results_matrix = run_dftd3_matrix(
+            system, element_tables, functional_params, device
+        )
+        results_list = run_dftd3(system, element_tables, functional_params, device)
+
+        np.testing.assert_allclose(
+            results_matrix["energy"],
+            0.0,
+            atol=1e-10,
+            err_msg="Padding-only system should have zero energy (matrix)",
+        )
+        np.testing.assert_allclose(
+            results_list["energy"],
+            0.0,
+            atol=1e-10,
+            err_msg="Padding-only system should have zero energy (list)",
+        )
+
+    @pytest.mark.usefixtures("element_tables", "functional_params", "device")
+    def test_padding_atom_zero_forces(self, request):
+        """Test that padding atoms produce zero forces."""
+        element_tables = request.getfixturevalue("element_tables")
+        functional_params = request.getfixturevalue("functional_params")
+        device = request.getfixturevalue("device")
+
+        B, M = 3, 5
+        coord = np.array(
+            [0.0, 0.0, 0.0, 1.4, 0.0, 0.0, 0.0, 1.4, 0.0],
+            dtype=np.float32,
+        )
+        numbers = np.array([0, 0, 0], dtype=np.int32)
+        nbmat = np.full((B, M), B, dtype=np.int32)
+        nbmat[0, 0] = 1
+        nbmat[1, 0] = 0
+        nbmat[2, 0] = 0
+
+        system = {"coord": coord, "numbers": numbers, "nbmat": nbmat, "B": B, "M": M}
+
+        results_matrix = run_dftd3_matrix(
+            system, element_tables, functional_params, device
+        )
+        results_list = run_dftd3(system, element_tables, functional_params, device)
+
+        np.testing.assert_allclose(
+            results_matrix["forces"],
+            0.0,
+            atol=1e-10,
+            err_msg="Padding atoms should have zero forces (matrix)",
+        )
+        np.testing.assert_allclose(
+            results_list["forces"],
+            0.0,
+            atol=1e-10,
+            err_msg="Padding atoms should have zero forces (list)",
+        )
+
+    @pytest.mark.usefixtures(
+        "h2_system", "element_tables", "functional_params", "device"
+    )
+    def test_padding_does_not_change_result(self, request):
+        """Test that appending padding atoms does not change energy or forces of real atoms."""
+        h2_system = request.getfixturevalue("h2_system")
+        element_tables = request.getfixturevalue("element_tables")
+        functional_params = request.getfixturevalue("functional_params")
+        device = request.getfixturevalue("device")
+
+        ref_matrix = run_dftd3_matrix(
+            h2_system, element_tables, functional_params, device
+        )
+        ref_list = run_dftd3(h2_system, element_tables, functional_params, device)
+
+        B_pad = 4
+        M = h2_system["M"]
+        coord_pad = np.concatenate(
+            [
+                h2_system["coord"],
+                np.array([5.0, 0.0, 0.0, 10.0, 0.0, 0.0], dtype=np.float32),
+            ]
+        )
+        numbers_pad = np.concatenate(
+            [h2_system["numbers"], np.array([0, 0], dtype=np.int32)]
+        )
+        nbmat_pad = np.full((B_pad, M), B_pad, dtype=np.int32)
+        nbmat_pad[0, 0] = 1
+        nbmat_pad[1, 0] = 0
+
+        padded_system = {
+            "coord": coord_pad,
+            "numbers": numbers_pad,
+            "nbmat": nbmat_pad,
+            "B": B_pad,
+            "M": M,
+        }
+        batch_indices = np.array([0, 0, 0, 0], dtype=np.int32)
+
+        pad_matrix = run_dftd3_matrix(
+            padded_system,
+            element_tables,
+            functional_params,
+            device,
+            batch_indices=batch_indices,
+        )
+        pad_list = run_dftd3(
+            padded_system,
+            element_tables,
+            functional_params,
+            device,
+            batch_indices=batch_indices,
+        )
+
+        np.testing.assert_allclose(
+            pad_matrix["energy"],
+            ref_matrix["energy"],
+            rtol=1e-6,
+            atol=1e-7,
+            err_msg="Adding padding atoms changed total energy (matrix)",
+        )
+        np.testing.assert_allclose(
+            pad_list["energy"],
+            ref_list["energy"],
+            rtol=1e-6,
+            atol=1e-7,
+            err_msg="Adding padding atoms changed total energy (list)",
+        )
+
+        np.testing.assert_allclose(
+            pad_matrix["forces"][:2],
+            ref_matrix["forces"],
+            rtol=1e-6,
+            atol=1e-7,
+            err_msg="Adding padding atoms changed forces on real atoms (matrix)",
+        )
+        np.testing.assert_allclose(
+            pad_list["forces"][:2],
+            ref_list["forces"],
+            rtol=1e-6,
+            atol=1e-7,
+            err_msg="Adding padding atoms changed forces on real atoms (list)",
+        )
+
+        np.testing.assert_allclose(
+            pad_matrix["forces"][2:],
+            0.0,
+            atol=1e-10,
+            err_msg="Padding atoms should have zero forces (matrix)",
+        )
+        np.testing.assert_allclose(
+            pad_list["forces"][2:],
+            0.0,
+            atol=1e-10,
+            err_msg="Padding atoms should have zero forces (list)",
+        )

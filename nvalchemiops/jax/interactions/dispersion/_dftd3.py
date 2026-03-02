@@ -731,7 +731,7 @@ def dftd3(
        ``"rcov"``, ``"r4r2"``, ``"c6ab"``, and ``"cn_ref"``.
        Individual parameters can override dictionary values if both are provided.
 
-    See ``examples/interactions/utils.py`` for parameter generation utilities.
+    See ``examples/dispersion/utils.py`` for parameter generation utilities.
 
     Parameters
     ----------

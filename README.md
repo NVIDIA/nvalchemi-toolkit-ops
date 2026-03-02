@@ -133,7 +133,7 @@ d3_energies, d3_forces, coord_nums, d3_virials = dftd3(
     neighbor_matrix_shifts=shift_matrix,
     batch_idx=batch_idx,
     # functional specific DFT-D3 parameters (PBE shown)
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
     compute_virial=True
 )
