@@ -826,7 +826,7 @@ def pme_reciprocal_space(
     )
 
     # Save reference to raw FFT before deconvolution (needed for virial).
-    # No clone needed: the reassignment below creates a new tensor.
+    # No copy needed: the reassignment below creates a new array.
     mesh_fft_raw = mesh_fft if compute_virial else None
 
     # Step 4: Apply B-spline deconvolution and convolve with Green's function
