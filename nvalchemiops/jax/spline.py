@@ -72,6 +72,7 @@ REFERENCES
 - Essmann et al. (1995). J. Chem. Phys. 103, 8577 (PME B-splines)
 """
 
+import jax
 import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
@@ -218,7 +219,7 @@ __all__ = [
 # ==============================================================================
 
 
-def bspline_weight(u: jnp.ndarray, order: int) -> jnp.ndarray:
+def bspline_weight(u: jax.Array, order: int) -> jax.Array:
     """Compute B-spline basis function M_n(u).
 
     Parameters
@@ -259,13 +260,13 @@ def bspline_weight(u: jnp.ndarray, order: int) -> jnp.ndarray:
 
 
 def spline_spread(
-    positions: jnp.ndarray,
-    values: jnp.ndarray,
-    cell: jnp.ndarray,
+    positions: jax.Array,
+    values: jax.Array,
+    cell: jax.Array,
     mesh_dims: tuple[int, int, int],
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    batch_idx: jax.Array | None = None,
+) -> jax.Array:
     """Spread values from atoms to mesh grid using B-spline interpolation.
 
     For each atom, distributes its value to nearby grid points weighted by the
@@ -371,12 +372,12 @@ def spline_spread(
 
 
 def spline_gather(
-    positions: jnp.ndarray,
-    mesh: jnp.ndarray,
-    cell: jnp.ndarray,
+    positions: jax.Array,
+    mesh: jax.Array,
+    cell: jax.Array,
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    batch_idx: jax.Array | None = None,
+) -> jax.Array:
     """Gather values from mesh to atoms using B-spline interpolation.
 
     For each atom, interpolates the mesh value at its position by summing nearby
@@ -462,13 +463,13 @@ def spline_gather(
 
 
 def spline_gather_vec3(
-    positions: jnp.ndarray,
-    charges: jnp.ndarray,
-    mesh: jnp.ndarray,
-    cell: jnp.ndarray,
+    positions: jax.Array,
+    charges: jax.Array,
+    mesh: jax.Array,
+    cell: jax.Array,
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    batch_idx: jax.Array | None = None,
+) -> jax.Array:
     """Gather charge-weighted 3D vector values from mesh using B-splines.
 
     Similar to spline_gather but multiplies by the atom's charge and
@@ -558,13 +559,13 @@ def spline_gather_vec3(
 
 
 def spline_gather_gradient(
-    positions: jnp.ndarray,
-    charges: jnp.ndarray,
-    mesh: jnp.ndarray,
-    cell: jnp.ndarray,
+    positions: jax.Array,
+    charges: jax.Array,
+    mesh: jax.Array,
+    cell: jax.Array,
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    batch_idx: jax.Array | None = None,
+) -> jax.Array:
     """Compute forces by gathering mesh gradients using B-spline derivatives.
 
     Computes:
@@ -660,13 +661,13 @@ def spline_gather_gradient(
 
 
 def spline_spread_channels(
-    positions: jnp.ndarray,
-    values: jnp.ndarray,
-    cell: jnp.ndarray,
+    positions: jax.Array,
+    values: jax.Array,
+    cell: jax.Array,
     mesh_dims: tuple[int, int, int],
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    batch_idx: jax.Array | None = None,
+) -> jax.Array:
     """Spread multi-channel values from atoms to mesh grid using B-spline interpolation.
 
     This is useful for spreading multipole coefficients (e.g., 9 channels for L_max=2:
@@ -764,12 +765,12 @@ def spline_spread_channels(
 
 
 def spline_gather_channels(
-    positions: jnp.ndarray,
-    mesh: jnp.ndarray,
-    cell: jnp.ndarray,
+    positions: jax.Array,
+    mesh: jax.Array,
+    cell: jax.Array,
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    batch_idx: jax.Array | None = None,
+) -> jax.Array:
     """Gather multi-channel values from mesh to atoms using B-spline interpolation.
 
     This is the inverse of spline_spread_channels.
@@ -873,7 +874,7 @@ def spline_gather_channels(
 # ==============================================================================
 
 
-def _bspline_modulus(k: jnp.ndarray, n: int, order: int) -> jnp.ndarray:
+def _bspline_modulus(k: jax.Array, n: int, order: int) -> jax.Array:
     """Compute the modulus of B-spline Fourier transform.
 
     The B-spline function M_n(u) has Fourier transform.
@@ -931,7 +932,7 @@ def _bspline_modulus(k: jnp.ndarray, n: int, order: int) -> jnp.ndarray:
     return result
 
 
-def _compute_bspline_coefficients(order: int) -> jnp.ndarray:
+def _compute_bspline_coefficients(order: int) -> jax.Array:
     """Compute B-spline basis function values at integer points.
 
     For a B-spline of order n, we need M_n(1), M_n(2), ..., M_n(n).
@@ -984,7 +985,7 @@ def _compute_bspline_coefficients(order: int) -> jnp.ndarray:
 def compute_bspline_deconvolution(
     mesh_dims: tuple[int, int, int],
     spline_order: int = 4,
-) -> jnp.ndarray:
+) -> jax.Array:
     """Compute B-spline deconvolution factors for Fourier space correction.
 
     In FFT-based methods (like PME), the B-spline interpolation introduces
@@ -1056,7 +1057,7 @@ def compute_bspline_deconvolution(
 def compute_bspline_deconvolution_1d(
     n: int,
     spline_order: int = 4,
-) -> jnp.ndarray:
+) -> jax.Array:
     """Compute 1D B-spline deconvolution factors.
 
     Useful for separable operations or debugging.
