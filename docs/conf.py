@@ -61,6 +61,7 @@ author = "NVIDIA"
 
 extensions = [
     "sphinx.ext.autodoc",
+    "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.autosummary",
@@ -70,6 +71,14 @@ extensions = [
     "sphinx_togglebutton",
     "sphinx_gallery.gen_gallery",
 ]
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "numpy": ("https://numpy.org/doc/stable", None),
+    "jax": ("https://jax.readthedocs.io/en/latest", None),
+    "torch": ("https://pytorch.org/docs/stable", None),
+    "warp": ("https://nvidia.github.io/warp/latest", None),
+}
 
 source_suffix = [".rst", ".md"]
 myst_enable_extensions = ["colon_fence", "dollarmath"]

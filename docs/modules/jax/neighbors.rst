@@ -66,6 +66,12 @@ Rebuild Detection
 .. autofunction:: nvalchemiops.jax.neighbors.rebuild_detection.check_cell_list_rebuild_needed
 .. autofunction:: nvalchemiops.jax.neighbors.rebuild_detection.check_neighbor_list_rebuild_needed
 
+Exceptions
+----------
+
+.. autoexception:: nvalchemiops.jax.neighbors.NeighborOverflowError
+   :show-inheritance:
+
 Utility Functions
 -----------------
 
