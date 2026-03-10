@@ -10,10 +10,12 @@ Neighbor lists identify atom pairs within a cutoff distance---the foundation for
 all forms of interatomic interactions including but not limited to: machine-learned
 interatomic potentials, dispersion corrections, and so on. ALCHEMI Toolkit-Ops provides
 GPU-accelerated neighbor list algorithms via [NVIDIA Warp](https://nvidia.github.io/warp/)
-with full `torch.compile` support.
+with bindings for both PyTorch and JAX.
 
 ```{tip}
-Start with the unified {func}`~nvalchemiops.torch.neighbors.neighbor_list` function.
+Start with the unified `neighbor_list` function
+({func}`~nvalchemiops.torch.neighbors.neighbor_list` for PyTorch,
+{func}`~nvalchemiops.jax.neighbors.neighbor_list` for JAX).
 It automatically selects the best algorithm for your system size and handles
 both single and batched inputs.
 ```
@@ -36,9 +38,14 @@ for guidance.
 
 ## Quick Start
 
-The {func}`~nvalchemiops.torch.neighbors.neighbor_list` function provides a unified
-interface that automatically dispatches to the optimal algorithm based on system
-size and whether batch indices are provided.
+The `neighbor_list` function provides a unified interface that automatically
+dispatches to the optimal algorithm based on system size and whether batch
+indices are provided.
+
+::::::{tab-set}
+
+:::::{tab-item} PyTorch
+:sync: pytorch
 
 ::::{tab-set}
 
@@ -114,11 +121,95 @@ Dispatches to {func}`~nvalchemiops.torch.neighbors.batched.batch_naive_neighbor_
 
 ::::
 
+:::::
+
+:::::{tab-item} JAX
+:sync: jax
+
+::::{tab-set}
+
+:::{tab-item} Single + Large
+:sync: single-large
+
+Single system with >5000 atoms
+
+```python
+from nvalchemiops.jax.neighbors import neighbor_list
+
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, method="cell_list"
+)
+```
+
+Dispatches to {func}`~nvalchemiops.jax.neighbors.cell_list` --- \(O(N)\) algorithm
+using spatial decomposition.
+:::
+
+:::{tab-item} Single + Small
+:sync: single-small
+
+Single system with <5000 atoms
+
+```python
+from nvalchemiops.jax.neighbors import neighbor_list
+
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, method="naive"
+)
+```
+
+Dispatches to {func}`~nvalchemiops.jax.neighbors.naive_neighbor_list` --- \(O(N^2)\)
+algorithm with lower overhead.
+:::
+
+:::{tab-item} Batch + Large
+:sync: batch-large
+
+Multiple systems with >5000 atoms each
+
+```python
+from nvalchemiops.jax.neighbors import neighbor_list
+
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cells, pbc=pbc,
+    batch_idx=batch_idx, method="batch_cell_list"
+)
+```
+
+Dispatches to {func}`~nvalchemiops.jax.neighbors.batch_cell_list` --- \(O(N)\)
+algorithm for heterogeneous batches.
+:::
+
+:::{tab-item} Batch + Small
+:sync: batch-small
+
+Multiple systems with <5000 atoms each
+
+```python
+from nvalchemiops.jax.neighbors import neighbor_list
+
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cells, pbc=pbc,
+    batch_idx=batch_idx, method="batch_naive"
+)
+```
+
+Dispatches to {func}`~nvalchemiops.jax.neighbors.batch_naive_neighbor_list` ---
+\(O(N^2)\) algorithm for batched small systems.
+:::
+
+::::
+
+:::::
+
+::::::
+
 ```{note}
 When `method` is not specified, `neighbor_list` automatically selects based on
-average system size (greater than 2000 atoms per system) and whether `batch_idx` is provided.
+average system size and whether `batch_idx` is provided.
 The crossover point depends on system density and cutoff radius---benchmark
-your workload to find the optimal threshold.
+your workload to find the optimal threshold. The default threshold is 2000
+atoms for PyTorch and 5000 atoms for JAX.
 ```
 
 ## Data Formats
@@ -126,12 +217,12 @@ your workload to find the optimal threshold.
 ALCHEMI Toolkit-Ops supports two output formats for neighbor data:
 
 Neighbor Matrix (default)
-: Fixed-size tensor of shape `(num_atoms, max_neighbors)` where each row
+: Fixed-size array of shape `(num_atoms, max_neighbors)` where each row
   contains the neighbor indices for that atom, padded with a fill value.
   Returns `(neighbor_matrix, num_neighbors, neighbor_matrix_shifts)`.
 
 Neighbor List (COO format)
-: Sparse tensor of shape `(2, num_pairs)` containing `[source_atoms, target_atoms]`.
+: Sparse array of shape `(2, num_pairs)` containing `[source_atoms, target_atoms]`.
   Returns `(neighbor_list, neighbor_ptr, neighbor_list_shifts)` where
   `neighbor_ptr` is a CSR-style pointer array. The first set of atoms (nominally
   `source_atoms`) is guaranteed to be sorted.
@@ -140,7 +231,7 @@ Neighbor List (COO format)
 
 **Neighbor Matrix** is preferred when:
 
-- Using `torch.compile` (fixed memory layout avoids graph breaks)
+- Using `torch.compile` or `jax.jit` (fixed memory layout avoids graph breaks)
 - Systems have dense, uniform neighbor distributions
 - Cache-friendly access patterns are important
 
@@ -151,6 +242,11 @@ Neighbor List (COO format)
 - Memory efficiency is critical
 
 ### Switching Formats
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 # Get COO format directly
@@ -166,6 +262,29 @@ neighbor_list_coo, neighbor_ptr, shifts_coo = get_neighbor_list_from_neighbor_ma
 )
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+# Get COO format directly
+neighbor_list_coo, neighbor_ptr, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Or convert from matrix format
+from nvalchemiops.jax.neighbors.neighbor_utils import get_neighbor_list_from_neighbor_matrix
+
+neighbor_list_coo, neighbor_ptr, shifts_coo = get_neighbor_list_from_neighbor_matrix(
+    neighbor_matrix, num_neighbors, neighbor_matrix_shifts, fill_value=num_atoms
+)
+```
+
+:::
+
+::::
+
 ```{warning}
 Setting `return_neighbor_list=True` incurs a conversion overhead. If you need
 both formats, compute the matrix format first and convert as needed.
@@ -173,11 +292,11 @@ both formats, compute the matrix format first and convert as needed.
 
 ## Method Dispatch
 
-When `method=None`, {func}`~nvalchemiops.torch.neighbors.neighbor_list` selects
-an algorithm using the following logic:
+When `method=None`, `neighbor_list` selects an algorithm using the following
+logic:
 
 1. If `cutoff2` is provided, then dual cutoff method
-2. If average atoms per system `>= 2000`, then `"cell_list"`
+2. If average atoms per system exceeds the threshold, then `"cell_list"`
 3. Otherwise, `"naive"` ($N^2$ scaling algorithm)
 4. If `batch_idx` or `batch_ptr` is provided, then prepend `"batch_"` to the method
 
@@ -185,7 +304,7 @@ an algorithm using the following logic:
 
 | Method | Algorithm | Use Case |
 |--------|-----------|----------|
-| `"naive"` | \(O(N^2)\) pairwise | Small single systems (<2000 atoms) |
+| `"naive"` | \(O(N^2)\) pairwise | Small single systems |
 | `"cell_list"` | \(O(N)\) spatial decomposition | Large single systems |
 | `"batch_naive"` | \(O(N^2)\) per system | Batched small systems |
 | `"batch_cell_list"` | \(O(N)\) per system | Batched large systems |
@@ -194,12 +313,37 @@ an algorithm using the following logic:
 
 Override automatic selection by passing the `method` parameter:
 
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
 ```python
 # Force cell_list on a small system for testing
+from nvalchemiops.torch.neighbors import neighbor_list
+
 neighbor_matrix, num_neighbors, shifts = neighbor_list(
     positions, cutoff, cell=cell, pbc=pbc, method="cell_list"
 )
 ```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+# Force cell_list on a small system for testing
+from nvalchemiops.jax.neighbors import neighbor_list
+
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, method="cell_list"
+)
+```
+
+:::
+
+::::
 
 ## Performance Tuning
 
@@ -237,6 +381,11 @@ $$
 n = S \times \rho \times \frac{4}{3} \pi r^3
 $$
 
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
 ```python
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.torch.neighbors.unbatched import estimate_cell_list_sizes
@@ -252,6 +401,38 @@ max_total_cells, neighbor_search_radius = estimate_cell_list_sizes(
 )
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.jax.neighbors import estimate_cell_list_sizes
+
+max_neighbors = estimate_max_neighbors(
+    cutoff,
+    atomic_density=0.15,
+    safety_factor=1.0
+)
+
+max_total_cells, neighbor_search_radius, _ = estimate_cell_list_sizes(
+    positions, cell, cutoff, pbc=pbc, buffer_factor=1.5
+)
+```
+
+```{note}
+The JAX `estimate_cell_list_sizes` takes `positions` as its first argument
+(to infer array sizes) and uses a `buffer_factor` parameter instead of
+`max_nbins`. It also returns a 3-tuple.
+This function is **not** compatible with `jax.jit` because it derives
+concrete array sizes from traced data.
+```
+
+:::
+
+::::
+
 **Setting `atomic_density`**: This should reflect the expected atomic density of
 your system in atoms per unit volume (using the same length units as `cutoff`).
 If set too low, the neighbor matrix may be too narrow and a
@@ -266,7 +447,7 @@ where atoms may cluster in one region.
 
 ```{tip}
 Users should check the "convergence" of the neighbor list computation by checking
-the respective tensor containing the number of neighbors per atom, against
+the respective array containing the number of neighbors per atom, against
 the maximum estimated number of neighbors. For optimal performance these
 two factors should be close: if the actual number of neighbors per atom is
 low relative to the estimated number, the allocated neighbor matrix will
@@ -277,14 +458,21 @@ and there is no guarantee that the nearest neighbors are included.
 
 ### Pre-allocation for Repeated Calculations
 
-Pre-allocating output tensors avoids repeated memory allocation overhead when
+Pre-allocating output arrays avoids repeated memory allocation overhead when
 computing neighbor lists in a loop (e.g., during MD simulation or training).
-This also enables `torch.compile` compatibility by ensuring fixed tensor shapes.
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+Pre-allocation also enables `torch.compile` compatibility by ensuring fixed
+tensor shapes.
 
 ```python
 import torch
 from nvalchemiops.torch.neighbors import neighbor_list
-from nvalchemiops.torch.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 
 num_atoms = positions.shape[0]
 max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.15)
@@ -335,15 +523,88 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+Pre-allocating arrays with known shapes enables `jax.jit` compilation by
+ensuring static array dimensions. Note that JAX functions always return
+**new** arrays rather than mutating inputs in-place.
+
+```python
+import jax.numpy as jnp
+from nvalchemiops.jax.neighbors import neighbor_list
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+
+num_atoms = positions.shape[0]
+max_neighbors = estimate_max_neighbors(cutoff, atomic_density=0.15)
+
+# Pre-allocate arrays (used as shape hints for XLA)
+neighbor_matrix = jnp.full(
+    (num_atoms, max_neighbors), num_atoms, dtype=jnp.int32
+)
+neighbor_matrix_shifts = jnp.zeros(
+    (num_atoms, max_neighbors, 3), dtype=jnp.int32
+)
+num_neighbors = jnp.zeros(num_atoms, dtype=jnp.int32)
+
+# Pass pre-allocated arrays
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc,
+    neighbor_matrix=neighbor_matrix,
+    neighbor_matrix_shifts=neighbor_matrix_shifts,
+    num_neighbors=num_neighbors,
+    fill_value=num_atoms
+)
+```
+
+For cell list methods, you can also pre-allocate the spatial data structures:
+
+```python
+from nvalchemiops.jax.neighbors import estimate_cell_list_sizes
+from nvalchemiops.jax.neighbors.neighbor_utils import allocate_cell_list
+
+max_total_cells, neighbor_search_radius, _ = estimate_cell_list_sizes(
+    positions, cell, cutoff, pbc=pbc
+)
+
+(
+    cells_per_dimension, neighbor_search_radius,
+    atom_periodic_shifts, atom_to_cell_mapping,
+    atoms_per_cell_count, cell_atom_start_indices, cell_atom_list
+) = allocate_cell_list(num_atoms, max_total_cells, neighbor_search_radius)
+
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc,
+    cells_per_dimension=cells_per_dimension,
+    neighbor_search_radius=neighbor_search_radius,
+    atom_periodic_shifts=atom_periodic_shifts,
+    atom_to_cell_mapping=atom_to_cell_mapping,
+    atoms_per_cell_count=atoms_per_cell_count,
+    cell_atom_start_indices=cell_atom_start_indices,
+    cell_atom_list=cell_atom_list
+)
+```
+
+:::
+
+::::
+
 ```{warning}
 If `max_neighbors` is too small, neighbors beyond that limit are silently
-dropped. Monitor `num_neighbors.max()` against your `max_neighbors` setting
-to detect truncation.
+dropped. Monitor `num_neighbors.max()` (PyTorch) or `jnp.max(num_neighbors)`
+(JAX) against your `max_neighbors` setting to detect truncation.
 ```
 
 ## Usage Patterns
 
 ### Basic Single System
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 import torch
@@ -363,7 +624,41 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 print(f"Average neighbors: {num_neighbors.float().mean():.1f}")
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+import jax
+import jax.numpy as jnp
+from nvalchemiops.jax.neighbors import neighbor_list
+
+# Create atomic system
+key = jax.random.PRNGKey(0)
+positions = jax.random.uniform(key, (1000, 3), dtype=jnp.float32) * 20.0
+cell = jnp.eye(3, dtype=jnp.float32)[None, ...] * 20.0
+pbc = jnp.array([[True, True, True]])
+cutoff = 5.0
+
+# Compute neighbors (automatic method selection)
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc
+)
+
+print(f"Average neighbors: {jnp.mean(num_neighbors.astype(jnp.float32)):.1f}")
+```
+
+:::
+
+::::
+
 ### Batch Processing
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 import torch
@@ -399,10 +694,64 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+import jax
+import jax.numpy as jnp
+from nvalchemiops.jax.neighbors import neighbor_list
+
+# Three systems of different sizes
+key = jax.random.PRNGKey(0)
+k1, k2, k3 = jax.random.split(key, 3)
+positions = jnp.concatenate([
+    jax.random.uniform(k1, (100, 3), dtype=jnp.float32),   # System 0
+    jax.random.uniform(k2, (150, 3), dtype=jnp.float32),   # System 1
+    jax.random.uniform(k3, (80, 3), dtype=jnp.float32),    # System 2
+])
+
+batch_idx = jnp.concatenate([
+    jnp.zeros(100, dtype=jnp.int32),
+    jnp.ones(150, dtype=jnp.int32),
+    jnp.full((80,), 2, dtype=jnp.int32),
+])
+
+batch_ptr = jnp.array([0, 100, 250, 330], dtype=jnp.int32)
+
+cells = jnp.stack([
+    jnp.eye(3, dtype=jnp.float32) * 10.0,
+    jnp.eye(3, dtype=jnp.float32) * 12.0,
+    jnp.eye(3, dtype=jnp.float32) * 8.0,
+])
+
+pbc = jnp.array([
+    [True, True, True],
+    [True, True, False],
+    [False, False, False],
+])
+
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff=5.0, cell=cells, pbc=pbc,
+    batch_idx=batch_idx, batch_ptr=batch_ptr
+)
+```
+
+:::
+
+::::
+
 ### Half-Fill Mode
 
 Store only half of neighbor pairs to avoid double-counting in symmetric
 calculations:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 # Full: stores both (i,j) and (j,i)
@@ -418,10 +767,44 @@ neighbor_matrix_half, num_neighbors_half, shifts_half = neighbor_list(
 # half_fill=True produces ~50% of the pairs
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+# Full: stores both (i,j) and (j,i)
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, half_fill=False
+)
+
+# Half: stores only (i,j) where i < j (or with non-zero periodic shift)
+neighbor_matrix_half, num_neighbors_half, shifts_half = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, half_fill=True
+)
+
+# half_fill=True produces ~50% of the pairs
+```
+
+```{note}
+The `half_fill` parameter is currently supported only by the `naive` and
+`batch_naive` methods in JAX. The `cell_list` and `batch_cell_list` methods
+silently ignore this parameter and always produce full neighbor lists.
+```
+
+:::
+
+::::
+
 ### Build/Query Separation for MD Workflows
 
 For molecular dynamics, separate building and querying allows caching the
 spatial data structure:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 from nvalchemiops.torch.neighbors.unbatched import (
@@ -458,9 +841,69 @@ for step in range(num_steps):
     positions = integrate(positions, forces, dt)
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.neighbors import (
+    build_cell_list, query_cell_list, estimate_cell_list_sizes
+)
+from nvalchemiops.jax.neighbors.neighbor_utils import allocate_cell_list
+from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+
+# Setup (once, outside jit)
+max_total_cells, neighbor_search_radius, _ = estimate_cell_list_sizes(
+    positions, cell, cutoff, pbc=pbc
+)
+cell_list_cache = allocate_cell_list(num_atoms, max_total_cells, neighbor_search_radius)
+
+max_neighbors = estimate_max_neighbors(cutoff)
+
+# MD loop (JAX returns new arrays each step; no in-place mutation)
+for step in range(num_steps):
+    # Build cell list (expensive, done when atoms change cells)
+    cell_list_cache = build_cell_list(
+        positions, cutoff, cell, pbc, *cell_list_cache
+    )
+
+    # Query neighbors (cheaper)
+    (
+        cells_per_dimension, neighbor_search_radius,
+        atom_periodic_shifts, atom_to_cell_mapping,
+        atoms_per_cell_count, cell_atom_start_indices, cell_atom_list
+    ) = cell_list_cache
+
+    neighbor_matrix, num_neighbors, neighbor_shifts = query_cell_list(
+        positions, cutoff, cell, pbc,
+        cells_per_dimension, atom_periodic_shifts, atom_to_cell_mapping,
+        atoms_per_cell_count, cell_atom_start_indices, cell_atom_list,
+        neighbor_search_radius, max_neighbors=max_neighbors
+    )
+
+    forces = compute_forces(positions, neighbor_matrix, num_neighbors, ...)
+    positions = integrate(positions, forces, dt)
+```
+
+```{note}
+JAX follows a functional paradigm: `build_cell_list` and `query_cell_list`
+return new arrays rather than mutating buffers in-place. Reassign the
+returned values each step.
+```
+
+:::
+
+::::
+
 ### Rebuild Detection with Skin Distance
 
 Avoid rebuilding neighbor lists every step by using a skin distance:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 from nvalchemiops.torch.neighbors.unbatched import (
@@ -502,9 +945,82 @@ for step in range(num_steps):
     query_cell_list(positions, cutoff, cell, pbc, *cell_list_cache, ...)
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.neighbors import (
+    build_cell_list, query_cell_list, estimate_cell_list_sizes
+)
+from nvalchemiops.jax.neighbors.neighbor_utils import allocate_cell_list
+from nvalchemiops.jax.neighbors.rebuild_detection import cell_list_needs_rebuild
+
+cutoff = 5.0
+skin_distance = 1.0
+effective_cutoff = cutoff + skin_distance
+
+# Build with effective cutoff (includes skin)
+max_total_cells, neighbor_search_radius, _ = estimate_cell_list_sizes(
+    positions, cell, effective_cutoff, pbc=pbc
+)
+cell_list_cache = allocate_cell_list(num_atoms, max_total_cells, neighbor_search_radius)
+
+(
+    cells_per_dimension, neighbor_search_radius,
+    atom_periodic_shifts, atom_to_cell_mapping,
+    atoms_per_cell_count, cell_atom_start_indices, cell_atom_list
+) = cell_list_cache
+
+cell_list_cache = build_cell_list(
+    positions, effective_cutoff, cell, pbc, *cell_list_cache
+)
+(
+    cells_per_dimension, neighbor_search_radius,
+    atom_periodic_shifts, atom_to_cell_mapping,
+    atoms_per_cell_count, cell_atom_start_indices, cell_atom_list
+) = cell_list_cache
+
+for step in range(num_steps):
+    positions = integrate(positions, forces, dt)
+
+    # Check if any atom moved to a different cell
+    needs_rebuild = cell_list_needs_rebuild(
+        positions, atom_to_cell_mapping, cells_per_dimension, cell, pbc
+    )
+
+    if needs_rebuild.item():
+        cell_list_cache = build_cell_list(
+            positions, effective_cutoff, cell, pbc, *cell_list_cache
+        )
+        (
+            cells_per_dimension, neighbor_search_radius,
+            atom_periodic_shifts, atom_to_cell_mapping,
+            atoms_per_cell_count, cell_atom_start_indices, cell_atom_list
+        ) = cell_list_cache
+
+    # Query with actual cutoff (not effective)
+    neighbor_matrix, num_neighbors, neighbor_shifts = query_cell_list(
+        positions, cutoff, cell, pbc,
+        cells_per_dimension, atom_periodic_shifts, atom_to_cell_mapping,
+        atoms_per_cell_count, cell_atom_start_indices, cell_atom_list,
+        neighbor_search_radius
+    )
+```
+
+:::
+
+::::
+
 ### Dual Cutoff
 
 Compute two neighbor lists with different cutoffs simultaneously:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -521,6 +1037,31 @@ cutoff1, cutoff2 = 3.0, 6.0
 # neighbor_matrix1: neighbors within cutoff1
 # neighbor_matrix2: neighbors within cutoff2 (superset of cutoff1)
 ```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.neighbors import neighbor_list
+
+cutoff1, cutoff2 = 3.0, 6.0
+
+(
+    neighbor_matrix1, num_neighbors1, shifts1,
+    neighbor_matrix2, num_neighbors2, shifts2
+) = neighbor_list(
+    positions, cutoff1, cutoff2=cutoff2, cell=cell, pbc=pbc
+)
+
+# neighbor_matrix1: neighbors within cutoff1
+# neighbor_matrix2: neighbors within cutoff2 (superset of cutoff1)
+```
+
+:::
+
+::::
 
 ---
 
