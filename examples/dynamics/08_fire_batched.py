@@ -241,7 +241,6 @@ for step in range(max_steps):
         vv=vv,
         ff=ff,
         batch_idx=batch_idx,
-        device=device,
     )
 
     # Check convergence at intervals
@@ -330,7 +329,6 @@ for step in range(max_steps):
         f_inc=f_inc_arr,
         uphill_flag=uphill_flag,
         atom_ptr=atom_ptr,  # Use atom_ptr instead of batch_idx
-        device=device,
     )
 
     # Check convergence at intervals

@@ -263,7 +263,6 @@ for step in range(max_steps):
         v_sumsq=v_sumsq,
         f_sumsq=f_sumsq,
         max_norm=max_norm_buf,
-        device=device,
     )
 
     # Check convergence and log only at intervals

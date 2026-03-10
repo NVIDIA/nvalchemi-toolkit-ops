@@ -87,7 +87,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.unbatched.cell_list` — O(N) algorithm
+Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list.cell_list` — O(N) algorithm
 using spatial decomposition.
 :::
 
@@ -104,7 +104,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.unbatched.naive_neighbor_list` — O(N²)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.naive.naive_neighbor_list` — O(N²)
 algorithm with lower overhead.
 :::
 
@@ -122,7 +122,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batched.batch_cell_list` — O(N)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list.batch_cell_list` — O(N)
 algorithm for heterogeneous batches.
 :::
 
@@ -140,8 +140,9 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batched.batch_naive_neighbor_list` —
-O(N²) algorithm for batched small systems.
+Dispatches to
+{func}`~nvalchemiops.torch.neighbors.batch_naive.batch_naive_neighbor_list`
+— O(N²) algorithm for batched small systems.
 :::
 
 ::::

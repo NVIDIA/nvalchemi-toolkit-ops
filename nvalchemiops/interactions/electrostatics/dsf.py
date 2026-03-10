@@ -108,9 +108,9 @@ References
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import warp as wp
-from warp.types import Any
 
 from nvalchemiops.dynamics.utils.launch_helpers import (
     KernelFamily,
