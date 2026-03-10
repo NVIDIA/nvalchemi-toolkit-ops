@@ -94,9 +94,9 @@ REFERENCES
 """
 
 import math
+from typing import Any
 
 import warp as wp
-from warp.types import Any
 
 # Mathematical constants
 PI = math.pi

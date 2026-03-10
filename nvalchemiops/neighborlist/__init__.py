@@ -112,7 +112,6 @@ sys.modules["nvalchemiops.neighborlist.rebuild_detection"] = (
 # Also expose submodules as attributes for `import nvalchemiops.neighborlist.naive` style
 naive = _neighbors.naive
 naive_dual_cutoff = _neighbors.naive_dual_cutoff
-cell_list = _neighbors.cell_list
 batch_cell_list = _neighbors.batch_cell_list
 batch_naive = _neighbors.batch_naive
 batch_naive_dual_cutoff = _neighbors.batch_naive_dual_cutoff
@@ -123,9 +122,10 @@ rebuild_detection = _neighbors.rebuild_detection
 def __getattr__(name: str):  # pragma: no cover
     """Lazy import for backward compatibility with the old API.
 
-    This handles the `neighbor_list` attribute which requires PyTorch.
+    This handles the `neighbor_list` and `cell_list` attributes which
+    require PyTorch.
     """
-    if name == "neighbor_list":
+    if name in ("neighbor_list", "cell_list"):
         import importlib.util
 
         if importlib.util.find_spec("torch") is None:
@@ -138,15 +138,14 @@ def __getattr__(name: str):  # pragma: no cover
                 stacklevel=2,
             )
 
-            def neighbor_list(*args, **kwargs):
-                """Raise a `RuntimeError` if we can't use the new API with torch."""
+            def _missing(*args, **kwargs):
                 raise RuntimeError(
-                    "PyTorch is required to use the previous `neighbor_list` API."
+                    f"PyTorch is required to use the previous `{name}` API."
                     " Please install via `pip install 'nvalchemiops[torch]'`"
-                    " and import from `nvalchemiops.torch.neighbors.neighbor_list` instead."
+                    f" and use `from nvalchemiops.torch.neighbors import {name}` instead."
                 )
 
-            return neighbor_list
+            return _missing
         else:
             warnings.warn(
                 "From version 0.3.0 onwards, PyTorch is now an optional dependency"
@@ -156,9 +155,9 @@ def __getattr__(name: str):  # pragma: no cover
                 category=DeprecationWarning,
                 stacklevel=2,
             )
-            from nvalchemiops.torch.neighbors import neighbor_list
+            import nvalchemiops.torch.neighbors as _torch_neighbors
 
-            return neighbor_list
+            return getattr(_torch_neighbors, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

@@ -168,9 +168,6 @@ for step in range(max_steps):
         vf=vf_wp,
         vv=vv_wp,
         ff=ff_wp,
-        # Single system mode: no batch_idx, no atom_ptr
-        # No downhill check: energy, energy_last, positions_last, velocities_last not provided
-        device=device,
     )
 
     # Logging / stopping criteria (host read only at intervals)

@@ -42,10 +42,10 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import warp as wp
-from _langevin_utils import (
+from _dynamics_utils import (
     AMU_TO_EV_FS2_PER_A2 as AMU_TO_INTERNAL,
 )
-from _langevin_utils import (
+from _dynamics_utils import (
     EPSILON_AR,
     MASS_AR,
     SIGMA_AR,
@@ -308,7 +308,6 @@ for step in range(max_steps):
         vf=vf,
         vv=vv,
         ff=ff,
-        device=device,
     )
 
     # Check convergence and log only at intervals (avoid sync every step)

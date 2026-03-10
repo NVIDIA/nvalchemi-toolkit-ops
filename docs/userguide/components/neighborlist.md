@@ -62,7 +62,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.unbatched.cell_list` --- \(O(N)\) algorithm
+Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list.cell_list` --- \(O(N)\) algorithm
 using spatial decomposition.
 :::
 
@@ -79,7 +79,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.unbatched.naive_neighbor_list` --- \(O(N^2)\)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.naive.naive_neighbor_list` --- \(O(N^2)\)
 algorithm with lower overhead.
 :::
 
@@ -97,7 +97,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batched.batch_cell_list` --- \(O(N)\)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list.batch_cell_list` --- \(O(N)\)
 algorithm for heterogeneous batches.
 :::
 
@@ -115,7 +115,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batched.batch_naive_neighbor_list` ---
+Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_naive.batch_naive_neighbor_list` ---
 \(O(N^2)\) algorithm for batched small systems.
 :::
 
@@ -388,7 +388,7 @@ $$
 
 ```python
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
-from nvalchemiops.torch.neighbors.unbatched import estimate_cell_list_sizes
+from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 
 max_neighbors = estimate_max_neighbors(
     cutoff,
@@ -500,7 +500,7 @@ For cell list methods, you can also pre-allocate the spatial data structures:
 
 ```python
 from nvalchemiops.torch.neighbors import neighbor_list
-from nvalchemiops.torch.neighbors.unbatched import estimate_cell_list_sizes
+from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 from nvalchemiops.torch.neighbors.neighbor_utils import allocate_cell_list
 
 max_total_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, cutoff)
@@ -807,7 +807,7 @@ spatial data structure:
 :sync: pytorch
 
 ```python
-from nvalchemiops.torch.neighbors.unbatched import (
+from nvalchemiops.torch.neighbors.cell_list import (
     build_cell_list, query_cell_list, estimate_cell_list_sizes
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
@@ -906,7 +906,7 @@ Avoid rebuilding neighbor lists every step by using a skin distance:
 :sync: pytorch
 
 ```python
-from nvalchemiops.torch.neighbors.unbatched import (
+from nvalchemiops.torch.neighbors.cell_list import (
     build_cell_list, query_cell_list, estimate_cell_list_sizes
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import allocate_cell_list

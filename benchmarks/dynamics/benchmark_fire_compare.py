@@ -43,8 +43,7 @@ import torch
 
 from benchmarks.dynamics.shared_utils import (
     NvalchemiOpsBenchmark,
-    NvalchemiopsLJModel,
-    create_lj_system,
+    create_fcc_argon,
     get_gpu_sku,
     load_config,
 )
@@ -61,75 +60,45 @@ _DEFAULT_SEED = 42
 def _make_bench(num_atoms, perturbation=0.1, batch_size=1, seed=_DEFAULT_SEED):
     """Create a NvalchemiOpsBenchmark for a perturbed LJ system."""
     torch.manual_seed(seed)
-    positions, cell, masses, velocities = create_lj_system(
-        num_atoms=num_atoms,
-        lattice_constant=5.26,
-        temperature=300.0,
-        device="cuda",
-        dtype=torch.float64,
-    )
+    num_cells = int((num_atoms // 4 + 1) ** (1.0 / 3.0))
+    positions_np, cell_np = create_fcc_argon(num_unit_cells=num_cells, a=5.26)
+    positions = torch.as_tensor(positions_np, dtype=torch.float64, device="cuda")
+    cell = torch.as_tensor(cell_np, dtype=torch.float64, device="cuda")
     actual_atoms = positions.shape[0]
 
     if batch_size == 1:
         positions = positions + torch.randn_like(positions) * perturbation
         pbc = torch.tensor([True, True, True], device=positions.device)
 
-        lj_model = NvalchemiopsLJModel(
-            **_POTENTIAL,
-            cell=cell,
-            batch_idx=None,
-            device="cuda",
-            dtype=torch.float64,
-        )
         return NvalchemiOpsBenchmark(
             positions=positions,
             cell=cell,
-            masses=masses,
             pbc=pbc,
-            model=lj_model,
             skin=_SKIN,
             neighbor_rebuild_interval=_NEIGHBOR_REBUILD,
+            **_POTENTIAL,
         ), actual_atoms
     else:
-        # Batched system
-        pos_list, mass_list, cell_list = [], [], []
+        pos_list, cell_list = [], []
         for _ in range(batch_size):
             pos_list.append(positions + torch.randn_like(positions) * perturbation)
-            mass_list.append(masses)
             cell_list.append(cell)
         batch_positions = torch.cat(pos_list, dim=0)
-        batch_masses = torch.cat(mass_list, dim=0)
-        batch_cells = torch.cat(cell_list, dim=0)
+        batch_cells = torch.stack(cell_list, dim=0)
         batch_idx = torch.repeat_interleave(
             torch.arange(batch_size, device="cuda"),
             actual_atoms,
         ).to(torch.int32)
-        atom_ptr = torch.arange(
-            0,
-            (batch_size + 1) * actual_atoms,
-            actual_atoms,
-            device="cuda",
-            dtype=torch.int64,
-        )
         pbc = torch.tensor([True, True, True], device="cuda")
 
-        lj_model = NvalchemiopsLJModel(
-            **_POTENTIAL,
-            cell=batch_cells,
-            batch_idx=batch_idx,
-            device="cuda",
-            dtype=torch.float64,
-        )
         return NvalchemiOpsBenchmark(
             positions=batch_positions,
             cell=batch_cells,
-            masses=batch_masses,
             pbc=pbc,
-            model=lj_model,
             skin=_SKIN,
             neighbor_rebuild_interval=_NEIGHBOR_REBUILD,
             batch_idx=batch_idx,
-            atom_ptr=atom_ptr,
+            **_POTENTIAL,
         ), actual_atoms
 
 
