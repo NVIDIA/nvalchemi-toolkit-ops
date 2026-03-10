@@ -142,7 +142,7 @@ def __getattr__(name: str):  # pragma: no cover
                 raise RuntimeError(
                     f"PyTorch is required to use the previous `{name}` API."
                     " Please install via `pip install 'nvalchemiops[torch]'`"
-                    f" and import from `nvalchemiops.torch.neighbors.{name}` instead."
+                    f" and use `from nvalchemiops.torch.neighbors import {name}` instead."
                 )
 
             return _missing

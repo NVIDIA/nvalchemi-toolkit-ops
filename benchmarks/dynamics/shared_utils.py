@@ -1785,8 +1785,7 @@ class NvalchemiOpsBenchmark:
     """Unified benchmark class for both single-system and batched simulations.
 
     This class consolidates MD and optimization benchmarks, automatically detecting
-    whether to use single-system or batched mode based on the presence of batch_idx
-    and atom_ptr parameters.
+    whether to use single-system or batched mode based on the presence of batch_idx.
 
     Parameters
     ----------
@@ -1794,36 +1793,35 @@ class NvalchemiOpsBenchmark:
         Atomic positions. Shape (N, 3) for single-system or (total_atoms, 3) for batched.
     cell : torch.Tensor
         Unit cell matrix. Shape (1, 3, 3) for single-system or (num_systems, 3, 3) for batched.
-    masses : torch.Tensor
-        Atomic masses. Shape (N,) for single-system or (total_atoms,) for batched.
     pbc : torch.Tensor
         Periodic boundary conditions, shape (3,).
-    model : NvalchemiopsModelInterface, optional
-        Model for force/energy computation. If None, uses LJ with epsilon/sigma/cutoff.
+    masses : torch.Tensor, optional
+        Atomic masses. Shape (N,) or (total_atoms,). Default: argon mass for all atoms.
     epsilon : float, optional
-        LJ epsilon parameter (eV). Used only if model is None.
+        LJ epsilon parameter (eV).
     sigma : float, optional
-        LJ sigma parameter (Å). Used only if model is None.
+        LJ sigma parameter (Å).
     cutoff : float, optional
-        LJ cutoff distance (Å). Used only if model is None.
+        LJ cutoff distance (Å).
     skin : float, optional
         Neighbor list skin distance (Å). Default 1.0.
+    switch_width : float, optional
+        Switching function width (Å). Default 0.0.
+    half_neighbor_list : bool, optional
+        Whether to use half neighbor lists. Default True.
     neighbor_rebuild_interval : int, optional
         Interval for rebuilding neighbor lists (0 = displacement-based). Default 10.
     velocities : torch.Tensor, optional
         Initial velocities. Required for MD, optional for optimization.
     batch_idx : torch.Tensor, optional
         Batch index for each atom (batched mode only). Shape (total_atoms,).
-    atom_ptr : torch.Tensor, optional
-        Pointer to start of each batch (batched mode only). Shape (num_systems+1,).
 
     Notes
     -----
-    - Batching is auto-detected: if batch_idx and atom_ptr are provided, batched mode is used.
+    - Batching is auto-detected: if batch_idx is provided, batched mode is used.
     - For batched mode, positions/velocities/masses should be concatenated across all systems.
     - Supports integrators: VelocityVerlet, Langevin, NoseHoover, NPT, NPH.
-    - Supports optimizer: FIRE.
-    - If model is None, automatically creates NvalchemiopsLJModel with epsilon/sigma/cutoff.
+    - Supports optimizers: FIRE, FIRE2.
     """
 
     def __init__(
