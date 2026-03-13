@@ -1151,6 +1151,11 @@ energy_per_system = torch.zeros(3, device=positions.device)
 energy_per_system.scatter_add_(0, batch_idx.long(), energies)
 ```
 
+Batch mode uses one shared set of Miller indices for the reciprocal-space
+calculation. If `k_cutoff` is supplied per system, either directly or via
+`estimate_ewald_parameters`, `nvalchemiops` uses the maximum cutoff across the
+batch to build that shared set.
+
 :::
 
 :::{tab-item} JAX

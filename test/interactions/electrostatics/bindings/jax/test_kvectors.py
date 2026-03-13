@@ -69,6 +69,39 @@ class TestKVectorsEwald:
 
         assert k_vectors_large.shape[0] > k_vectors_small.shape[0]
 
+    def test_batch_tensor_cutoff_matches_max_reduction(self):
+        """Test batched k_cutoff tensors use the maximum shared cutoff."""
+        cell = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float64) * 10.0,
+                jnp.eye(3, dtype=jnp.float64) * 12.0,
+            ]
+        )
+        k_cutoff = jnp.array([5.0, 7.0], dtype=jnp.float64)
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff)
+        expected = generate_k_vectors_ewald_summation(cell, jnp.max(k_cutoff))
+
+        assert k_vectors.shape == expected.shape
+        assert jnp.allclose(k_vectors, expected)
+
+    def test_batch_tensor_cutoff_size_three_matches_max_reduction(self):
+        """Test B=3 does not silently use per-axis cutoffs."""
+        cell = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float64) * 10.0,
+                jnp.eye(3, dtype=jnp.float64) * 12.0,
+                jnp.eye(3, dtype=jnp.float64) * 14.0,
+            ]
+        )
+        k_cutoff = jnp.array([5.0, 6.0, 7.0], dtype=jnp.float64)
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff)
+        expected = generate_k_vectors_ewald_summation(cell, jnp.max(k_cutoff))
+
+        assert k_vectors.shape == expected.shape
+        assert jnp.allclose(k_vectors, expected)
+
     def test_halfspace_completeness(self):
         """Test that half-space enumeration produces exactly the right k-vectors.
 
