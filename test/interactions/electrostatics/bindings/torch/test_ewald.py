@@ -4515,7 +4515,7 @@ class TestEwaldSummationAutoParameters:
             [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
         )
         neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
-        neighbor_shifts = torch.zeros((2, 3), dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros((4, 3), dtype=torch.int32, device=device)
 
         energies = ewald_summation(
             positions,
