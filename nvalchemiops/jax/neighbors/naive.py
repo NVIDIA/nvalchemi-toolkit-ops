@@ -180,7 +180,7 @@ def naive_neighbor_list(
     cutoff : float
         Cutoff distance for neighbor detection in Cartesian units.
         Must be positive. Atoms within this distance are considered neighbors.
-    pbc : jax.Array, shape (1, 3), dtype=bool, optional
+    pbc : jax.Array, shape (3,) or (1, 3), dtype=bool, optional
         Periodic boundary condition flags for each dimension.
         True enables periodicity in that direction. Default is None (no PBC).
     cell : jax.Array, shape (1, 3, 3), dtype=float32 or float64, optional

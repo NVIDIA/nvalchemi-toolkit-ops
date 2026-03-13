@@ -40,6 +40,7 @@ nvalchemiops.jax.spline : B-spline interpolation
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
@@ -184,13 +185,13 @@ _jax_batch_pme_energy_corrections_charge_grad = _make_jax_kernels(
 
 
 def pme_green_structure_factor(
-    k_squared: jnp.ndarray,
+    k_squared: jax.Array,
     mesh_dimensions: tuple[int, int, int],
-    alpha: jnp.ndarray,
-    cell: jnp.ndarray,
+    alpha: jax.Array,
+    cell: jax.Array,
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+    batch_idx: jax.Array | None = None,
+) -> tuple[jax.Array, jax.Array]:
     """Compute Green's function and B-spline structure factor correction.
 
     Computes the Coulomb Green's function with volume normalization and the
@@ -330,12 +331,12 @@ def pme_green_structure_factor(
 
 
 def pme_energy_corrections(
-    raw_energies: jnp.ndarray,
-    charges: jnp.ndarray,
-    cell: jnp.ndarray,
-    alpha: jnp.ndarray,
-    batch_idx: jnp.ndarray | None = None,
-) -> jnp.ndarray:
+    raw_energies: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: jax.Array,
+    batch_idx: jax.Array | None = None,
+) -> jax.Array:
     """Apply self-energy and background corrections to PME energies.
 
     Converts raw interpolated potential to energy and subtracts corrections:
@@ -438,12 +439,12 @@ def pme_energy_corrections(
 
 
 def pme_energy_corrections_with_charge_grad(
-    raw_energies: jnp.ndarray,
-    charges: jnp.ndarray,
-    cell: jnp.ndarray,
-    alpha: jnp.ndarray,
-    batch_idx: jnp.ndarray | None = None,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+    raw_energies: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: jax.Array,
+    batch_idx: jax.Array | None = None,
+) -> tuple[jax.Array, jax.Array]:
     """Apply energy corrections and compute charge gradients.
 
     Same as pme_energy_corrections but also returns dE/dq for each atom.
@@ -544,14 +545,14 @@ def pme_energy_corrections_with_charge_grad(
 
 
 def _compute_pme_reciprocal_virial(
-    mesh_fft_raw: jnp.ndarray,
-    convolved_mesh: jnp.ndarray,
-    k_vectors: jnp.ndarray,
-    k_squared: jnp.ndarray,
-    alpha: jnp.ndarray,
+    mesh_fft_raw: jax.Array,
+    convolved_mesh: jax.Array,
+    k_vectors: jax.Array,
+    k_squared: jax.Array,
+    alpha: jax.Array,
     mesh_dimensions: tuple[int, int, int],
     is_batch: bool,
-) -> jnp.ndarray:
+) -> jax.Array:
     """Compute PME reciprocal-space virial tensor in k-space.
 
     Uses the exact spectral pair from the pipeline (mesh_fft_raw before
@@ -665,24 +666,24 @@ def _compute_pme_reciprocal_virial(
 
 
 def pme_reciprocal_space(
-    positions: jnp.ndarray,
-    charges: jnp.ndarray,
-    cell: jnp.ndarray,
-    alpha: jnp.ndarray,
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: jax.Array,
     mesh_dimensions: tuple[int, int, int] | None = None,
     mesh_spacing: float | None = None,
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-    k_vectors: jnp.ndarray | None = None,
-    k_squared: jnp.ndarray | None = None,
+    batch_idx: jax.Array | None = None,
+    k_vectors: jax.Array | None = None,
+    k_squared: jax.Array | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
 ) -> (
-    jnp.ndarray
-    | tuple[jnp.ndarray, jnp.ndarray]
-    | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
-    | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    jax.Array
+    | tuple[jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
     """Compute PME reciprocal-space contribution.
 
@@ -825,7 +826,7 @@ def pme_reciprocal_space(
     )
 
     # Save reference to raw FFT before deconvolution (needed for virial).
-    # No clone needed: the reassignment below creates a new tensor.
+    # No copy needed: the reassignment below creates a new array.
     mesh_fft_raw = mesh_fft if compute_virial else None
 
     # Step 4: Apply B-spline deconvolution and convolve with Green's function
@@ -923,31 +924,31 @@ def pme_reciprocal_space(
 
 
 def particle_mesh_ewald(
-    positions: jnp.ndarray,
-    charges: jnp.ndarray,
-    cell: jnp.ndarray,
-    alpha: float | jnp.ndarray | None = None,
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: float | jax.Array | None = None,
     mesh_spacing: float | None = None,
     mesh_dimensions: tuple[int, int, int] | None = None,
     spline_order: int = 4,
-    batch_idx: jnp.ndarray | None = None,
-    k_vectors: jnp.ndarray | None = None,
-    k_squared: jnp.ndarray | None = None,
-    neighbor_list: jnp.ndarray | None = None,
-    neighbor_ptr: jnp.ndarray | None = None,
-    neighbor_shifts: jnp.ndarray | None = None,
-    neighbor_matrix: jnp.ndarray | None = None,
-    neighbor_matrix_shifts: jnp.ndarray | None = None,
+    batch_idx: jax.Array | None = None,
+    k_vectors: jax.Array | None = None,
+    k_squared: jax.Array | None = None,
+    neighbor_list: jax.Array | None = None,
+    neighbor_ptr: jax.Array | None = None,
+    neighbor_shifts: jax.Array | None = None,
+    neighbor_matrix: jax.Array | None = None,
+    neighbor_matrix_shifts: jax.Array | None = None,
     mask_value: int | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     accuracy: float = 1e-6,
 ) -> (
-    jnp.ndarray
-    | tuple[jnp.ndarray, jnp.ndarray]
-    | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
-    | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]
+    jax.Array
+    | tuple[jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array]
+    | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
     """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 

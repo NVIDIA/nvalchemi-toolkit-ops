@@ -49,6 +49,7 @@ Individual components of the Particle Mesh Ewald method.
 K-Vector Generation
 -------------------
 
+.. autofunction:: generate_miller_indices
 .. autofunction:: generate_k_vectors_ewald_summation
 .. autofunction:: generate_k_vectors_pme
 

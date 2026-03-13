@@ -1082,13 +1082,18 @@ def ewald_reciprocal_space(
         alpha_val = alpha_arr[0] if not is_batched else alpha_arr[batch_idx]
         self_energy_grad = 2.0 * alpha_val / jnp.sqrt(PI) * charges_cast
 
-        # Background gradient: pi / (alpha^2) * (Q_total / V)
+        # Background gradient: pi / (2 * alpha^2 * V) * Q_total
+        volume = jnp.abs(jnp.linalg.det(cell_cast)).astype(jnp.float64)
         if is_batched:
             total_charge_per_atom = total_charge[batch_idx]
+            volume_per_atom = volume[batch_idx]
         else:
             total_charge_per_atom = total_charge[0]
+            volume_per_atom = volume[0]
 
-        background_grad = PI / (alpha_val * alpha_val) * total_charge_per_atom
+        background_grad = (
+            PI / (2.0 * alpha_val * alpha_val * volume_per_atom) * total_charge_per_atom
+        )
 
         charge_grads = charge_grads - self_energy_grad - background_grad
 

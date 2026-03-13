@@ -7,8 +7,8 @@
 Dispersion corrections account for van der Waals interactions that standard DFT
 functionals underestimate. ALCHEMI Toolkit-Ops provides GPU-accelerated DFT-D3
 with Becke-Johnson damping via [NVIDIA Warp](https://nvidia.github.io/warp/),
-supporting batched computation, periodic systems, and full `torch.compile`
-compatibility.
+supporting batched computation, periodic systems, and bindings for both PyTorch
+and JAX.
 
 ```{tip}
 The current implementation computes two-body terms only (C6 and C8). Three-body
@@ -49,6 +49,11 @@ on units for each parameter.
 :::{tab-item} Neighbor Matrix (Dense)
 :sync: matrix
 
+::::::{tab-set}
+
+:::::{tab-item} PyTorch
+:sync: pytorch
+
 ```python
 from nvalchemiops.torch.interactions.dispersion import dftd3
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -68,10 +73,43 @@ energy, forces, coord_num = dftd3(
 )
 ```
 
+:::::
+
+:::::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.interactions.dispersion import dftd3
+from nvalchemiops.jax.neighbors import neighbor_list
+
+# Build neighbor matrix; 50 Bohr cutoff
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff=50.0, cell=cell, pbc=pbc
+)
+
+# Compute dispersion correction (PBE functional)
+energy, forces, coord_num = dftd3(
+    positions=positions,           # [num_atoms, 3] in Bohr
+    numbers=numbers,               # [num_atoms] atomic numbers
+    neighbor_matrix=neighbor_matrix,
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::::
+
+::::::
+
 :::
 
 :::{tab-item} Neighbor List (Sparse COO)
 :sync: coo
+
+::::::{tab-set}
+
+:::::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 from nvalchemiops.torch.interactions.dispersion import dftd3
@@ -93,18 +131,52 @@ energy, forces, coord_num = dftd3(
 )
 ```
 
+:::::
+
+:::::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.interactions.dispersion import dftd3
+from nvalchemiops.jax.neighbors import neighbor_list
+
+# Build neighbor list in COO format; 50 Bohr cutoff
+neighbor_list_coo, neighbor_list_ptr, unit_shifts = neighbor_list(
+    positions, cutoff=50.0, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Compute dispersion correction (PBE functional)
+energy, forces, coord_num = dftd3(
+    positions=positions,           # [num_atoms, 3] in Bohr
+    numbers=numbers,               # [num_atoms] atomic numbers
+    neighbor_list=neighbor_list_coo,  # [2, num_pairs]
+    neighbor_ptr=neighbor_list_ptr,
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::::
+
+::::::
+
 :::
 
 ::::
 
 ### Periodic Boundary Conditions
 
-For periodic systems, provide the cell and shift tensors:
+For periodic systems, provide the cell and shift arrays:
 
 ::::{tab-set}
 
 :::{tab-item} Neighbor Matrix (Dense)
 :sync: matrix
+
+::::::{tab-set}
+
+:::::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 energy, forces, coord_num, virial = dftd3(
@@ -119,10 +191,37 @@ energy, forces, coord_num, virial = dftd3(
 )
 ```
 
+:::::
+
+:::::{tab-item} JAX
+:sync: jax
+
+```python
+energy, forces, coord_num, virial = dftd3(
+    positions=positions,
+    numbers=numbers,
+    neighbor_matrix=neighbor_matrix,
+    neighbor_matrix_shifts=neighbor_matrix_shifts,   # [num_atoms, max_neighbors, 3]
+    cell=cell,                                       # [num_systems, 3, 3]
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+    compute_virial=True                              # also compute virial
+)
+```
+
+:::::
+
+::::::
+
 :::
 
 :::{tab-item} Neighbor List (Sparse COO)
 :sync: coo
+
+::::::{tab-set}
+
+:::::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 energy, forces, coord_num = dftd3(
@@ -135,6 +234,27 @@ energy, forces, coord_num = dftd3(
     d3_params=d3_params,
 )
 ```
+
+:::::
+
+:::::{tab-item} JAX
+:sync: jax
+
+```python
+energy, forces, coord_num = dftd3(
+    positions=positions,
+    numbers=numbers,
+    neighbor_list=neighbor_list_coo,
+    unit_shifts=unit_shifts,           # [num_pairs, 3]
+    cell=cell,                         # [num_systems, 3, 3]
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::::
+
+::::::
 
 :::
 
@@ -149,12 +269,12 @@ Use `batch_idx` to specify multi-system batches, mapping each atom to its system
 ALCHEMI Toolkit-Ops supports two neighbor formats that produce identical results:
 
 Neighbor Matrix (default)
-: Dense tensor of shape `[num_atoms, max_neighbors]`. Each row contains neighbor
+: Dense array of shape `[num_atoms, max_neighbors]`. Each row contains neighbor
   indices for that atom, padded with `fill_value` (typically `num_atoms`).
   Use with `neighbor_matrix` and `neighbor_matrix_shifts` arguments.
 
 Neighbor List (COO)
-: Sparse tensor of shape `[2, num_pairs]` where row 0 contains source indices
+: Sparse array of shape `[2, num_pairs]` where row 0 contains source indices
   and row 1 contains target indices. No padding needed.
   Use with `neighbor_list` and `unit_shifts` arguments.
 
@@ -165,7 +285,7 @@ We refer the reader for a more in-depth discussion in the
 
 **Neighbor Matrix** is preferred when:
 
-- Using `torch.compile` (fixed memory layout avoids graph breaks)
+- Using `torch.compile` or `jax.jit` (fixed memory layout avoids graph breaks)
 - Systems have dense, uniform neighbor distributions
 
 **Neighbor List (COO)** is preferred when:
@@ -248,6 +368,11 @@ Three options are available:
 
 ### Option 1: D3Parameters Dataclass (Recommended)
 
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
 ```python
 from nvalchemiops.torch.interactions.dispersion import D3Parameters
 
@@ -264,6 +389,32 @@ energy, forces, coord_num = dftd3(
     d3_params=d3_params,
 )
 ```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.interactions.dispersion import D3Parameters
+
+d3_params = D3Parameters(
+    rcov=covalent_radii,      # [max_Z+1] in Bohr
+    r4r2=r4r2_values,         # [max_Z+1] <r^4>/<r^2> expectation values
+    c6ab=c6_reference,        # [max_Z+1, max_Z+1, 5, 5] C6 grid
+    cn_ref=coord_num_ref,     # [max_Z+1, max_Z+1, 5, 5] CN grid
+)
+
+energy, forces, coord_num = dftd3(
+    positions, numbers, neighbor_matrix,
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::
+
+::::
 
 ### Option 2: Dictionary
 
@@ -316,9 +467,14 @@ for a complete list.
 : Enable smooth cutoff with the S5 switching function. The function provides
   $C^2$ continuity at both boundaries, preventing force discontinuities.
 
-### torch.compile Compatibility
+### JIT Compilation
 
-Both neighbor formats support `torch.compile` for JIT optimization:
+Both neighbor formats support JIT optimization in PyTorch and JAX:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 compiled_dftd3 = torch.compile(dftd3)
@@ -333,6 +489,40 @@ energy, forces, coord_num = compiled_dftd3(
 )
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from functools import partial
+import jax
+
+jit_dftd3 = jax.jit(partial(
+    dftd3,
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    num_systems=num_systems,  # must be a static integer for jax.jit
+))
+
+energy, forces, coord_num = jit_dftd3(
+    positions=positions,
+    numbers=numbers,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_list_ptr,
+    d3_params=d3_params,
+)
+```
+
+```{note}
+When using `jax.jit`, provide `num_systems` explicitly as a static integer.
+If omitted, the code attempts to infer it from `cell` or `batch_idx`, which
+may fail during JIT tracing.
+```
+
+:::
+
+::::
+
 ### Precision Notes
 
 - Input positions and unit cell can be `float64` for large unit cells or systems far from origin
@@ -343,6 +533,11 @@ energy, forces, coord_num = compiled_dftd3(
 
 ### Single Molecule (Non-Periodic)
 
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
 ```python
 import torch
 from nvalchemiops.torch.interactions.dispersion import dftd3
@@ -351,7 +546,7 @@ from nvalchemiops.torch.neighbors import neighbor_list
 ANGSTROM_TO_BOHR = 1.8897259886
 HARTREE_TO_EV = 27.211386245981
 
-# Water molecule (Ångström → Bohr)
+# Water molecule (Angstrom -> Bohr)
 positions_ang = torch.tensor([
     [0.0000,  0.0000,  0.1173],  # O
     [0.0000,  0.7572, -0.4692],  # H
@@ -382,7 +577,60 @@ print(f"Dispersion energy: {energy[0].item():.6f} Ha")
 print(f"                   {energy[0].item() * HARTREE_TO_EV:.6f} eV")
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+import jax.numpy as jnp
+from nvalchemiops.jax.interactions.dispersion import dftd3
+from nvalchemiops.jax.neighbors import neighbor_list
+
+ANGSTROM_TO_BOHR = 1.8897259886
+HARTREE_TO_EV = 27.211386245981
+
+# Water molecule (Angstrom -> Bohr)
+positions_ang = jnp.array([
+    [0.0000,  0.0000,  0.1173],  # O
+    [0.0000,  0.7572, -0.4692],  # H
+    [0.0000, -0.7572, -0.4692],  # H
+], dtype=jnp.float32)
+positions = positions_ang * ANGSTROM_TO_BOHR
+
+numbers = jnp.array([8, 1, 1], dtype=jnp.int32)
+
+# Non-periodic: use large box with pbc=False
+cell = jnp.eye(3, dtype=jnp.float32)[None, ...] * 100.0
+pbc = jnp.array([[False, False, False]])
+
+neighbor_matrix, num_neighbors, _ = neighbor_list(
+    positions, cutoff=50.0, cell=cell, pbc=pbc
+)
+
+# d3_params loaded from file (see examples/interactions/utils.py)
+energy, forces, coord_num = dftd3(
+    positions=positions,
+    numbers=numbers,
+    neighbor_matrix=neighbor_matrix,
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+)
+
+print(f"Dispersion energy: {energy[0].item():.6f} Ha")
+print(f"                   {energy[0].item() * HARTREE_TO_EV:.6f} eV")
+```
+
+:::
+
+::::
+
 ### Batched Periodic Crystals
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 ```python
 import torch
@@ -400,7 +648,7 @@ positions_ang = torch.randn(total_atoms, 3, device="cuda")
 positions = positions_ang * ANGSTROM_TO_BOHR
 numbers = torch.randint(1, 20, (total_atoms,), dtype=torch.int32, device="cuda")
 
-# Per-system cells (Å → Bohr)
+# Per-system cells (Angstrom -> Bohr)
 cells = torch.eye(3, device="cuda").unsqueeze(0).repeat(BATCH_SIZE, 1, 1) * 10.0
 cells = cells * ANGSTROM_TO_BOHR
 
@@ -433,6 +681,67 @@ energy, forces, coord_num, virial = dftd3(
 
 print(f"Energies per system (Ha): {energy}")
 ```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+import jax
+import jax.numpy as jnp
+from nvalchemiops.jax.interactions.dispersion import dftd3
+from nvalchemiops.jax.neighbors import neighbor_list
+
+ANGSTROM_TO_BOHR = 1.8897259886
+
+# Batch of 4 systems, 8 atoms each
+BATCH_SIZE = 4
+atoms_per_system = 8
+total_atoms = BATCH_SIZE * atoms_per_system
+
+key = jax.random.PRNGKey(0)
+positions_ang = jax.random.normal(key, (total_atoms, 3), dtype=jnp.float32)
+positions = positions_ang * ANGSTROM_TO_BOHR
+numbers = jnp.array([1, 6, 7, 8, 1, 6, 7, 8] * BATCH_SIZE, dtype=jnp.int32)
+
+# Per-system cells (Angstrom -> Bohr)
+cells = jnp.stack([jnp.eye(3, dtype=jnp.float32) * 10.0] * BATCH_SIZE)
+cells = cells * ANGSTROM_TO_BOHR
+
+pbc = jnp.array([[True, True, True]] * BATCH_SIZE)
+
+batch_idx = jnp.repeat(
+    jnp.arange(BATCH_SIZE, dtype=jnp.int32), atoms_per_system
+)
+batch_ptr = jnp.arange(0, total_atoms + 1, atoms_per_system, dtype=jnp.int32)
+
+# Build neighbors
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff=20.0 * ANGSTROM_TO_BOHR,
+    cell=cells, pbc=pbc, batch_idx=batch_idx, batch_ptr=batch_ptr,
+    method="batch_cell_list"
+)
+
+energy, forces, coord_num, virial = dftd3(
+    positions=positions,
+    numbers=numbers,
+    neighbor_matrix=neighbor_matrix,
+    neighbor_matrix_shifts=shifts,
+    cell=cells,
+    batch_idx=batch_idx,
+    a1=0.4145, a2=4.8593, s8=1.2177,  # PBE0
+    d3_params=d3_params,
+    compute_virial=True,
+    num_systems=BATCH_SIZE
+)
+
+print(f"Energies per system (Ha): {energy}")
+```
+
+:::
+
+::::
 
 ### Smooth Cutoff
 
@@ -548,9 +857,8 @@ Pass 3
 
 ### Neighbor Format Dispatch
 
-The {func}`~nvalchemiops.torch.interactions.dispersion.dftd3`
-function dispatches to different kernel implementations based on the neighbor
-representation format:
+The `dftd3` function dispatches to different kernel implementations based on the
+neighbor representation format:
 
 - **Neighbor matrix** (`neighbor_matrix` argument): Dispatches to
   `_dftd3_nm_op`, which launches kernels that iterate over a

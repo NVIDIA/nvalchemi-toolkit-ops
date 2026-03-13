@@ -133,7 +133,7 @@ def estimate_cell_list_sizes(
         Cell matrix defining lattice vectors.
     cutoff : float
         Cutoff distance for neighbor searching.
-    pbc : jax.Array, shape (1, 3), dtype=bool, optional
+    pbc : jax.Array, shape (3,) or (1, 3), dtype=bool, optional
         Periodic boundary condition flags. Default is all True.
     buffer_factor : float, optional
         Buffer multiplier for cell count estimation. Default is 1.5.
@@ -229,7 +229,7 @@ def build_cell_list(
         Cutoff distance for neighbor searching. Must be positive.
     cell : jax.Array, shape (1, 3, 3), dtype=float32 or float64
         Cell matrix defining lattice vectors.
-    pbc : jax.Array, shape (1, 3), dtype=bool
+    pbc : jax.Array, shape (3,) or (1, 3), dtype=bool
         Periodic boundary condition flags.
     cells_per_dimension : jax.Array, shape (3,), dtype=int32, optional
         OUTPUT: Number of cells in x, y, z directions. If None, allocated.
@@ -408,7 +408,7 @@ def query_cell_list(
         Cutoff distance for neighbor detection.
     cell : jax.Array, shape (1, 3, 3), dtype=float32 or float64
         Cell matrix defining lattice vectors.
-    pbc : jax.Array, shape (1, 3), dtype=bool
+    pbc : jax.Array, shape (3,) or (1, 3), dtype=bool
         Periodic boundary condition flags.
     cells_per_dimension : jax.Array, shape (3,), dtype=int32
         Number of cells in each dimension.
@@ -558,7 +558,7 @@ def cell_list(
         Cutoff distance for neighbor detection.
     cell : jax.Array, shape (1, 3, 3), dtype=float32 or float64, optional
         Cell matrix defining lattice vectors. Default is identity matrix.
-    pbc : jax.Array, shape (1, 3), dtype=bool, optional
+    pbc : jax.Array, shape (3,) or (1, 3), dtype=bool, optional
         Periodic boundary condition flags. Default is all True.
     max_neighbors : int, optional
         Maximum number of neighbors per atom. If None, will be estimated.

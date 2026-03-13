@@ -261,9 +261,9 @@ def prepare_batch_idx_ptr(
     Parameters
     ----------
     batch_idx : jax.Array | None, shape (total_atoms,), dtype=int32
-        Tensor indicating the batch index for each atom.
+        Array indicating the batch index for each atom.
     batch_ptr : jax.Array | None, shape (num_systems + 1,), dtype=int32
-        Tensor indicating the start index of each batch in the atom list.
+        Array indicating the start index of each batch in the atom list.
     num_atoms : int
         Total number of atoms across all systems.
 
