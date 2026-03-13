@@ -28,6 +28,17 @@ __all__ = [
 ]
 
 
+def _prepare_k_cutoff(
+    k_cutoff: float | jax.Array,
+    dtype: jax.typing.DTypeLike,
+) -> jax.Array:
+    """Normalize k_cutoff for shared batch Miller bounds."""
+    k_cutoff_array = jnp.asarray(k_cutoff, dtype=dtype)
+    if k_cutoff_array.ndim == 0 or k_cutoff_array.size == 1:
+        return jnp.reshape(k_cutoff_array, ())
+    return jnp.max(k_cutoff_array)
+
+
 def generate_miller_indices(
     cell: jax.Array,
     k_cutoff: float | jax.Array,
@@ -49,13 +60,15 @@ def generate_miller_indices(
 
     Notes
     -----
-    If cell represents a single system, returns max_h, max_k, max_l
-    computed by taking the maximum reciprocal cell_lengths over the entire batch of systems.
+    For batch mode, one shared set of Miller bounds is used for all systems.
+    If ``k_cutoff`` is provided per system, the maximum cutoff across the batch
+    is used to build those shared bounds.
     """
+    shared_k_cutoff = _prepare_k_cutoff(k_cutoff, cell.dtype)
     cell_lengths = (jnp.linalg.norm(cell, axis=-1).max(axis=0)) / (
         2 * jnp.pi
     )  # Length of each reciprocal vector
-    return jnp.ceil(k_cutoff * cell_lengths).astype(jnp.int32)
+    return jnp.ceil(shared_k_cutoff * cell_lengths).astype(jnp.int32)
 
 
 # Backwards-compatible alias
@@ -161,7 +174,9 @@ def generate_k_vectors_ewald_summation(
     -----
     - The k=0 vector is always excluded (causes division by zero in Green's function).
     - For batch mode, the same set of Miller indices is used for all systems but
-      transformed using each system's reciprocal cell.
+      transformed using each system's reciprocal cell. If ``k_cutoff`` is given
+      per system, the maximum cutoff across the batch determines the shared
+      Miller bounds.
     - The number of k-vectors K scales as O(k_cutoff³ · V) where V is the cell volume.
     - When using inside ``jax.jit``, you **must** provide ``miller_bounds``
       as a concrete ``tuple[int, int, int]``. The bounds determine array shapes

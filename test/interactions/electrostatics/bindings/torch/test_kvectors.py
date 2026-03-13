@@ -118,6 +118,49 @@ class TestKVectorsEwald:
 
         assert k_vectors_large.shape[0] > k_vectors_small.shape[0]
 
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_tensor_cutoff_matches_max_reduction(self, device):
+        """Test batched k_cutoff tensors use the maximum shared cutoff."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        cell = torch.stack(
+            [
+                torch.eye(3, dtype=torch.float64, device=device) * 10.0,
+                torch.eye(3, dtype=torch.float64, device=device) * 12.0,
+            ]
+        )
+        k_cutoff = torch.tensor([5.0, 7.0], dtype=torch.float64, device=device)
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff)
+        expected = generate_k_vectors_ewald_summation(cell, k_cutoff.max())
+
+        assert k_vectors.shape == expected.shape
+        assert torch.allclose(k_vectors, expected)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_tensor_cutoff_size_three_matches_max_reduction(self, device):
+        """Test B=3 does not silently use per-axis cutoffs."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        cell = torch.stack(
+            [
+                torch.eye(3, dtype=torch.float64, device=device) * 10.0,
+                torch.eye(3, dtype=torch.float64, device=device) * 12.0,
+                torch.eye(3, dtype=torch.float64, device=device) * 14.0,
+            ]
+        )
+        k_cutoff = torch.tensor([5.0, 6.0, 7.0], dtype=torch.float64, device=device)
+
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff)
+        expected = generate_k_vectors_ewald_summation(cell, k_cutoff.max())
+
+        assert k_vectors.shape == expected.shape
+        assert torch.allclose(k_vectors, expected)
+
 
 ###########################################################################################
 ########################### PME K-Vector Tests ############################################

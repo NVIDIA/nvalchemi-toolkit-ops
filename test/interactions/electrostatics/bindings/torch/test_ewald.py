@@ -4488,6 +4488,51 @@ class TestEwaldSummationAutoParameters:
         assert torch.isfinite(energies).all()
         assert torch.isfinite(forces).all()
 
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_auto_estimate_alpha_and_k_cutoff(self, device):
+        """Test batch auto-estimation uses a shared maximum reciprocal cutoff."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions = torch.tensor(
+            [[2.0, 5.0, 5.0], [8.0, 5.0, 5.0], [3.0, 5.0, 5.0], [7.0, 5.0, 5.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [1.0, -1.0, 1.0, -1.0], dtype=torch.float64, device=device
+        )
+        cell = (
+            torch.eye(3, dtype=torch.float64, device=device)
+            .unsqueeze(0)
+            .expand(2, -1, -1)
+            .contiguous()
+            * 10.0
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        neighbor_list = torch.tensor(
+            [[0, 1, 2, 3], [1, 0, 3, 2]], dtype=torch.int32, device=device
+        )
+        neighbor_ptr = torch.tensor([0, 1, 2, 3, 4], dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros((4, 3), dtype=torch.int32, device=device)
+
+        energies = ewald_summation(
+            positions,
+            charges,
+            cell,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            alpha=None,
+            k_cutoff=None,
+            batch_idx=batch_idx,
+            compute_forces=False,
+        )
+
+        assert energies.shape == (4,)
+        assert torch.isfinite(energies).all()
+
 
 class TestAutogradWithMatrixFormat:
     """Test autograd with neighbor matrix format for attach_for_backward coverage."""

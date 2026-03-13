@@ -21,6 +21,17 @@ PI = math.pi
 TWOPI = 2.0 * PI
 
 
+def _prepare_k_cutoff(
+    cell: torch.Tensor,
+    k_cutoff: float | torch.Tensor,
+) -> torch.Tensor:
+    """Normalize k_cutoff for shared batch Miller bounds."""
+    k_cutoff_tensor = torch.as_tensor(k_cutoff, device=cell.device, dtype=cell.dtype)
+    if k_cutoff_tensor.ndim == 0 or k_cutoff_tensor.numel() == 1:
+        return k_cutoff_tensor.reshape(())
+    return k_cutoff_tensor.max()
+
+
 def _generate_miller_indices(
     cell: torch.Tensor,
     k_cutoff: float | torch.Tensor,
@@ -36,13 +47,15 @@ def _generate_miller_indices(
 
     Notes
     -----
-    if cell represents a single system, return max_h, max_k, max_l
-    computed by taking the maximum reciprocal cell_lengths over the entire batch of systems.
+    For batch mode, one shared set of Miller bounds is used for all systems.
+    If ``k_cutoff`` is provided per system, the maximum cutoff across the batch
+    is used to build those shared bounds.
     """
+    shared_k_cutoff = _prepare_k_cutoff(cell, k_cutoff)
     cell_lengths = (torch.norm(cell, dim=-1).max(dim=0).values) / (
         2 * torch.pi
     )  # Length of each reciprocal vector
-    return torch.ceil(k_cutoff * cell_lengths).long()
+    return torch.ceil(shared_k_cutoff * cell_lengths).long()
 
 
 def generate_k_vectors_ewald_summation(
@@ -126,7 +139,9 @@ def generate_k_vectors_ewald_summation(
     -----
     - The k=0 vector is always excluded (causes division by zero in Green's function).
     - For batch mode, the same set of Miller indices is used for all systems but
-      transformed using each system's reciprocal cell.
+      transformed using each system's reciprocal cell. If ``k_cutoff`` is given
+      per system, the maximum cutoff across the batch determines the shared
+      Miller bounds.
     - The number of k-vectors K scales as O(k_cutoff³ · V) where V is the cell volume.
 
     See Also

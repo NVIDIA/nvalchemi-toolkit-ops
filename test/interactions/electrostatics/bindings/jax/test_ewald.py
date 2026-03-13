@@ -1276,6 +1276,48 @@ class TestEdgeCases:
         assert jnp.all(jnp.isfinite(energies))
         assert energies.sum() < 0
 
+    def test_batch_auto_parameters(self, device):
+        """Test batched automatic parameter estimation uses a shared max cutoff."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.0, -1.0, 1.0, -1.0], dtype=jnp.float64)
+        cell_single = cubic_cell_jax(10.0, dtype=jnp.float64)
+        cell = jnp.concatenate([cell_single, cell_single], axis=0)
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_cell_list(
+            positions,
+            5.0,
+            cell,
+            jnp.array([[True, True, True], [True, True, True]]),
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=32,
+        )
+
+        energies = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=None,
+            k_cutoff=None,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            batch_idx=batch_idx,
+            accuracy=1e-6,
+        )
+
+        assert energies.shape == (4,)
+        assert jnp.all(jnp.isfinite(energies))
+
 
 class TestEwaldJIT:
     """Smoke tests for Ewald summation compatibility with jax.jit."""
