@@ -1,5 +1,6 @@
 # Master requirements file for all examples
-# Install with: pip install -r examples/requirements.txt
+# Install with: pip install -r examples/example-requires.txt
 # Example-specific dependencies
 pymatgen>=2025.10.7
 requests>=2.31.0  # For interactions examples
+matplotlib>=3.10.8

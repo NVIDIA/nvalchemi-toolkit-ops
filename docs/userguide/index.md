@@ -16,6 +16,12 @@ The quickest way to install ALCHEMI Toolkit-Ops:
 $ pip install nvalchemi-toolkit-ops
 ```
 
+To install ALCHEMI Toolkit-Ops with PyTorch support:
+
+```bash
+$ pip install nvalchemi-toolkit-ops[torch]
+```
+
 Make sure it is importable:
 
 ```bash

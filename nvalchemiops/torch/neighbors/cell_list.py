@@ -26,7 +26,10 @@ from nvalchemiops.neighbors.cell_list import (
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as wp_query_cell_list,
 )
-from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.neighbors.neighbor_utils import (
+    estimate_max_neighbors,
+    selective_zero_num_neighbors_single,
+)
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
     get_neighbor_list_from_neighbor_matrix,
@@ -45,7 +48,7 @@ def estimate_cell_list_sizes(
     cell: torch.Tensor,
     pbc: torch.Tensor,
     cutoff: float,
-    max_nbins: int = 1000,
+    max_nbins: int = 8192,
 ) -> tuple[int, torch.Tensor]:
     """Estimate allocation sizes for torch.compile-friendly cell list construction.
 
@@ -64,7 +67,7 @@ def estimate_cell_list_sizes(
         Flags indicating periodic boundary conditions in x, y, z directions.
     cutoff : float
         Maximum distance for neighbor search, determines minimum cell size.
-    max_nbins : int, default=1000
+    max_nbins : int, default=8192
         Maximum number of cells to allocate.
 
     Returns
@@ -337,6 +340,7 @@ def _query_cell_list_op(
     neighbor_matrix_shifts: torch.Tensor,
     num_neighbors: torch.Tensor,
     half_fill: bool = False,
+    rebuild_flags: torch.Tensor | None = None,
 ) -> None:
     """Internal custom op for querying spatial cell list to build neighbor matrix.
 
@@ -395,6 +399,16 @@ def _query_cell_list_op(
     )
     wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
 
+    if rebuild_flags is not None:
+        wp_rebuild_flags = wp.from_torch(
+            rebuild_flags, dtype=wp.bool, return_ctype=True
+        )
+        selective_zero_num_neighbors_single(
+            wp_num_neighbors, wp_rebuild_flags, wp_device
+        )
+    else:
+        wp_rebuild_flags = None
+
     # Call core warp launcher
     wp_query_cell_list(
         positions=wp_positions,
@@ -414,6 +428,7 @@ def _query_cell_list_op(
         wp_dtype=wp_dtype,
         device=wp_device,
         half_fill=half_fill,
+        rebuild_flags=wp_rebuild_flags,
     )
 
 
@@ -433,6 +448,7 @@ def query_cell_list(
     neighbor_matrix_shifts: torch.Tensor,
     num_neighbors: torch.Tensor,
     half_fill: bool = False,
+    rebuild_flags: torch.Tensor | None = None,
 ) -> None:
     """Query spatial cell list to build neighbor matrix with distance constraints.
 
@@ -477,6 +493,12 @@ def query_cell_list(
         Must be pre-allocated.
     half_fill : bool, default=False
         If True, only store half of the neighbor relationships.
+    rebuild_flags : torch.Tensor, shape () or (1,), dtype=torch.bool, optional
+        If provided, controls whether the neighbor list is recomputed.
+        When the flag is False the kernel is skipped and the pre-allocated output
+        tensors are returned unchanged.  When the flag is True (or when this
+        argument is None) the query proceeds as normal.
+        Note: providing this argument disables torch.compile compatibility.
 
     See Also
     --------
@@ -500,6 +522,7 @@ def query_cell_list(
         neighbor_matrix_shifts,
         num_neighbors,
         half_fill,
+        rebuild_flags,
     )
 
 
@@ -522,6 +545,7 @@ def cell_list(
     atoms_per_cell_count: torch.Tensor | None = None,
     cell_atom_start_indices: torch.Tensor | None = None,
     cell_atom_list: torch.Tensor | None = None,
+    rebuild_flags: torch.Tensor | None = None,
 ) -> (
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
     | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -592,6 +616,12 @@ def cell_list(
         Flattened list of atom indices organized by cell.
         Pass a pre-allocated tensor to avoid reallocation for cell list construction.
         If None, allocated internally to build the cell list.
+    rebuild_flags : torch.Tensor, shape () or (1,), dtype=torch.bool, optional
+        If provided, controls whether the neighbor list is recomputed.
+        When the flag is False the existing ``neighbor_matrix``, ``num_neighbors``,
+        and ``neighbor_matrix_shifts`` tensors are returned unchanged and all
+        kernel launches are skipped.  When the flag is True (or when this argument
+        is None) the neighbor list is recomputed as normal.
 
     Returns
     -------
@@ -656,17 +686,17 @@ def cell_list(
         neighbor_matrix = torch.full(
             (total_atoms, max_neighbors), fill_value, dtype=torch.int32, device=device
         )
-    else:
+    elif rebuild_flags is None:
         neighbor_matrix.fill_(fill_value)
     if neighbor_matrix_shifts is None:
         neighbor_matrix_shifts = torch.zeros(
             (total_atoms, max_neighbors, 3), dtype=torch.int32, device=device
         )
-    else:
+    elif rebuild_flags is None:
         neighbor_matrix_shifts.zero_()
     if num_neighbors is None:
         num_neighbors = torch.zeros((total_atoms,), dtype=torch.int32, device=device)
-    else:
+    elif rebuild_flags is None:
         num_neighbors.zero_()
 
     # Allocate cell list if needed
@@ -723,6 +753,7 @@ def cell_list(
         neighbor_matrix_shifts,
         num_neighbors,
         half_fill,
+        rebuild_flags,
     )
 
     if return_neighbor_list:

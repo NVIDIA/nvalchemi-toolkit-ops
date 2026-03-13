@@ -882,3 +882,141 @@ class TestBatchNaiveDualCutoffPerformance:
         torch.testing.assert_close(
             num_neighbors2_f32, num_neighbors2_f64, rtol=0, atol=0
         )
+
+
+class TestBatchNaiveDualCutoffSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for batch_naive_neighbor_list_dual_cutoff."""
+
+    def test_no_rebuild_preserves_data(self, device, dtype, half_fill):
+        """All flags False: neighbor data should remain unchanged for all systems."""
+        atoms_per_system = [5, 6]
+        positions_batch, _, _, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        total_atoms = positions_batch.shape[0]
+
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+
+        # Initial full build
+        nm1 = torch.full(
+            (total_atoms, max_neighbors1), -1, dtype=torch.int32, device=device
+        )
+        nm2 = torch.full(
+            (total_atoms, max_neighbors2), -1, dtype=torch.int32, device=device
+        )
+        nn1 = torch.zeros(total_atoms, dtype=torch.int32, device=device)
+        nn2 = torch.zeros(total_atoms, dtype=torch.int32, device=device)
+
+        batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1,
+            neighbor_matrix2=nm2,
+            num_neighbors1=nn1,
+            num_neighbors2=nn2,
+            half_fill=half_fill,
+        )
+
+        saved_nn1 = nn1.clone()
+        saved_nn2 = nn2.clone()
+
+        rebuild_flags = torch.zeros(2, dtype=torch.bool, device=device)
+        batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1,
+            neighbor_matrix2=nm2,
+            num_neighbors1=nn1,
+            num_neighbors2=nn2,
+            half_fill=half_fill,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert torch.equal(nn1, saved_nn1), "nn1 must be unchanged when flags are False"
+        assert torch.equal(nn2, saved_nn2), "nn2 must be unchanged when flags are False"
+
+    def test_rebuild_updates_data(self, device, dtype, half_fill):
+        """True flags: rebuilt system data should match a fresh full rebuild."""
+        atoms_per_system = [5, 6]
+        positions_batch, _, _, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        total_atoms = positions_batch.shape[0]
+
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+
+        # Reference: full build
+        nm1_ref = torch.full(
+            (total_atoms, max_neighbors1), -1, dtype=torch.int32, device=device
+        )
+        nm2_ref = torch.full(
+            (total_atoms, max_neighbors2), -1, dtype=torch.int32, device=device
+        )
+        nn1_ref = torch.zeros(total_atoms, dtype=torch.int32, device=device)
+        nn2_ref = torch.zeros(total_atoms, dtype=torch.int32, device=device)
+        batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1_ref,
+            neighbor_matrix2=nm2_ref,
+            num_neighbors1=nn1_ref,
+            num_neighbors2=nn2_ref,
+            half_fill=half_fill,
+        )
+
+        # Selective rebuild with all flags=True
+        nm1_sel = torch.full(
+            (total_atoms, max_neighbors1), 99, dtype=torch.int32, device=device
+        )
+        nm2_sel = torch.full(
+            (total_atoms, max_neighbors2), 99, dtype=torch.int32, device=device
+        )
+        nn1_sel = torch.full((total_atoms,), 99, dtype=torch.int32, device=device)
+        nn2_sel = torch.full((total_atoms,), 99, dtype=torch.int32, device=device)
+
+        rebuild_flags = torch.ones(2, dtype=torch.bool, device=device)
+        batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1_sel,
+            neighbor_matrix2=nm2_sel,
+            num_neighbors1=nn1_sel,
+            num_neighbors2=nn2_sel,
+            half_fill=half_fill,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert torch.equal(nn1_sel, nn1_ref), (
+            "nn1 should match full rebuild when all flags=True"
+        )
+        assert torch.equal(nn2_sel, nn2_ref), (
+            "nn2 should match full rebuild when all flags=True"
+        )

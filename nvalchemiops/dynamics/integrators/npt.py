@@ -489,8 +489,8 @@ def _npt_velocity_half_step_single_kernel(
     cell_velocity: wp.array(dtype=Any),
     volume: wp.array(dtype=Any),
     eta_dot: wp.array2d(dtype=Any),
-    num_atoms: wp.int32,
-    dt_half: Any,
+    num_atoms: wp.array(dtype=wp.int32),
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPT isotropic velocity half-step, single system (out-only).
@@ -509,8 +509,9 @@ def _npt_velocity_half_step_single_kernel(
     eta_dot_1 = eta_dot[0, 0]
 
     V = volume[0]
-    N_f = type(m)(3 * num_atoms)
+    N_f = type(m)(3 * num_atoms[0])
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_isotropic(h_dot, V, coupling, eta_dot_1, v)
 
@@ -527,7 +528,7 @@ def _npt_velocity_half_step_kernel(
     volumes: wp.array(dtype=Any),
     eta_dots: wp.array2d(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPT isotropic velocity half-step, batched (out-only).
@@ -548,6 +549,7 @@ def _npt_velocity_half_step_kernel(
     V = volumes[sys_id]
     N_f = type(m)(3 * N)
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_isotropic(h_dot, V, coupling, eta_dot_1, v)
 
@@ -566,8 +568,8 @@ def _nph_velocity_half_step_single_kernel(
     forces: wp.array(dtype=Any),
     cell_velocity: wp.array(dtype=Any),
     volume: wp.array(dtype=Any),
-    num_atoms: wp.int32,
-    dt_half: Any,
+    num_atoms: wp.array(dtype=wp.int32),
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPH isotropic velocity half-step, single system (out-only).
@@ -585,8 +587,9 @@ def _nph_velocity_half_step_single_kernel(
     h_dot = cell_velocity[0]
 
     V = volume[0]
-    N_f = type(m)(3 * num_atoms)
+    N_f = type(m)(3 * num_atoms[0])
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_isotropic(h_dot, V, coupling, type(m)(0.0), v)
 
@@ -602,7 +605,7 @@ def _nph_velocity_half_step_kernel(
     cell_velocities: wp.array(dtype=Any),
     volumes: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPH isotropic velocity half-step, batched (out-only).
@@ -622,6 +625,7 @@ def _nph_velocity_half_step_kernel(
     V = volumes[sys_id]
     N_f = type(m)(3 * N)
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_isotropic(h_dot, V, coupling, type(m)(0.0), v)
 
@@ -640,7 +644,7 @@ def _position_update_single_kernel(
     cell: wp.array(dtype=Any),
     cell_inv: wp.array(dtype=Any),
     cell_velocity: wp.array(dtype=Any),
-    dt: Any,
+    dt: wp.array(dtype=Any),
     positions_out: wp.array(dtype=Any),
 ):
     """Position update for single system (out-only).
@@ -657,7 +661,7 @@ def _position_update_single_kernel(
     h_inv = cell_inv[0]
     h_dot = cell_velocity[0]
 
-    positions_out[atom_idx] = _npt_position_step(r, v, h_dot, h_inv, dt)
+    positions_out[atom_idx] = _npt_position_step(r, v, h_dot, h_inv, dt[0])
 
 
 @wp.kernel
@@ -668,7 +672,7 @@ def _position_update_kernel(
     cells: wp.array(dtype=Any),
     cells_inv: wp.array(dtype=Any),
     cell_velocities: wp.array(dtype=Any),
-    dt: Any,
+    dt: wp.array(dtype=Any),
     positions_out: wp.array(dtype=Any),
 ):
     """Position update, batched (out-only).
@@ -684,7 +688,7 @@ def _position_update_kernel(
     h_inv = cells_inv[sys_id]
     h_dot = cell_velocities[sys_id]
 
-    positions_out[atom_idx] = _npt_position_step(r, v, h_dot, h_inv, dt)
+    positions_out[atom_idx] = _npt_position_step(r, v, h_dot, h_inv, dt[sys_id])
 
 
 # ==============================================================================
@@ -702,7 +706,7 @@ def _npt_cell_velocity_update_kernel(
     kinetic_energies: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
     eta_dots: wp.array2d(dtype=Any),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
 ):
     """
     NPT isotropic cell velocity update with Nosé-Hoover thermostat coupling.
@@ -746,8 +750,8 @@ def _npt_cell_velocity_update_kernel(
         Atom counts per system. Shape (B,).
     eta_dots : wp.array2d(dtype=float32/float64)
         Thermostat chain velocities. Shape (B, chain_length).
-    dt_half : float32/float64
-        Half time step (dt/2).
+    dt : wp.array(dtype=float32/float64)
+        Time step per system. Shape (B,).
 
     Notes
     -----
@@ -783,6 +787,7 @@ def _npt_cell_velocity_update_kernel(
 
     # Apply thermostat drag
     zero = type(V)(0.0)
+    dt_half = dt[sys_id] * type(V)(0.5)
     h_dot_new_diag = h_dot[0, 0] + dt_half * (h_dot_accel - eta_dot_1 * h_dot[0, 0])
 
     cell_velocities[sys_id] = type(h_dot)(
@@ -807,7 +812,7 @@ def _nph_cell_velocity_update_kernel(
     cell_masses: wp.array(dtype=Any),
     kinetic_energies: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
 ):
     """
     NPH isotropic cell velocity update (no thermostat coupling).
@@ -838,8 +843,8 @@ def _nph_cell_velocity_update_kernel(
         System properties.
     num_atoms_per_system : wp.array(dtype=wp.int32)
         Atom counts per system.
-    dt_half : float
-        Half time step.
+    dt : wp.array(dtype=float32/float64)
+        Time step per system. Shape (B,).
 
     Notes
     -----
@@ -872,6 +877,7 @@ def _nph_cell_velocity_update_kernel(
     h_dot_accel = V * P_diff / W
 
     zero = type(V)(0.0)
+    dt_half = dt[sys_id] * type(V)(0.5)
     h_dot_new_diag = h_dot[0, 0] + dt_half * h_dot_accel
 
     cell_velocities[sys_id] = type(h_dot)(
@@ -902,7 +908,7 @@ def _npt_cell_velocity_update_aniso_kernel(
     kinetic_energies: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
     eta_dots: wp.array2d(dtype=Any),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
 ):
     """NPT cell velocity update - anisotropic/orthorhombic.
 
@@ -945,6 +951,7 @@ def _npt_cell_velocity_update_aniso_kernel(
 
     # Apply thermostat drag per axis
     zero = type(V)(0.0)
+    dt_half = dt[sys_id] * type(V)(0.5)
     h_dot_new_xx = h_dot[0, 0] + dt_half * (h_dot_accel_x - eta_dot_1 * h_dot[0, 0])
     h_dot_new_yy = h_dot[1, 1] + dt_half * (h_dot_accel_y - eta_dot_1 * h_dot[1, 1])
     h_dot_new_zz = h_dot[2, 2] + dt_half * (h_dot_accel_z - eta_dot_1 * h_dot[2, 2])
@@ -963,7 +970,7 @@ def _nph_cell_velocity_update_aniso_kernel(
     cell_masses: wp.array(dtype=Any),
     kinetic_energies: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
 ):
     """NPH cell velocity update - anisotropic/orthorhombic (no thermostat).
 
@@ -998,6 +1005,7 @@ def _nph_cell_velocity_update_aniso_kernel(
     h_dot_accel_z = V * P_diff_z / W
 
     zero = type(V)(0.0)
+    dt_half = dt[sys_id] * type(V)(0.5)
     h_dot_new_xx = h_dot[0, 0] + dt_half * h_dot_accel_x
     h_dot_new_yy = h_dot[1, 1] + dt_half * h_dot_accel_y
     h_dot_new_zz = h_dot[2, 2] + dt_half * h_dot_accel_z
@@ -1022,7 +1030,7 @@ def _npt_cell_velocity_update_triclinic_kernel(
     kinetic_energies: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
     eta_dots: wp.array2d(dtype=Any),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
 ):
     """NPT cell velocity update - full triclinic.
 
@@ -1061,6 +1069,7 @@ def _npt_cell_velocity_update_triclinic_kernel(
 
     # Cell velocity accelerations
     V_W = V / W
+    dt_half = dt[sys_id] * type(V)(0.5)
     h_dot_new_00 = h_dot[0, 0] + dt_half * (V_W * P_diff_00 - eta_dot_1 * h_dot[0, 0])
     h_dot_new_01 = h_dot[0, 1] + dt_half * (V_W * P_diff_01 - eta_dot_1 * h_dot[0, 1])
     h_dot_new_02 = h_dot[0, 2] + dt_half * (V_W * P_diff_02 - eta_dot_1 * h_dot[0, 2])
@@ -1093,7 +1102,7 @@ def _nph_cell_velocity_update_triclinic_kernel(
     cell_masses: wp.array(dtype=Any),
     kinetic_energies: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
 ):
     """NPH cell velocity update - full triclinic (no thermostat).
 
@@ -1127,6 +1136,7 @@ def _nph_cell_velocity_update_triclinic_kernel(
     P_diff_22 = P[8] + dof_V - P_ext[8]
 
     V_W = V / W
+    dt_half = dt[sys_id] * type(V)(0.5)
     h_dot_new_00 = h_dot[0, 0] + dt_half * V_W * P_diff_00
     h_dot_new_01 = h_dot[0, 1] + dt_half * V_W * P_diff_01
     h_dot_new_02 = h_dot[0, 2] + dt_half * V_W * P_diff_02
@@ -1163,8 +1173,8 @@ def _npt_velocity_half_step_aniso_single_kernel(
     cell_velocity: wp.array(dtype=Any),
     volume: wp.array(dtype=Any),
     eta_dot: wp.array2d(dtype=Any),
-    num_atoms: wp.int32,
-    dt_half: Any,
+    num_atoms: wp.array(dtype=wp.int32),
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPT anisotropic velocity half-step, single system (out-only).
@@ -1181,8 +1191,9 @@ def _npt_velocity_half_step_aniso_single_kernel(
     eta_dot_1 = eta_dot[0, 0]
     V = volume[0]
 
-    N_f = type(m)(3 * num_atoms)
+    N_f = type(m)(3 * num_atoms[0])
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_anisotropic(h_dot, V, coupling, eta_dot_1, v)
 
@@ -1199,7 +1210,7 @@ def _npt_velocity_half_step_aniso_kernel(
     volumes: wp.array(dtype=Any),
     eta_dots: wp.array2d(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPT anisotropic velocity half-step, batched (out-only).
@@ -1220,6 +1231,7 @@ def _npt_velocity_half_step_aniso_kernel(
 
     N_f = type(m)(3 * N)
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_anisotropic(h_dot, V, coupling, eta_dot_1, v)
 
@@ -1240,8 +1252,8 @@ def _npt_velocity_half_step_triclinic_single_kernel(
     cell_inv: wp.array(dtype=Any),
     volume: wp.array(dtype=Any),
     eta_dot: wp.array2d(dtype=Any),
-    num_atoms: wp.int32,
-    dt_half: Any,
+    num_atoms: wp.array(dtype=wp.int32),
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPT triclinic velocity half-step, single system (out-only).
@@ -1258,8 +1270,9 @@ def _npt_velocity_half_step_triclinic_single_kernel(
     h_inv = cell_inv[0]
     eta_dot_1 = eta_dot[0, 0]
 
-    N_f = type(m)(3 * num_atoms)
+    N_f = type(m)(3 * num_atoms[0])
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_triclinic(h_dot, h_inv, coupling, eta_dot_1, v)
 
@@ -1277,7 +1290,7 @@ def _npt_velocity_half_step_triclinic_kernel(
     volumes: wp.array(dtype=Any),
     eta_dots: wp.array2d(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPT triclinic velocity half-step, batched (out-only).
@@ -1298,6 +1311,7 @@ def _npt_velocity_half_step_triclinic_kernel(
 
     N_f = type(m)(3 * N)
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_triclinic(h_dot, h_inv, coupling, eta_dot_1, v)
 
@@ -1317,8 +1331,8 @@ def _nph_velocity_half_step_triclinic_single_kernel(
     cell_velocity: wp.array(dtype=Any),
     cell_inv: wp.array(dtype=Any),
     volume: wp.array(dtype=Any),
-    num_atoms: wp.int32,
-    dt_half: Any,
+    num_atoms: wp.array(dtype=wp.int32),
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPH triclinic velocity half-step, single system (out-only, no thermostat).
@@ -1334,8 +1348,9 @@ def _nph_velocity_half_step_triclinic_single_kernel(
     h_dot = cell_velocity[0]
     h_inv = cell_inv[0]
 
-    N_f = type(m)(3 * num_atoms)
+    N_f = type(m)(3 * num_atoms[0])
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_triclinic(h_dot, h_inv, coupling, type(m)(0.0), v)
 
@@ -1352,7 +1367,7 @@ def _nph_velocity_half_step_triclinic_kernel(
     cells_inv: wp.array(dtype=Any),
     volumes: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPH triclinic velocity half-step, batched (out-only, no thermostat).
@@ -1372,6 +1387,7 @@ def _nph_velocity_half_step_triclinic_kernel(
 
     N_f = type(m)(3 * N)
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_triclinic(h_dot, h_inv, coupling, type(m)(0.0), v)
 
@@ -1385,8 +1401,8 @@ def _nph_velocity_half_step_aniso_single_kernel(
     forces: wp.array(dtype=Any),
     cell_velocity: wp.array(dtype=Any),
     volume: wp.array(dtype=Any),
-    num_atoms: wp.int32,
-    dt_half: Any,
+    num_atoms: wp.array(dtype=wp.int32),
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPH anisotropic velocity half-step, single system (out-only, no thermostat).
@@ -1402,8 +1418,9 @@ def _nph_velocity_half_step_aniso_single_kernel(
     h_dot = cell_velocity[0]
     V = volume[0]
 
-    N_f = type(m)(3 * num_atoms)
+    N_f = type(m)(3 * num_atoms[0])
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_anisotropic(h_dot, V, coupling, type(m)(0.0), v)
 
@@ -1419,7 +1436,7 @@ def _nph_velocity_half_step_aniso_kernel(
     cell_velocities: wp.array(dtype=Any),
     volumes: wp.array(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
-    dt_half: Any,
+    dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
     """NPH anisotropic velocity half-step, batched (out-only, no thermostat).
@@ -1439,6 +1456,7 @@ def _nph_velocity_half_step_aniso_kernel(
 
     N_f = type(m)(3 * N)
     coupling = type(m)(1.0) + type(m)(1.0) / N_f
+    dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
     drag = _drag_anisotropic(h_dot, V, coupling, type(m)(0.0), v)
 
@@ -1454,7 +1472,7 @@ def _nph_velocity_half_step_aniso_kernel(
 def _cell_update_kernel(
     cells: wp.array(dtype=Any),
     cell_velocities: wp.array(dtype=Any),
-    dt: Any,
+    dt: wp.array(dtype=Any),
     cells_out: wp.array(dtype=Any),
 ):
     """Update cell matrix: h_new = h + dt * ḣ (out-only).
@@ -1466,7 +1484,7 @@ def _cell_update_kernel(
     sys_id = wp.tid()
     h = cells[sys_id]
     h_dot = cell_velocities[sys_id]
-    cells_out[sys_id] = h + dt * h_dot
+    cells_out[sys_id] = h + dt[sys_id] * h_dot
 
 
 # ==============================================================================
@@ -1483,7 +1501,7 @@ def _npt_thermostat_chain_update_kernel(
     thermostat_masses: wp.array2d(dtype=Any),
     num_atoms_per_system: wp.array(dtype=wp.int32),
     chain_length: wp.int32,
-    dt_chain: Any,
+    dt_chain: wp.array(dtype=Any),
 ):
     """Update Nosé-Hoover chain for NPT thermostat.
 
@@ -1504,8 +1522,9 @@ def _npt_thermostat_chain_update_kernel(
     # First thermostat driven by kinetic energy difference
     G1 = (type(eta_dot_0)(2.0) * KE_typed - N_f * kT) / thermostat_masses[sys_id, 0]
 
-    dt_half = dt_chain * type(eta_dot_0)(0.5)
-    dt_quarter = dt_chain * type(eta_dot_0)(0.25)
+    dt_chain_sys = dt_chain[sys_id]
+    dt_half = dt_chain_sys * type(eta_dot_0)(0.5)
+    dt_quarter = dt_chain_sys * type(eta_dot_0)(0.25)
 
     # Last thermostat
     M_last = chain_length - 1
@@ -2030,13 +2049,6 @@ def compute_barostat_potential_energy(
 # ==============================================================================
 
 
-def _cast_dt(dtype, dt, scale=1.0):
-    """Cast ``dt * scale`` to the scalar type matching a vec3 dtype."""
-    if dtype == wp.vec3f:
-        return wp.float32(dt * scale)
-    return wp.float64(dt * scale)
-
-
 def npt_thermostat_half_step(
     eta: wp.array,
     eta_dot: wp.array,
@@ -2045,7 +2057,7 @@ def npt_thermostat_half_step(
     thermostat_masses: wp.array,
     num_atoms_per_system: wp.array,
     chain_length: int,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """
@@ -2067,8 +2079,9 @@ def npt_thermostat_half_step(
         Number of atoms per system. Shape (B,).
     chain_length : int
         Number of thermostats in chain.
-    dt : float
-        Half-step time (dt/2 for typical integration).
+    dt : wp.array
+        Full time step dt per system. Shape (B,). The half-step and quarter-step
+        factors are applied internally.
     device : str, optional
         Warp device.
     """
@@ -2076,11 +2089,6 @@ def npt_thermostat_half_step(
         device = eta.device
 
     num_systems = eta.shape[0]
-
-    if eta.dtype == wp.float32:
-        dt_typed = wp.float32(dt)
-    else:
-        dt_typed = wp.float64(dt)
 
     wp.launch(
         _npt_thermostat_chain_update_kernel,
@@ -2093,7 +2101,7 @@ def npt_thermostat_half_step(
             thermostat_masses,
             num_atoms_per_system,
             chain_length,
-            dt_typed,
+            dt,
         ],
         device=device,
     )
@@ -2108,7 +2116,7 @@ def npt_barostat_half_step(
     kinetic_energy: wp.array,
     num_atoms_per_system: wp.array,
     eta_dots: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """
@@ -2183,8 +2191,9 @@ def npt_barostat_half_step(
     eta_dots : wp.array2d(dtype=scalar)
         Thermostat chain velocities η̇. Shape (B, chain_length).
         Only eta_dots[:, 0] (first thermostat) couples to barostat.
-    dt : float
-        Integration time step. The half-step uses dt/2.
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,). The half-step factor is applied
+        internally.
     device : str, optional
         Warp device. Default: inferred from cell_velocities.
 
@@ -2238,11 +2247,6 @@ def npt_barostat_half_step(
 
     num_systems = cell_velocities.shape[0]
 
-    if cell_velocities.dtype == wp.mat33f:
-        dt_half = wp.float32(dt * 0.5)
-    else:
-        dt_half = wp.float64(dt * 0.5)
-
     # Dispatch based on target_pressures dtype
     tp_dtype = target_pressures.dtype
     kernel = _NPT_BAROSTAT_KERNELS.get(tp_dtype)
@@ -2264,7 +2268,7 @@ def npt_barostat_half_step(
             kinetic_energy,
             num_atoms_per_system,
             eta_dots,
-            dt_half,
+            dt,
         ],
         device=device,
     )
@@ -2280,18 +2284,13 @@ def npt_barostat_half_step_aniso(
     kinetic_energy: wp.array,
     num_atoms_per_system: wp.array,
     eta_dots: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """Anisotropic NPT barostat. See :func:`npt_barostat_half_step` with vec3 target."""
     if device is None:
         device = cell_velocities.device
     num_systems = cell_velocities.shape[0]
-    dt_half = (
-        wp.float32(dt * 0.5)
-        if cell_velocities.dtype == wp.mat33f
-        else wp.float64(dt * 0.5)
-    )
     wp.launch(
         _npt_cell_velocity_update_aniso_kernel,
         dim=num_systems,
@@ -2304,7 +2303,7 @@ def npt_barostat_half_step_aniso(
             kinetic_energy,
             num_atoms_per_system,
             eta_dots,
-            dt_half,
+            dt,
         ],
         device=device,
     )
@@ -2319,18 +2318,13 @@ def npt_barostat_half_step_triclinic(
     kinetic_energy: wp.array,
     num_atoms_per_system: wp.array,
     eta_dots: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """Triclinic NPT barostat. See :func:`npt_barostat_half_step` with vec9 target."""
     if device is None:
         device = cell_velocities.device
     num_systems = cell_velocities.shape[0]
-    dt_half = (
-        wp.float32(dt * 0.5)
-        if cell_velocities.dtype == wp.mat33f
-        else wp.float64(dt * 0.5)
-    )
     wp.launch(
         _npt_cell_velocity_update_triclinic_kernel,
         dim=num_systems,
@@ -2343,7 +2337,7 @@ def npt_barostat_half_step_triclinic(
             kinetic_energy,
             num_atoms_per_system,
             eta_dots,
-            dt_half,
+            dt,
         ],
         device=device,
     )
@@ -2356,8 +2350,8 @@ def npt_velocity_half_step(
     cell_velocities: wp.array,
     volumes: wp.array,
     eta_dots: wp.array,
-    num_atoms: int,
-    dt: float,
+    num_atoms: wp.array,
+    dt: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
     cells_inv: wp.array = None,
@@ -2411,10 +2405,11 @@ def npt_velocity_half_step(
         Cell volumes. Shape (B,).
     eta_dots : wp.array2d(dtype=scalar)
         Thermostat chain velocities. Shape (B, chain_length).
-    num_atoms : int
-        Total number of atoms (for single system) or used with num_atoms_per_system.
-    dt : float
-        Integration time step.
+    num_atoms : wp.array(dtype=wp.int32)
+        Atom count for single-system mode. Shape (1,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,). The half-step factor is applied
+        internally.
     batch_idx : wp.array(dtype=wp.int32), optional
         System index for each atom. Required for batched simulations.
     num_atoms_per_system : wp.array(dtype=wp.int32), optional
@@ -2480,8 +2475,8 @@ def npt_velocity_half_step_out(
     cell_velocities: wp.array,
     volumes: wp.array,
     eta_dots: wp.array,
-    num_atoms: int,
-    dt: float,
+    num_atoms: wp.array,
+    dt: wp.array,
     velocities_out: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
@@ -2502,10 +2497,11 @@ def npt_velocity_half_step_out(
         Input velocities (not modified when velocities_out differs).
     masses, forces, cell_velocities, volumes, eta_dots : wp.array
         System state arrays.
-    num_atoms : int
-        Number of atoms.
-    dt : float
-        Time step.
+    num_atoms : wp.array(dtype=wp.int32)
+        Atom count for single-system mode. Shape (1,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,). The half-step factor is applied
+        internally.
     velocities_out : wp.array
         Pre-allocated output array.
     batch_idx : wp.array, optional
@@ -2532,7 +2528,6 @@ def npt_velocity_half_step_out(
 
     exec_mode = resolve_execution_mode(batch_idx, None)
     n_atoms = velocities.shape[0]
-    dt_half = _cast_dt(velocities.dtype, dt, 0.5)
 
     if mode not in _NPT_VELOCITY_FAMILIES:
         raise ValueError(
@@ -2556,8 +2551,8 @@ def npt_velocity_half_step_out(
             *extra,
             volumes,
             eta_dots,
-            n_atoms,
-            dt_half,
+            num_atoms,
+            dt,
             velocities_out,
         ],
         inputs_batch=[
@@ -2570,7 +2565,7 @@ def npt_velocity_half_step_out(
             volumes,
             eta_dots,
             num_atoms_per_system,
-            dt_half,
+            dt,
             velocities_out,
         ],
         device=device,
@@ -2583,7 +2578,7 @@ def npt_position_update(
     velocities: wp.array,
     cells: wp.array,
     cell_velocities: wp.array,
-    dt: float,
+    dt: wp.array,
     cells_inv: wp.array,
     batch_idx: wp.array = None,
     device: str = None,
@@ -2601,8 +2596,8 @@ def npt_position_update(
         Cell matrices.
     cell_velocities : wp.array
         Cell velocity matrices.
-    dt : float
-        Time step.
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
     cells_inv : wp.array
         Pre-computed cell inverses. Caller must pre-compute via
         ``compute_cell_inverse``.
@@ -2631,7 +2626,7 @@ def npt_position_update_out(
     velocities: wp.array,
     cells: wp.array,
     cell_velocities: wp.array,
-    dt: float,
+    dt: wp.array,
     positions_out: wp.array,
     cells_inv: wp.array,
     batch_idx: wp.array = None,
@@ -2661,8 +2656,6 @@ def npt_position_update_out(
     exec_mode = resolve_execution_mode(batch_idx, None)
     num_atoms = positions.shape[0]
 
-    dt_typed = _cast_dt(positions.dtype, dt)
-
     launch_family(
         _POSITION_UPDATE_FAMILY,
         mode=exec_mode,
@@ -2673,7 +2666,7 @@ def npt_position_update_out(
             cells,
             cells_inv,
             cell_velocities,
-            dt_typed,
+            dt,
             positions_out,
         ],
         inputs_batch=[
@@ -2683,7 +2676,7 @@ def npt_position_update_out(
             cells,
             cells_inv,
             cell_velocities,
-            dt_typed,
+            dt,
             positions_out,
         ],
         device=device,
@@ -2694,7 +2687,7 @@ def npt_position_update_out(
 def npt_cell_update(
     cells: wp.array,
     cell_velocities: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """
@@ -2706,8 +2699,8 @@ def npt_cell_update(
         Cell matrices. MODIFIED in-place.
     cell_velocities : wp.array
         Cell velocity matrices.
-    dt : float
-        Time step.
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
     device : str, optional
         Warp device.
     """
@@ -2724,7 +2717,7 @@ def npt_cell_update(
 def npt_cell_update_out(
     cells: wp.array,
     cell_velocities: wp.array,
-    dt: float,
+    dt: wp.array,
     cells_out: wp.array,
     device: str = None,
     _skip_validation: bool = False,
@@ -2745,15 +2738,10 @@ def npt_cell_update_out(
 
     num_systems = cells.shape[0]
 
-    if cells.dtype == wp.mat33f:
-        dt_typed = wp.float32(dt)
-    else:
-        dt_typed = wp.float64(dt)
-
     wp.launch(
         _cell_update_kernel,
         dim=num_systems,
-        inputs=[cells, cell_velocities, dt_typed, cells_out],
+        inputs=[cells, cell_velocities, dt, cells_out],
         device=device,
     )
 
@@ -2774,9 +2762,9 @@ def run_npt_step(
     cell_masses: wp.array,
     target_temperature: wp.array,
     target_pressure: wp.array,
-    num_atoms: int,
+    num_atoms: wp.array,
     chain_length: int,
-    dt: float,
+    dt: wp.array,
     pressure_tensors: wp.array,
     volumes: wp.array,
     kinetic_energy: wp.array,
@@ -2821,12 +2809,12 @@ def run_npt_step(
         Barostat masses.
     target_temperature, target_pressure : wp.array
         Target conditions.
-    num_atoms : int
-        Total number of atoms.
+    num_atoms : wp.array(dtype=wp.int32)
+        Atom count for single-system mode. Shape (1,).
     chain_length : int
         Number of thermostats in chain.
-    dt : float
-        Time step.
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
     pressure_tensors : wp.array(dtype=vec9f or vec9d)
         Scratch array for pressure tensor. Shape (B,).
     volumes : wp.array(dtype=scalar)
@@ -2872,7 +2860,7 @@ def run_npt_step(
         thermostat_masses,
         num_atoms_per_system,
         chain_length,
-        dt * 0.5,
+        dt,
         device=device,
     )
 
@@ -2984,7 +2972,7 @@ def run_npt_step(
         thermostat_masses,
         num_atoms_per_system,
         chain_length,
-        dt * 0.5,
+        dt,
         device=device,
     )
 
@@ -3002,7 +2990,7 @@ def nph_barostat_half_step(
     cell_masses: wp.array,
     kinetic_energy: wp.array,
     num_atoms_per_system: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """
@@ -3063,8 +3051,9 @@ def nph_barostat_half_step(
         System kinetic energies. Shape (B,).
     num_atoms_per_system : wp.array(dtype=wp.int32)
         Number of atoms per system. Shape (B,).
-    dt : float
-        Integration time step.
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,). The half-step factor is applied
+        internally.
     device : str, optional
         Warp device.
 
@@ -3096,11 +3085,6 @@ def nph_barostat_half_step(
 
     num_systems = cell_velocities.shape[0]
 
-    if cell_velocities.dtype == wp.mat33f:
-        dt_half = wp.float32(dt * 0.5)
-    else:
-        dt_half = wp.float64(dt * 0.5)
-
     # Dispatch based on target_pressures dtype
     tp_dtype = target_pressures.dtype
     kernel = _NPH_BAROSTAT_KERNELS.get(tp_dtype)
@@ -3120,7 +3104,7 @@ def nph_barostat_half_step(
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            dt_half,
+            dt,
         ],
         device=device,
     )
@@ -3135,18 +3119,13 @@ def nph_barostat_half_step_aniso(
     cell_masses: wp.array,
     kinetic_energy: wp.array,
     num_atoms_per_system: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """Anisotropic NPH barostat. See :func:`nph_barostat_half_step` with vec3 target."""
     if device is None:
         device = cell_velocities.device
     num_systems = cell_velocities.shape[0]
-    dt_half = (
-        wp.float32(dt * 0.5)
-        if cell_velocities.dtype == wp.mat33f
-        else wp.float64(dt * 0.5)
-    )
     wp.launch(
         _nph_cell_velocity_update_aniso_kernel,
         dim=num_systems,
@@ -3158,7 +3137,7 @@ def nph_barostat_half_step_aniso(
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            dt_half,
+            dt,
         ],
         device=device,
     )
@@ -3172,7 +3151,7 @@ def nph_barostat_half_step_triclinic(
     cell_masses: wp.array,
     kinetic_energy: wp.array,
     num_atoms_per_system: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """Triclinic NPH barostat. See :func:`nph_barostat_half_step` with vec9 target."""
@@ -3180,11 +3159,6 @@ def nph_barostat_half_step_triclinic(
         device = cell_velocities.device
 
     num_systems = cell_velocities.shape[0]
-
-    if cell_velocities.dtype == wp.mat33f:
-        dt_half = wp.float32(dt * 0.5)
-    else:
-        dt_half = wp.float64(dt * 0.5)
 
     wp.launch(
         _nph_cell_velocity_update_triclinic_kernel,
@@ -3197,7 +3171,7 @@ def nph_barostat_half_step_triclinic(
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            dt_half,
+            dt,
         ],
         device=device,
     )
@@ -3209,8 +3183,8 @@ def nph_velocity_half_step(
     forces: wp.array,
     cell_velocities: wp.array,
     volumes: wp.array,
-    num_atoms: int,
-    dt: float,
+    num_atoms: wp.array,
+    dt: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
     cells_inv: wp.array = None,
@@ -3255,10 +3229,11 @@ def nph_velocity_half_step(
         Cell velocity matrices.
     volumes : wp.array(dtype=scalar)
         Cell volumes.
-    num_atoms : int
-        Total number of atoms.
-    dt : float
-        Integration time step.
+    num_atoms : wp.array(dtype=wp.int32)
+        Atom count for single-system mode. Shape (1,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,). The half-step factor is applied
+        internally.
     batch_idx : wp.array, optional
         System index for each atom.
     num_atoms_per_system : wp.array, optional
@@ -3308,8 +3283,8 @@ def nph_velocity_half_step_out(
     forces: wp.array,
     cell_velocities: wp.array,
     volumes: wp.array,
-    num_atoms: int,
-    dt: float,
+    num_atoms: wp.array,
+    dt: wp.array,
     velocities_out: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
@@ -3329,10 +3304,11 @@ def nph_velocity_half_step_out(
         Input velocities (not modified when velocities_out differs).
     masses, forces, cell_velocities, volumes : wp.array
         System state arrays.
-    num_atoms : int
-        Number of atoms.
-    dt : float
-        Time step.
+    num_atoms : wp.array(dtype=wp.int32)
+        Atom count for single-system mode. Shape (1,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,). The half-step factor is applied
+        internally.
     velocities_out : wp.array
         Pre-allocated output array.
     batch_idx, num_atoms_per_system : wp.array, optional
@@ -3357,7 +3333,6 @@ def nph_velocity_half_step_out(
 
     exec_mode = resolve_execution_mode(batch_idx, None)
     n_atoms = velocities.shape[0]
-    dt_half = _cast_dt(velocities.dtype, dt, 0.5)
 
     if mode not in _NPH_VELOCITY_FAMILIES:
         raise ValueError(
@@ -3380,8 +3355,8 @@ def nph_velocity_half_step_out(
             cell_velocities,
             *extra,
             volumes,
-            n_atoms,
-            dt_half,
+            num_atoms,
+            dt,
             velocities_out,
         ],
         inputs_batch=[
@@ -3393,7 +3368,7 @@ def nph_velocity_half_step_out(
             *extra,
             volumes,
             num_atoms_per_system,
-            dt_half,
+            dt,
             velocities_out,
         ],
         device=device,
@@ -3406,7 +3381,7 @@ def nph_position_update(
     velocities: wp.array,
     cells: wp.array,
     cell_velocities: wp.array,
-    dt: float,
+    dt: wp.array,
     cells_inv: wp.array,
     batch_idx: wp.array = None,
     device: str = None,
@@ -3433,7 +3408,7 @@ def nph_position_update_out(
     velocities: wp.array,
     cells: wp.array,
     cell_velocities: wp.array,
-    dt: float,
+    dt: wp.array,
     positions_out: wp.array,
     cells_inv: wp.array,
     batch_idx: wp.array = None,
@@ -3463,7 +3438,7 @@ def nph_position_update_out(
 def nph_cell_update(
     cells: wp.array,
     cell_velocities: wp.array,
-    dt: float,
+    dt: wp.array,
     device: str = None,
 ) -> None:
     """
@@ -3484,8 +3459,8 @@ def run_nph_step(
     virial_tensors: wp.array,
     cell_masses: wp.array,
     target_pressure: wp.array,
-    num_atoms: int,
-    dt: float,
+    num_atoms: wp.array,
+    dt: wp.array,
     pressure_tensors: wp.array,
     volumes: wp.array,
     kinetic_energy: wp.array,
@@ -3524,10 +3499,10 @@ def run_nph_step(
         Barostat masses.
     target_pressure : wp.array
         Target/external pressures.
-    num_atoms : int
-        Total number of atoms.
-    dt : float
-        Time step.
+    num_atoms : wp.array(dtype=wp.int32)
+        Atom count for single-system mode. Shape (1,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
     pressure_tensors : wp.array(dtype=vec9f or vec9d)
         Scratch array for pressure tensor. Shape (B,).
     volumes : wp.array(dtype=scalar)

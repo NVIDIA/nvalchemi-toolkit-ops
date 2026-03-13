@@ -1728,6 +1728,8 @@ def lj_energy_forces(
     switch_width: float = 0.0,
     half_neighbor_list: bool = True,
     device: str | None = None,
+    energies_out: wp.array | None = None,
+    forces_out: wp.array | None = None,
 ) -> tuple[wp.array, wp.array]:
     """Compute Lennard-Jones energies and forces.
 
@@ -1761,6 +1763,13 @@ def lj_energy_forces(
         Batch indices for each atom. Required for batched mode.
     device : str | None
         Warp device. If None, inferred from positions.
+    energies_out : wp.array | None, shape (N,)
+        Optional pre-allocated output buffer for per-atom energies.
+        When provided, it is zeroed and reused instead of allocating a
+        new array.
+    forces_out : wp.array | None, shape (N,)
+        Optional pre-allocated output buffer for forces. When provided,
+        it is zeroed and reused instead of allocating a new array.
 
     Returns
     -------
@@ -1784,9 +1793,17 @@ def lj_energy_forces(
     if not use_matrix and not use_list:
         raise ValueError("Must provide either neighbor_matrix or neighbor_list")
 
-    # Allocate outputs (matches input dtype for flexibility)
-    energies = wp.zeros(num_atoms, dtype=scalar_dtype, device=device)
-    forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+    if energies_out is None:
+        energies = wp.zeros(num_atoms, dtype=scalar_dtype, device=device)
+    else:
+        energies = energies_out
+        energies.zero_()
+
+    if forces_out is None:
+        forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+    else:
+        forces = forces_out
+        forces.zero_()
 
     # Wrap scalar parameters
     wp_epsilon = wp.array([epsilon], dtype=scalar_dtype, device=device)
@@ -1889,6 +1906,9 @@ def lj_energy_forces_virial(
     switch_width: float = 0.0,
     half_neighbor_list: bool = True,
     device: str | None = None,
+    energies_out: wp.array | None = None,
+    forces_out: wp.array | None = None,
+    virial_out: wp.array | None = None,
 ) -> tuple[wp.array, wp.array, wp.array]:
     """Compute Lennard-Jones energies, forces, and virial tensor.
 
@@ -1926,6 +1946,17 @@ def lj_energy_forces_virial(
         Number of systems (for batched virial allocation).
     device : str | None
         Warp device. If None, inferred from positions.
+    energies_out : wp.array | None, shape (N,)
+        Optional pre-allocated output buffer for per-atom energies.
+        When provided, it is zeroed and reused instead of allocating a
+        new array.
+    forces_out : wp.array | None, shape (N,)
+        Optional pre-allocated output buffer for forces. When provided,
+        it is zeroed and reused instead of allocating a new array.
+    virial_out : wp.array | None, shape (9,) or (B, 9)
+        Optional pre-allocated output buffer for the virial tensor.
+        When provided, it is zeroed and reused instead of allocating a
+        new array.
 
     Returns
     -------
@@ -1956,14 +1987,26 @@ def lj_energy_forces_virial(
     if not use_matrix and not use_list:
         raise ValueError("Must provide either neighbor_matrix or neighbor_list")
 
-    # Allocate outputs (matches input dtype for flexibility)
-    energies = wp.zeros(num_atoms, dtype=scalar_dtype, device=device)
-    forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
-
-    if is_batched:
-        virial = wp.zeros((num_systems, 9), dtype=scalar_dtype, device=device)
+    if energies_out is None:
+        energies = wp.zeros(num_atoms, dtype=scalar_dtype, device=device)
     else:
-        virial = wp.zeros(9, dtype=scalar_dtype, device=device)
+        energies = energies_out
+        energies.zero_()
+
+    if forces_out is None:
+        forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+    else:
+        forces = forces_out
+        forces.zero_()
+
+    if virial_out is None:
+        if is_batched:
+            virial = wp.zeros((num_systems, 9), dtype=scalar_dtype, device=device)
+        else:
+            virial = wp.zeros(9, dtype=scalar_dtype, device=device)
+    else:
+        virial = virial_out
+        virial.zero_()
 
     # Wrap scalar parameters
     wp_epsilon = wp.array([epsilon], dtype=scalar_dtype, device=device)

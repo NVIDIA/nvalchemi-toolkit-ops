@@ -60,10 +60,13 @@ _DEFAULT_SEED = 42
 def _make_bench(num_atoms, perturbation=0.1, batch_size=1, seed=_DEFAULT_SEED):
     """Create a NvalchemiOpsBenchmark for a perturbed LJ system."""
     torch.manual_seed(seed)
-    num_cells = int((num_atoms // 4 + 1) ** (1.0 / 3.0))
-    positions_np, cell_np = create_fcc_argon(num_unit_cells=num_cells, a=5.26)
-    positions = torch.as_tensor(positions_np, dtype=torch.float64, device="cuda")
-    cell = torch.as_tensor(cell_np, dtype=torch.float64, device="cuda")
+    num_cells = int((num_atoms // 4 + 1) ** (1 / 3))
+    positions, cell = create_fcc_argon(
+        num_unit_cells=num_cells,
+        a=5.26,
+    )
+    positions = torch.as_tensor(positions, dtype=torch.float64, device="cuda")
+    cell = torch.as_tensor(cell, dtype=torch.float64, device="cuda")
     actual_atoms = positions.shape[0]
 
     if batch_size == 1:

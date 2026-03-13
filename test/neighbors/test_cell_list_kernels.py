@@ -608,3 +608,266 @@ class TestCellListWpLaunchers:
         # Verify we found some neighbors
         assert torch.all(num_neighbors >= 0), "Neighbor counts should be non-negative"
         assert num_neighbors.sum() > 0, "Should find some neighbors"
+
+
+@pytest.mark.parametrize("dtype", dtypes)
+class TestCellListSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for cell list warp launchers."""
+
+    def test_no_rebuild_preserves_data(self, device, dtype):
+        """Flag=False: neighbor data should remain unchanged."""
+        positions, cell, pbc = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+        )
+        pbc = pbc.squeeze(0)
+        cutoff = 1.1
+
+        wp_dtype = get_wp_dtype(dtype)
+        wp_vec_dtype = get_wp_vec_dtype(dtype)
+        wp_mat_dtype = get_wp_mat_dtype(dtype)
+
+        # Build cell list
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, cutoff)
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0], max_cells, neighbor_search_radius, device
+        )
+
+        wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+        wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+        wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+        wp_cells_per_dimension = wp.from_torch(
+            cell_list_cache[0], dtype=wp.int32, return_ctype=True
+        )
+        wp_atom_periodic_shifts = wp.from_torch(
+            cell_list_cache[2], dtype=wp.vec3i, return_ctype=True
+        )
+        wp_atom_to_cell_mapping = wp.from_torch(
+            cell_list_cache[3], dtype=wp.vec3i, return_ctype=True
+        )
+        wp_atoms_per_cell_count = wp.from_torch(cell_list_cache[4], dtype=wp.int32)
+        wp_cell_atom_start_indices = wp.from_torch(cell_list_cache[5], dtype=wp.int32)
+        wp_cell_atom_list = wp.from_torch(
+            cell_list_cache[6], dtype=wp.int32, return_ctype=True
+        )
+
+        build_cell_list(
+            wp_positions,
+            wp_cell,
+            wp_pbc,
+            cutoff,
+            wp_cells_per_dimension,
+            wp_atom_periodic_shifts,
+            wp_atom_to_cell_mapping,
+            wp_atoms_per_cell_count,
+            wp_cell_atom_start_indices,
+            wp_cell_atom_list,
+            wp_dtype,
+            str(device),
+        )
+
+        max_neighbors = 10
+        neighbor_matrix = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        neighbor_matrix_shifts = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        num_neighbors = torch.zeros(
+            (positions.shape[0],), dtype=torch.int32, device=device
+        )
+        wp_neighbor_search_radius = wp.from_torch(
+            cell_list_cache[1], dtype=wp.int32, return_ctype=True
+        )
+        wp_nm = wp.from_torch(neighbor_matrix, dtype=wp.int32, return_ctype=True)
+        wp_nm_shifts = wp.from_torch(
+            neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+        )
+        wp_nn = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+
+        query_cell_list(
+            wp_positions,
+            wp_cell,
+            wp_pbc,
+            cutoff,
+            wp_cells_per_dimension,
+            wp_neighbor_search_radius,
+            wp_atom_periodic_shifts,
+            wp_atom_to_cell_mapping,
+            wp_atoms_per_cell_count,
+            wp_cell_atom_start_indices,
+            wp_cell_atom_list,
+            wp_nm,
+            wp_nm_shifts,
+            wp_nn,
+            wp_dtype,
+            str(device),
+            True,
+        )
+
+        saved_nm = neighbor_matrix.clone()
+        saved_nn = num_neighbors.clone()
+
+        # Selective query with flag=False: data should be unchanged
+        rebuild_flags = torch.zeros(1, dtype=torch.bool, device=device)
+        wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool)
+
+        query_cell_list(
+            wp_positions,
+            wp_cell,
+            wp_pbc,
+            cutoff,
+            wp_cells_per_dimension,
+            wp_neighbor_search_radius,
+            wp_atom_periodic_shifts,
+            wp_atom_to_cell_mapping,
+            wp_atoms_per_cell_count,
+            wp_cell_atom_start_indices,
+            wp_cell_atom_list,
+            wp_nm,
+            wp_nm_shifts,
+            wp_nn,
+            wp_dtype,
+            str(device),
+            True,
+            rebuild_flags=wp_rebuild_flags,
+        )
+
+        assert torch.equal(num_neighbors, saved_nn), (
+            "num_neighbors must be unchanged when rebuild_flags is False"
+        )
+        for i in range(positions.shape[0]):
+            n = num_neighbors[i].item()
+            assert torch.equal(neighbor_matrix[i, :n], saved_nm[i, :n]), (
+                f"neighbor_matrix row {i} should be unchanged"
+            )
+
+    def test_rebuild_updates_data(self, device, dtype):
+        """Flag=True: result should match a fresh full rebuild."""
+
+        positions, cell, pbc = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+        )
+        pbc = pbc.squeeze(0)
+        cutoff = 1.1
+
+        wp_dtype = get_wp_dtype(dtype)
+        wp_vec_dtype = get_wp_vec_dtype(dtype)
+        wp_mat_dtype = get_wp_mat_dtype(dtype)
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, cutoff)
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0], max_cells, neighbor_search_radius, device
+        )
+
+        wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+        wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+        wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+        wp_cells_per_dimension = wp.from_torch(
+            cell_list_cache[0], dtype=wp.int32, return_ctype=True
+        )
+        wp_atom_periodic_shifts = wp.from_torch(
+            cell_list_cache[2], dtype=wp.vec3i, return_ctype=True
+        )
+        wp_atom_to_cell_mapping = wp.from_torch(
+            cell_list_cache[3], dtype=wp.vec3i, return_ctype=True
+        )
+        wp_atoms_per_cell_count = wp.from_torch(cell_list_cache[4], dtype=wp.int32)
+        wp_cell_atom_start_indices = wp.from_torch(cell_list_cache[5], dtype=wp.int32)
+        wp_cell_atom_list = wp.from_torch(
+            cell_list_cache[6], dtype=wp.int32, return_ctype=True
+        )
+
+        build_cell_list(
+            wp_positions,
+            wp_cell,
+            wp_pbc,
+            cutoff,
+            wp_cells_per_dimension,
+            wp_atom_periodic_shifts,
+            wp_atom_to_cell_mapping,
+            wp_atoms_per_cell_count,
+            wp_cell_atom_start_indices,
+            wp_cell_atom_list,
+            wp_dtype,
+            str(device),
+        )
+
+        max_neighbors = 10
+        wp_neighbor_search_radius = wp.from_torch(
+            cell_list_cache[1], dtype=wp.int32, return_ctype=True
+        )
+
+        # Reference: full build
+        nm_ref = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        nm_ref_shifts = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_ref = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+        wp_nm_ref = wp.from_torch(nm_ref, dtype=wp.int32, return_ctype=True)
+        wp_nm_ref_shifts = wp.from_torch(
+            nm_ref_shifts, dtype=wp.vec3i, return_ctype=True
+        )
+        wp_nn_ref = wp.from_torch(nn_ref, dtype=wp.int32, return_ctype=True)
+        query_cell_list(
+            wp_positions,
+            wp_cell,
+            wp_pbc,
+            cutoff,
+            wp_cells_per_dimension,
+            wp_neighbor_search_radius,
+            wp_atom_periodic_shifts,
+            wp_atom_to_cell_mapping,
+            wp_atoms_per_cell_count,
+            wp_cell_atom_start_indices,
+            wp_cell_atom_list,
+            wp_nm_ref,
+            wp_nm_ref_shifts,
+            wp_nn_ref,
+            wp_dtype,
+            str(device),
+            True,
+        )
+
+        # Selective rebuild with flag=True
+        nm_sel = torch.full(
+            (positions.shape[0], max_neighbors), 0, dtype=torch.int32, device=device
+        )
+        nm_sel_shifts = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_sel = torch.full(positions.shape[0:1], 0, dtype=torch.int32, device=device)
+        wp_nm_sel = wp.from_torch(nm_sel, dtype=wp.int32, return_ctype=True)
+        wp_nm_sel_shifts = wp.from_torch(
+            nm_sel_shifts, dtype=wp.vec3i, return_ctype=True
+        )
+        wp_nn_sel = wp.from_torch(nn_sel, dtype=wp.int32, return_ctype=True)
+
+        rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
+        wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool)
+
+        query_cell_list(
+            wp_positions,
+            wp_cell,
+            wp_pbc,
+            cutoff,
+            wp_cells_per_dimension,
+            wp_neighbor_search_radius,
+            wp_atom_periodic_shifts,
+            wp_atom_to_cell_mapping,
+            wp_atoms_per_cell_count,
+            wp_cell_atom_start_indices,
+            wp_cell_atom_list,
+            wp_nm_sel,
+            wp_nm_sel_shifts,
+            wp_nn_sel,
+            wp_dtype,
+            str(device),
+            True,
+            rebuild_flags=wp_rebuild_flags,
+        )
+
+        assert torch.equal(nn_sel, nn_ref), (
+            "num_neighbors should match full rebuild when flag=True"
+        )

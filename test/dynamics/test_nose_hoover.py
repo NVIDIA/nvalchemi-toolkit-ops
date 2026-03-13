@@ -196,7 +196,14 @@ class TestNHCMassComputation:
         chain_length = 3
 
         masses = wp.empty(chain_length, dtype=wp.float64, device=device)
-        nhc_compute_masses(ndof, target_temp, tau, chain_length, masses, device=device)
+        nhc_compute_masses(
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            masses,
+            device=device,
+        )
 
         assert len(masses) == chain_length
         expected_q0 = ndof * target_temp * tau * tau
@@ -216,7 +223,12 @@ class TestNHCMassComputation:
         for chain_length in [1, 3, 5]:
             masses = wp.empty(chain_length, dtype=wp.float64, device=device)
             nhc_compute_masses(
-                ndof, target_temp, tau, chain_length, masses, device=device
+                wp.array([ndof], dtype=wp.int32, device=device),
+                wp.array([target_temp], dtype=wp.float64, device=device),
+                wp.array([tau], dtype=wp.float64, device=device),
+                chain_length,
+                masses,
+                device=device,
             )
             assert len(masses) == chain_length
 
@@ -361,7 +373,12 @@ class TestNHCAPI:
         ndof = 3 * num_atoms - 3
         chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
         nhc_compute_masses(
-            ndof, target_temp, tau, chain_length, chain_masses, device=device
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
         )
 
         eta = wp.zeros(chain_length, dtype=dtype_scalar, device=device)
@@ -411,7 +428,12 @@ class TestNHCAPI:
         ndof = 3 * num_atoms - 3
         chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
         nhc_compute_masses(
-            ndof, target_temp, tau, chain_length, chain_masses, device=device
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
         )
 
         eta_np = np.zeros(chain_length)
@@ -500,7 +522,12 @@ class TestNHCAPI:
         masses_np = np.ones(num_atoms, dtype=np_dtype)
         chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
         nhc_compute_masses(
-            ndof, target_temp, tau, chain_length, chain_masses, device=device
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
         )
 
         velocities = wp.array(
@@ -892,7 +919,12 @@ class TestNHCPhysics:
         ndof = 3 * num_atoms - 3
         chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
         nhc_compute_masses(
-            ndof, target_temp, tau, chain_length, chain_masses, device=device
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
         )
         masses_np = np.ones(num_atoms, dtype=np.float32)
 
@@ -969,7 +1001,12 @@ class TestNHCPhysics:
         ndof = 3 * num_atoms - 3
         chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
         nhc_compute_masses(
-            ndof, target_temp, tau, chain_length, chain_masses, device=device
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
         )
         masses_np = np.ones(num_atoms, dtype=np.float32)
 
@@ -1080,7 +1117,12 @@ class TestNHCPhysics:
         def measure_temperature(target_temp):
             chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
             nhc_compute_masses(
-                ndof, target_temp, tau, chain_length, chain_masses, device=device
+                wp.array([ndof], dtype=wp.int32, device=device),
+                wp.array([target_temp], dtype=wp.float64, device=device),
+                wp.array([tau], dtype=wp.float64, device=device),
+                chain_length,
+                chain_masses,
+                device=device,
             )
             initial_pos = np.random.randn(num_atoms, 3).astype(np.float32) * 0.5
             initial_vel = np.random.randn(num_atoms, 3).astype(np.float32) * 0.1
@@ -1154,7 +1196,12 @@ class TestNHCPhysics:
         masses_np = np.ones(num_atoms, dtype=np.float32)
         chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
         nhc_compute_masses(
-            ndof, target_temp, tau, chain_length, chain_masses, device=device
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
         )
 
         positions = wp.array(
@@ -1215,7 +1262,12 @@ class TestNHCPhysics:
         masses_np = np.ones(num_atoms, dtype=np.float32)
         chain_masses = wp.empty(chain_length, dtype=wp.float64, device=device)
         nhc_compute_masses(
-            ndof, target_temp, tau, chain_length, chain_masses, device=device
+            wp.array([ndof], dtype=wp.int32, device=device),
+            wp.array([target_temp], dtype=wp.float64, device=device),
+            wp.array([tau], dtype=wp.float64, device=device),
+            chain_length,
+            chain_masses,
+            device=device,
         )
 
         velocities = wp.array(

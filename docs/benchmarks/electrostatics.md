@@ -286,7 +286,7 @@ using the instructions below.
 ### DSF Parameters
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | `cutoff` | 12.0 |
 | `alpha` | 0.2 |
 | `component` | `full` (real-space only, no reciprocal-space split) |
@@ -298,7 +298,7 @@ using the instructions below.
 ## Benchmark Configuration
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | System Type | FCC crystal lattice with periodic boundaries |
 | Neighbor List | Cell list algorithm ($O(N)$ scaling) |
 | Warmup Iterations | 3 |
@@ -311,7 +311,7 @@ Parameters are automatically estimated using accuracy-based parameter estimation
 targeting $10^{-6}$ relative accuracy:
 
 | Parameter | Description |
-|-----------|-------------|
+| --------- | ----------- |
 | `alpha` | Ewald splitting parameter (auto-estimated) |
 | `k_cutoff` | Reciprocal-space cutoff for Ewald (auto-estimated) |
 | `real_space_cutoff` | Real-space cutoff distance (auto-estimated) |

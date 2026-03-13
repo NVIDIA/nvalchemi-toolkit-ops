@@ -25,8 +25,8 @@ from nvalchemiops.neighbors.naive import (
     naive_neighbor_matrix_pbc,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
-    _expand_naive_shifts,
     estimate_max_neighbors,
+    selective_zero_num_neighbors_single,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
@@ -47,6 +47,7 @@ def _naive_neighbor_matrix_no_pbc(
     neighbor_matrix: torch.Tensor,
     num_neighbors: torch.Tensor,
     half_fill: bool = False,
+    rebuild_flags: torch.Tensor | None = None,
 ) -> None:
     """Fill neighbor matrix for atoms using naive O(N^2) algorithm.
 
@@ -75,7 +76,10 @@ def _naive_neighbor_matrix_no_pbc(
     half_fill : bool
         If True, only store relationships where i < j to avoid double counting.
         If False, store all neighbor relationships symmetrically.
-
+    rebuild_flags : torch.Tensor, shape (1,), dtype=torch.bool, optional
+        Per-system rebuild flags. If provided, only systems where rebuild_flags[i]
+        is True are processed; others are skipped on the GPU without CPU sync.
+        Call selective_zero_num_neighbors before this launcher to reset counts.
     See Also
     --------
     nvalchemiops.neighbors.naive.naive_neighbor_matrix : Core warp launcher
@@ -90,6 +94,15 @@ def _naive_neighbor_matrix_no_pbc(
         neighbor_matrix, dtype=wp.int32, return_ctype=True
     )
     wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    if rebuild_flags is not None:
+        wp_rebuild_flags = wp.from_torch(
+            rebuild_flags, dtype=wp.bool, return_ctype=True
+        )
+        selective_zero_num_neighbors_single(
+            wp_num_neighbors, wp_rebuild_flags, str(device)
+        )
+    else:
+        wp_rebuild_flags = None
 
     naive_neighbor_matrix(
         positions=wp_positions,
@@ -99,6 +112,7 @@ def _naive_neighbor_matrix_no_pbc(
         wp_dtype=wp_dtype,
         device=str(device),
         half_fill=half_fill,
+        rebuild_flags=wp_rebuild_flags,
     )
 
 
@@ -114,28 +128,24 @@ def _naive_neighbor_matrix_pbc(
     neighbor_matrix_shifts: torch.Tensor,
     num_neighbors: torch.Tensor,
     shift_range_per_dimension: torch.Tensor,
-    shift_offset: torch.Tensor,
-    total_shifts: int,
+    num_shifts_per_system: torch.Tensor,
+    max_shifts_per_system: int,
     half_fill: bool = False,
+    rebuild_flags: torch.Tensor | None = None,
+    wrap_positions: bool = True,
 ) -> None:
     """Compute neighbor matrix with periodic boundary conditions using naive O(N^2) algorithm.
-
-    This function assumes that the number of shifts has been computed and the shifts have been
-    expanded into a single array of shift vectors. PBC information is encoded in the pre-computed
-    shifts, so it's not needed as a separate argument.
 
     This function is torch compilable.
 
     Parameters
     ----------
-    positions : torch.Tensor, shape (total_atoms, 3), dtype=torch.float32 or torch.float64
-        Atomic coordinates in Cartesian space. Each row represents one atom's
-        (x, y, z) position.
+    positions : torch.Tensor, shape (total_atoms, 3)
+        Atomic coordinates in Cartesian space.
     cutoff : float
-        Cutoff distance for neighbor detection in Cartesian units.
-        Must be positive. Atoms within this distance are considered neighbors.
-    cell : torch.Tensor, shape (1, 3, 3), dtype=torch.float32 or torch.float64
-        Cell matrices defining lattice vectors in Cartesian coordinates.
+        Cutoff distance for neighbor detection.
+    cell : torch.Tensor, shape (1, 3, 3)
+        Cell matrix defining lattice vectors.
     neighbor_matrix : torch.Tensor, shape (total_atoms, max_neighbors), dtype=torch.int32
         OUTPUT: Neighbor matrix to be filled.
     neighbor_matrix_shifts : torch.Tensor, shape (total_atoms, max_neighbors, 3), dtype=torch.int32
@@ -143,59 +153,33 @@ def _naive_neighbor_matrix_pbc(
     num_neighbors : torch.Tensor, shape (total_atoms,), dtype=torch.int32
         OUTPUT: Number of neighbors found for each atom.
     shift_range_per_dimension : torch.Tensor, shape (1, 3), dtype=torch.int32
-        Shift range in each dimension for each system.
-    shift_offset : torch.Tensor, shape (2,), dtype=torch.int32
-        Cumulative sum of number of shifts for each system.
-    total_shifts : int
-        Total number of shifts.
+        Shift range in each dimension.
+    num_shifts_per_system : torch.Tensor, shape (1,), dtype=torch.int32
+        Number of periodic shifts for the system.
+    max_shifts_per_system : int
+        Maximum shift count (used as launch dimension).
     half_fill : bool, optional
-        If True, only store relationships where i < j to avoid double counting.
-        If False, store all neighbor relationships symmetrically. Default is False.
-
-    Notes
-    -----
-    The PBC parameter is not needed because PBC information is encoded in the
-    pre-computed shift vectors (shift_range_per_dimension, shift_offset).
+        If True, only store relationships where i < j. Default is False.
+    rebuild_flags : torch.Tensor, shape (1,), dtype=torch.bool, optional
+        When False the kernel skips work (no CPU-GPU sync).
+    wrap_positions : bool, default=True
+        If True, wrap positions into the primary cell before neighbor search.
 
     See Also
     --------
     nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc : Core warp launcher
-    nvalchemiops.neighbors.neighbor_utils._expand_naive_shifts : Kernel for expanding shifts
     naive_neighbor_list : High-level wrapper function
     """
     device = positions.device
-    wp_device = wp.device_from_torch(device)
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
     wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
 
-    # Expand shift ranges into explicit shift vectors
-    shifts = torch.empty((total_shifts, 3), dtype=torch.int32, device=device)
-    shift_system_idx = torch.empty((total_shifts,), dtype=torch.int32, device=device)
-    wp_shifts = wp.from_torch(shifts, dtype=wp.vec3i, return_ctype=True)
-    wp_shift_system_idx = wp.from_torch(
-        shift_system_idx, dtype=wp.int32, return_ctype=True
-    )
-    wp_shift_range_per_dimension = wp.from_torch(
-        shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
-    )
-    wp_shift_offset = wp.from_torch(shift_offset, dtype=wp.int32, return_ctype=True)
-
-    wp.launch(
-        kernel=_expand_naive_shifts,
-        dim=1,
-        inputs=[
-            wp_shift_range_per_dimension,
-            wp_shift_offset,
-            wp_shifts,
-            wp_shift_system_idx,
-        ],
-        device=wp_device,
-    )
-
-    # Call warp launcher for neighbor computation
     wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
     wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_shift_range = wp.from_torch(
+        shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
+    )
     wp_neighbor_matrix = wp.from_torch(
         neighbor_matrix, dtype=wp.int32, return_ctype=True
     )
@@ -204,17 +188,30 @@ def _naive_neighbor_matrix_pbc(
     )
     wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
 
+    if rebuild_flags is not None:
+        wp_rebuild_flags = wp.from_torch(
+            rebuild_flags, dtype=wp.bool, return_ctype=True
+        )
+        selective_zero_num_neighbors_single(
+            wp_num_neighbors, wp_rebuild_flags, str(device)
+        )
+    else:
+        wp_rebuild_flags = None
+
     naive_neighbor_matrix_pbc(
         positions=wp_positions,
         cutoff=cutoff,
         cell=wp_cell,
-        shifts=wp_shifts,
+        shift_range=wp_shift_range,
+        num_shifts=max_shifts_per_system,
         neighbor_matrix=wp_neighbor_matrix,
         neighbor_matrix_shifts=wp_neighbor_matrix_shifts,
         num_neighbors=wp_num_neighbors,
         wp_dtype=wp_dtype,
         device=str(device),
         half_fill=half_fill,
+        rebuild_flags=wp_rebuild_flags,
+        wrap_positions=wrap_positions,
     )
 
 
@@ -231,8 +228,10 @@ def naive_neighbor_list(
     neighbor_matrix_shifts: torch.Tensor | None = None,
     num_neighbors: torch.Tensor | None = None,
     shift_range_per_dimension: torch.Tensor | None = None,
-    shift_offset: torch.Tensor | None = None,
-    total_shifts: int | None = None,
+    num_shifts_per_system: torch.Tensor | None = None,
+    max_shifts_per_system: int | None = None,
+    rebuild_flags: torch.Tensor | None = None,
+    wrap_positions: bool = True,
 ) -> (
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
     | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -245,7 +244,7 @@ def naive_neighbor_list(
     and periodic boundary conditions.
 
     For non-pbc systems, this function is torch compilable. For pbc systems,
-    precompute the shift vectors using compute_naive_num_shifts.
+    precompute the shift metadata using compute_naive_num_shifts.
 
     Parameters
     ----------
@@ -282,12 +281,24 @@ def naive_neighbor_list(
     shift_range_per_dimension : torch.Tensor, shape (1, 3), dtype=torch.int32, optional
         Shift range in each dimension for each system.
         Pass in a pre-allocated tensor to avoid reallocation for pbc systems.
-    shift_offset : torch.Tensor, shape (2,), dtype=torch.int32, optional
-        Cumulative sum of number of shifts for each system.
-        Pass in a pre-allocated tensor to avoid reallocation for pbc systems.
-    total_shifts : int, optional
-        Total number of shifts.
-        Pass in a pre-allocated tensor to avoid reallocation for pbc systems.
+    num_shifts_per_system : torch.Tensor, shape (1,), dtype=torch.int32, optional
+        Number of periodic shifts for the system.
+        Pass in to avoid recomputation for pbc systems.
+    max_shifts_per_system : int, optional
+        Maximum shift count across all systems.
+        Pass in to avoid recomputation for pbc systems.
+    rebuild_flags : torch.Tensor, shape () or (1,), dtype=torch.bool, optional
+        If provided, controls whether the neighbor list is recomputed.
+        When the flag is False the existing ``neighbor_matrix``, ``num_neighbors``,
+        and ``neighbor_matrix_shifts`` tensors are returned unchanged and all
+        kernel launches are skipped.  When the flag is True (or when this argument
+        is None) the neighbor list is recomputed as normal.
+        Note: providing this argument disables torch.compile compatibility.
+    wrap_positions : bool, default=True
+        If True, wrap input positions into the primary cell before
+        neighbor search. Set to False when positions are already
+        wrapped (e.g. by a preceding integration step) to save two
+        GPU kernel launches per call.
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
@@ -392,14 +403,14 @@ def naive_neighbor_list(
             dtype=torch.int32,
             device=positions.device,
         )
-    else:
+    elif rebuild_flags is None:
         neighbor_matrix.fill_(fill_value)
 
     if num_neighbors is None:
         num_neighbors = torch.zeros(
             positions.shape[0], dtype=torch.int32, device=positions.device
         )
-    else:
+    elif rebuild_flags is None:
         num_neighbors.zero_()
 
     if pbc is not None:
@@ -409,14 +420,14 @@ def naive_neighbor_list(
                 dtype=torch.int32,
                 device=positions.device,
             )
-        else:
+        elif rebuild_flags is None:
             neighbor_matrix_shifts.zero_()
         if (
-            total_shifts is None
-            or shift_offset is None
+            max_shifts_per_system is None
+            or num_shifts_per_system is None
             or shift_range_per_dimension is None
         ):
-            shift_range_per_dimension, shift_offset, total_shifts = (
+            shift_range_per_dimension, num_shifts_per_system, max_shifts_per_system = (
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
 
@@ -454,6 +465,7 @@ def naive_neighbor_list(
             neighbor_matrix=neighbor_matrix,
             num_neighbors=num_neighbors,
             half_fill=half_fill,
+            rebuild_flags=rebuild_flags,
         )
         if return_neighbor_list:
             neighbor_list, neighbor_ptr = get_neighbor_list_from_neighbor_matrix(
@@ -473,9 +485,11 @@ def naive_neighbor_list(
             neighbor_matrix_shifts=neighbor_matrix_shifts,
             num_neighbors=num_neighbors,
             shift_range_per_dimension=shift_range_per_dimension,
-            shift_offset=shift_offset,
-            total_shifts=total_shifts,
+            num_shifts_per_system=num_shifts_per_system,
+            max_shifts_per_system=max_shifts_per_system,
             half_fill=half_fill,
+            rebuild_flags=rebuild_flags,
+            wrap_positions=wrap_positions,
         )
         if return_neighbor_list:
             neighbor_list, neighbor_ptr, neighbor_list_shifts = (

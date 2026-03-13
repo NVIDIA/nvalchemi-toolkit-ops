@@ -186,7 +186,7 @@ Peak GPU memory consumption for single and batched systems.
 ## Benchmark Configuration
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | Cutoff | 21.2 Å (40 Bohr) |
 | System Type | CsCl supercells with periodic boundaries |
 | Neighbor List | Cell list algorithm ($O(N)$ scaling) |
@@ -197,7 +197,7 @@ Peak GPU memory consumption for single and batched systems.
 ### DFT-D3 Parameters
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | Functional | BJ-damping |
 | `a1` | 0.4289 |
 | `a2` | 4.4407 |

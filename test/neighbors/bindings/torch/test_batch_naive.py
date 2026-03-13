@@ -15,6 +15,8 @@
 
 """Tests for PyTorch bindings of batched naive neighbor list methods."""
 
+from unittest import mock
+
 import pytest
 import torch
 
@@ -137,6 +139,39 @@ class TestBatchNaiveCorrectness:
 
         # Check neighbor counts
         assert torch.all(num_neighbors >= 0)
+
+    def test_pbc_uses_forwarded_batch_idx_without_rebuilding(self, device, dtype):
+        """Test PBC path does not rebuild batch_idx when both batch tensors are provided."""
+        atoms_per_system = [5, 7, 6]
+        positions_batch, cell_batch, pbc_batch, _ = create_batch_systems(
+            num_systems=3,
+            atoms_per_system=atoms_per_system,
+            dtype=dtype,
+            device=device,
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+
+        with mock.patch(
+            "nvalchemiops.torch.neighbors.batch_naive.torch.repeat_interleave",
+            side_effect=AssertionError("unexpected repeat_interleave call"),
+        ):
+            neighbor_matrix, num_neighbors, neighbor_matrix_shifts = (
+                batch_naive_neighbor_list(
+                    positions=positions_batch,
+                    cutoff=1.2,
+                    batch_idx=batch_idx,
+                    batch_ptr=batch_ptr,
+                    pbc=pbc_batch,
+                    cell=cell_batch,
+                    max_neighbors=30,
+                    half_fill=False,
+                )
+            )
+
+        total_atoms = positions_batch.shape[0]
+        assert neighbor_matrix.shape == (total_atoms, 30)
+        assert neighbor_matrix_shifts.shape == (total_atoms, 30, 3)
+        assert num_neighbors.shape == (total_atoms,)
 
     def test_consistency_single_system_no_pbc(self, device, dtype):
         """Test batch gives same results as single system without PBC.

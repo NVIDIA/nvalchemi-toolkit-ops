@@ -36,10 +36,24 @@ In this example you will learn:
     that are not representative of production workloads.
 """
 
-import jax
-import jax.numpy as jnp
+import sys
 
-from nvalchemiops.jax.neighbors import neighbor_list
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError:
+    print(
+        "This example requires JAX. Install with: pip install 'nvalchemi-toolkit-ops[jax]'"
+    )
+    sys.exit(0)
+
+try:
+    from nvalchemiops.jax.neighbors import neighbor_list
+except Exception as exc:
+    print(
+        f"JAX/Warp backend unavailable ({exc}). This example requires a CUDA-backed runtime."
+    )
+    sys.exit(0)
 from nvalchemiops.jax.neighbors.cell_list import cell_list
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
 
@@ -286,7 +300,7 @@ num_loops = 100
 
 print(f"\nRun neighbor computation loop {num_loops} times.")
 all_neighbors = run_compute_loop(positions, cell, pbc)
-print(f"Rturned neighbor matrix shape: {all_neighbors.shape}")
+print(f"Returned neighbor matrix shape: {all_neighbors.shape}")
 
 # %%
 # Summary

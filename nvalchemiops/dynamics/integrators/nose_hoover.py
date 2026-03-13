@@ -205,9 +205,9 @@ def _batch_compute_2ke_kernel(
 
 @wp.kernel
 def _nhc_compute_masses_kernel(
-    ndof: Any,
-    target_temp: Any,
-    tau: Any,
+    ndof: wp.array(dtype=wp.int32),
+    target_temp: wp.array(dtype=Any),
+    tau: wp.array(dtype=Any),
     masses: wp.array(dtype=Any),
 ):
     """Compute Nosé-Hoover chain masses (single system).
@@ -218,12 +218,12 @@ def _nhc_compute_masses_kernel(
 
     Parameters
     ----------
-    ndof : Any
-        Number of degrees of freedom.
-    target_temp : Any
-        Target temperature (kT).
-    tau : Any
-        Time constant.
+    ndof : wp.array(dtype=wp.int32)
+        Number of degrees of freedom. Shape (1,).
+    target_temp : wp.array(dtype=Any)
+        Target temperature (kT). Shape (1,).
+    tau : wp.array(dtype=Any)
+        Time constant. Shape (1,).
     masses : wp.array(dtype=Any)
         Chain masses output. Shape (chain_length,).
 
@@ -232,30 +232,31 @@ def _nhc_compute_masses_kernel(
     dim = [chain_length]
     """
     k = wp.tid()
-    tau_sq = tau * tau
+    tau_val = tau[0]
+    tau_sq = tau_val * tau_val
     if k == 0:
-        masses[k] = ndof * target_temp * tau_sq
+        masses[k] = type(tau_val)(ndof[0]) * target_temp[0] * tau_sq
     else:
-        masses[k] = target_temp * tau_sq
+        masses[k] = target_temp[0] * tau_sq
 
 
 @wp.kernel
 def _batch_nhc_compute_masses_kernel(
-    ndof: Any,
-    target_temp: Any,
-    tau: Any,
+    ndof: wp.array(dtype=wp.int32),
+    target_temp: wp.array(dtype=Any),
+    tau: wp.array(dtype=Any),
     masses: wp.array2d(dtype=Any),
 ):
     """Compute Nosé-Hoover chain masses for batched simulations.
 
     Parameters
     ----------
-    ndof : Any
-        Number of degrees of freedom.
-    target_temp : Any
-        Target temperature (kT).
-    tau : Any
-        Time constant.
+    ndof : wp.array(dtype=wp.int32)
+        Number of degrees of freedom per system. Shape (num_systems,).
+    target_temp : wp.array(dtype=Any)
+        Target temperature (kT) per system. Shape (num_systems,).
+    tau : wp.array(dtype=Any)
+        Time constant per system. Shape (num_systems,).
     masses : wp.array2d(dtype=Any)
         Chain masses output. Shape (num_systems, chain_length).
 
@@ -264,11 +265,12 @@ def _batch_nhc_compute_masses_kernel(
     dim = [num_systems, chain_length]
     """
     sys_id, k = wp.tid()
-    tau_sq = tau * tau
+    tau_val = tau[sys_id]
+    tau_sq = tau_val * tau_val
     if k == 0:
-        masses[sys_id, k] = ndof * target_temp * tau_sq
+        masses[sys_id, k] = type(tau_val)(ndof[sys_id]) * target_temp[sys_id] * tau_sq
     else:
-        masses[sys_id, k] = target_temp * tau_sq
+        masses[sys_id, k] = target_temp[sys_id] * tau_sq
 
 
 # ==============================================================================
@@ -855,11 +857,21 @@ _batch_nhc_compute_masses_kernel_overload = {}
 for t in _T:
     _nhc_compute_masses_kernel_overload[t] = wp.overload(
         _nhc_compute_masses_kernel,
-        [t, t, t, wp.array(dtype=t)],
+        [
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=t),
+            wp.array(dtype=t),
+            wp.array(dtype=t),
+        ],
     )
     _batch_nhc_compute_masses_kernel_overload[t] = wp.overload(
         _batch_nhc_compute_masses_kernel,
-        [t, t, t, wp.array2d(dtype=t)],
+        [
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=t),
+            wp.array(dtype=t),
+            wp.array2d(dtype=t),
+        ],
     )
 
 # Create overloads for all combinations of velocity type (v) and output type (t_out)
@@ -969,9 +981,9 @@ for t in _T:
 
 
 def nhc_compute_masses(
-    ndof: int,
-    target_temp: float,
-    tau: float,
+    ndof: wp.array,
+    target_temp: wp.array,
+    tau: wp.array,
     chain_length: int,
     masses: wp.array,
     num_systems: int = 1,
@@ -986,12 +998,15 @@ def nhc_compute_masses(
 
     Parameters
     ----------
-    ndof : int
-        Number of degrees of freedom.
-    target_temp : float
-        Target temperature (kT).
-    tau : float
-        Time constant.
+    ndof : wp.array(dtype=wp.int32)
+        Number of degrees of freedom per system. Shape (1,) for single system,
+        (num_systems,) for batched.
+    target_temp : wp.array
+        Target temperature (kT) per system. Shape (1,) for single system,
+        (num_systems,) for batched.
+    tau : wp.array
+        Time constant per system. Shape (1,) for single system,
+        (num_systems,) for batched.
     chain_length : int
         Number of thermostats in the chain.
     masses : wp.array
@@ -1001,7 +1016,7 @@ def nhc_compute_masses(
     num_systems : int, optional
         Number of systems for batched mode. Default: 1.
     device : str, optional
-        Warp device. If None, uses 'cuda:0'.
+        Warp device. If None, inferred from masses.
     dtype : dtype, optional
         Data type for the masses. Default: wp.float64.
 
@@ -1012,19 +1027,9 @@ def nhc_compute_masses(
         (num_systems, chain_length) for batched.
     """
     if device is None:
-        device = "cuda:0"
+        device = masses.device
 
     is_batched = masses.ndim == 2
-
-    # Get the scalar type for kernel launch
-    if dtype == wp.float32:
-        ndof_typed = wp.float32(float(ndof))
-        temp_typed = wp.float32(target_temp)
-        tau_typed = wp.float32(tau)
-    else:
-        ndof_typed = wp.float64(float(ndof))
-        temp_typed = wp.float64(target_temp)
-        tau_typed = wp.float64(tau)
 
     # Select overload based on dtype
     scalar_type = dtype
@@ -1033,14 +1038,14 @@ def nhc_compute_masses(
         wp.launch(
             _batch_nhc_compute_masses_kernel_overload[scalar_type],
             dim=(num_systems, chain_length),
-            inputs=[ndof_typed, temp_typed, tau_typed, masses],
+            inputs=[ndof, target_temp, tau, masses],
             device=device,
         )
     else:
         wp.launch(
             _nhc_compute_masses_kernel_overload[scalar_type],
             dim=chain_length,
-            inputs=[ndof_typed, temp_typed, tau_typed, masses],
+            inputs=[ndof, target_temp, tau, masses],
             device=device,
         )
 

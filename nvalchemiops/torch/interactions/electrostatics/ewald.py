@@ -2494,7 +2494,7 @@ def ewald_real_space(
     neighbor_shifts: torch.Tensor | None = None,
     neighbor_matrix: torch.Tensor | None = None,
     neighbor_matrix_shifts: torch.Tensor | None = None,
-    mask_value: int = -1,
+    mask_value: int | None = None,
     batch_idx: torch.Tensor | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
@@ -2526,8 +2526,8 @@ def ewald_real_space(
         Dense neighbor matrix format.
     neighbor_matrix_shifts : torch.Tensor, shape (N, max_neighbors, 3), optional
         Periodic image shifts for neighbor_matrix.
-    mask_value : int, default=-1
-        Value indicating invalid entries in neighbor_matrix.
+    mask_value : int, optional
+        Value indicating invalid entries in neighbor_matrix. Defaults to N.
     batch_idx : torch.Tensor, shape (N,), optional
         System index for each atom.
     compute_forces : bool, default=False
@@ -2555,6 +2555,9 @@ def ewald_real_space(
     Forces and virial match the input dtype (float32 or float64).
 
     """
+    if mask_value is None:
+        mask_value = positions.shape[0]
+
     is_batch = batch_idx is not None
 
     # The virial tensor is computed as the outer product of separation vectors and

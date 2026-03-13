@@ -386,6 +386,7 @@ def prepare_inputs(
     device,
     dtype_str,
     backend: BackendType = "torch",
+    wrap_positions: bool = True,
 ):
     """Prepare inputs for a specific neighbor list method.
 
@@ -408,6 +409,8 @@ def prepare_inputs(
         Dtype string like "float32".
     backend : BackendType, default="torch"
         Backend to use.
+    wrap_positions : bool, default=True
+        Whether to wrap positions before neighbor search.
 
     Returns
     -------
@@ -523,18 +526,23 @@ def prepare_inputs(
 
         # Method-specific allocations
         if "naive" in method:
+            inputs["wrap_positions"] = wrap_positions
             match backend:
                 case "torch":
-                    shift_range_per_dimension, shift_offset, total_shifts = (
-                        torch_compute_naive_num_shifts(cells, cutoff, pbc)
-                    )
+                    (
+                        shift_range_per_dimension,
+                        num_shifts_per_system,
+                        max_shifts_per_system,
+                    ) = torch_compute_naive_num_shifts(cells, cutoff, pbc)
                 case "jax":
-                    shift_range_per_dimension, shift_offset, total_shifts = (
-                        jax_compute_naive_num_shifts(cells, cutoff, pbc)
-                    )
+                    (
+                        shift_range_per_dimension,
+                        num_shifts_per_system,
+                        max_shifts_per_system,
+                    ) = jax_compute_naive_num_shifts(cells, cutoff, pbc)
             inputs["shift_range_per_dimension"] = shift_range_per_dimension
-            inputs["shift_offset"] = shift_offset
-            inputs["total_shifts"] = total_shifts
+            inputs["num_shifts_per_system"] = num_shifts_per_system
+            inputs["max_shifts_per_system"] = max_shifts_per_system
             inputs["batch_ptr"] = batch_ptr
         elif "cell_list" in method:
             match backend:
@@ -649,18 +657,23 @@ def prepare_inputs(
 
         # Method-specific allocations
         if "naive" in method:
+            inputs["wrap_positions"] = wrap_positions
             match backend:
                 case "torch":
-                    shift_range_per_dimension, shift_offset, total_shifts = (
-                        torch_compute_naive_num_shifts(cell, cutoff, pbc)
-                    )
+                    (
+                        shift_range_per_dimension,
+                        num_shifts_per_system,
+                        max_shifts_per_system,
+                    ) = torch_compute_naive_num_shifts(cell, cutoff, pbc)
                 case "jax":
-                    shift_range_per_dimension, shift_offset, total_shifts = (
-                        jax_compute_naive_num_shifts(cell, cutoff, pbc)
-                    )
+                    (
+                        shift_range_per_dimension,
+                        num_shifts_per_system,
+                        max_shifts_per_system,
+                    ) = jax_compute_naive_num_shifts(cell, cutoff, pbc)
             inputs["shift_range_per_dimension"] = shift_range_per_dimension
-            inputs["shift_offset"] = shift_offset
-            inputs["total_shifts"] = total_shifts
+            inputs["num_shifts_per_system"] = num_shifts_per_system
+            inputs["max_shifts_per_system"] = max_shifts_per_system
         elif "cell_list" in method:
             match backend:
                 case "torch":
@@ -701,11 +714,19 @@ def run_single_benchmark(
     device,
     dtype_str,
     backend: BackendType = "torch",
+    wrap_positions: bool = True,
 ):
     """Run a single benchmark configuration."""
     # Prepare inputs (includes pre-allocated tensors)
     inputs = prepare_inputs(
-        method, num_atoms_per_system, batch_size, cutoff, device, dtype_str, backend
+        method,
+        num_atoms_per_system,
+        batch_size,
+        cutoff,
+        device,
+        dtype_str,
+        backend,
+        wrap_positions=wrap_positions,
     )
 
     # Dispatch to correct backend and time the neighbor list construction
@@ -714,8 +735,8 @@ def run_single_benchmark(
             timing_results = timer.time_function(torch_neighbor_list, **inputs)
         case "jax":
             # The JAX neighbor_list API differs from Torch in several ways:
-            # 1. Static values (cutoff, method, total_shifts) must be compile-time
-            #    constants, so we capture them in the jit closure.
+            # 1. Static values (cutoff, method, max_shifts_per_system) must be
+            #    compile-time constants, so we capture them in the jit closure.
             # 2. For batch_naive method, max_atoms_per_system must be explicit inside jit.
             # 3. For cell_list methods, max_total_cells must be computed outside jit
             #    (estimate_cell_list_sizes is not JIT-compatible).
@@ -725,7 +746,9 @@ def run_single_benchmark(
             # We separate kwargs into static (closure) vs traced (jit args).
 
             # Static keys: non-array values that must be compile-time constants
-            static_keys = {"cutoff", "method", "total_shifts"}
+            static_keys = {"cutoff", "method", "max_shifts_per_system"}
+            if "wrap_positions" in inputs:
+                static_keys.add("wrap_positions")
 
             method = inputs.get("method", "")
 
@@ -882,6 +905,7 @@ def run_benchmarks_for_method(
     method = method_config["name"]
     atom_counts = method_config["atom_counts"]
     batch_sizes = method_config["batch_sizes"]
+    wrap_positions = method_config.get("wrap_positions", True)
     is_batch_method = "batch" in method
 
     print(f"\n{'=' * 70}")
@@ -914,6 +938,7 @@ def run_benchmarks_for_method(
                     device,
                     dtype_str,
                     backend,
+                    wrap_positions=wrap_positions,
                 )
                 result["method"] = method.replace("_", "-")
                 error_type = (

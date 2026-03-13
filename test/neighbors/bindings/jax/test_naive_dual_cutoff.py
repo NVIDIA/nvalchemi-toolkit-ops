@@ -265,3 +265,90 @@ class TestNaiveDualCutoffJIT:
         assert nm2.shape == (8, 25)
         assert nn1.shape == (8,)
         assert nn2.shape == (8,)
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+class TestNaiveDualCutoffSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for naive_neighbor_list_dual_cutoff JAX."""
+
+    def test_no_rebuild_preserves_data(self, dtype):
+        """Flag=False: neighbor data should remain unchanged."""
+        positions, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype
+        )
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 15
+        max_neighbors2 = 25
+
+        # Initial full build
+        nm1, nn1, nm2, nn2 = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+        )
+
+        saved_nn1 = jnp.array(nn1)
+        saved_nn2 = jnp.array(nn2)
+
+        # Selective rebuild with flag=False
+        rebuild_flags = jnp.zeros(1, dtype=jnp.bool_)
+        nm1b, nn1b, nm2b, nn2b = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1,
+            neighbor_matrix2=nm2,
+            num_neighbors1=nn1,
+            num_neighbors2=nn2,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn1b == saved_nn1), "nn1 must be unchanged when flag=False"
+        assert jnp.all(nn2b == saved_nn2), "nn2 must be unchanged when flag=False"
+
+    def test_rebuild_updates_data(self, dtype):
+        """Flag=True: result should match a fresh full rebuild."""
+        positions, _, _ = create_simple_cubic_system_jax(
+            num_atoms=8, cell_size=2.0, dtype=dtype
+        )
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 15
+        max_neighbors2 = 25
+
+        # Reference: full build
+        _, nn1_ref, _, nn2_ref = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+        )
+
+        # Selective rebuild with flag=True
+        nm1_stale = jnp.full((8, max_neighbors1), 99, dtype=jnp.int32)
+        nm2_stale = jnp.full((8, max_neighbors2), 99, dtype=jnp.int32)
+        nn1_stale = jnp.full((8,), 99, dtype=jnp.int32)
+        nn2_stale = jnp.full((8,), 99, dtype=jnp.int32)
+
+        rebuild_flags = jnp.ones(1, dtype=jnp.bool_)
+        _, nn1b, _, nn2b = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1_stale,
+            neighbor_matrix2=nm2_stale,
+            num_neighbors1=nn1_stale,
+            num_neighbors2=nn2_stale,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn1b == nn1_ref), "nn1 should match full rebuild when flag=True"
+        assert jnp.all(nn2b == nn2_ref), "nn2 should match full rebuild when flag=True"

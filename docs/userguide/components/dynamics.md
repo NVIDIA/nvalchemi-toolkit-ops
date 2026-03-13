@@ -131,7 +131,8 @@ initialize_velocities(
 # Verify temperature
 ke = compute_kinetic_energy(velocities, masses)
 T_out = wp.zeros(1, dtype=wp.float64, device="cuda:0")
-compute_temperature(ke, T_out, num_atoms=100)
+num_atoms_per_system = wp.array([100], dtype=wp.int32, device="cuda:0")
+compute_temperature(ke, T_out, num_atoms_per_system)
 print(f"Target: {temperature.numpy()[0]}, Actual: {T_out.numpy()[0]}")
 ```
 
@@ -434,6 +435,7 @@ fire2_step_coord_cell(
 ### Computing Temperature
 
 ```python
+import warp as wp
 from nvalchemiops.dynamics.utils import (
     compute_kinetic_energy,
     compute_temperature
@@ -443,11 +445,9 @@ from nvalchemiops.dynamics.utils import (
 ke = compute_kinetic_energy(velocities, masses)
 
 # Convert to temperature (assumes k_B = 1)
-temperature = compute_temperature(
-    velocities, masses,
-    num_atoms=100,
-    dof=297  # 3*100 - 3 (remove translational DOF)
-)
+T_out = wp.zeros(1, dtype=wp.float64, device=velocities.device)
+num_atoms_per_system = wp.array([100], dtype=wp.int32, device=velocities.device)
+compute_temperature(ke, T_out, num_atoms_per_system)
 ```
 
 ## Cell Utilities
@@ -479,20 +479,23 @@ scale_positions_with_cell(positions, cell_old, cell_new)
 Holonomic constraints for fixing bond lengths:
 
 ```python
+import warp as wp
 from nvalchemiops.dynamics.utils import shake_constraints, rattle_constraints
+
+max_error = wp.zeros(1, dtype=wp.float64, device=positions.device)
 
 # After position update: correct positions to satisfy constraints
 shake_constraints(
-    positions, positions_old,
-    constraint_pairs, constraint_distances,
-    masses, tolerance=1e-8, max_iter=100
+    positions, positions_old, masses,
+    bond_atom_i, bond_atom_j, bond_lengths_sq,
+    max_error, num_iter=10,
 )
 
 # After velocity update: correct velocities to satisfy constraints
 rattle_constraints(
-    velocities, positions,
-    constraint_pairs, constraint_distances,
-    masses, tolerance=1e-8, max_iter=100
+    positions, velocities, masses,
+    bond_atom_i, bond_atom_j,
+    max_error, num_iter=10,
 )
 ```
 

@@ -25,7 +25,6 @@ from nvalchemiops.neighbors.batch_naive_dual_cutoff import (
     batch_naive_neighbor_matrix_pbc_dual_cutoff,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
-    _expand_naive_shifts,
     estimate_max_neighbors,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
@@ -116,6 +115,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     cell: torch.Tensor,
     cutoff1: float,
     cutoff2: float,
+    batch_idx: torch.Tensor,
     batch_ptr: torch.Tensor,
     neighbor_matrix1: torch.Tensor,
     neighbor_matrix2: torch.Tensor,
@@ -124,10 +124,11 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     num_neighbors1: torch.Tensor,
     num_neighbors2: torch.Tensor,
     shift_range_per_dimension: torch.Tensor,
-    shift_offset: torch.Tensor,
-    total_shifts: int,
+    num_shifts_per_system: torch.Tensor,
+    max_shifts_per_system: int,
     half_fill: bool = False,
     max_atoms_per_system: int | None = None,
+    wrap_positions: bool = True,
 ) -> None:
     """Compute batch neighbor matrices with PBC using dual cutoffs.
 
@@ -138,36 +139,20 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher
     batch_naive_neighbor_list_dual_cutoff : High-level wrapper function
     """
-    num_systems = cell.shape[0]
     device = positions.device
-    wp_device = wp.device_from_torch(device)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     wp_dtype = get_wp_dtype(positions.dtype)
 
-    # Expand shift ranges into explicit shift vectors
-    shifts = torch.empty((total_shifts, 3), dtype=torch.int32, device=device)
-    shift_system_idx = torch.empty((total_shifts,), dtype=torch.int32, device=device)
-    wp_shifts = wp.from_torch(shifts, dtype=wp.vec3i, return_ctype=True)
-    wp_shift_system_idx = wp.from_torch(
-        shift_system_idx, dtype=wp.int32, return_ctype=True
-    )
-
-    wp.launch(
-        kernel=_expand_naive_shifts,
-        dim=num_systems,
-        inputs=[
-            wp.from_torch(shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True),
-            wp.from_torch(shift_offset, dtype=wp.int32, return_ctype=True),
-            wp_shifts,
-            wp_shift_system_idx,
-        ],
-        device=wp_device,
-    )
-
-    # Convert tensors to warp arrays
     wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
     wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_shift_range = wp.from_torch(
+        shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_num_shifts_arr = wp.from_torch(
+        num_shifts_per_system, dtype=wp.int32, return_ctype=True
+    )
+    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
     wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
     wp_neighbor_matrix1 = wp.from_torch(
         neighbor_matrix1, dtype=wp.int32, return_ctype=True
@@ -193,8 +178,10 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1=cutoff1,
         cutoff2=cutoff2,
         batch_ptr=wp_batch_ptr,
-        shifts=wp_shifts,
-        shift_system_idx=wp_shift_system_idx,
+        batch_idx=wp_batch_idx,
+        shift_range=wp_shift_range,
+        num_shifts_arr=wp_num_shifts_arr,
+        max_shifts_per_system=max_shifts_per_system,
         neighbor_matrix1=wp_neighbor_matrix1,
         neighbor_matrix2=wp_neighbor_matrix2,
         neighbor_matrix_shifts1=wp_neighbor_matrix_shifts1,
@@ -205,6 +192,176 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
         device=str(device),
         max_atoms_per_system=max_atoms_per_system,
         half_fill=half_fill,
+        wrap_positions=wrap_positions,
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_naive_neighbor_matrix_no_pbc_dual_cutoff_selective",
+    mutates_args=(
+        "neighbor_matrix1",
+        "num_neighbors1",
+        "neighbor_matrix2",
+        "num_neighbors2",
+    ),
+)
+def _batch_naive_neighbor_matrix_no_pbc_dual_cutoff_selective(
+    positions: torch.Tensor,
+    cutoff1: float,
+    cutoff2: float,
+    batch_idx: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    neighbor_matrix1: torch.Tensor,
+    num_neighbors1: torch.Tensor,
+    neighbor_matrix2: torch.Tensor,
+    num_neighbors2: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    half_fill: bool = False,
+) -> None:
+    """Selective batched naive dual cutoff neighbor matrix custom op (no PBC).
+
+    Wraps the GPU-side selective kernel: per-system rebuild_flags checked on the
+    device — no CPU-GPU synchronisation occurs.
+
+    See Also
+    --------
+    nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff : Core warp launcher
+    batch_naive_neighbor_list_dual_cutoff : High-level wrapper that dispatches here when rebuild_flags is set
+    """
+    device = positions.device
+    wp_device = wp.device_from_torch(device)
+    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
+    wp_dtype = get_wp_dtype(positions.dtype)
+
+    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
+    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
+    wp_neighbor_matrix1 = wp.from_torch(
+        neighbor_matrix1, dtype=wp.int32, return_ctype=True
+    )
+    wp_num_neighbors1 = wp.from_torch(num_neighbors1, dtype=wp.int32, return_ctype=True)
+    wp_neighbor_matrix2 = wp.from_torch(
+        neighbor_matrix2, dtype=wp.int32, return_ctype=True
+    )
+    wp_num_neighbors2 = wp.from_torch(num_neighbors2, dtype=wp.int32, return_ctype=True)
+    wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool, return_ctype=True)
+
+    batch_naive_neighbor_matrix_dual_cutoff(
+        positions=wp_positions,
+        cutoff1=cutoff1,
+        cutoff2=cutoff2,
+        batch_idx=wp_batch_idx,
+        batch_ptr=wp_batch_ptr,
+        neighbor_matrix1=wp_neighbor_matrix1,
+        num_neighbors1=wp_num_neighbors1,
+        neighbor_matrix2=wp_neighbor_matrix2,
+        num_neighbors2=wp_num_neighbors2,
+        wp_dtype=wp_dtype,
+        device=str(wp_device),
+        half_fill=half_fill,
+        rebuild_flags=wp_rebuild_flags,
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective",
+    mutates_args=(
+        "neighbor_matrix1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts1",
+        "neighbor_matrix_shifts2",
+        "num_neighbors1",
+        "num_neighbors2",
+    ),
+)
+def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    cutoff1: float,
+    cutoff2: float,
+    batch_idx: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    neighbor_matrix1: torch.Tensor,
+    neighbor_matrix2: torch.Tensor,
+    neighbor_matrix_shifts1: torch.Tensor,
+    neighbor_matrix_shifts2: torch.Tensor,
+    num_neighbors1: torch.Tensor,
+    num_neighbors2: torch.Tensor,
+    shift_range_per_dimension: torch.Tensor,
+    num_shifts_per_system: torch.Tensor,
+    max_shifts_per_system: int,
+    rebuild_flags: torch.Tensor,
+    half_fill: bool = False,
+    max_atoms_per_system: int | None = None,
+    wrap_positions: bool = True,
+) -> None:
+    """Selective batched naive dual cutoff PBC neighbor matrix custom op.
+
+    Per-system rebuild_flags are checked on the device — no CPU-GPU
+    synchronisation occurs.
+
+    See Also
+    --------
+    nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher
+    batch_naive_neighbor_list_dual_cutoff : High-level wrapper that dispatches here when rebuild_flags is set
+    """
+    device = positions.device
+    wp_device = wp.device_from_torch(device)
+    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
+    wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
+    wp_dtype = get_wp_dtype(positions.dtype)
+
+    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_shift_range = wp.from_torch(
+        shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_num_shifts_arr = wp.from_torch(
+        num_shifts_per_system, dtype=wp.int32, return_ctype=True
+    )
+    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
+    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
+    wp_neighbor_matrix1 = wp.from_torch(
+        neighbor_matrix1, dtype=wp.int32, return_ctype=True
+    )
+    wp_neighbor_matrix2 = wp.from_torch(
+        neighbor_matrix2, dtype=wp.int32, return_ctype=True
+    )
+    wp_neighbor_matrix_shifts1 = wp.from_torch(
+        neighbor_matrix_shifts1, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_neighbor_matrix_shifts2 = wp.from_torch(
+        neighbor_matrix_shifts2, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_num_neighbors1 = wp.from_torch(num_neighbors1, dtype=wp.int32, return_ctype=True)
+    wp_num_neighbors2 = wp.from_torch(num_neighbors2, dtype=wp.int32, return_ctype=True)
+    wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool, return_ctype=True)
+
+    if max_atoms_per_system is None:
+        max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
+
+    batch_naive_neighbor_matrix_pbc_dual_cutoff(
+        positions=wp_positions,
+        cell=wp_cell,
+        cutoff1=cutoff1,
+        cutoff2=cutoff2,
+        batch_ptr=wp_batch_ptr,
+        batch_idx=wp_batch_idx,
+        shift_range=wp_shift_range,
+        num_shifts_arr=wp_num_shifts_arr,
+        max_shifts_per_system=max_shifts_per_system,
+        neighbor_matrix1=wp_neighbor_matrix1,
+        neighbor_matrix2=wp_neighbor_matrix2,
+        neighbor_matrix_shifts1=wp_neighbor_matrix_shifts1,
+        neighbor_matrix_shifts2=wp_neighbor_matrix_shifts2,
+        num_neighbors1=wp_num_neighbors1,
+        num_neighbors2=wp_num_neighbors2,
+        wp_dtype=wp_dtype,
+        device=str(wp_device),
+        max_atoms_per_system=max_atoms_per_system,
+        half_fill=half_fill,
+        rebuild_flags=wp_rebuild_flags,
+        wrap_positions=wrap_positions,
     )
 
 
@@ -228,9 +385,11 @@ def batch_naive_neighbor_list_dual_cutoff(
     num_neighbors1: torch.Tensor | None = None,
     num_neighbors2: torch.Tensor | None = None,
     shift_range_per_dimension: torch.Tensor | None = None,
-    shift_offset: torch.Tensor | None = None,
-    total_shifts: int | None = None,
+    num_shifts_per_system: torch.Tensor | None = None,
+    max_shifts_per_system: int | None = None,
     max_atoms_per_system: int | None = None,
+    rebuild_flags: torch.Tensor | None = None,
+    wrap_positions: bool = True,
 ) -> (
     tuple[
         torch.Tensor,
@@ -296,14 +455,14 @@ def batch_naive_neighbor_list_dual_cutoff(
             dtype=torch.int32,
             device=positions.device,
         )
-    else:
+    elif rebuild_flags is None:
         neighbor_matrix1.fill_(fill_value)
 
     if num_neighbors1 is None:
         num_neighbors1 = torch.zeros(
             total_atoms, dtype=torch.int32, device=positions.device
         )
-    else:
+    elif rebuild_flags is None:
         num_neighbors1.zero_()
 
     if neighbor_matrix2 is None:
@@ -313,14 +472,14 @@ def batch_naive_neighbor_list_dual_cutoff(
             dtype=torch.int32,
             device=positions.device,
         )
-    else:
+    elif rebuild_flags is None:
         neighbor_matrix2.fill_(fill_value)
 
     if num_neighbors2 is None:
         num_neighbors2 = torch.zeros(
             total_atoms, dtype=torch.int32, device=positions.device
         )
-    else:
+    elif rebuild_flags is None:
         num_neighbors2.zero_()
 
     if pbc is not None:
@@ -330,7 +489,7 @@ def batch_naive_neighbor_list_dual_cutoff(
                 dtype=torch.int32,
                 device=positions.device,
             )
-        else:
+        elif rebuild_flags is None:
             neighbor_matrix_shifts1.zero_()
         if neighbor_matrix_shifts2 is None:
             neighbor_matrix_shifts2 = torch.zeros(
@@ -338,14 +497,14 @@ def batch_naive_neighbor_list_dual_cutoff(
                 dtype=torch.int32,
                 device=positions.device,
             )
-        else:
+        elif rebuild_flags is None:
             neighbor_matrix_shifts2.zero_()
         if (
-            total_shifts is None
-            or shift_offset is None
+            max_shifts_per_system is None
+            or num_shifts_per_system is None
             or shift_range_per_dimension is None
         ):
-            shift_range_per_dimension, shift_offset, total_shifts = (
+            shift_range_per_dimension, num_shifts_per_system, max_shifts_per_system = (
                 compute_naive_num_shifts(cell, cutoff2, pbc)
             )
 
@@ -365,18 +524,33 @@ def batch_naive_neighbor_list_dual_cutoff(
         )
 
     if pbc is None:
-        _batch_naive_neighbor_matrix_no_pbc_dual_cutoff(
-            positions=positions,
-            cutoff1=cutoff1,
-            cutoff2=cutoff2,
-            batch_idx=batch_idx,
-            batch_ptr=batch_ptr,
-            neighbor_matrix1=neighbor_matrix1,
-            num_neighbors1=num_neighbors1,
-            neighbor_matrix2=neighbor_matrix2,
-            num_neighbors2=num_neighbors2,
-            half_fill=half_fill,
-        )
+        if rebuild_flags is not None:
+            _batch_naive_neighbor_matrix_no_pbc_dual_cutoff_selective(
+                positions=positions,
+                cutoff1=cutoff1,
+                cutoff2=cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix1=neighbor_matrix1,
+                num_neighbors1=num_neighbors1,
+                neighbor_matrix2=neighbor_matrix2,
+                num_neighbors2=num_neighbors2,
+                rebuild_flags=rebuild_flags,
+                half_fill=half_fill,
+            )
+        else:
+            _batch_naive_neighbor_matrix_no_pbc_dual_cutoff(
+                positions=positions,
+                cutoff1=cutoff1,
+                cutoff2=cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix1=neighbor_matrix1,
+                num_neighbors1=num_neighbors1,
+                neighbor_matrix2=neighbor_matrix2,
+                num_neighbors2=num_neighbors2,
+                half_fill=half_fill,
+            )
         if return_neighbor_list:
             neighbor_list1, neighbor_ptr1 = get_neighbor_list_from_neighbor_matrix(
                 neighbor_matrix1, num_neighbors=num_neighbors1, fill_value=fill_value
@@ -398,24 +572,49 @@ def batch_naive_neighbor_list_dual_cutoff(
                 num_neighbors2,
             )
     else:
-        _batch_naive_neighbor_matrix_pbc_dual_cutoff(
-            positions=positions,
-            cell=cell,
-            cutoff1=cutoff1,
-            cutoff2=cutoff2,
-            batch_ptr=batch_ptr,
-            neighbor_matrix1=neighbor_matrix1,
-            neighbor_matrix2=neighbor_matrix2,
-            neighbor_matrix_shifts1=neighbor_matrix_shifts1,
-            neighbor_matrix_shifts2=neighbor_matrix_shifts2,
-            num_neighbors1=num_neighbors1,
-            num_neighbors2=num_neighbors2,
-            shift_range_per_dimension=shift_range_per_dimension,
-            shift_offset=shift_offset,
-            total_shifts=total_shifts,
-            half_fill=half_fill,
-            max_atoms_per_system=max_atoms_per_system,
-        )
+        if rebuild_flags is not None:
+            _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
+                positions=positions,
+                cell=cell,
+                cutoff1=cutoff1,
+                cutoff2=cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix1=neighbor_matrix1,
+                neighbor_matrix2=neighbor_matrix2,
+                neighbor_matrix_shifts1=neighbor_matrix_shifts1,
+                neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+                num_neighbors1=num_neighbors1,
+                num_neighbors2=num_neighbors2,
+                shift_range_per_dimension=shift_range_per_dimension,
+                num_shifts_per_system=num_shifts_per_system,
+                max_shifts_per_system=max_shifts_per_system,
+                rebuild_flags=rebuild_flags,
+                half_fill=half_fill,
+                max_atoms_per_system=max_atoms_per_system,
+                wrap_positions=wrap_positions,
+            )
+        else:
+            _batch_naive_neighbor_matrix_pbc_dual_cutoff(
+                positions=positions,
+                cell=cell,
+                cutoff1=cutoff1,
+                cutoff2=cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix1=neighbor_matrix1,
+                neighbor_matrix2=neighbor_matrix2,
+                neighbor_matrix_shifts1=neighbor_matrix_shifts1,
+                neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+                num_neighbors1=num_neighbors1,
+                num_neighbors2=num_neighbors2,
+                shift_range_per_dimension=shift_range_per_dimension,
+                num_shifts_per_system=num_shifts_per_system,
+                max_shifts_per_system=max_shifts_per_system,
+                half_fill=half_fill,
+                max_atoms_per_system=max_atoms_per_system,
+                wrap_positions=wrap_positions,
+            )
         if return_neighbor_list:
             neighbor_list1, neighbor_ptr1, unit_shifts1 = (
                 get_neighbor_list_from_neighbor_matrix(

@@ -104,7 +104,7 @@ class DFTD3(nn.Module):
 
     Examples
     --------
-    Initialize with PBE0 parameters:
+    Initialize with B3LYP parameters:
 
     >>> dftd3 = DFTD3(a1=0.3981, a2=4.4211, s8=1.9889)
 
@@ -163,7 +163,7 @@ class DFTD3(nn.Module):
             raise FileNotFoundError(
                 f"DFT-D3 parameter file not found: {param_file}\n"
                 "Please run one of the example scripts to generate the parameter file.\n"
-                "Example: python examples/interactions/01_dftd3_molecule.py"
+                "Example: python examples/dispersion/01_dftd3_molecule.py"
             )
 
         # Load parameters as D3Parameters instance
@@ -766,7 +766,7 @@ def load_d3_parameters(
         raise FileNotFoundError(
             f"DFT-D3 parameter file not found: {param_file}\n"
             "Please run one of the example scripts to generate the parameter file.\n"
-            "Example: python examples/interactions/01_dftd3_molecule.py"
+            "Example: python examples/dispersion/01_dftd3_molecule.py"
         )
 
     state_dict = torch.load(param_file, map_location="cpu", weights_only=True)

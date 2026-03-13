@@ -427,3 +427,165 @@ class TestCellListCorrectnessVesin:
         np.testing.assert_array_equal(jax_i[jax_order], ref_i[ref_order])
         np.testing.assert_array_equal(jax_j[jax_order], ref_j[ref_order])
         np.testing.assert_array_equal(jax_shifts[jax_order], ref_shifts[ref_order])
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+class TestCellListSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for JAX cell list."""
+
+    def test_no_rebuild_preserves_data(self, dtype):
+        """Flag=False: neighbor data should remain unchanged."""
+        from nvalchemiops.jax.neighbors.cell_list import (
+            build_cell_list,
+            query_cell_list,
+        )
+
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [2.0, 2.0, 0.0],
+                [0.0, 0.0, 2.0],
+                [2.0, 0.0, 2.0],
+                [0.0, 2.0, 2.0],
+                [2.0, 2.0, 2.0],
+            ],
+            dtype=dtype,
+        )
+        cell = jnp.eye(3, dtype=dtype).reshape(1, 3, 3) * 4.0
+        pbc = jnp.array([[True, True, True]])
+        cutoff = 2.5
+        max_neighbors = 20
+
+        # Build cell list
+        (
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+        ) = build_cell_list(positions, cutoff, cell, pbc)
+
+        # Initial query
+        nm, nn, nm_shifts = query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            max_neighbors=max_neighbors,
+        )
+
+        saved_nn = jnp.array(nn)
+
+        # Selective rebuild with flag=False
+        rebuild_flags = jnp.zeros(1, dtype=jnp.bool_)
+        nm2, nn2, nm_shifts2 = query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            num_neighbors=nn,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn2 == saved_nn), (
+            "num_neighbors must be unchanged when rebuild_flags is False"
+        )
+
+    def test_rebuild_updates_data(self, dtype):
+        """Flag=True: result should match a fresh full rebuild."""
+        from nvalchemiops.jax.neighbors.cell_list import (
+            build_cell_list,
+            query_cell_list,
+        )
+
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0],
+                [2.0, 2.0, 0.0],
+                [0.0, 0.0, 2.0],
+                [2.0, 0.0, 2.0],
+                [0.0, 2.0, 2.0],
+                [2.0, 2.0, 2.0],
+            ],
+            dtype=dtype,
+        )
+        cell = jnp.eye(3, dtype=dtype).reshape(1, 3, 3) * 4.0
+        pbc = jnp.array([[True, True, True]])
+        cutoff = 2.5
+        max_neighbors = 20
+
+        # Build cell list
+        (
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+        ) = build_cell_list(positions, cutoff, cell, pbc)
+
+        # Reference: full query
+        _, nn_ref, _ = query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            max_neighbors=max_neighbors,
+        )
+
+        # Selective rebuild with flag=True
+        nm_stale = jnp.full((positions.shape[0], max_neighbors), 99, dtype=jnp.int32)
+        nn_stale = jnp.full((positions.shape[0],), 99, dtype=jnp.int32)
+
+        rebuild_flags = jnp.ones(1, dtype=jnp.bool_)
+        _, nn2, _ = query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm_stale,
+            num_neighbors=nn_stale,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn2 == nn_ref), (
+            "num_neighbors should match full rebuild when flag=True"
+        )

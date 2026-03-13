@@ -200,7 +200,7 @@ Total throughput (atom-steps/s) for batched optimization.
 ### System Setup
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | System Type | FCC argon lattice with periodic boundaries |
 | Lattice Constant | 5.26 Å (argon) |
 | Temperature | 300 K |
@@ -212,7 +212,7 @@ Total throughput (atom-steps/s) for batched optimization.
 ### MD Parameters
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | Timestep | 1.0 fs (0.001 time units) |
 | Total Steps | 10,000 |
 | Warmup Steps | 100 (excluded from timing) |
@@ -223,7 +223,7 @@ Total throughput (atom-steps/s) for batched optimization.
 ### Optimization Parameters
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | Max Steps | 1,000 |
 | Force Tolerance | 0.01 eV/Å |
 | Initial Perturbation | Gaussian (σ = 0.15 Å for batched, 0.1 Å for single) |

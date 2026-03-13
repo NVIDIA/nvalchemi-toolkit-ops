@@ -517,7 +517,7 @@ Peak GPU memory consumption for different batch sizes.
 ## Benchmark Configuration
 
 | Parameter | Value |
-|-----------|-------|
+| --------- | ----- |
 | Cutoff | 5.0 Å |
 | System Type | FCC crystal lattice |
 | Warmup Iterations | 3 |

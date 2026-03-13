@@ -68,7 +68,7 @@ energy, forces, coord_num = dftd3(
     positions=positions,           # [num_atoms, 3] in Bohr
     numbers=numbers,               # [num_atoms] atomic numbers
     neighbor_matrix=neighbor_matrix,
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
 )
 ```
@@ -126,7 +126,7 @@ energy, forces, coord_num = dftd3(
     numbers=numbers,               # [num_atoms] atomic numbers
     neighbor_list=neighbor_list_coo,  # [2, num_pairs]
     neighbor_ptr=neighbor_list_ptr,
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
 )
 ```
@@ -185,7 +185,7 @@ energy, forces, coord_num, virial = dftd3(
     neighbor_matrix=neighbor_matrix,
     neighbor_matrix_shifts=neighbor_matrix_shifts,   # [num_atoms, max_neighbors, 3]
     cell=cell,                                       # [num_systems, 3, 3]
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
     compute_virial=True                              # also compute virial
 )
@@ -230,7 +230,7 @@ energy, forces, coord_num = dftd3(
     neighbor_list=neighbor_list_coo,
     unit_shifts=unit_shifts,           # [num_pairs, 3]
     cell=cell,                         # [num_systems, 3, 3]
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
 )
 ```
@@ -305,11 +305,11 @@ is a neighbor of atom `i`, then atom `i` should also be a neighbor of atom `j`.
 
 While the DFT-D3 kernels themselves are unit-agnostic, the reference parameters themselves
 typically use atomic units. The table below lists quantities and their conversions from
-conventional units that are more commonly encountered in computational chemistry
+conventional units more commonly encountered in computational chemistry
 and materials science:
 
-| Quantity | Unit | Conversion from SI |
-|----------|------|-------------------|
+| Quantity | Unit | Common conversions |
+| -------- | ---- | ----------------- |
 | Positions | Bohr | $(\text{Å} \times 1.8897259886)$ |
 | Energy (output) | Hartree | $(\times 27.211 \rightarrow \text{eV})$ |
 | Forces (output) | Hartree/Bohr | $(\times 51.422 \rightarrow \text{eV/Å})$ |
@@ -329,7 +329,7 @@ Use `scipy.constants` for precise conversions:
 ### Data Types
 
 | Tensor | Dtype | Notes |
-|--------|-------|-------|
+| ------ | ----- | ----- |
 | Positions | `float32` or `float64` | FP64 used for distance vectors only |
 | Cell | `float32` or `float64` | Same format as Positions |
 | Atomic numbers | `int32` | |
@@ -338,6 +338,28 @@ Use `scipy.constants` for precise conversions:
 | Forces (output) | `float32` | Always |
 | Virial (output) | `float32` | Always |
 | Coordination numbers (output) | `float32` | Always |
+
+### Padding Atoms
+
+Atoms with atomic number `0` are treated as **padding atoms** and are excluded
+from all computations:
+
+- Padding atoms contribute zero to energy, forces, virial, and coordination numbers.
+- Neighbor entries pointing to padding atoms (or from padding atoms) are skipped.
+- Index 0 in the reference parameter arrays (`rcov`, `r4r2`, `c6ab`, `cn_ref`)
+  is reserved for the padding element and should be set to `0.0`.
+
+```python
+# Example: batch of two systems with 3 and 2 atoms, padded to 3
+numbers = torch.tensor([8, 1, 1, 6, 8, 0], dtype=torch.int32, device="cuda")
+#                       ^^^system 0^^^  ^^system 1^^  ^pad^
+```
+
+```{note}
+The reference parameter files from the Grimme group already follow this
+convention (index 0 is unused). No special handling is needed when loading
+standard parameters.
+```
 
 ## Parameter Setup
 
@@ -363,7 +385,7 @@ d3_params = D3Parameters(
 
 energy, forces, coord_num = dftd3(
     positions, numbers, neighbor_matrix,
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
 )
 ```
@@ -410,7 +432,7 @@ d3_params = {
 ```python
 energy, forces, coord_num = dftd3(
     positions, numbers, neighbor_matrix,
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     covalent_radii=covalent_radii,
     r4r2=r4r2_values,
     c6_reference=c6_reference,
@@ -422,19 +444,19 @@ energy, forces, coord_num = dftd3(
 
 Parameter files are available from the
 [Grimme group website](https://www.chemie.uni-bonn.de/grimme/de/software/dft-d3/).
-See `examples/interactions/utils.py` for loading utilities.
+See `examples/dispersion/utils.py` for loading utilities.
 
 ### Functional-Specific Damping Parameters
 
 Common BJ damping parameters (`a1`, `a2`, `s8`):
 
 | Functional | a1 | a2 (Bohr) | s8 |
-|------------|----|-----------|----|
-| PBE | 0.3981 | 4.4211 | 0.7875 |
+| ---------- | -- | --------- | -- |
+| PBE | 0.4289 | 4.4407 | 0.7875 |
 | PBE0 | 0.4145 | 4.8593 | 1.2177 |
 | B3LYP | 0.3981 | 4.4211 | 1.9889 |
 
-See the [DFT-D3 parameters page](https://www.chemie.uni-bonn.de/grimme/de/software/dft-d3/)
+See the [DFT-D3 BJ-damping parameters](https://www.chemie.uni-bonn.de/grimme/de/software/dft-d3/bj_damping)
 for a complete list.
 
 ## Performance Tuning
@@ -461,7 +483,7 @@ energy, forces, coord_num = compiled_dftd3(
     positions=positions,
     numbers=numbers,
     neighbor_list=neighbor_list_coo,
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
     num_systems=num_systems  # will introduce CUDA graph break if not provided
 )
@@ -542,12 +564,12 @@ neighbor_matrix, num_neighbors, _ = neighbor_list(
     positions, cutoff=50.0, cell=cell, pbc=pbc
 )
 
-# d3_params loaded from file (see examples/interactions/utils.py)
+# d3_params loaded from file (see examples/dispersion/utils.py)
 energy, forces, coord_num = dftd3(
     positions=positions,
     numbers=numbers,
     neighbor_matrix=neighbor_matrix,
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
 )
 
@@ -728,7 +750,7 @@ energy, forces, coord_num = dftd3(
     positions=positions,
     numbers=numbers,
     neighbor_matrix=neighbor_matrix,
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
     s5_smoothing_on=40.0,   # Start transition at 40 Bohr
     s5_smoothing_off=50.0,  # Complete cutoff at 50 Bohr
@@ -817,7 +839,7 @@ creates a data dependency that prevents computing direct and chain-rule forces
 in a single pass. The multi-pass architecture separates these computations:
 
 Pass 0 (PBC only)
-: Convert integer unit cell shifts to Cartesian coordinates using the lattice
+: Convert integer unit cell shifts to Cartesian shifts using the lattice
   vectors. This is performed once and reused in subsequent passes.
 
 Pass 1

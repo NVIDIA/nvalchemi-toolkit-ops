@@ -61,7 +61,8 @@ import torch
 from nvalchemiops.torch.neighbors import neighbor_list
 
 torch.set_default_dtype(torch.float32)
-torch.set_default_device(torch.device("cuda"))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_default_device(device)
 
 NUM_ATOMS = 50_000
 # arbitrarily scale positions
@@ -133,7 +134,7 @@ d3_energies, d3_forces, coord_nums, d3_virials = dftd3(
     neighbor_matrix_shifts=shift_matrix,
     batch_idx=batch_idx,
     # functional specific DFT-D3 parameters (PBE shown)
-    a1=0.3981, a2=4.4211, s8=0.7875,
+    a1=0.4289, a2=4.4407, s8=0.7875,
     d3_params=d3_params,
     compute_virial=True
 )
@@ -150,6 +151,7 @@ as well as the forces using the particle mesh Ewald interface.
 ```python
 import torch
 from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
+from nvalchemiops.torch.neighbors import neighbor_list
 
 # the following parameters need to be constructed ahead of time
 positions = ...  # [num_atoms, 3]
