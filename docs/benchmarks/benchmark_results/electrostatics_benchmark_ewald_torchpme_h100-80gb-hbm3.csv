@@ -1,0 +1,232 @@
+total_atoms,batch_size,method,backend,component,compute_forces,compute_virial,neighbor_format,median_time_ms,peak_memory_mb,compile_ms,success,supercell_size,mode,error,error_type
+2,1,ewald,torchpme,full,True,True,n/a,3.7347359657287598,64.58642578125,156.4541682600975,True,1,single,,
+2,1,ewald,torchpme,real,True,True,n/a,3.7188479900360107,64.58642578125,11.06259599328041,True,1,single,,
+2,1,ewald,torchpme,reciprocal,True,True,n/a,3.7043999433517456,64.58642578125,11.101143434643745,True,1,single,,
+54,1,ewald,torchpme,full,True,True,n/a,3.7580960988998413,71.53369140625,13.650627806782722,True,3,single,,
+54,1,ewald,torchpme,real,True,True,n/a,3.7783520221710205,71.53369140625,11.460607871413231,True,3,single,,
+54,1,ewald,torchpme,reciprocal,True,True,n/a,3.772528052330017,71.53369140625,11.453930288553238,True,3,single,,
+250,1,ewald,torchpme,full,True,True,n/a,3.830464005470276,103.26904296875,32.37265162169933,True,5,single,,
+250,1,ewald,torchpme,real,True,True,n/a,3.7948800325393677,103.26904296875,11.727279052138329,True,5,single,,
+250,1,ewald,torchpme,reciprocal,True,True,n/a,3.7937119007110596,103.26904296875,11.726139113307,True,5,single,,
+686,1,ewald,torchpme,full,True,True,n/a,3.847135901451111,221.845703125,12.250898405909538,True,7,single,,
+686,1,ewald,torchpme,real,True,True,n/a,3.8360639810562134,221.845703125,12.229971587657928,True,7,single,,
+686,1,ewald,torchpme,reciprocal,True,True,n/a,3.825935959815979,221.845703125,12.038705870509148,True,7,single,,
+2000,1,ewald,torchpme,full,True,True,n/a,5.287680149078369,871.6494140625,16.54714159667492,True,10,single,,
+2000,1,ewald,torchpme,real,True,True,n/a,5.280416011810303,871.6494140625,16.572250053286552,True,10,single,,
+2000,1,ewald,torchpme,reciprocal,True,True,n/a,5.3089759349823,871.6494140625,16.45120047032833,True,10,single,,
+6750,1,ewald,torchpme,full,True,True,n/a,14.338608264923096,4831.646484375,49.82173442840576,True,15,single,,
+6750,1,ewald,torchpme,real,True,True,n/a,14.346271991729736,4831.646484375,49.733204767107964,True,15,single,,
+6750,1,ewald,torchpme,reciprocal,True,True,n/a,14.384975910186768,4831.646484375,45.11675797402859,True,15,single,,
+16000,1,ewald,torchpme,full,True,True,n/a,43.93657684326172,17485.140625,134.1013591736555,True,20,single,,
+16000,1,ewald,torchpme,real,True,True,n/a,44.07780838012695,17485.140625,135.75871661305428,True,20,single,,
+16000,1,ewald,torchpme,reciprocal,True,True,n/a,44.074256896972656,17485.140625,136.4679392427206,True,20,single,,
+31250,1,ewald,torchpme,full,True,True,n/a,114.93105697631836,47535.97900390625,348.0988908559084,True,25,single,,
+31250,1,ewald,torchpme,real,True,True,n/a,114.85659408569336,47535.97900390625,352.1690834313631,True,25,single,,
+31250,1,ewald,torchpme,reciprocal,True,True,n/a,114.87419128417969,47535.97900390625,351.90683975815773,True,25,single,,
+54000,1,ewald,torchpme,full,True,True,n/a,inf,,,False,30,single,Out of Memory during warmup run 1,OOM
+54000,1,ewald,torchpme,real,True,True,n/a,inf,,,False,30,single,Out of Memory during warmup run 1,OOM
+54000,1,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,30,single,Out of Memory during warmup run 1,OOM
+16,1,ewald,torchpme,full,True,True,n/a,3.7577279806137085,65.11474609375,12.584483250975609,True,2,batched,,
+16,1,ewald,torchpme,real,True,True,n/a,3.7452160120010376,65.11474609375,11.215470731258392,True,2,batched,,
+16,1,ewald,torchpme,reciprocal,True,True,n/a,3.744495987892151,65.11474609375,11.223731562495232,True,2,batched,,
+64,4,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+64,4,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+64,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+128,8,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+128,8,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+128,8,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+256,16,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+256,16,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+256,16,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+512,32,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+512,32,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+512,32,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+1024,64,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+1024,64,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+1024,64,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+2048,128,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+2048,128,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+2048,128,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,256,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,256,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,256,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,512,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,512,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,512,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,1024,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,1024,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,1024,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,4096,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,4096,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,4096,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,8192,ewald,torchpme,full,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,8192,ewald,torchpme,real,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,8192,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,2,batched,torchpme does not support native batched evaluation,NotImplemented
+54,1,ewald,torchpme,full,True,True,n/a,3.7757920026779175,71.5341796875,12.742849066853523,True,3,batched,,
+54,1,ewald,torchpme,real,True,True,n/a,3.774991989135742,71.5341796875,11.30574382841587,True,3,batched,,
+54,1,ewald,torchpme,reciprocal,True,True,n/a,3.764256000518799,71.5341796875,11.246098205447197,True,3,batched,,
+216,4,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+216,4,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+216,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+432,8,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+432,8,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+432,8,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+864,16,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+864,16,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+864,16,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+1728,32,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+1728,32,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+1728,32,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+3456,64,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+3456,64,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+3456,64,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+6912,128,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+6912,128,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+6912,128,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+13824,256,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+13824,256,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+13824,256,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+27648,512,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+27648,512,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+27648,512,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+55296,1024,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+55296,1024,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+55296,1024,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+221184,4096,ewald,torchpme,full,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+221184,4096,ewald,torchpme,real,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+221184,4096,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,3,batched,torchpme does not support native batched evaluation,NotImplemented
+128,1,ewald,torchpme,full,True,True,n/a,3.801232099533081,80.57666015625,15.767859295010567,True,4,batched,,
+128,1,ewald,torchpme,real,True,True,n/a,3.7757599353790283,80.57666015625,12.57839985191822,True,4,batched,,
+128,1,ewald,torchpme,reciprocal,True,True,n/a,3.7774239778518677,80.57666015625,13.410186395049095,True,4,batched,,
+512,4,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+512,4,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+512,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+1024,8,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+1024,8,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+1024,8,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+2048,16,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+2048,16,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+2048,16,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,32,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,32,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,32,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,64,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,64,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,64,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,128,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,128,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,128,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+32768,256,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+32768,256,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+32768,256,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,512,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,512,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,512,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,1024,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,1024,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,1024,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+524288,4096,ewald,torchpme,full,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+524288,4096,ewald,torchpme,real,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+524288,4096,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,4,batched,torchpme does not support native batched evaluation,NotImplemented
+250,1,ewald,torchpme,full,True,True,n/a,3.818895936012268,101.98681640625,15.382183715701103,True,5,batched,,
+250,1,ewald,torchpme,real,True,True,n/a,3.7986559867858887,101.98681640625,12.276211753487587,True,5,batched,,
+250,1,ewald,torchpme,reciprocal,True,True,n/a,3.808127999305725,101.98681640625,12.455619871616364,True,5,batched,,
+1000,4,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+1000,4,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+1000,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+2000,8,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+2000,8,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+2000,8,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+4000,16,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+4000,16,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+4000,16,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+8000,32,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+8000,32,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+8000,32,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+16000,64,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+16000,64,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+16000,64,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+32000,128,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+32000,128,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+32000,128,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,256,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,256,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,256,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+128000,512,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+128000,512,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+128000,512,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+256000,1024,ewald,torchpme,full,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+256000,1024,ewald,torchpme,real,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+256000,1024,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,5,batched,torchpme does not support native batched evaluation,NotImplemented
+432,1,ewald,torchpme,full,True,True,n/a,3.824463963508606,146.0537109375,17.626972869038582,True,6,batched,,
+432,1,ewald,torchpme,real,True,True,n/a,3.825824022293091,146.0537109375,12.691536918282509,True,6,batched,,
+432,1,ewald,torchpme,reciprocal,True,True,n/a,3.8192960023880005,146.0537109375,12.197881937026978,True,6,batched,,
+1728,4,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+1728,4,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+1728,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+3456,8,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+3456,8,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+3456,8,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+6912,16,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+6912,16,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+6912,16,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+13824,32,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+13824,32,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+13824,32,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+27648,64,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+27648,64,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+27648,64,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+55296,128,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+55296,128,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+55296,128,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+110592,256,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+110592,256,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+110592,256,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+221184,512,ewald,torchpme,full,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+221184,512,ewald,torchpme,real,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+221184,512,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,6,batched,torchpme does not support native batched evaluation,NotImplemented
+1024,1,ewald,torchpme,full,True,True,n/a,4.217904090881348,349.9853515625,13.326747342944145,True,8,batched,,
+1024,1,ewald,torchpme,real,True,True,n/a,4.198992013931274,349.9853515625,12.540288269519806,True,8,batched,,
+1024,1,ewald,torchpme,reciprocal,True,True,n/a,4.189519882202148,349.9853515625,12.579405680298805,True,8,batched,,
+4096,4,ewald,torchpme,full,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,4,ewald,torchpme,real,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+4096,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,8,ewald,torchpme,full,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,8,ewald,torchpme,real,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+8192,8,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,16,ewald,torchpme,full,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,16,ewald,torchpme,real,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+16384,16,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+32768,32,ewald,torchpme,full,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+32768,32,ewald,torchpme,real,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+32768,32,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,64,ewald,torchpme,full,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,64,ewald,torchpme,real,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+65536,64,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,128,ewald,torchpme,full,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,128,ewald,torchpme,real,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+131072,128,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,8,batched,torchpme does not support native batched evaluation,NotImplemented
+2000,1,ewald,torchpme,full,True,True,n/a,5.321919918060303,870.3349609375,18.298104405403137,True,10,batched,,
+2000,1,ewald,torchpme,real,True,True,n/a,5.315984010696411,870.3349609375,16.138603910803795,True,10,batched,,
+2000,1,ewald,torchpme,reciprocal,True,True,n/a,5.3176798820495605,870.3349609375,15.881555154919624,True,10,batched,,
+8000,4,ewald,torchpme,full,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+8000,4,ewald,torchpme,real,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+8000,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+16000,8,ewald,torchpme,full,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+16000,8,ewald,torchpme,real,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+16000,8,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+32000,16,ewald,torchpme,full,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+32000,16,ewald,torchpme,real,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+32000,16,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,32,ewald,torchpme,full,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,32,ewald,torchpme,real,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,32,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+128000,64,ewald,torchpme,full,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+128000,64,ewald,torchpme,real,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+128000,64,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,10,batched,torchpme does not support native batched evaluation,NotImplemented
+16000,1,ewald,torchpme,full,True,True,n/a,43.84769630432129,17483.31494140625,133.24712961912155,True,20,batched,,
+16000,1,ewald,torchpme,real,True,True,n/a,43.86673545837402,17483.31494140625,135.60356572270393,True,20,batched,,
+16000,1,ewald,torchpme,reciprocal,True,True,n/a,43.91032028198242,17483.31494140625,134.75187495350838,True,20,batched,,
+64000,4,ewald,torchpme,full,True,True,n/a,inf,,,False,20,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,4,ewald,torchpme,real,True,True,n/a,inf,,,False,20,batched,torchpme does not support native batched evaluation,NotImplemented
+64000,4,ewald,torchpme,reciprocal,True,True,n/a,inf,,,False,20,batched,torchpme does not support native batched evaluation,NotImplemented
