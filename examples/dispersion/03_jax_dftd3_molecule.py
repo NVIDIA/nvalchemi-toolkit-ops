@@ -49,17 +49,30 @@ In this example you will learn:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
-import jax
-import jax.numpy as jnp
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError:
+    print(
+        "This example requires JAX. Install with: pip install 'nvalchemi-toolkit-ops[jax]'"
+    )
+    sys.exit(0)
+
 import numpy as np
 import torch
 
-# Import JAX DFT-D3 API
-from nvalchemiops.jax.interactions.dispersion import D3Parameters, dftd3
-from nvalchemiops.jax.neighbors import neighbor_list
-from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+try:
+    from nvalchemiops.jax.interactions.dispersion import D3Parameters, dftd3
+    from nvalchemiops.jax.neighbors import neighbor_list
+    from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+except Exception as exc:
+    print(
+        f"JAX/Warp backend unavailable ({exc}). This example requires a CUDA-backed runtime."
+    )
+    sys.exit(0)
 
 # Unit conversion constants (CODATA 2022)
 BOHR_TO_ANGSTROM = 0.529177210544
@@ -72,6 +85,7 @@ param_file = (
 )
 if not param_file.exists():
     print("Downloading DFT-D3 parameters...")
+    sys.path.insert(0, str(Path(__file__).parent))
     from utils import extract_dftd3_parameters, save_dftd3_parameters
 
     params_torch = extract_dftd3_parameters()

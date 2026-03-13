@@ -354,3 +354,101 @@ class TestBatchNaiveJIT:
         assert neighbor_matrix.shape == (4, 10)
         assert num_neighbors.shape == (4,)
         assert jnp.all(num_neighbors >= 0)
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+class TestBatchNaiveSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for batch_naive_neighbor_list JAX binding."""
+
+    def test_no_rebuild_preserves_data(self, dtype):
+        """All flags False: neighbor data should remain unchanged for all systems."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.5, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+                [10.0, 0.5, 0.0],
+            ],
+            dtype=dtype,
+        )
+        batch_idx = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 3, 6], dtype=jnp.int32)
+        cutoff = 1.0
+        max_neighbors = 10
+
+        # Initial full build
+        nm, nn = batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=max_neighbors,
+        )
+
+        saved_nn = jnp.array(nn)
+
+        # Selective rebuild with all flags=False
+        rebuild_flags = jnp.zeros(2, dtype=jnp.bool_)
+        nm2, nn2 = batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            num_neighbors=nn,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn2 == saved_nn), (
+            "num_neighbors must be unchanged when all rebuild_flags are False"
+        )
+
+    def test_rebuild_updates_data(self, dtype):
+        """True flags: rebuilt system data should match a fresh full rebuild."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.5, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+                [10.0, 0.5, 0.0],
+            ],
+            dtype=dtype,
+        )
+        batch_idx = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 3, 6], dtype=jnp.int32)
+        cutoff = 1.0
+        max_neighbors = 10
+
+        # Reference: full build
+        _, nn_ref = batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=max_neighbors,
+        )
+
+        # Selective rebuild with all flags=True
+        nm_stale = jnp.full((positions.shape[0], max_neighbors), 99, dtype=jnp.int32)
+        nn_stale = jnp.full((positions.shape[0],), 99, dtype=jnp.int32)
+
+        rebuild_flags = jnp.ones(2, dtype=jnp.bool_)
+        _, nn2 = batch_naive_neighbor_list(
+            positions,
+            cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm_stale,
+            num_neighbors=nn_stale,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn2 == nn_ref), (
+            "num_neighbors should match full rebuild when all flags=True"
+        )

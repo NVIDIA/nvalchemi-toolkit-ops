@@ -70,6 +70,8 @@ from nvalchemiops.neighbors.neighbor_utils import (
 
 # Warp launchers from rebuild_detection
 from nvalchemiops.neighbors.rebuild_detection import (
+    check_batch_cell_list_rebuild,
+    check_batch_neighbor_list_rebuild,
     check_cell_list_rebuild,
     check_neighbor_list_rebuild,
 )
@@ -133,6 +135,8 @@ __all__ = [
     "batch_naive_neighbor_matrix_pbc_dual_cutoff",
     "check_cell_list_rebuild",
     "check_neighbor_list_rebuild",
+    "check_batch_neighbor_list_rebuild",
+    "check_batch_cell_list_rebuild",
     "compute_naive_num_shifts",
     "zero_array",
     "estimate_max_neighbors",

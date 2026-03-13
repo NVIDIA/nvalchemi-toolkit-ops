@@ -55,7 +55,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list.cell_list` --- \(O(N)\) algorithm
+Dispatches to {func}`~nvalchemiops.torch.neighbors.cell_list` --- \(O(N)\) algorithm
 using spatial decomposition.
 :::
 
@@ -72,7 +72,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.naive.naive_neighbor_list` --- \(O(N^2)\)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.naive_neighbor_list` --- \(O(N^2)\)
 algorithm with lower overhead.
 :::
 
@@ -90,7 +90,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list.batch_cell_list` --- \(O(N)\)
+Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_cell_list` --- \(O(N)\)
 algorithm for heterogeneous batches.
 :::
 
@@ -108,7 +108,7 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 )
 ```
 
-Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_naive.batch_naive_neighbor_list` ---
+Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_naive_neighbor_list` ---
 \(O(N^2)\) algorithm for batched small systems.
 :::
 
@@ -227,6 +227,20 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 : Maximum number of spatial cells for cell list decomposition. Default is 1000.
   Limits memory usage for very large simulation boxes.
 
+`wrap_positions`
+: Controls whether positions are wrapped into the primary cell before neighbor
+  search. Default is `True`. Set to `False` when positions are already wrapped
+  (e.g. after an integration step that keeps coordinates inside the box) to skip
+  two GPU kernel launches per call.
+  Only applies to naive methods; cell list methods handle wrapping internally.
+
+`shift_range_per_dimension`, `num_shifts_per_system`, `max_shifts_per_system`
+: Optional cached naive-PBC metadata for advanced workflows. Use
+  `compute_naive_num_shifts()` to compute these values outside repeated calls,
+  especially for JAX where `max_shifts_per_system` must be concrete outside
+  `jax.jit`. Older `shift_offset` and `total_shifts` inputs are no longer part
+  of the public Torch/JAX API.
+
 ### Estimation Utilities
 
 The {func}`~nvalchemiops.neighbors.neighbor_utils.estimate_max_neighbors` function estimates
@@ -239,7 +253,7 @@ $$
 
 ```python
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
-from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
+from nvalchemiops.torch.neighbors import estimate_cell_list_sizes
 
 max_neighbors = estimate_max_neighbors(
     cutoff,

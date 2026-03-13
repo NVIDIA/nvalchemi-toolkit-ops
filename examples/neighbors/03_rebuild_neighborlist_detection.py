@@ -21,19 +21,29 @@ This example demonstrates how to use rebuild detection functions in nvalchemiops
 to efficiently determine when neighbor lists need to be reconstructed during
 molecular dynamics simulations. We'll cover:
 
-- cell_list_needs_rebuild: Detect when atoms move between spatial cells
-- neighbor_list_needs_rebuild: Detect when atoms exceed skin distance
-- Skin distance approach for efficient neighbor list caching
-- Integration with build_cell_list + query_cell_list for MD workflows
+- ``cell_list_needs_rebuild``: Detect when atoms move between spatial cells
+- ``neighbor_list_needs_rebuild``: Detect when atoms exceed skin distance
+- ``batch_neighbor_list_needs_rebuild`` / ``batch_cell_list_needs_rebuild``:
+  Batch variants producing per-system GPU-side rebuild flags
+- Selective skip in batch neighbor list APIs using ``rebuild_flags``:
+  only rebuild systems that actually need it, with no CPU-GPU sync
 
-Rebuild detection is crucial for MD performance - neighbor lists are expensive to
-compute but only need updating when atoms have moved significantly. Smart rebuild
-detection can improve simulation performance by 2-10x.
+Rebuild detection is crucial for MD performance — neighbor lists are expensive to
+compute but only need updating when atoms have moved significantly. The batch
+variants enable per-system rebuild decisions with a single GPU kernel, while the
+selective skip avoids unnecessary neighbor recomputation for stable systems.
 """
 
 import numpy as np
 import torch
 
+from nvalchemiops.torch.neighbors.batch_cell_list import (
+    batch_build_cell_list,
+    batch_cell_list,
+    batch_query_cell_list,
+    estimate_batch_cell_list_sizes,
+)
+from nvalchemiops.torch.neighbors.batch_naive import batch_naive_neighbor_list
 from nvalchemiops.torch.neighbors.cell_list import (
     build_cell_list,
     estimate_cell_list_sizes,
@@ -44,6 +54,8 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     estimate_max_neighbors,
 )
 from nvalchemiops.torch.neighbors.rebuild_detection import (
+    batch_cell_list_needs_rebuild,
+    batch_neighbor_list_needs_rebuild,
     cell_list_needs_rebuild,
     neighbor_list_needs_rebuild,
 )
@@ -301,4 +313,361 @@ for displacement_magnitude in [0.1, 0.3, 0.5, 0.7, 1.0]:
         f"-> Rebuild: {rebuild_status}"
     )
 
+print("\nSingle-system section completed.")
+
+# %%
+# Batch Rebuild Detection
+# =======================
+#
+# When simulating many systems at once, the batch variants
+# ``batch_neighbor_list_needs_rebuild`` and ``batch_cell_list_needs_rebuild``
+# return a per-system boolean tensor entirely on the GPU — no CPU-GPU sync.
+#
+# Each flag independently reports whether that system needs rebuilding.
+
+print("\n" + "=" * 70)
+print("BATCH REBUILD DETECTION")
+print("=" * 70)
+
+# Set up a batch of systems with different atom counts
+batch_sizes = [32, 48, 40]
+batch_size = sum(batch_sizes)
+num_systems_batch = len(batch_sizes)
+batch_box_size = 5.0
+batch_cutoff = 1.5
+batch_skin = 0.4
+batch_total_cutoff = batch_cutoff + batch_skin
+
+# Create per-atom batch index and batch pointer
+batch_idx = torch.repeat_interleave(
+    torch.arange(num_systems_batch, dtype=torch.int32, device=device),
+    torch.tensor(batch_sizes, dtype=torch.int32, device=device),
+)
+ptr_vals = [0] + [sum(batch_sizes[: i + 1]) for i in range(num_systems_batch)]
+batch_ptr = torch.tensor(ptr_vals, dtype=torch.int32, device=device)
+
+# Per-system cells and PBCs
+batch_cell = (torch.eye(3, dtype=dtype, device=device) * batch_box_size).unsqueeze(0)
+batch_cell = batch_cell.expand(num_systems_batch, -1, -1).contiguous()
+batch_pbc = torch.zeros(num_systems_batch, 3, dtype=torch.bool, device=device)
+
+# Random initial positions for each system
+torch.manual_seed(1234)
+batch_positions = torch.rand(batch_size, 3, dtype=dtype, device=device) * batch_box_size
+
+print(f"\nBatch of {num_systems_batch} systems, {batch_sizes} atoms each")
+print(f"  Cutoff: {batch_cutoff}, skin: {batch_skin}")
+
+# Build initial batch neighbor lists
+batch_max_neighbors = estimate_max_neighbors(batch_total_cutoff)
+batch_nm, batch_nn = batch_naive_neighbor_list(
+    positions=batch_positions,
+    cutoff=batch_total_cutoff,
+    batch_idx=batch_idx,
+    batch_ptr=batch_ptr,
+    max_neighbors=batch_max_neighbors,
+)
+print(f"\nInitial batch neighbor list built (max_neighbors={batch_max_neighbors})")
+for s in range(num_systems_batch):
+    sys_mask = batch_idx == s
+    avg_nn = batch_nn[sys_mask].float().mean().item()
+    print(f"  System {s}: avg {avg_nn:.1f} neighbors")
+
+# %%
+# Check rebuild flags after small and large displacements
+# -------------------------------------------------------
+#
+# Move only atoms in system 1 beyond the skin distance threshold.
+# Only system 1's flag should be True.
+
+reference_batch_positions = batch_positions.clone()
+
+# Simulate a step where system 1 atoms move significantly
+current_batch_positions = batch_positions.clone()
+sys1_start = batch_ptr[1].item()
+sys1_end = batch_ptr[2].item()
+# Move system 1 atoms by 2 × skin distance
+current_batch_positions[sys1_start:sys1_end] += batch_skin * 2.0
+
+rebuild_flags = batch_neighbor_list_needs_rebuild(
+    reference_positions=reference_batch_positions,
+    current_positions=current_batch_positions,
+    batch_idx=batch_idx,
+    skin_distance_threshold=batch_skin,
+)
+
+print(f"\nAfter moving system 1 atoms by {batch_skin * 2.0:.2f} Å:")
+print(f"  rebuild_flags device: {rebuild_flags.device}  (stays on GPU, no CPU sync)")
+for s in range(num_systems_batch):
+    print(f"  System {s} needs rebuild: {rebuild_flags[s].item()}")
+
+if rebuild_flags[0].item() or not rebuild_flags[1].item() or rebuild_flags[2].item():
+    raise RuntimeError(
+        "Unexpected rebuild flags: expected only system 1 to need rebuild"
+    )
+
+# %%
+# GPU-Side Selective Skip in Batch Neighbor APIs
+# ===============================================
+#
+# Now we use ``rebuild_flags`` directly in ``batch_naive_neighbor_list``.
+# Only system 1 is recomputed; systems 0 and 2 skip the kernel entirely
+# on the GPU — their neighbor data is preserved from the previous build.
+#
+# To make the neighbor-count change clearly visible we use three small
+# hand-crafted systems:
+#
+# - **System 0 / 2** (stable): 4 atoms in a tight 0.4 Å grid → every pair is
+#   within the 1.0 Å cutoff → each atom has 3 neighbors.
+# - **System 1** (displaced): same tight cluster initially.  After the "MD
+#   step" the atoms are spread to a 3.0 Å grid — all inter-atom distances
+#   exceed the cutoff → every atom drops to 0 neighbors.
+#
+# This avoids any CPU-GPU sync and minimizes wasted GPU work.
+
+print("\n" + "=" * 70)
+print("GPU-SIDE SELECTIVE SKIP IN BATCH NEIGHBOR APIS")
+print("=" * 70)
+
+# --- Build controlled mini-systems -------------------------------------------
+sk_cutoff = 1.0  # short cutoff so spacing > cutoff → 0 neighbors
+sk_max_neighbors = 10
+sk_n_atoms = 4  # atoms per system
+
+# Tight cluster positions (spacing 0.4 < 1.0 → fully connected)
+tight_offsets = torch.tensor(
+    [[0.0, 0.0, 0.0], [0.4, 0.0, 0.0], [0.0, 0.4, 0.0], [0.4, 0.4, 0.0]],
+    dtype=dtype,
+    device=device,
+)
+
+# Sparse cluster (spacing 3.0 > 1.0 → no neighbors)
+sparse_offsets = torch.tensor(
+    [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [3.0, 3.0, 0.0]],
+    dtype=dtype,
+    device=device,
+)
+
+sk_positions_initial = torch.cat(
+    [tight_offsets, tight_offsets + 10.0, tight_offsets + 20.0], dim=0
+)
+# After "MD step": system 1 atoms spread apart, systems 0 and 2 unchanged
+sk_positions_after = torch.cat(
+    [tight_offsets, sparse_offsets + 10.0, tight_offsets + 20.0], dim=0
+)
+
+sk_n_total = sk_n_atoms * 3
+sk_batch_idx = torch.repeat_interleave(
+    torch.arange(3, dtype=torch.int32, device=device),
+    sk_n_atoms,
+)
+sk_batch_ptr = torch.tensor([0, 4, 8, 12], dtype=torch.int32, device=device)
+
+# Build initial neighbor list (all three systems are tight clusters)
+sk_nm = torch.full(
+    (sk_n_total, sk_max_neighbors), sk_n_total, dtype=torch.int32, device=device
+)
+sk_nn = torch.zeros(sk_n_total, dtype=torch.int32, device=device)
+batch_naive_neighbor_list(
+    positions=sk_positions_initial,
+    cutoff=sk_cutoff,
+    batch_idx=sk_batch_idx,
+    batch_ptr=sk_batch_ptr,
+    max_neighbors=sk_max_neighbors,
+    neighbor_matrix=sk_nm,
+    num_neighbors=sk_nn,
+)
+
+print("\nInitial state (all systems: tight 0.4 Å cluster, cutoff=1.0 Å):")
+for s in range(3):
+    mask = sk_batch_idx == s
+    print(f"  System {s}: avg {sk_nn[mask].float().mean().item():.1f} neighbors/atom")
+
+# Detect which systems need rebuilding (only system 1 moved)
+sk_ref_positions = sk_positions_initial.clone()
+sk_rebuild_flags = batch_neighbor_list_needs_rebuild(
+    reference_positions=sk_ref_positions,
+    current_positions=sk_positions_after,
+    batch_idx=sk_batch_idx,
+    skin_distance_threshold=0.1,  # tight threshold: any move > 0.1 triggers flag
+)
+
+print("\nrebuild_flags after spreading system 1 atoms to 3.0 Å spacing:")
+for s in range(3):
+    print(f"  System {s}: {sk_rebuild_flags[s].item()}")
+
+# Selective rebuild: only system 1 is recomputed on the GPU
+batch_naive_neighbor_list(
+    positions=sk_positions_after,
+    cutoff=sk_cutoff,
+    batch_idx=sk_batch_idx,
+    batch_ptr=sk_batch_ptr,
+    max_neighbors=sk_max_neighbors,
+    neighbor_matrix=sk_nm,  # in-place: non-rebuilt systems preserved
+    num_neighbors=sk_nn,
+    rebuild_flags=sk_rebuild_flags,
+)
+
+print("\nAfter selective rebuild (GPU kernel skipped for systems 0 and 2):")
+for s in range(3):
+    mask = sk_batch_idx == s
+    rebuilt = sk_rebuild_flags[s].item()
+    print(
+        f"  System {s}: avg {sk_nn[mask].float().mean().item():.1f} neighbors/atom"
+        f"  (rebuilt={rebuilt})"
+    )
+
+# System 1 should now show 0 neighbors (atoms spread beyond cutoff)
+if sk_nn[sk_batch_idx == 1].sum().item() != 0:
+    raise RuntimeError("System 1 neighbors should be 0 after spreading atoms apart")
+# Systems 0 and 2 should still have 3 neighbors/atom (fully connected cluster)
+for s in (0, 2):
+    if sk_nn[sk_batch_idx == s].float().mean().item() != float(sk_n_atoms - 1):
+        raise RuntimeError(f"System {s} neighbor counts should be unchanged")
+
+print(
+    "\nVerified:"
+    "\n  System 1 rebuilt → neighbor count dropped from 3 to 0 (atoms spread beyond cutoff)"
+    "\n  Systems 0 and 2 skipped → neighbor count unchanged at 3"
+)
+
+# %%
+# Batch Cell List with Selective Skip
+# ====================================
+#
+# The same pattern works with the O(N) cell list algorithm.
+# ``batch_cell_list_needs_rebuild`` detects when atoms cross cell boundaries,
+# while ``batch_neighbor_list_needs_rebuild`` uses skin distance.
+# Either method produces ``rebuild_flags`` that can be fed directly into
+# ``batch_cell_list`` / ``batch_query_cell_list`` to skip non-rebuilt systems.
+#
+# We reuse the same three mini-systems from above so the neighbor-count
+# change is equally clear.
+
+print("\n" + "=" * 70)
+print("BATCH CELL LIST WITH SELECTIVE SKIP")
+print("=" * 70)
+
+# Use a large periodic box so cell list can be built
+cl_box = 30.0
+cl_cell = (torch.eye(3, dtype=dtype, device=device) * cl_box).unsqueeze(0)
+cl_cell = cl_cell.expand(3, -1, -1).contiguous()
+cl_pbc = torch.ones(3, 3, dtype=torch.bool, device=device)
+
+# Build initial cell list and neighbor matrix (all systems: tight cluster)
+cl_nm, cl_nn, cl_shifts = batch_cell_list(
+    positions=sk_positions_initial,
+    cutoff=sk_cutoff,
+    cell=cl_cell,
+    pbc=cl_pbc,
+    batch_idx=sk_batch_idx,
+    max_neighbors=sk_max_neighbors,
+)
+
+print("\nInitial state (all systems: tight 0.4 Å cluster, cutoff=1.0 Å):")
+for s in range(3):
+    mask = sk_batch_idx == s
+    print(f"  System {s}: avg {cl_nn[mask].float().mean().item():.1f} neighbors/atom")
+
+# Estimate and allocate cell list data structures
+max_total_cells_cl, neighbor_search_radius_cl = estimate_batch_cell_list_sizes(
+    cl_cell, cl_pbc, cutoff=sk_cutoff
+)
+cl_cache = allocate_cell_list(
+    sk_n_total, max_total_cells_cl, neighbor_search_radius_cl, device
+)
+
+# Build cell list at reference positions and save atom-to-cell mapping
+batch_build_cell_list(
+    sk_positions_initial,
+    sk_cutoff,
+    cl_cell,
+    cl_pbc,
+    sk_batch_idx,
+    *cl_cache,
+)
+ref_cl_atom_to_cell_mapping = cl_cache[3].clone()
+
+# Detect rebuild by cell boundary crossing (system 1 atoms move by 3 Å)
+cl_rebuild_flags = batch_cell_list_needs_rebuild(
+    current_positions=sk_positions_after,
+    atom_to_cell_mapping=ref_cl_atom_to_cell_mapping,
+    batch_idx=sk_batch_idx,
+    cells_per_dimension=cl_cache[0],
+    cell=cl_cell,
+    pbc=cl_pbc,
+)
+
+print("\nbatch_cell_list_needs_rebuild flags (system 1 atoms moved 3.0 Å):")
+for s in range(3):
+    print(f"  System {s}: {cl_rebuild_flags[s].item()}")
+
+# Rebuild the full cell list with new positions before selective query
+batch_build_cell_list(
+    sk_positions_after,
+    sk_cutoff,
+    cl_cell,
+    cl_pbc,
+    sk_batch_idx,
+    *cl_cache,
+)
+
+# Selective query: only recompute neighbors for flagged systems
+cl_nm_sel = cl_nm.clone()
+cl_nn_sel = cl_nn.clone()
+cl_shifts_sel = cl_shifts.clone()
+
+batch_query_cell_list(
+    positions=sk_positions_after,
+    cell=cl_cell,
+    pbc=cl_pbc,
+    cutoff=sk_cutoff,
+    batch_idx=sk_batch_idx,
+    cells_per_dimension=cl_cache[0],
+    neighbor_search_radius=cl_cache[1],
+    atom_periodic_shifts=cl_cache[2],
+    atom_to_cell_mapping=cl_cache[3],
+    atoms_per_cell_count=cl_cache[4],
+    cell_atom_start_indices=cl_cache[5],
+    cell_atom_list=cl_cache[6],
+    neighbor_matrix=cl_nm_sel,
+    neighbor_matrix_shifts=cl_shifts_sel,
+    num_neighbors=cl_nn_sel,
+    half_fill=False,
+    rebuild_flags=cl_rebuild_flags,
+)
+
+print("\nAfter selective batch_query_cell_list:")
+for s in range(3):
+    mask = sk_batch_idx == s
+    rebuilt = cl_rebuild_flags[s].item()
+    print(
+        f"  System {s}: avg {cl_nn_sel[mask].float().mean().item():.1f} neighbors/atom"
+        f"  (rebuilt={rebuilt})"
+    )
+
+# System 1 → 0 neighbors; systems 0 and 2 unchanged at 3
+if cl_nn_sel[sk_batch_idx == 1].sum().item() != 0:
+    raise RuntimeError(
+        "System 1 (cell list) neighbors should be 0 after spreading atoms apart"
+    )
+for s in (0, 2):
+    if cl_nn_sel[sk_batch_idx == s].float().mean().item() != float(sk_n_atoms - 1):
+        raise RuntimeError(
+            f"System {s} (cell list) neighbor counts should be unchanged"
+        )
+
+print(
+    "\nVerified:"
+    "\n  System 1 rebuilt → neighbor count dropped from 3 to 0 (atoms spread beyond cutoff)"
+    "\n  Systems 0 and 2 skipped → neighbor count unchanged at 3"
+)
+
 print("\nExample completed successfully!")
+print(
+    "\nKey takeaways:"
+    "\n  - batch_*_needs_rebuild returns GPU-resident per-system bool tensor (no CPU sync)"
+    "\n  - Pass rebuild_flags to batch_naive_neighbor_list / batch_cell_list / batch_query_cell_list"
+    "\n  - Non-rebuilt systems return immediately from GPU kernel — zero extra GPU work"
+    "\n  - Pre-allocate neighbor_matrix and num_neighbors and pass them in to enable in-place update"
+)

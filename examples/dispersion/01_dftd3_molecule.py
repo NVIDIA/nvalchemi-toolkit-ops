@@ -103,7 +103,7 @@ d3_module = DFTD3(
 # where the first line contains the number of atoms, the second line is a
 # comment, and subsequent lines contain: element symbol, x, y, z coordinates.
 
-with open("./dimer.xyz") as f:
+with open(Path(__file__).parent / "dimer.xyz") as f:
     lines = f.readlines()
     num_atoms = int(lines[0])
     coords = torch.zeros(num_atoms, 3, device=device, dtype=dtype)

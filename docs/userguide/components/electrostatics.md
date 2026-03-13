@@ -311,7 +311,9 @@ be used instead of the high level wrapper to compute the contributions
 directly:
 
 ```python
-from nvalchemiops.torch.interactions.electrostatics import ewald_real_space, ewald_reciprocal_space
+from nvalchemiops.torch.interactions.electrostatics import (
+    ewald_real_space, ewald_reciprocal_space, generate_k_vectors_ewald_summation,
+)
 
 # Real-space only (short-range, damped Coulomb)
 real_energies, real_forces = ewald_real_space(
@@ -320,8 +322,10 @@ real_energies, real_forces = ewald_real_space(
 )
 
 # Reciprocal-space only (long-range, smooth)
+alpha = torch.tensor([0.3], dtype=positions.dtype, device=positions.device)
+k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
 recip_energies, recip_forces = ewald_reciprocal_space(
-    positions, charges, cell, alpha=0.3, k_cutoff=8.0,
+    positions, charges, cell, k_vectors, alpha, compute_forces=True,
 )
 ```
 
@@ -774,154 +778,6 @@ and its parameters.
   summation." *J. Chem. Phys.* 110, 8254.
   [DOI: 10.1063/1.478738](https://doi.org/10.1063/1.478738)
 
-## Multipole Electrostatics
-
-ALCHEMI Toolkit-Ops supports multipolar charge distributions beyond point charges.
-Multipole electrostatics extends standard Ewald and PME to include:
-
-| Order L | Name | Components | Physical Meaning |
-|---------|------|------------|------------------|
-| 0 | Monopole | 1 | Net charge |
-| 1 | Dipole | 3 | Charge separation |
-| 2 | Quadrupole | 5 | Charge distribution shape |
-
-For maximum angular momentum $L_\text{max}=2$, each
-atom has **9 multipole coefficients**.
-
-### Multipole Coefficient Layout
-
-The multipole coefficients follow spherical harmonic ordering:
-
-```python
-# Shape: (N, 9) where N is number of atoms
-# Channel layout:
-#   [0]: q^{0,0}   - monopole (charge)
-#   [1]: q^{1,-1}  - dipole y-component
-#   [2]: q^{1,0}   - dipole z-component
-#   [3]: q^{1,+1}  - dipole x-component
-#   [4]: q^{2,-2}  - quadrupole xy
-#   [5]: q^{2,-1}  - quadrupole yz
-#   [6]: q^{2,0}   - quadrupole 3z²-r²
-#   [7]: q^{2,+1}  - quadrupole xz
-#   [8]: q^{2,+2}  - quadrupole x²-y²
-
-import torch
-multipoles = torch.zeros((num_atoms, 9), dtype=torch.float64)
-multipoles[:, 0] = charges          # Set monopoles (same as point charges)
-multipoles[:, 1:4] = dipoles        # Set dipole moments
-multipoles[:, 4:9] = quadrupoles    # Set quadrupole moments
-```
-
-### Ewald Multipole
-
-Explicit k-vector Ewald summation for multipoles:
-
-```python
-from nvalchemiops.torch.interactions.electrostatics import ewald_multipole_summation
-
-energies = ewald_multipole_summation(
-    positions=positions,        # (N, 3)
-    multipoles=multipoles,      # (N, 9)
-    cell=cell,
-    neighbor_list=neighbor_list,
-    neighbor_shifts=neighbor_shifts,
-    accuracy=1e-6,
-)
-```
-
-For the reciprocal-space only (no real-space, useful for ML applications):
-
-```python
-from nvalchemiops.torch.interactions.electrostatics import ewald_multipole_reciprocal_space
-from nvalchemiops.torch.interactions.electrostatics.k_vectors import generate_k_vectors_ewald_summation
-
-k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
-alpha = torch.tensor([0.5], dtype=torch.float64, device=cell.device)
-
-energies = ewald_multipole_reciprocal_space(
-    positions, multipoles, cell, k_vectors, alpha,
-)
-
-# With response field (gradient w.r.t. multipoles)
-energies, response = ewald_multipole_reciprocal_space(
-    positions, multipoles, cell, k_vectors, alpha,
-    compute_response=True,
-)
-```
-
-### PME Multipole
-
-FFT-based multipole electrostatics with $O(N \log N)$ scaling:
-
-```python
-from nvalchemiops.torch.interactions.electrostatics import pme_multipole_summation
-
-energies = pme_multipole_summation(
-    positions=positions,
-    multipoles=multipoles,
-    cell=cell,
-    neighbor_list=neighbor_list,
-    neighbor_shifts=neighbor_shifts,
-    accuracy=1e-6,  # Estimates alpha and mesh
-)
-
-# Or with explicit parameters:
-energies = pme_multipole_summation(
-    positions=positions,
-    multipoles=multipoles,
-    cell=cell,
-    neighbor_list=neighbor_list,
-    neighbor_shifts=neighbor_shifts,
-    alpha=0.3,
-    mesh_dimensions=(32, 32, 32),
-    spline_order=4,
-)
-```
-
-### Mathematical Background
-
-The multipole charge density is represented using Gaussian Type Orbitals (GTOs):
-
-```{math}
-\rho_i(\mathbf{r}) = \sum_{l,m} q_i^{lm} \cdot \phi_{lm}(\mathbf{r} - \mathbf{r}_i, \sigma_i)
-```
-
-where the GTO width $\sigma$ is related to the Ewald parameter $\alpha$ by:
-
-```{math}
-\sigma = \frac{1}{2\alpha}
-```
-
-**Real-space** uses damped T-tensors (interaction tensors derived from $\text{erfc}(\alpha r)/r)$:
-
-- Monopole-Monopole: $q_i T^0 q_j$
-- Monopole-Dipole: $q_i T^1 \cdot \mu_j$
-- Dipole-Dipole: $\mu_i \cdot T^2 \cdot \mu_j$
-- And higher-order terms...
-
-**Reciprocal-space** uses Fourier-transformed GTOs:
-
-```{math}
-\tilde{\phi}_{lm}(\mathbf{k}, \sigma) = (-i)^l Y_{lm}(\hat{\mathbf{k}}) \cdot e^{-k^2 \sigma^2 / 2}
-```
-
-**Self-energy correction**:
-
-```{math}
-E_{\text{self}} = \sum_{lm} C_l (q_i^{lm})^2 \alpha^{2l+1}
-```
-
-where $C_l$ are l-dependent constants.
-
-### Use Cases
-
-Multipole electrostatics are useful for:
-
-- **Polarizable force fields**: Dipole moments from induced polarization
-- **Machine learning potentials**: Higher-order features beyond point charges
-- **Coarse-grained models**: Representing charge distributions of molecular groups
-- **Quantum chemistry interfaces**: Using multipole moments from quantum calculations
-
 ## Batched Calculations
 
 All electrostatics functions support batched calculations for evaluating multiple
@@ -1048,15 +904,15 @@ explicitly:
 
 ```python
 charges.requires_grad_(True)
-energy_per_atom = ewald_summation(...)
+energies = ewald_summation(...)
 energy_per_system = torch.zeros(3, device=positions.device)
 # scatter add based on the system index mapping
 energy_per_system.scatter_add_(0, batch_idx.long(), energies)
 # now compute the derivatives
-(charge_gradients, _) = torch.autograd.grad(
-  outputs=[energy_per_system,]
-  inputs=[charges,]
-  grad_outputs=torch.ones_like(charges)
+(charge_gradients,) = torch.autograd.grad(
+  outputs=[energy_per_system],
+  inputs=[charges],
+  grad_outputs=torch.ones_like(energy_per_system),
 )
 ```
 

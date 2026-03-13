@@ -13,6 +13,7 @@ methods:
   - name: naive
     atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384]
     batch_sizes: [1]
+    wrap_positions: true
 
   # Cell list algorithm: O(N) scaling - test larger systems
   - name: cell_list
@@ -23,6 +24,7 @@ methods:
   - name: batch_naive
     atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
     batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]
+    wrap_positions: true
 
   # # Batch cell list: larger systems, various batch sizes
   - name: batch_cell_list

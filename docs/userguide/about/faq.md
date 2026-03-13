@@ -55,6 +55,20 @@ implementations. ALCHEMI Toolkit-Ops differs in several ways:
 The acceleration is substantial, particularly for larger system sizes
 where GPU utilization is amortized.
 
+### When should I set `wrap_positions=False`?
+
+When you know that all atom positions are already inside the primary simulation
+cell.  Common scenarios include:
+
+- After an MD integration step that wraps coordinates (e.g. via
+  `wrap_positions_to_cell`)
+- When positions come from a code that always keeps coordinates within the box
+
+Setting `wrap_positions=False` skips two GPU kernel launches per neighbor list
+call, which can noticeably reduce overhead in tight inner loops.  If positions
+are **not** wrapped and you set this to `False`, the neighbor list will be
+incorrect.
+
 ## Troubleshooting
 
 ### Using `torch.compile`

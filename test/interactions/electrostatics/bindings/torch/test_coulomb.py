@@ -823,11 +823,18 @@ class TestBatchedCalculations:
             device=device,
         )
         cell = torch.tensor(
-            [[[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]]],
+            [
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+                [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+            ],
             dtype=torch.float64,
             device=device,
         )
-        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+        pbc = torch.tensor(
+            [[True, True, True], [True, True, True]],
+            dtype=torch.bool,
+            device=device,
+        )
 
         batch_idx = torch.tensor([0, 0, 1, 1, 1], dtype=torch.int32, device=device)
         neighbor_list, neighbor_ptr, neighbor_shifts = neighbor_list_fn(

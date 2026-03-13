@@ -45,15 +45,14 @@ class TestComputeNaiveNumShifts:
         pbc = jnp.array([[False, False, False]])
         cutoff = 2.0
 
-        shift_range, shift_offset, total_shifts = compute_naive_num_shifts(
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
             cell, cutoff, pbc
         )
 
         # No PBC should result in no shifts
-        assert total_shifts == 1  # Only the zero shift
-        assert shift_offset.shape == (2,)
-        assert int(shift_offset[0]) == 0
-        assert int(shift_offset[1]) == 1
+        assert max_shifts == 1  # Only the zero shift
+        assert num_shifts.shape == (1,)
+        assert int(num_shifts[0]) == 1
 
     def test_single_system_full_pbc(self):
         """Test with single system and full periodic boundary conditions."""
@@ -61,15 +60,14 @@ class TestComputeNaiveNumShifts:
         pbc = jnp.array([[True, True, True]])
         cutoff = 2.0
 
-        shift_range, shift_offset, total_shifts = compute_naive_num_shifts(
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
             cell, cutoff, pbc
         )
 
         # With PBC and cutoff=2.0, cell=5.0, should have shifts in each direction
-        assert total_shifts > 1
-        assert shift_offset.shape == (2,)
-        assert int(shift_offset[0]) == 0
-        assert int(shift_offset[1]) == total_shifts
+        assert max_shifts > 1
+        assert num_shifts.shape == (1,)
+        assert max_shifts == int(num_shifts[0])
 
     def test_single_system_mixed_pbc(self):
         """Test with single system and mixed periodic boundary conditions."""
@@ -77,13 +75,13 @@ class TestComputeNaiveNumShifts:
         pbc = jnp.array([[True, True, False]])
         cutoff = 2.0
 
-        shift_range, shift_offset, total_shifts = compute_naive_num_shifts(
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
             cell, cutoff, pbc
         )
 
         # Mixed PBC should have shifts in x and y but not z
         assert shift_range.shape == (1, 3)
-        assert total_shifts >= 1
+        assert max_shifts >= 1
 
     def test_multiple_systems(self):
         """Test with multiple systems."""
@@ -96,14 +94,13 @@ class TestComputeNaiveNumShifts:
         pbcs = jnp.array([[True, True, True], [True, True, True]])
         cutoff = 2.0
 
-        shift_range, shift_offset, total_shifts = compute_naive_num_shifts(
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
             cells, cutoff, pbcs
         )
 
         # Should have shifts for both systems
-        assert shift_offset.shape == (3,)
-        assert int(shift_offset[0]) == 0
-        assert total_shifts > 0
+        assert num_shifts.shape == (2,)
+        assert max_shifts > 0
 
     def test_large_cutoff(self):
         """Test with large cutoff relative to cell size."""
@@ -111,12 +108,12 @@ class TestComputeNaiveNumShifts:
         pbc = jnp.array([[True, True, True]])
         cutoff = 5.0
 
-        shift_range, shift_offset, total_shifts = compute_naive_num_shifts(
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
             cell, cutoff, pbc
         )
 
         # Large cutoff should result in many shifts
-        assert total_shifts > 1
+        assert max_shifts > 1
         assert shift_range.shape == (1, 3)
 
 

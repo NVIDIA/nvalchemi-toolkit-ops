@@ -24,7 +24,7 @@ import warp as wp
 
 from nvalchemiops.neighbors.naive import (
     _fill_naive_neighbor_matrix,
-    _fill_naive_neighbor_matrix_pbc,
+    _fill_naive_neighbor_matrix_pbc_overload,
     naive_neighbor_matrix,
     naive_neighbor_matrix_pbc,
 )
@@ -33,6 +33,8 @@ from nvalchemiops.neighbors.neighbor_utils import (
     _expand_naive_shifts,
     _update_neighbor_matrix,
     _update_neighbor_matrix_pbc,
+    compute_inv_cells,
+    wrap_positions_single,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
@@ -411,9 +413,14 @@ class TestNaiveKernels:
             1, 3
         )
         cutoff = 1.5
-        shift_range_per_dimension, shift_offset, total_shifts = (
-            compute_naive_num_shifts(cell, cutoff, pbc)
+        shift_range_per_dimension, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff, pbc
         )
+        shift_offset = torch.zeros(
+            num_shifts.shape[0] + 1, dtype=torch.int32, device=device
+        )
+        shift_offset[1:] = torch.cumsum(num_shifts, dim=0)
+        total_shifts = shift_offset[-1].item()
 
         # Output arrays
         shifts = torch.zeros(total_shifts, 3, dtype=torch.int32, device=device)
@@ -491,20 +498,36 @@ class TestNaiveKernels:
         wp_mat_dtype = get_wp_mat_dtype(dtype)
         wp_device = str(device)
 
+        total_atoms = positions.shape[0]
         wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype)
         wp_cell = wp.from_torch(cell.unsqueeze(0), dtype=wp_mat_dtype)
         wp_shifts = wp.from_torch(shifts, dtype=wp.vec3i)
 
+        # Pre-wrap positions
+        wp_inv_cell = wp.empty_like(wp_cell)
+        compute_inv_cells(wp_cell, wp_inv_cell, wp_dtype, wp_device)
+        wp_positions_wrapped = wp.empty_like(wp_positions)
+        wp_per_atom_cell_offsets = wp.empty(
+            total_atoms, dtype=wp.vec3i, device=wp_device
+        )
+        wrap_positions_single(
+            wp_positions,
+            wp_cell,
+            wp_inv_cell,
+            wp_positions_wrapped,
+            wp_per_atom_cell_offsets,
+            wp_dtype,
+            wp_device,
+        )
+
         # Output arrays
         neighbor_matrix = torch.full(
-            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+            (total_atoms, max_neighbors), -1, dtype=torch.int32, device=device
         )
         neighbor_matrix_shifts = torch.zeros(
-            positions.shape[0], max_neighbors, 3, dtype=torch.int32, device=device
+            total_atoms, max_neighbors, 3, dtype=torch.int32, device=device
         )
-        num_neighbors = torch.zeros(
-            positions.shape[0], dtype=torch.int32, device=device
-        )
+        num_neighbors = torch.zeros(total_atoms, dtype=torch.int32, device=device)
 
         wp_neighbor_matrix = wp.from_torch(neighbor_matrix, dtype=wp.int32)
         wp_neighbor_matrix_shifts = wp.from_torch(
@@ -512,13 +535,14 @@ class TestNaiveKernels:
         )
         wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32)
 
-        # Launch kernel
+        # Launch kernel using the typed overload
         wp.launch(
-            _fill_naive_neighbor_matrix_pbc,
-            dim=(len(shifts), positions.shape[0]),
+            _fill_naive_neighbor_matrix_pbc_overload[wp_dtype],
+            dim=(len(shifts), total_atoms),
             device=wp_device,
             inputs=[
-                wp_positions,
+                wp_positions_wrapped,
+                wp_per_atom_cell_offsets,
                 wp_dtype(cutoff * cutoff),
                 wp_cell,
                 wp_shifts,
@@ -593,29 +617,11 @@ class TestNaiveWpLaunchers:
 
         max_neighbors = 30
         # Compute shift ranges
-        shift_range_per_dimension, shift_offset, total_shifts = (
-            compute_naive_num_shifts(cell, cutoff, pbc)
+        shift_range_per_dimension, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff, pbc
         )
 
-        # Expand shifts
-        shifts = torch.zeros((total_shifts, 3), dtype=torch.int32, device=device)
-        shift_system_idx = torch.zeros(total_shifts, dtype=torch.int32, device=device)
         wp_shift_range = wp.from_torch(shift_range_per_dimension, dtype=wp.vec3i)
-        wp_shift_offset = wp.from_torch(shift_offset, dtype=wp.int32)
-        wp_shifts = wp.from_torch(shifts, dtype=wp.vec3i)
-        wp_shift_system_idx = wp.from_torch(shift_system_idx, dtype=wp.int32)
-
-        wp.launch(
-            _expand_naive_shifts,
-            dim=cell.shape[0],  # num_systems
-            device=str(device),
-            inputs=[
-                wp_shift_range,
-                wp_shift_offset,
-                wp_shifts,
-                wp_shift_system_idx,
-            ],
-        )
 
         # Prepare output arrays
         neighbor_matrix = torch.full(
@@ -651,7 +657,8 @@ class TestNaiveWpLaunchers:
             wp_positions,
             cutoff,
             wp_cell,
-            wp_shifts,
+            wp_shift_range,
+            max_shifts,
             wp_neighbor_matrix,
             wp_neighbor_matrix_shifts,
             wp_num_neighbors,
@@ -670,3 +677,179 @@ class TestNaiveWpLaunchers:
             assert torch.all(torch.abs(valid_shifts) <= 5), (
                 "Unit shifts should be small integers"
             )
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_naive_neighbor_matrix_pbc_prewrapped(self, device, dtype, half_fill):
+        """Test naive_neighbor_matrix_pbc with wrap_positions=False."""
+        positions, cell, pbc = create_simple_cubic_system(
+            num_atoms=8, dtype=dtype, device=device
+        )
+        cutoff = 1.1
+        max_neighbors = 30
+
+        shift_range_per_dimension, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff, pbc
+        )
+        wp_shift_range = wp.from_torch(shift_range_per_dimension, dtype=wp.vec3i)
+
+        wp_dtype = get_wp_dtype(dtype)
+        wp_vec_dtype = get_wp_vec_dtype(dtype)
+        wp_mat_dtype = get_wp_mat_dtype(dtype)
+
+        wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype)
+        wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype)
+
+        neighbor_matrix = torch.full(
+            (positions.shape[0], max_neighbors),
+            positions.shape[0],
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_matrix_shifts = torch.zeros(
+            (positions.shape[0], max_neighbors, 3),
+            dtype=torch.int32,
+            device=device,
+        )
+        num_neighbors = torch.zeros(
+            positions.shape[0], dtype=torch.int32, device=device
+        )
+        naive_neighbor_matrix_pbc(
+            wp_positions,
+            cutoff,
+            wp_cell,
+            wp_shift_range,
+            max_shifts,
+            wp.from_torch(neighbor_matrix, dtype=wp.int32),
+            wp.from_torch(neighbor_matrix_shifts, dtype=wp.vec3i),
+            wp.from_torch(num_neighbors, dtype=wp.int32),
+            wp_dtype,
+            str(device),
+            half_fill,
+            wrap_positions=False,
+        )
+
+        assert torch.all(num_neighbors >= 0), "Neighbor counts should be non-negative"
+        assert num_neighbors.sum() > 0, "Should find some neighbors"
+
+        valid_shifts = neighbor_matrix_shifts[neighbor_matrix != -1]
+        if len(valid_shifts) > 0:
+            assert torch.all(torch.abs(valid_shifts) <= 5), (
+                "Unit shifts should be small integers"
+            )
+
+
+class TestNaiveSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for naive neighbor list warp launchers."""
+
+    def test_no_rebuild_preserves_data(self):
+        """All flags False: neighbor data should remain unchanged."""
+        device = "cuda:0"
+        dtype = torch.float32
+        wp_device = device
+
+        positions, _, _ = create_simple_cubic_system(
+            num_atoms=8, dtype=dtype, device=device
+        )
+        cutoff = 1.1
+        max_neighbors = 20
+
+        wp_dtype = get_wp_dtype(dtype)
+        wp_vec_dtype = get_wp_vec_dtype(dtype)
+
+        wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype)
+
+        # Initial full build
+        neighbor_matrix = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        num_neighbors = torch.zeros(
+            positions.shape[0], dtype=torch.int32, device=device
+        )
+        wp_nm = wp.from_torch(neighbor_matrix, dtype=wp.int32)
+        wp_nn = wp.from_torch(num_neighbors, dtype=wp.int32)
+
+        naive_neighbor_matrix(
+            wp_positions, cutoff, wp_nm, wp_nn, wp_dtype, wp_device, False
+        )
+
+        saved_nm = neighbor_matrix.clone()
+        saved_nn = num_neighbors.clone()
+
+        # Rebuild with flag=False: nothing should change
+        rebuild_flags = torch.zeros(1, dtype=torch.bool, device=device)
+        wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool)
+
+        naive_neighbor_matrix(
+            wp_positions,
+            cutoff,
+            wp_nm,
+            wp_nn,
+            wp_dtype,
+            wp_device,
+            False,
+            rebuild_flags=wp_rebuild_flags,
+        )
+
+        assert torch.equal(num_neighbors, saved_nn), (
+            "num_neighbors must be unchanged when rebuild_flags is False"
+        )
+        for i in range(positions.shape[0]):
+            n = num_neighbors[i].item()
+            assert torch.equal(neighbor_matrix[i, :n], saved_nm[i, :n]), (
+                f"neighbor_matrix row {i} should be unchanged"
+            )
+
+    def test_rebuild_updates_data(self):
+        """Flag=True: result should match a fresh full rebuild."""
+        device = "cuda:0"
+        dtype = torch.float32
+        wp_device = device
+
+        positions, _, _ = create_simple_cubic_system(
+            num_atoms=8, dtype=dtype, device=device
+        )
+        cutoff = 1.1
+        max_neighbors = 20
+
+        wp_dtype = get_wp_dtype(dtype)
+        wp_vec_dtype = get_wp_vec_dtype(dtype)
+
+        wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype)
+
+        # Full build reference
+        nm_ref = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        nn_ref = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+        wp_nm_ref = wp.from_torch(nm_ref, dtype=wp.int32)
+        wp_nn_ref = wp.from_torch(nn_ref, dtype=wp.int32)
+        naive_neighbor_matrix(
+            wp_positions, cutoff, wp_nm_ref, wp_nn_ref, wp_dtype, wp_device, False
+        )
+
+        # Build with stale data, then selective rebuild with flag=True
+        nm_sel = torch.full(
+            (positions.shape[0], max_neighbors), 0, dtype=torch.int32, device=device
+        )
+        nn_sel = torch.full((positions.shape[0],), 0, dtype=torch.int32, device=device)
+        wp_nm_sel = wp.from_torch(nm_sel, dtype=wp.int32)
+        wp_nn_sel = wp.from_torch(nn_sel, dtype=wp.int32)
+
+        rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
+        wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool)
+
+        naive_neighbor_matrix(
+            wp_positions,
+            cutoff,
+            wp_nm_sel,
+            wp_nn_sel,
+            wp_dtype,
+            wp_device,
+            False,
+            rebuild_flags=wp_rebuild_flags,
+        )
+
+        assert torch.equal(nn_sel, nn_ref), (
+            "num_neighbors should match full rebuild when flag=True"
+        )

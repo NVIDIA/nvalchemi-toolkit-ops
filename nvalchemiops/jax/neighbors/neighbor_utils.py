@@ -89,10 +89,15 @@ def compute_naive_num_shifts(
     -------
     shift_range : jax.Array, shape (num_systems, 3), dtype=int32
         Maximum shift indices in each dimension for each system.
-    shift_offset : jax.Array, shape (num_systems + 1,), dtype=int32
-        Cumulative sum of number of shifts for each system.
-    total_shifts : int
-        Total number of periodic shifts needed across all systems.
+    num_shifts : jax.Array, shape (num_systems,), dtype=int32
+        Number of periodic shifts for each system.
+    max_shifts : int
+        Maximum per-system shift count across all systems.
+
+    Raises
+    ------
+    ValueError
+        If any per-system shift count exceeds int32 range.
 
     See Also
     --------
@@ -101,14 +106,14 @@ def compute_naive_num_shifts(
     Notes
     -----
     This function must be called outside ``jax.jit`` scope. The returned
-    ``total_shifts`` is a Python int needed for determining allocation sizes,
+    ``max_shifts`` is a Python int needed for determining launch dimensions,
     which cannot be traced. This is an inherent limitation: array shapes must
     be known at trace time in JAX.
     """
     num_systems = cell.shape[0]
 
     # Allocate outputs as JAX arrays
-    num_shifts = jnp.zeros(num_systems, dtype=jnp.int32)
+    num_shifts_i32 = jnp.zeros(num_systems, dtype=jnp.int32)
     shift_range = jnp.zeros((num_systems, 3), dtype=jnp.int32)
 
     # Ensure pbc is bool dtype (jax_kernel handles bool arrays directly)
@@ -117,36 +122,40 @@ def compute_naive_num_shifts(
     # Select the appropriate kernel based on input dtype
     if cell.dtype == jnp.float64:
         cell_f64 = cell.astype(jnp.float64)
-        num_shifts, shift_range = _jax_compute_naive_num_shifts_f64(
+        num_shifts_i32, shift_range = _jax_compute_naive_num_shifts_f64(
             cell_f64,
             float(cutoff),
             pbc_bool,
-            num_shifts,
+            num_shifts_i32,
             shift_range,
             launch_dims=(num_systems,),
         )
     else:
-        # Default to float32 for float32, float16, and other types
         cell_f32 = cell.astype(jnp.float32)
-        num_shifts, shift_range = _jax_compute_naive_num_shifts_f32(
+        num_shifts_i32, shift_range = _jax_compute_naive_num_shifts_f32(
             cell_f32,
             float(cutoff),
             pbc_bool,
-            num_shifts,
+            num_shifts_i32,
             shift_range,
             launch_dims=(num_systems,),
         )
 
-    # Compute cumulative sum for shift offsets (pure JAX, jit-compatible)
-    shift_offset = jnp.zeros(num_systems + 1, dtype=jnp.int32)
-    shift_offset = shift_offset.at[1:].set(jnp.cumsum(num_shifts))
+    s = shift_range.astype(jnp.int64)
+    k1 = 2 * s[:, 1] + 1
+    k2 = 2 * s[:, 2] + 1
+    num_shifts_i64 = s[:, 0] * k1 * k2 + s[:, 1] * k2 + s[:, 2] + 1
 
-    # NOTE: total_shifts_value requires int() extraction - this is needed for
-    # array allocation and must be concrete. The caller needs to handle this.
-    # This means compute_naive_num_shifts must be called outside jax.jit.
-    total_shifts_value = int(shift_offset[-1])
+    max_shifts_i64 = int(num_shifts_i64.max()) if num_systems > 0 else 0
+    if max_shifts_i64 > 2**31 - 1:
+        raise ValueError(
+            f"Per-system shift count ({max_shifts_i64}) exceeds int32 max "
+            f"(2^31 - 1). Reduce the cutoff, increase cell size, or use a "
+            f"cell-list method for very small cells."
+        )
 
-    return shift_range, shift_offset, total_shifts_value
+    num_shifts = num_shifts_i64.astype(jnp.int32)
+    return shift_range, num_shifts, int(max_shifts_i64)
 
 
 def get_neighbor_list_from_neighbor_matrix(
@@ -230,7 +239,7 @@ def get_neighbor_list_from_neighbor_matrix(
 
     # Create CSR-style pointer array
     neighbor_ptr = jnp.zeros(num_neighbors.shape[0] + 1, dtype=jnp.int32)
-    neighbor_ptr = neighbor_ptr.at[1:].set(jnp.cumsum(num_neighbors))
+    neighbor_ptr = neighbor_ptr.at[1:].set(jnp.cumsum(num_neighbors, dtype=jnp.int32))
 
     if neighbor_shift_matrix is not None:
         neighbor_list_shifts = neighbor_shift_matrix[mask]
@@ -308,7 +317,9 @@ def prepare_batch_idx_ptr(
             batch_idx, minlength=num_systems, length=num_systems
         )
         batch_ptr = jnp.zeros(num_systems + 1, dtype=jnp.int32)
-        batch_ptr = batch_ptr.at[1:].set(jnp.cumsum(num_atoms_per_system))
+        batch_ptr = batch_ptr.at[1:].set(
+            jnp.cumsum(num_atoms_per_system, dtype=jnp.int32)
+        )
 
     return batch_idx, batch_ptr
 

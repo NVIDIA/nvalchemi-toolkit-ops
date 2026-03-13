@@ -50,7 +50,7 @@ def estimate_batch_cell_list_sizes(
     cell: torch.Tensor,
     pbc: torch.Tensor,
     cutoff: float,
-    max_nbins: int = 1000,
+    max_nbins: int = 8192,
 ) -> tuple[int, torch.Tensor]:
     """Estimate memory allocation sizes for batch cell list construction.
 
@@ -66,7 +66,7 @@ def estimate_batch_cell_list_sizes(
         Periodic boundary condition flags for each system and dimension.
     cutoff : float
         Neighbor search cutoff distance.
-    max_nbins : int, default=1000
+    max_nbins : int, default=8192
         Maximum number of cells to allocate per system.
 
     Returns
@@ -427,6 +427,117 @@ def _batch_query_cell_list_op(
     )
 
 
+@torch.library.custom_op(
+    "nvalchemiops::batch_query_cell_list_selective",
+    mutates_args=("neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"),
+)
+def _batch_query_cell_list_selective_op(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cutoff: float,
+    batch_idx: torch.Tensor,
+    cells_per_dimension: torch.Tensor,
+    neighbor_search_radius: torch.Tensor,
+    atom_periodic_shifts: torch.Tensor,
+    atom_to_cell_mapping: torch.Tensor,
+    atoms_per_cell_count: torch.Tensor,
+    cell_atom_start_indices: torch.Tensor,
+    cell_atom_list: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    rebuild_flags: torch.Tensor,
+    half_fill: bool = False,
+) -> None:
+    """Internal custom op for querying batch cell lists with per-system selective skip.
+
+    Only systems with rebuild_flags[i] == True are recomputed on the GPU.
+    Existing neighbor data for non-rebuilt systems is preserved without CPU-GPU sync.
+
+    This function is torch compilable.
+
+    See Also
+    --------
+    nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list : Core warp launcher
+    batch_query_cell_list : High-level wrapper function
+    """
+    device = positions.device
+    num_systems = cell.shape[0]
+
+    if positions.shape[0] == 0 or cutoff <= 0:
+        return
+
+    wp_dtype = get_wp_dtype(positions.dtype)
+    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
+    wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
+    wp_device = str(device)
+
+    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_batch_idx = wp.from_torch(
+        batch_idx.to(dtype=torch.int32), dtype=wp.int32, return_ctype=True
+    )
+    wp_cells_per_dimension = wp.from_torch(
+        cells_per_dimension, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_neighbor_search_radius = wp.from_torch(
+        neighbor_search_radius, dtype=wp.vec3i, return_ctype=True
+    )
+
+    cells_per_system = cells_per_dimension.prod(dim=1)
+    cell_offsets = torch.zeros(num_systems, dtype=torch.int32, device=device)
+    if num_systems > 1:
+        torch.cumsum(cells_per_system[:-1], dim=0, out=cell_offsets[1:])
+    wp_cell_offsets = wp.from_torch(cell_offsets, dtype=wp.int32, return_ctype=True)
+
+    wp_atom_periodic_shifts = wp.from_torch(
+        atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_atom_to_cell_mapping = wp.from_torch(
+        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_atoms_per_cell_count = wp.from_torch(
+        atoms_per_cell_count, dtype=wp.int32, return_ctype=True
+    )
+    wp_cell_atom_start_indices = wp.from_torch(
+        cell_atom_start_indices, dtype=wp.int32, return_ctype=True
+    )
+    wp_cell_atom_list = wp.from_torch(cell_atom_list, dtype=wp.int32, return_ctype=True)
+    wp_neighbor_matrix = wp.from_torch(
+        neighbor_matrix, dtype=wp.int32, return_ctype=True
+    )
+    wp_neighbor_matrix_shifts = wp.from_torch(
+        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool, return_ctype=True)
+
+    wp_batch_query_cell_list(
+        positions=wp_positions,
+        cell=wp_cell,
+        pbc=wp_pbc,
+        cutoff=cutoff,
+        batch_idx=wp_batch_idx,
+        cells_per_dimension=wp_cells_per_dimension,
+        neighbor_search_radius=wp_neighbor_search_radius,
+        cell_offsets=wp_cell_offsets,
+        atom_periodic_shifts=wp_atom_periodic_shifts,
+        atom_to_cell_mapping=wp_atom_to_cell_mapping,
+        atoms_per_cell_count=wp_atoms_per_cell_count,
+        cell_atom_start_indices=wp_cell_atom_start_indices,
+        cell_atom_list=wp_cell_atom_list,
+        neighbor_matrix=wp_neighbor_matrix,
+        neighbor_matrix_shifts=wp_neighbor_matrix_shifts,
+        num_neighbors=wp_num_neighbors,
+        wp_dtype=wp_dtype,
+        device=wp_device,
+        half_fill=half_fill,
+        rebuild_flags=wp_rebuild_flags,
+    )
+
+
 def batch_query_cell_list(
     positions: torch.Tensor,
     cell: torch.Tensor,
@@ -444,10 +555,47 @@ def batch_query_cell_list(
     neighbor_matrix_shifts: torch.Tensor,
     num_neighbors: torch.Tensor,
     half_fill: bool = False,
+    rebuild_flags: torch.Tensor | None = None,
 ) -> None:
     """Query batch spatial cell lists to build neighbor matrices for multiple systems.
 
-    This function is torch compilable.
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (total_atoms, 3)
+        Concatenated Cartesian coordinates for all systems in the batch.
+    cell : torch.Tensor, shape (num_systems, 3, 3)
+        Unit cell matrices for each system in the batch.
+    pbc : torch.Tensor, shape (num_systems, 3), dtype=bool
+        Periodic boundary condition flags.
+    cutoff : float
+        Neighbor search cutoff distance.
+    batch_idx : torch.Tensor, shape (total_atoms,), dtype=int32
+        System index for each atom.
+    cells_per_dimension : torch.Tensor, shape (num_systems, 3), dtype=int32
+        Number of cells in x, y, z directions for each system.
+    neighbor_search_radius : torch.Tensor, shape (num_systems, 3), dtype=int32
+        Radius of neighboring cells to search.
+    atom_periodic_shifts : torch.Tensor, shape (total_atoms, 3), dtype=int32
+        Periodic boundary crossings per atom from batch_build_cell_list.
+    atom_to_cell_mapping : torch.Tensor, shape (total_atoms, 3), dtype=int32
+        3D cell coordinates per atom from batch_build_cell_list.
+    atoms_per_cell_count : torch.Tensor, shape (max_total_cells,), dtype=int32
+        Number of atoms per cell from batch_build_cell_list.
+    cell_atom_start_indices : torch.Tensor, shape (max_total_cells,), dtype=int32
+        Starting index per cell from batch_build_cell_list.
+    cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32
+        Atom list organized by cell from batch_build_cell_list.
+    neighbor_matrix : torch.Tensor, shape (total_atoms, max_neighbors), dtype=int32
+        OUTPUT: Neighbor matrix to be filled.
+    neighbor_matrix_shifts : torch.Tensor, shape (total_atoms, max_neighbors, 3), dtype=int32
+        OUTPUT: Shift vectors for each neighbor relationship.
+    num_neighbors : torch.Tensor, shape (total_atoms,), dtype=int32
+        OUTPUT: Number of neighbors per atom.
+    half_fill : bool, default=False
+        If True, only store half of the neighbor relationships.
+    rebuild_flags : torch.Tensor, shape (num_systems,), dtype=torch.bool, optional
+        Per-system rebuild flags. If provided, only systems with True are processed
+        on the GPU; existing neighbor data for other systems is preserved.
 
     See Also
     --------
@@ -455,7 +603,26 @@ def batch_query_cell_list(
     batch_build_cell_list : Builds the cell list data structures
     batch_cell_list : High-level function that builds and queries in one call
     """
-    return _batch_query_cell_list_op(
+    if rebuild_flags is None:
+        return _batch_query_cell_list_op(
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            batch_idx,
+            cells_per_dimension,
+            neighbor_search_radius,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            half_fill,
+        )
+    return _batch_query_cell_list_selective_op(
         positions,
         cell,
         pbc,
@@ -471,6 +638,7 @@ def batch_query_cell_list(
         neighbor_matrix,
         neighbor_matrix_shifts,
         num_neighbors,
+        rebuild_flags,
         half_fill,
     )
 
@@ -496,6 +664,7 @@ def batch_cell_list(
     atoms_per_cell_count: torch.Tensor | None = None,
     cell_atom_start_indices: torch.Tensor | None = None,
     cell_atom_list: torch.Tensor | None = None,
+    rebuild_flags: torch.Tensor | None = None,
 ) -> (
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
     | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -542,6 +711,13 @@ def batch_cell_list(
         Pre-allocated tensor for start indices.
     cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32, optional
         Pre-allocated tensor for atom list.
+    rebuild_flags : torch.Tensor, shape (num_systems,), dtype=torch.bool, optional
+        Per-system rebuild flags produced by ``batch_cell_list_needs_rebuild``.
+        If provided, only systems where rebuild_flags[i] is True are recomputed;
+        existing data in ``neighbor_matrix`` and ``num_neighbors`` is preserved for
+        non-rebuilt systems entirely on the GPU (no CPU-GPU sync). When this is used,
+        pre-allocated ``neighbor_matrix`` and ``num_neighbors`` tensors must be provided
+        and will not be globally zeroed — only rebuilt-system entries are reset.
 
     Returns
     -------
@@ -588,17 +764,17 @@ def batch_cell_list(
         neighbor_matrix = torch.full(
             (total_atoms, max_neighbors), fill_value, dtype=torch.int32, device=device
         )
-    else:
+    elif rebuild_flags is None:
         neighbor_matrix.fill_(fill_value)
     if neighbor_matrix_shifts is None:
         neighbor_matrix_shifts = torch.zeros(
             (total_atoms, max_neighbors, 3), dtype=torch.int32, device=device
         )
-    else:
+    elif rebuild_flags is None:
         neighbor_matrix_shifts.zero_()
     if num_neighbors is None:
         num_neighbors = torch.zeros((total_atoms,), dtype=torch.int32, device=device)
-    else:
+    elif rebuild_flags is None:
         num_neighbors.zero_()
 
     # Allocate cell list if needed
@@ -676,6 +852,7 @@ def batch_cell_list(
         neighbor_matrix_shifts,
         num_neighbors,
         half_fill,
+        rebuild_flags,
     )
 
     if return_neighbor_list:

@@ -923,3 +923,201 @@ class TestCellListComponentsAPI:
         )
         assert max_neighbors > 0
         assert isinstance(max_neighbors, int)
+
+
+class TestCellListSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for cell list torch bindings."""
+
+    def test_no_rebuild_preserves_data(self, device, dtype):
+        """Flag=False: neighbor data should remain unchanged."""
+        positions, cell, pbc = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+        )
+        cell = cell.reshape(1, 3, 3)
+        pbc_1d = pbc.squeeze(0)
+        cutoff = 1.1
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell, pbc_1d, cutoff
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0], max_cells, neighbor_search_radius, device
+        )
+        (
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        ) = cell_list_cache
+
+        build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc_1d,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        )
+
+        max_neighbors = 10
+        nm = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        nm_shifts = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc_1d,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm,
+            nm_shifts,
+            nn,
+        )
+
+        saved_nm = nm.clone()
+        saved_nn = nn.clone()
+
+        rebuild_flags = torch.zeros(1, dtype=torch.bool, device=device)
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc_1d,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm,
+            nm_shifts,
+            nn,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert torch.equal(nn, saved_nn), (
+            "num_neighbors must be unchanged when rebuild_flags is False"
+        )
+        for i in range(positions.shape[0]):
+            n = nn[i].item()
+            assert torch.equal(nm[i, :n], saved_nm[i, :n]), (
+                f"neighbor_matrix row {i} should be unchanged"
+            )
+
+    def test_rebuild_updates_data(self, device, dtype):
+        """Flag=True: result should match a fresh full rebuild."""
+        positions, cell, pbc = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+        )
+        cell = cell.reshape(1, 3, 3)
+        pbc_1d = pbc.squeeze(0)
+        cutoff = 1.1
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell, pbc_1d, cutoff
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0], max_cells, neighbor_search_radius, device
+        )
+        (
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        ) = cell_list_cache
+
+        build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc_1d,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        )
+
+        max_neighbors = 10
+
+        # Reference: full build
+        nm_ref = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        nm_ref_shifts = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_ref = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc_1d,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm_ref,
+            nm_ref_shifts,
+            nn_ref,
+        )
+
+        # Selective rebuild with flag=True
+        nm_sel = torch.full(
+            (positions.shape[0], max_neighbors), 99, dtype=torch.int32, device=device
+        )
+        nm_sel_shifts = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_sel = torch.full((positions.shape[0],), 99, dtype=torch.int32, device=device)
+
+        rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc_1d,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm_sel,
+            nm_sel_shifts,
+            nn_sel,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert torch.equal(nn_sel, nn_ref), (
+            "num_neighbors should match full rebuild when flag=True"
+        )

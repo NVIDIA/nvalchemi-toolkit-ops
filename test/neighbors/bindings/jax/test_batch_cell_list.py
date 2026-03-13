@@ -406,3 +406,204 @@ class TestBatchCellListReturnNeighborList:
 
         if neighbor_list.shape[1] > 0:
             assert jnp.all(shifts == 0)
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+class TestBatchCellListSelectiveRebuildFlags:
+    """Test selective rebuild (rebuild_flags) for JAX batch cell list."""
+
+    def test_no_rebuild_preserves_data(self, dtype):
+        """All flags False: neighbor data should remain unchanged for all systems."""
+        from nvalchemiops.jax.neighbors.batch_cell_list import (
+            batch_build_cell_list,
+            batch_query_cell_list,
+        )
+
+        positions = jnp.vstack(
+            [
+                jnp.array(
+                    [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
+                    dtype=dtype,
+                ),
+                jnp.array(
+                    [[10.0, 0.0, 0.0], [10.5, 0.0, 0.0], [10.0, 0.5, 0.0]],
+                    dtype=dtype,
+                ),
+            ]
+        )
+        cells = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ],
+            dtype=dtype,
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 3, 6], dtype=jnp.int32)
+        cutoff = 1.0
+        max_neighbors = 10
+
+        # Build cell list
+        cell_cache = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=cutoff,
+            cell=cells,
+            pbc=pbcs,
+        )
+        (
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            _cell_origin,
+        ) = cell_cache
+
+        # Initial query
+        nm, nn, nm_shifts = batch_query_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=cutoff,
+            cell=cells,
+            pbc=pbcs,
+            cells_per_dimension=cells_per_dimension,
+            atom_periodic_shifts=atom_periodic_shifts,
+            atom_to_cell_mapping=atom_to_cell_mapping,
+            atoms_per_cell_count=atoms_per_cell_count,
+            cell_atom_start_indices=cell_atom_start_indices,
+            cell_atom_list=cell_atom_list,
+            neighbor_search_radius=neighbor_search_radius,
+            max_neighbors=max_neighbors,
+        )
+
+        saved_nn = jnp.array(nn)
+
+        # Selective rebuild with all flags=False
+        rebuild_flags = jnp.zeros(2, dtype=jnp.bool_)
+        nm2, nn2, _ = batch_query_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=cutoff,
+            cell=cells,
+            pbc=pbcs,
+            cells_per_dimension=cells_per_dimension,
+            atom_periodic_shifts=atom_periodic_shifts,
+            atom_to_cell_mapping=atom_to_cell_mapping,
+            atoms_per_cell_count=atoms_per_cell_count,
+            cell_atom_start_indices=cell_atom_start_indices,
+            cell_atom_list=cell_atom_list,
+            neighbor_search_radius=neighbor_search_radius,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            num_neighbors=nn,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn2 == saved_nn), (
+            "num_neighbors must be unchanged when all rebuild_flags are False"
+        )
+
+    def test_rebuild_updates_data(self, dtype):
+        """True flags: rebuilt system data should match a fresh full rebuild."""
+        from nvalchemiops.jax.neighbors.batch_cell_list import (
+            batch_build_cell_list,
+            batch_query_cell_list,
+        )
+
+        positions = jnp.vstack(
+            [
+                jnp.array(
+                    [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0]],
+                    dtype=dtype,
+                ),
+                jnp.array(
+                    [[10.0, 0.0, 0.0], [10.5, 0.0, 0.0], [10.0, 0.5, 0.0]],
+                    dtype=dtype,
+                ),
+            ]
+        )
+        cells = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ],
+            dtype=dtype,
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 3, 6], dtype=jnp.int32)
+        cutoff = 1.0
+        max_neighbors = 10
+
+        cell_cache = batch_build_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=cutoff,
+            cell=cells,
+            pbc=pbcs,
+        )
+        (
+            cells_per_dimension,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_search_radius,
+            _cell_origin,
+        ) = cell_cache
+
+        # Reference: full query
+        _, nn_ref, _ = batch_query_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=cutoff,
+            cell=cells,
+            pbc=pbcs,
+            cells_per_dimension=cells_per_dimension,
+            atom_periodic_shifts=atom_periodic_shifts,
+            atom_to_cell_mapping=atom_to_cell_mapping,
+            atoms_per_cell_count=atoms_per_cell_count,
+            cell_atom_start_indices=cell_atom_start_indices,
+            cell_atom_list=cell_atom_list,
+            neighbor_search_radius=neighbor_search_radius,
+            max_neighbors=max_neighbors,
+        )
+
+        # Selective rebuild with all flags=True
+        nm_stale = jnp.full((positions.shape[0], max_neighbors), 99, dtype=jnp.int32)
+        nn_stale = jnp.full((positions.shape[0],), 99, dtype=jnp.int32)
+
+        rebuild_flags = jnp.ones(2, dtype=jnp.bool_)
+        _, nn2, _ = batch_query_cell_list(
+            positions,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            cutoff=cutoff,
+            cell=cells,
+            pbc=pbcs,
+            cells_per_dimension=cells_per_dimension,
+            atom_periodic_shifts=atom_periodic_shifts,
+            atom_to_cell_mapping=atom_to_cell_mapping,
+            atoms_per_cell_count=atoms_per_cell_count,
+            cell_atom_start_indices=cell_atom_start_indices,
+            cell_atom_list=cell_atom_list,
+            neighbor_search_radius=neighbor_search_radius,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm_stale,
+            num_neighbors=nn_stale,
+            rebuild_flags=rebuild_flags,
+        )
+
+        assert jnp.all(nn2 == nn_ref), (
+            "num_neighbors should match full rebuild when all flags=True"
+        )

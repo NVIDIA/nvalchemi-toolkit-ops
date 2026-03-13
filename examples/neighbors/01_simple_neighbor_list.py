@@ -31,6 +31,8 @@ The neighbor list construction efficiently finds all atom pairs within a cutoff 
 which is essential for molecular simulations and materials science calculations.
 """
 
+import time
+
 import torch
 
 from nvalchemiops.torch.neighbors import neighbor_list
@@ -56,6 +58,30 @@ dtype = torch.float32
 
 print(f"Using device: {device}")
 print(f"Using dtype: {dtype}")
+
+_USE_CUDA_EVENTS = device.type == "cuda"
+
+
+def _timed_loop(fn, n_iter=10, warmup=10):
+    """Run *fn* for *warmup* + *n_iter* iterations and return avg ms."""
+    for _ in range(warmup):
+        fn()
+    if _USE_CUDA_EVENTS:
+        start_ev = torch.cuda.Event(enable_timing=True)
+        end_ev = torch.cuda.Event(enable_timing=True)
+        torch.cuda.synchronize()
+        start_ev.record()
+        for _ in range(n_iter):
+            fn()
+        end_ev.record()
+        torch.cuda.synchronize()
+        return start_ev.elapsed_time(end_ev) / n_iter
+    else:
+        t0 = time.perf_counter()
+        for _ in range(n_iter):
+            fn()
+        return (time.perf_counter() - t0) / n_iter * 1000.0
+
 
 # %%
 # Create random systems of different sizes
@@ -190,38 +216,21 @@ print("=" * 70)
 print("\n--- Small System (100 atoms) ---")
 
 # Cell list on small system
-cell_start = torch.cuda.Event(enable_timing=True)
-cell_end = torch.cuda.Event(enable_timing=True)
-# Warmup
-for _ in range(10):
-    _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
-torch.cuda.synchronize()
-cell_start.record()
-for _ in range(10):
-    _, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
-cell_end.record()
-torch.cuda.synchronize()
-cell_time_small = cell_start.elapsed_time(cell_end) / 10.0
+_, num_neighbors_cell_small, _ = cell_list(small_positions, cutoff, small_cell, pbc)
+cell_time_small = _timed_loop(
+    lambda: cell_list(small_positions, cutoff, small_cell, pbc)
+)
 
 # Naive on small system
-naive_start = torch.cuda.Event(enable_timing=True)
-naive_end = torch.cuda.Event(enable_timing=True)
-for _ in range(10):
-    _, num_neighbors_naive_small, _ = naive_neighbor_list(
-        small_positions, cutoff, cell=small_cell, pbc=pbc
-    )
-torch.cuda.synchronize()
-naive_start.record()
-for _ in range(10):
-    _, num_neighbors_naive_small, _ = naive_neighbor_list(
-        small_positions, cutoff, cell=small_cell, pbc=pbc
-    )
-naive_end.record()
-torch.cuda.synchronize()
-naive_time_small = naive_start.elapsed_time(naive_end) / 10.0
+_, num_neighbors_naive_small, _ = naive_neighbor_list(
+    small_positions, cutoff, cell=small_cell, pbc=pbc
+)
+naive_time_small = _timed_loop(
+    lambda: naive_neighbor_list(small_positions, cutoff, cell=small_cell, pbc=pbc)
+)
 
-print(f"Cell list:  {cell_time_small} ms, {num_neighbors_cell_small.sum()} pairs")
-print(f"Naive:      {naive_time_small} ms, {num_neighbors_naive_small.sum()} pairs")
+print(f"Cell list:  {cell_time_small:.3f} ms, {num_neighbors_cell_small.sum()} pairs")
+print(f"Naive:      {naive_time_small:.3f} ms, {num_neighbors_naive_small.sum()} pairs")
 print(
     f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
 )
@@ -229,31 +238,21 @@ print(
 print("\n--- Large System (30,000 atoms) ---")
 
 # Cell list on large system
-cell_start = torch.cuda.Event(enable_timing=True)
-cell_end = torch.cuda.Event(enable_timing=True)
-torch.cuda.synchronize()
-cell_start.record()
-for _ in range(10):
-    _, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
-cell_end.record()
-torch.cuda.synchronize()
-cell_time_large = cell_start.elapsed_time(cell_end) / 10.0
+_, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
+cell_time_large = _timed_loop(
+    lambda: cell_list(large_positions, cutoff, large_cell, pbc)
+)
 
 # Naive on large system (will be slower)
-naive_start = torch.cuda.Event(enable_timing=True)
-naive_end = torch.cuda.Event(enable_timing=True)
-torch.cuda.synchronize()
-naive_start.record()
-for _ in range(10):
-    _, num_neighbors_naive_large, _ = naive_neighbor_list(
-        large_positions, cutoff, cell=large_cell, pbc=pbc
-    )
-naive_end.record()
-torch.cuda.synchronize()
-naive_time_large = naive_start.elapsed_time(naive_end) / 10.0
+_, num_neighbors_naive_large, _ = naive_neighbor_list(
+    large_positions, cutoff, cell=large_cell, pbc=pbc
+)
+naive_time_large = _timed_loop(
+    lambda: naive_neighbor_list(large_positions, cutoff, cell=large_cell, pbc=pbc)
+)
 
-print(f"Cell list:  {cell_time_large} ms, {num_neighbors_cell_large.sum()} pairs")
-print(f"Naive:      {naive_time_large} ms, {num_neighbors_naive_large.sum()} pairs")
+print(f"Cell list:  {cell_time_large:.3f} ms, {num_neighbors_cell_large.sum()} pairs")
+print(f"Naive:      {naive_time_large:.3f} ms, {num_neighbors_naive_large.sum()} pairs")
 print(
     f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
 )

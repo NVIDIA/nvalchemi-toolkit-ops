@@ -32,6 +32,7 @@ The unified API uses:
 - ewald_summation(compute_forces=, batch_idx=)
 """
 
+import numpy as np
 import pytest
 import torch
 from torchpme.lib.kvectors import _generate_kvectors as _generate_kvectors_torchpme
@@ -1570,14 +1571,18 @@ class TestExplicitChargeGradients:
         n2 = len(system2.positions)
 
         positions = torch.tensor(
-            list(system1.positions) + list(system2.positions),
+            np.concatenate([system1.positions, system2.positions]),
             dtype=dtype,
             device=device,
         )
         charges = torch.tensor(
-            list(system1.charges) + list(system2.charges), dtype=dtype, device=device
+            np.concatenate([system1.charges, system2.charges]),
+            dtype=dtype,
+            device=device,
         )
-        cells = torch.tensor([system1.cell, system2.cell], dtype=dtype, device=device)
+        cells = torch.tensor(
+            np.stack([system1.cell, system2.cell]), dtype=dtype, device=device
+        )
         batch_idx = torch.tensor([0] * n1 + [1] * n2, dtype=torch.int32, device=device)
         pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
         alpha = torch.tensor([0.3, 0.3], dtype=dtype, device=device)
@@ -1789,14 +1794,18 @@ class TestExplicitChargeGradients:
         n2 = len(system2.positions)
 
         positions = torch.tensor(
-            list(system1.positions) + list(system2.positions),
+            np.concatenate([system1.positions, system2.positions]),
             dtype=dtype,
             device=device,
         )
         charges = torch.tensor(
-            list(system1.charges) + list(system2.charges), dtype=dtype, device=device
+            np.concatenate([system1.charges, system2.charges]),
+            dtype=dtype,
+            device=device,
         )
-        cells = torch.tensor([system1.cell, system2.cell], dtype=dtype, device=device)
+        cells = torch.tensor(
+            np.stack([system1.cell, system2.cell]), dtype=dtype, device=device
+        )
         batch_idx = torch.tensor([0] * n1 + [1] * n2, dtype=torch.int32, device=device)
         pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
         alpha = torch.tensor([0.3, 0.3], dtype=dtype, device=device)
@@ -2011,14 +2020,18 @@ class TestExplicitReciprocalChargeGradients:
         n2 = len(system2.positions)
 
         positions = torch.tensor(
-            list(system1.positions) + list(system2.positions),
+            np.concatenate([system1.positions, system2.positions]),
             dtype=dtype,
             device=device,
         )
         charges = torch.tensor(
-            list(system1.charges) + list(system2.charges), dtype=dtype, device=device
+            np.concatenate([system1.charges, system2.charges]),
+            dtype=dtype,
+            device=device,
         )
-        cells = torch.tensor([system1.cell, system2.cell], dtype=dtype, device=device)
+        cells = torch.tensor(
+            np.stack([system1.cell, system2.cell]), dtype=dtype, device=device
+        )
         batch_idx = torch.tensor([0] * n1 + [1] * n2, dtype=torch.int32, device=device)
         alpha = torch.tensor([0.3, 0.3], dtype=dtype, device=device)
 

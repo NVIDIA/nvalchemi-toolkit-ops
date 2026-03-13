@@ -61,7 +61,8 @@ import torch
 from nvalchemiops.torch.neighbors import neighbor_list
 
 torch.set_default_dtype(torch.float32)
-torch.set_default_device(torch.device("cuda"))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.set_default_device(device)
 
 NUM_ATOMS = 50_000
 # arbitrarily scale positions
@@ -150,6 +151,7 @@ as well as the forces using the particle mesh Ewald interface.
 ```python
 import torch
 from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
+from nvalchemiops.torch.neighbors import neighbor_list
 
 # the following parameters need to be constructed ahead of time
 positions = ...  # [num_atoms, 3]
