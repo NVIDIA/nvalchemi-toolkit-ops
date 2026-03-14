@@ -43,7 +43,7 @@ with system size.
 
 #### Time Scaling
 
-```{figure} _static/dynamics_md_single_scaling_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_md_single_nvalchemiops_scaling_h100.png
 :width: 90%
 :align: center
 :alt: MD single-system time scaling
@@ -53,7 +53,7 @@ Average step time vs. system size for single-system MD integrators.
 
 #### Throughput
 
-```{figure} _static/dynamics_md_single_throughput_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_md_single_nvalchemiops_throughput_h100.png
 :width: 90%
 :align: center
 :alt: MD single-system throughput
@@ -69,7 +69,7 @@ ensemble simulations.
 
 #### Time Scaling
 
-```{figure} _static/dynamics_md_batch_scaling_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_md_batch_nvalchemiops_scaling_h100.png
 :width: 90%
 :align: center
 :alt: MD batched scaling
@@ -79,7 +79,7 @@ Average step time for batched MD simulations showing batch size scaling.
 
 #### Throughput
 
-```{figure} _static/dynamics_md_batch_throughput_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_md_batch_nvalchemiops_throughput_h100.png
 :width: 90%
 :align: center
 :alt: MD batched throughput
@@ -125,7 +125,7 @@ and computational efficiency.
 
 #### Time Scaling
 
-```{figure} _static/dynamics_opt_single_scaling_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_opt_single_nvalchemiops_scaling_h100.png
 :width: 90%
 :align: center
 :alt: Optimization single-system scaling
@@ -135,7 +135,7 @@ Average step time vs. system size for FIRE optimizer.
 
 #### Throughput
 
-```{figure} _static/dynamics_opt_single_throughput_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_opt_single_nvalchemiops_throughput_h100.png
 :width: 90%
 :align: center
 :alt: Optimization single-system throughput
@@ -151,7 +151,7 @@ finding, or structural screening.
 
 #### Time Scaling
 
-```{figure} _static/dynamics_opt_batch_scaling_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_opt_batch_nvalchemiops_scaling_h100.png
 :width: 90%
 :align: center
 :alt: Optimization batched scaling
@@ -161,7 +161,7 @@ Average step time for batched FIRE optimization.
 
 #### Throughput
 
-```{figure} _static/dynamics_opt_batch_throughput_nvalchemiops_h100-80gb-hbm3.png
+```{figure} _static/dynamics_opt_batch_nvalchemiops_throughput_h100.png
 :width: 90%
 :align: center
 :alt: Optimization batched throughput
