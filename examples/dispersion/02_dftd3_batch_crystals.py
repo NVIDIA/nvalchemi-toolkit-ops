@@ -165,7 +165,12 @@ def lattice_params_to_matrix(
 # - Atomic positions in fractional coordinates
 # - Element symbols and atomic numbers
 
-with open(Path(__file__).parent / "4300813.json") as read_file:
+try:
+    _script_dir = Path(__file__).parent
+except NameError:
+    _script_dir = Path.cwd()
+
+with open(_script_dir / "4300813.json") as read_file:
     data = json.load(read_file)
 
 num_atoms = len(data["atoms"])
