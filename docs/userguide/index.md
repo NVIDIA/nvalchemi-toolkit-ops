@@ -36,8 +36,8 @@ import torch
 from nvalchemiops.torch.neighbors import cell_list
 
 # Create atomic system data
-positions = torch.randn(1000, 3, device='cuda')  # 1000 atoms
-cell = torch.eye(3, device='cuda').unsqueeze(0) * 10.0  # 10x10x10 unit cell
+positions = torch.randn(1000, 3, device='cuda') * 25.0  # 1000 atoms
+cell = torch.eye(3, device='cuda').unsqueeze(0) * 25.0  # 10x10x10 unit cell
 pbc = torch.tensor([True, True, True], device='cuda')  # PBC
 cutoff = 2.5  # Cutoff radius in Angstroms
 
