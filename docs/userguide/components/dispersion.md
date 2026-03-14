@@ -44,14 +44,14 @@ cutoff in Angstrom, positions in Bohr). See [Units](dispersion_units) for guidan
 on units for each parameter.
 ```
 
-::::{tab-set}
+:::::::{tab-set}
 
-:::{tab-item} Neighbor Matrix (Dense)
+::::::{tab-item} Neighbor Matrix (Dense)
 :sync: matrix
 
-::::::{tab-set}
+::::{tab-set}
 
-:::::{tab-item} PyTorch
+:::{tab-item} PyTorch
 :sync: pytorch
 
 ```python
@@ -72,110 +72,110 @@ energy, forces, coord_num = dftd3(
     d3_params=d3_params,
 )
 ```
-
-:::::
-
-:::::{tab-item} JAX
-:sync: jax
-
-```python
-from nvalchemiops.jax.interactions.dispersion import dftd3
-from nvalchemiops.jax.neighbors import neighbor_list
-
-# Build neighbor matrix; 50 Bohr cutoff
-neighbor_matrix, num_neighbors, shifts = neighbor_list(
-    positions, cutoff=50.0, cell=cell, pbc=pbc
-)
-
-# Compute dispersion correction (PBE functional)
-energy, forces, coord_num = dftd3(
-    positions=positions,           # [num_atoms, 3] in Bohr
-    numbers=numbers,               # [num_atoms] atomic numbers
-    neighbor_matrix=neighbor_matrix,
-    a1=0.3981, a2=4.4211, s8=0.7875,
-    d3_params=d3_params,
-)
-```
-
-:::::
-
-::::::
 
 :::
 
-:::{tab-item} Neighbor List (Sparse COO)
-:sync: coo
-
-::::::{tab-set}
-
-:::::{tab-item} PyTorch
-:sync: pytorch
-
-```python
-from nvalchemiops.torch.interactions.dispersion import dftd3
-from nvalchemiops.torch.neighbors import neighbor_list
-
-# Build neighbor list in COO format; 50 Bohr cutoff
-neighbor_list_coo, neighbor_list_ptr, unit_shifts = neighbor_list(
-    positions, cutoff=50.0, cell=cell, pbc=pbc, return_neighbor_list=True
-)
-
-# Compute dispersion correction (PBE functional)
-energy, forces, coord_num = dftd3(
-    positions=positions,           # [num_atoms, 3] in Bohr
-    numbers=numbers,               # [num_atoms] atomic numbers
-    neighbor_list=neighbor_list_coo,  # [2, num_pairs]
-    neighbor_ptr=neighbor_list_ptr,
-    a1=0.4289, a2=4.4407, s8=0.7875,
-    d3_params=d3_params,
-)
-```
-
-:::::
-
-:::::{tab-item} JAX
+:::{tab-item} JAX
 :sync: jax
 
 ```python
 from nvalchemiops.jax.interactions.dispersion import dftd3
 from nvalchemiops.jax.neighbors import neighbor_list
 
-# Build neighbor list in COO format; 50 Bohr cutoff
-neighbor_list_coo, neighbor_list_ptr, unit_shifts = neighbor_list(
-    positions, cutoff=50.0, cell=cell, pbc=pbc, return_neighbor_list=True
+# Build neighbor matrix; 50 Bohr cutoff
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff=50.0, cell=cell, pbc=pbc
 )
 
 # Compute dispersion correction (PBE functional)
 energy, forces, coord_num = dftd3(
     positions=positions,           # [num_atoms, 3] in Bohr
     numbers=numbers,               # [num_atoms] atomic numbers
-    neighbor_list=neighbor_list_coo,  # [2, num_pairs]
-    neighbor_ptr=neighbor_list_ptr,
+    neighbor_matrix=neighbor_matrix,
     a1=0.3981, a2=4.4211, s8=0.7875,
     d3_params=d3_params,
 )
 ```
-
-:::::
-
-::::::
 
 :::
 
 ::::
+
+::::::
+
+::::::{tab-item} Neighbor List (Sparse COO)
+:sync: coo
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+```python
+from nvalchemiops.torch.interactions.dispersion import dftd3
+from nvalchemiops.torch.neighbors import neighbor_list
+
+# Build neighbor list in COO format; 50 Bohr cutoff
+neighbor_list_coo, neighbor_list_ptr, unit_shifts = neighbor_list(
+    positions, cutoff=50.0, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Compute dispersion correction (PBE functional)
+energy, forces, coord_num = dftd3(
+    positions=positions,           # [num_atoms, 3] in Bohr
+    numbers=numbers,               # [num_atoms] atomic numbers
+    neighbor_list=neighbor_list_coo,  # [2, num_pairs]
+    neighbor_ptr=neighbor_list_ptr,
+    a1=0.4289, a2=4.4407, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.interactions.dispersion import dftd3
+from nvalchemiops.jax.neighbors import neighbor_list
+
+# Build neighbor list in COO format; 50 Bohr cutoff
+neighbor_list_coo, neighbor_list_ptr, unit_shifts = neighbor_list(
+    positions, cutoff=50.0, cell=cell, pbc=pbc, return_neighbor_list=True
+)
+
+# Compute dispersion correction (PBE functional)
+energy, forces, coord_num = dftd3(
+    positions=positions,           # [num_atoms, 3] in Bohr
+    numbers=numbers,               # [num_atoms] atomic numbers
+    neighbor_list=neighbor_list_coo,  # [2, num_pairs]
+    neighbor_ptr=neighbor_list_ptr,
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::
+
+::::
+
+::::::
+
+:::::::
 
 ### Periodic Boundary Conditions
 
 For periodic systems, provide the cell and shift arrays:
 
-::::{tab-set}
+:::::::{tab-set}
 
-:::{tab-item} Neighbor Matrix (Dense)
+::::::{tab-item} Neighbor Matrix (Dense)
 :sync: matrix
 
-::::::{tab-set}
+::::{tab-set}
 
-:::::{tab-item} PyTorch
+:::{tab-item} PyTorch
 :sync: pytorch
 
 ```python
@@ -190,75 +190,75 @@ energy, forces, coord_num, virial = dftd3(
     compute_virial=True                              # also compute virial
 )
 ```
-
-:::::
-
-:::::{tab-item} JAX
-:sync: jax
-
-```python
-energy, forces, coord_num, virial = dftd3(
-    positions=positions,
-    numbers=numbers,
-    neighbor_matrix=neighbor_matrix,
-    neighbor_matrix_shifts=neighbor_matrix_shifts,   # [num_atoms, max_neighbors, 3]
-    cell=cell,                                       # [num_systems, 3, 3]
-    a1=0.3981, a2=4.4211, s8=0.7875,
-    d3_params=d3_params,
-    compute_virial=True                              # also compute virial
-)
-```
-
-:::::
-
-::::::
 
 :::
 
-:::{tab-item} Neighbor List (Sparse COO)
-:sync: coo
-
-::::::{tab-set}
-
-:::::{tab-item} PyTorch
-:sync: pytorch
-
-```python
-energy, forces, coord_num = dftd3(
-    positions=positions,
-    numbers=numbers,
-    neighbor_list=neighbor_list_coo,
-    unit_shifts=unit_shifts,           # [num_pairs, 3]
-    cell=cell,                         # [num_systems, 3, 3]
-    a1=0.4289, a2=4.4407, s8=0.7875,
-    d3_params=d3_params,
-)
-```
-
-:::::
-
-:::::{tab-item} JAX
+:::{tab-item} JAX
 :sync: jax
 
 ```python
-energy, forces, coord_num = dftd3(
+energy, forces, coord_num, virial = dftd3(
     positions=positions,
     numbers=numbers,
-    neighbor_list=neighbor_list_coo,
-    unit_shifts=unit_shifts,           # [num_pairs, 3]
-    cell=cell,                         # [num_systems, 3, 3]
+    neighbor_matrix=neighbor_matrix,
+    neighbor_matrix_shifts=neighbor_matrix_shifts,   # [num_atoms, max_neighbors, 3]
+    cell=cell,                                       # [num_systems, 3, 3]
     a1=0.3981, a2=4.4211, s8=0.7875,
     d3_params=d3_params,
+    compute_virial=True                              # also compute virial
 )
 ```
-
-:::::
-
-::::::
 
 :::
 
 ::::
+
+::::::
+
+::::::{tab-item} Neighbor List (Sparse COO)
+:sync: coo
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+```python
+energy, forces, coord_num = dftd3(
+    positions=positions,
+    numbers=numbers,
+    neighbor_list=neighbor_list_coo,
+    unit_shifts=unit_shifts,           # [num_pairs, 3]
+    cell=cell,                         # [num_systems, 3, 3]
+    a1=0.4289, a2=4.4407, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+energy, forces, coord_num = dftd3(
+    positions=positions,
+    numbers=numbers,
+    neighbor_list=neighbor_list_coo,
+    unit_shifts=unit_shifts,           # [num_pairs, 3]
+    cell=cell,                         # [num_systems, 3, 3]
+    a1=0.3981, a2=4.4211, s8=0.7875,
+    d3_params=d3_params,
+)
+```
+
+:::
+
+::::
+
+::::::
+
+:::::::
 
 Use `batch_idx` to specify multi-system batches, mapping each atom to its system.
 
