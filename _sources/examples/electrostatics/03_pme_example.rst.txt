@@ -47,14 +47,14 @@ PME accelerates the reciprocal-space sum using B-spline interpolation:
     This script is intended as an API demonstration. Do not use this script
     for performance benchmarking; refer to the `benchmarks` folder instead.
 
-.. GENERATED FROM PYTHON SOURCE LINES 43-47
+.. GENERATED FROM PYTHON SOURCE LINES 48-52
 
 Setup and Imports
 -----------------
 First, we import the necessary modules. The PME API provides unified functions
 that handle both single-system and batched calculations.
 
-.. GENERATED FROM PYTHON SOURCE LINES 47-66
+.. GENERATED FROM PYTHON SOURCE LINES 52-70
 
 .. code-block:: Python
 
@@ -66,16 +66,15 @@ that handle both single-system and batched calculations.
     import numpy as np
     import torch
 
-    from nvalchemiops.interactions.electrostatics import (
+    from nvalchemiops.torch.interactions.electrostatics import (
+        estimate_ewald_parameters,
+        estimate_pme_parameters,
         ewald_real_space,
         ewald_summation,
         particle_mesh_ewald,
         pme_reciprocal_space,
     )
-    from nvalchemiops.interactions.electrostatics.parameters import (
-        estimate_pme_parameters,
-    )
-    from nvalchemiops.neighborlist import neighbor_list as neighbor_list_fn
+    from nvalchemiops.torch.neighbors import neighbor_list as neighbor_list_fn
 
 
 
@@ -84,12 +83,12 @@ that handle both single-system and batched calculations.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 67-69
+.. GENERATED FROM PYTHON SOURCE LINES 71-73
 
 Configure Device
 ----------------
 
-.. GENERATED FROM PYTHON SOURCE LINES 69-77
+.. GENERATED FROM PYTHON SOURCE LINES 73-81
 
 .. code-block:: Python
 
@@ -114,13 +113,13 @@ Configure Device
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 78-81
+.. GENERATED FROM PYTHON SOURCE LINES 82-85
 
 Create a NaCl Crystal System
 ----------------------------
 We define a helper function to create NaCl rock salt crystal supercells.
 
-.. GENERATED FROM PYTHON SOURCE LINES 81-120
+.. GENERATED FROM PYTHON SOURCE LINES 85-124
 
 .. code-block:: Python
 
@@ -170,7 +169,7 @@ We define a helper function to create NaCl rock salt crystal supercells.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 121-126
+.. GENERATED FROM PYTHON SOURCE LINES 125-130
 
 Basic Usage with Automatic Parameters
 -------------------------------------
@@ -178,7 +177,7 @@ The simplest way to use PME is with automatic parameter estimation.
 Given an accuracy tolerance, the API estimates optimal alpha, mesh dimensions,
 and real-space cutoff.
 
-.. GENERATED FROM PYTHON SOURCE LINES 126-134
+.. GENERATED FROM PYTHON SOURCE LINES 130-138
 
 .. code-block:: Python
 
@@ -198,6 +197,8 @@ and real-space cutoff.
 
  .. code-block:: none
 
+    /home/kinlongkelvi/Repos/nvalchemi-toolkit-ops.worktrees/gh-pages/.venv/lib/python3.13/site-packages/torch/utils/_device.py:109: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+      return func(*args, **kwargs)
     System: 54 atoms NaCl crystal
     Cell size: 16.92 Å
     Total charge: 0.0 (should be 0 for neutral)
@@ -205,11 +206,11 @@ and real-space cutoff.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 135-136
+.. GENERATED FROM PYTHON SOURCE LINES 139-140
 
 Estimate optimal PME parameters:
 
-.. GENERATED FROM PYTHON SOURCE LINES 136-150
+.. GENERATED FROM PYTHON SOURCE LINES 140-154
 
 .. code-block:: Python
 
@@ -245,11 +246,11 @@ Estimate optimal PME parameters:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 151-152
+.. GENERATED FROM PYTHON SOURCE LINES 155-156
 
 Build neighbor list and run PME:
 
-.. GENERATED FROM PYTHON SOURCE LINES 152-181
+.. GENERATED FROM PYTHON SOURCE LINES 156-185
 
 .. code-block:: Python
 
@@ -295,19 +296,19 @@ Build neighbor list and run PME:
       Total energy: -9.743761
       Energy per atom: -0.180440
       Max force magnitude: 0.000000
-      Time: 15170.04 ms
+      Time: 48.33 ms
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 182-186
+.. GENERATED FROM PYTHON SOURCE LINES 186-190
 
 Neighbor List vs Neighbor Matrix Format
 ---------------------------------------
 PME supports both neighbor formats, producing identical results.
 We use the estimated parameters from above for consistency.
 
-.. GENERATED FROM PYTHON SOURCE LINES 186-206
+.. GENERATED FROM PYTHON SOURCE LINES 190-210
 
 .. code-block:: Python
 
@@ -346,11 +347,11 @@ We use the estimated parameters from above for consistency.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 207-208
+.. GENERATED FROM PYTHON SOURCE LINES 211-212
 
 Using neighbor list format:
 
-.. GENERATED FROM PYTHON SOURCE LINES 208-224
+.. GENERATED FROM PYTHON SOURCE LINES 212-228
 
 .. code-block:: Python
 
@@ -378,16 +379,16 @@ Using neighbor list format:
 
  .. code-block:: none
 
-      List format: E=-9.743761, time=5.18 ms
+      List format: E=-9.743761, time=4.41 ms
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 225-226
+.. GENERATED FROM PYTHON SOURCE LINES 229-230
 
 Using neighbor matrix format:
 
-.. GENERATED FROM PYTHON SOURCE LINES 226-246
+.. GENERATED FROM PYTHON SOURCE LINES 230-250
 
 .. code-block:: Python
 
@@ -419,15 +420,15 @@ Using neighbor matrix format:
 
  .. code-block:: none
 
-      Matrix format: E=-9.743761, time=10.89 ms
+      Matrix format: E=-9.743761, time=4.68 ms
 
     Energy difference: 0.00e+00
-    Max force difference: 2.20e-17
+    Max force difference: 2.36e-17
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 247-252
+.. GENERATED FROM PYTHON SOURCE LINES 251-256
 
 Convergence with Accuracy Parameter
 -----------------------------------
@@ -435,7 +436,7 @@ The PME accuracy depends on the accuracy parameter, which controls both the
 mesh resolution and alpha parameter. The parameter estimation uses optimal
 formulas to balance computational cost between real and reciprocal space.
 
-.. GENERATED FROM PYTHON SOURCE LINES 252-260
+.. GENERATED FROM PYTHON SOURCE LINES 256-264
 
 .. code-block:: Python
 
@@ -463,11 +464,11 @@ formulas to balance computational cost between real and reciprocal space.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 261-262
+.. GENERATED FROM PYTHON SOURCE LINES 265-266
 
 Run PME with different accuracy targets:
 
-.. GENERATED FROM PYTHON SOURCE LINES 262-295
+.. GENERATED FROM PYTHON SOURCE LINES 266-299
 
 .. code-block:: Python
 
@@ -512,21 +513,21 @@ Run PME with different accuracy targets:
 
  .. code-block:: none
 
-       1e-02  |  0.204  | (8, 8, 8)    |   10.54  |  -9.755594  | 4.53 ms
-       1e-03  |  0.204  | (16, 16, 16) |   12.91  |  -9.745599  | 5.26 ms
-       1e-04  |  0.204  | (16, 16, 16) |   14.90  |  -9.743791  | 2.81 ms
+       1e-02  |  0.204  | (8, 8, 8)    |   10.54  |  -9.755594  | 4.32 ms
+       1e-03  |  0.204  | (16, 16, 16) |   12.91  |  -9.745599  | 4.19 ms
+       1e-04  |  0.204  | (16, 16, 16) |   14.90  |  -9.743791  | 3.40 ms
        1e-05  |  0.204  | (32, 32, 32) |   16.66  |  -9.743703  | 4.47 ms
-       1e-06  |  0.204  | (64, 64, 64) |   18.25  |  -9.743761  | 3.51 ms
-       1e-07  |  0.204  | (64, 64, 64) |   19.71  |  -9.743762  | 3.24 ms
+       1e-06  |  0.204  | (64, 64, 64) |   18.25  |  -9.743761  | 3.31 ms
+       1e-07  |  0.204  | (64, 64, 64) |   19.71  |  -9.743762  | 3.45 ms
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 296-297
+.. GENERATED FROM PYTHON SOURCE LINES 300-301
 
 Show convergence relative to highest accuracy:
 
-.. GENERATED FROM PYTHON SOURCE LINES 297-304
+.. GENERATED FROM PYTHON SOURCE LINES 301-308
 
 .. code-block:: Python
 
@@ -556,14 +557,14 @@ Show convergence relative to highest accuracy:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 305-309
+.. GENERATED FROM PYTHON SOURCE LINES 309-313
 
 Effect of Accuracy on PME Parameters
 ------------------------------------
 The accuracy parameter controls how alpha and mesh dimensions are chosen.
 Lower accuracy targets require larger meshes and cutoffs.
 
-.. GENERATED FROM PYTHON SOURCE LINES 309-317
+.. GENERATED FROM PYTHON SOURCE LINES 313-321
 
 .. code-block:: Python
 
@@ -591,11 +592,11 @@ Lower accuracy targets require larger meshes and cutoffs.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 318-319
+.. GENERATED FROM PYTHON SOURCE LINES 322-323
 
 Sweep through accuracy values:
 
-.. GENERATED FROM PYTHON SOURCE LINES 319-349
+.. GENERATED FROM PYTHON SOURCE LINES 323-353
 
 .. code-block:: Python
 
@@ -646,13 +647,13 @@ Sweep through accuracy values:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 350-353
+.. GENERATED FROM PYTHON SOURCE LINES 354-357
 
 Accessing Real-Space and Reciprocal-Space Components
 ----------------------------------------------------
 You can compute the components separately if needed.
 
-.. GENERATED FROM PYTHON SOURCE LINES 353-366
+.. GENERATED FROM PYTHON SOURCE LINES 357-370
 
 .. code-block:: Python
 
@@ -683,11 +684,11 @@ You can compute the components separately if needed.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 367-368
+.. GENERATED FROM PYTHON SOURCE LINES 371-372
 
 Real-space component (uses same kernel as Ewald):
 
-.. GENERATED FROM PYTHON SOURCE LINES 368-381
+.. GENERATED FROM PYTHON SOURCE LINES 372-385
 
 .. code-block:: Python
 
@@ -717,11 +718,11 @@ Real-space component (uses same kernel as Ewald):
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 382-383
+.. GENERATED FROM PYTHON SOURCE LINES 386-387
 
 PME reciprocal-space component (FFT-based):
 
-.. GENERATED FROM PYTHON SOURCE LINES 383-395
+.. GENERATED FROM PYTHON SOURCE LINES 387-399
 
 .. code-block:: Python
 
@@ -751,7 +752,7 @@ PME reciprocal-space component (FFT-based):
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 396-401
+.. GENERATED FROM PYTHON SOURCE LINES 400-405
 
 Charge Gradients for ML Potentials
 ----------------------------------
@@ -759,7 +760,7 @@ PME supports computing analytical charge gradients (∂E/∂q_i), which are usef
 for training machine learning potentials that predict atomic partial charges.
 The charge gradient represents the electrostatic potential at each atom.
 
-.. GENERATED FROM PYTHON SOURCE LINES 401-443
+.. GENERATED FROM PYTHON SOURCE LINES 405-447
 
 .. code-block:: Python
 
@@ -823,11 +824,11 @@ The charge gradient represents the electrostatic potential at each atom.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 444-445
+.. GENERATED FROM PYTHON SOURCE LINES 448-449
 
 Full PME with charge gradients in one call:
 
-.. GENERATED FROM PYTHON SOURCE LINES 445-462
+.. GENERATED FROM PYTHON SOURCE LINES 449-466
 
 .. code-block:: Python
 
@@ -862,11 +863,11 @@ Full PME with charge gradients in one call:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 463-464
+.. GENERATED FROM PYTHON SOURCE LINES 467-468
 
 Verify charge gradients against autograd:
 
-.. GENERATED FROM PYTHON SOURCE LINES 464-485
+.. GENERATED FROM PYTHON SOURCE LINES 468-489
 
 .. code-block:: Python
 
@@ -899,18 +900,18 @@ Verify charge gradients against autograd:
 
  .. code-block:: none
 
-      Explicit vs Autograd charge gradient max diff: 2.22e-16
+      Explicit vs Autograd charge gradient max diff: 1.67e-16
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 486-489
+.. GENERATED FROM PYTHON SOURCE LINES 490-493
 
 Batch Evaluation
 ----------------
 Multiple systems can be evaluated simultaneously using batch_idx.
 
-.. GENERATED FROM PYTHON SOURCE LINES 489-509
+.. GENERATED FROM PYTHON SOURCE LINES 493-513
 
 .. code-block:: Python
 
@@ -951,11 +952,11 @@ Multiple systems can be evaluated simultaneously using batch_idx.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 510-511
+.. GENERATED FROM PYTHON SOURCE LINES 514-515
 
 Concatenate all systems:
 
-.. GENERATED FROM PYTHON SOURCE LINES 511-528
+.. GENERATED FROM PYTHON SOURCE LINES 515-532
 
 .. code-block:: Python
 
@@ -993,11 +994,11 @@ Concatenate all systems:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 529-530
+.. GENERATED FROM PYTHON SOURCE LINES 533-534
 
 Build batched neighbor list and run:
 
-.. GENERATED FROM PYTHON SOURCE LINES 530-565
+.. GENERATED FROM PYTHON SOURCE LINES 534-569
 
 .. code-block:: Python
 
@@ -1045,7 +1046,7 @@ Build batched neighbor list and run:
  .. code-block:: none
 
 
-    Batch evaluation time: 32.91 ms
+    Batch evaluation time: 9.67 ms
 
     Per-system results:
       System 0: 16 atoms, E=-2.8870, |F|_max=0.0000
@@ -1055,11 +1056,11 @@ Build batched neighbor list and run:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 566-567
+.. GENERATED FROM PYTHON SOURCE LINES 570-571
 
 Verify batch vs individual calculations:
 
-.. GENERATED FROM PYTHON SOURCE LINES 567-592
+.. GENERATED FROM PYTHON SOURCE LINES 571-596
 
 .. code-block:: Python
 
@@ -1105,7 +1106,7 @@ Verify batch vs individual calculations:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 593-598
+.. GENERATED FROM PYTHON SOURCE LINES 597-602
 
 PME vs Standard Ewald Comparison
 --------------------------------
@@ -1113,14 +1114,11 @@ PME becomes more efficient than standard Ewald for larger systems due to
 its O(N log N) scaling vs O(N²) for explicit k-vector summation.
 Both methods use the same accuracy target for fair comparison.
 
-.. GENERATED FROM PYTHON SOURCE LINES 598-610
+.. GENERATED FROM PYTHON SOURCE LINES 602-611
 
 .. code-block:: Python
 
 
-    from nvalchemiops.interactions.electrostatics.parameters import (
-        estimate_ewald_parameters,
-    )
 
     system_sizes = [2, 3, 4]
     accuracy_cmp = 1e-5
@@ -1145,11 +1143,11 @@ Both methods use the same accuracy target for fair comparison.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 611-612
+.. GENERATED FROM PYTHON SOURCE LINES 612-613
 
 Compare timing and accuracy:
 
-.. GENERATED FROM PYTHON SOURCE LINES 612-667
+.. GENERATED FROM PYTHON SOURCE LINES 613-668
 
 .. code-block:: Python
 
@@ -1216,16 +1214,16 @@ Compare timing and accuracy:
 
  .. code-block:: none
 
-        2     |    16   |      2.29  |     2.94  | 2.53e-06
-        3     |    54   |      2.06  |     3.30  | 4.31e-08
-        4     |   128   |      3.38  |     3.17  | 2.47e-06
+        2     |    16   |      2.00  |     2.86  | 2.53e-06
+        3     |    54   |      2.08  |     2.77  | 4.31e-08
+        4     |   128   |      2.96  |     3.54  | 2.47e-06
 
     Note: PME becomes increasingly efficient for larger systems.
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 668-689
+.. GENERATED FROM PYTHON SOURCE LINES 669-690
 
 Summary
 -------
@@ -1249,7 +1247,7 @@ Key PME steps:
 - Force interpolation from mesh gradients
 - Charge gradient: :math:`\\frac{\\partial E}{\\partial q_i} = \\phi_i` (electrostatic potential)
 
-.. GENERATED FROM PYTHON SOURCE LINES 689-691
+.. GENERATED FROM PYTHON SOURCE LINES 690-692
 
 .. code-block:: Python
 
@@ -1272,7 +1270,7 @@ Key PME steps:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 15.372 seconds)
+   **Total running time of the script:** (0 minutes 0.214 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_03_pme_example.py:

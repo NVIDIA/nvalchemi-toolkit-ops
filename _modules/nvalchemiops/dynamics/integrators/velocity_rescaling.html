@@ -1,0 +1,731 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.dynamics.integrators.velocity_rescaling &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/dynamics/integrators/velocity_rescaling';</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.dynamics.integrators.velocity_rescaling</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Velocity Rescaling Thermostat</span>
+<span class="sd">=============================</span>
+
+<span class="sd">GPU-accelerated Warp kernels for simple velocity rescaling thermostat.</span>
+
+<span class="sd">This module provides both mutating (in-place) and non-mutating versions</span>
+<span class="sd">of each kernel for gradient tracking compatibility.</span>
+
+<span class="sd">MATHEMATICAL FORMULATION</span>
+<span class="sd">========================</span>
+
+<span class="sd">Simple velocity rescaling:</span>
+
+<span class="sd">.. math::</span>
+
+<span class="sd">    \\mathbf{v}_i \\leftarrow \\mathbf{v}_i \\cdot \\sqrt{\\frac{T_{\\text{target}}}{T_{\\text{current}}}}</span>
+
+<span class="sd">where the instantaneous temperature is:</span>
+
+<span class="sd">.. math::</span>
+
+<span class="sd">    T_{\\text{current}} = \\frac{2 \\cdot KE}{N_{\\text{DOF}} \\cdot k_B}</span>
+<span class="sd">                        = \\frac{\\sum_i m_i |\\mathbf{v}_i|^2}{N_{\\text{DOF}} \\cdot k_B}</span>
+
+<span class="sd">USAGE</span>
+<span class="sd">=====</span>
+
+<span class="sd">Velocity rescaling is useful for:</span>
+<span class="sd">- Quick equilibration to target temperature</span>
+<span class="sd">- Simple temperature control (non-canonical sampling)</span>
+<span class="sd">- Initial velocity scaling before production runs</span>
+
+<span class="sd">Note: Velocity rescaling does NOT produce canonical (NVT) sampling.</span>
+<span class="sd">For proper NVT sampling, use Langevin or Nosé-Hoover thermostats.</span>
+
+<span class="sd">BATCH MODE</span>
+<span class="sd">==========</span>
+
+<span class="sd">Supports three execution modes for scaling velocities:</span>
+
+<span class="sd">**Single System Mode**::</span>
+
+<span class="sd">    from nvalchemiops.dynamics.utils import compute_temperature, compute_kinetic_energy</span>
+
+<span class="sd">    # Compute current temperature</span>
+<span class="sd">    ke = wp.empty(1, dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    compute_kinetic_energy(velocities, masses, ke)</span>
+<span class="sd">    T_current = wp.empty(1, dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    compute_temperature(ke, T_current, num_atoms=100)</span>
+
+<span class="sd">    # Compute scaling factor</span>
+<span class="sd">    factor = _compute_rescale_factor(T_current, T_target=1.0)</span>
+<span class="sd">    scale_factor = wp.array([factor], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">    # Apply rescaling</span>
+<span class="sd">    velocity_rescale(velocities, scale_factor)</span>
+
+<span class="sd">**Batch Mode with batch_idx**::</span>
+
+<span class="sd">    # Different scale factors for each system</span>
+<span class="sd">    batch_idx = wp.array([0]*N0 + [1]*N1 + [2]*N2, dtype=wp.int32, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    scale_factors = wp.array([s0, s1, s2], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">    velocity_rescale(velocities, scale_factors, batch_idx=batch_idx)</span>
+
+<span class="sd">**Batch Mode with atom_ptr**::</span>
+
+<span class="sd">    atom_ptr = wp.array([0, N0, N0+N1, N0+N1+N2], dtype=wp.int32, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    scale_factors = wp.array([s0, s1, s2], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">    velocity_rescale(velocities, scale_factors, atom_ptr=atom_ptr)</span>
+
+<span class="sd">REFERENCES</span>
+<span class="sd">==========</span>
+
+<span class="sd">- Berendsen et al. (1984). J. Chem. Phys. 81, 3684 (weak coupling)</span>
+<span class="sd">- Bussi et al. (2007). J. Chem. Phys. 126, 014101 (stochastic rescaling)</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.utils.launch_helpers</span><span class="w"> </span><span class="kn">import</span> <span class="n">dispatch_family</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.utils.shared_kernels</span><span class="w"> </span><span class="kn">import</span> <span class="n">velocity_rescale_families</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.warp_dispatch</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_out_array</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># Mutating APIs</span>
+    <span class="s2">&quot;velocity_rescale&quot;</span><span class="p">,</span>
+    <span class="c1"># Non-mutating APIs</span>
+    <span class="s2">&quot;velocity_rescale_out&quot;</span><span class="p">,</span>
+    <span class="c1"># Utility</span>
+    <span class="s2">&quot;_compute_rescale_factor&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Functional Interface</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_compute_rescale_factor</span><span class="p">(</span>
+    <span class="n">current_temperature</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">target_temperature</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute velocity rescaling factor.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    current_temperature : float</span>
+<span class="sd">        Current instantaneous temperature.</span>
+<span class="sd">    target_temperature : float</span>
+<span class="sd">        Target temperature.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    float</span>
+<span class="sd">        Scaling factor sqrt(T_target / T_current).</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">current_temperature</span> <span class="o">&lt;=</span> <span class="nb">type</span><span class="p">(</span><span class="n">current_temperature</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="n">current_temperature</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">target_temperature</span> <span class="o">/</span> <span class="n">current_temperature</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="velocity_rescale">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.velocity_rescaling.velocity_rescale">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">velocity_rescale</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">scale_factor</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Rescale velocities to achieve target temperature (in-place).</span>
+
+<span class="sd">    Applies ``v_i *= scale_factor`` to all velocities.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    scale_factor : wp.array</span>
+<span class="sd">        Scaling factor(s). Shape (1,) for single system, (B,) for batched.</span>
+<span class="sd">        Typically sqrt(T_target / T_current).</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. For batched mode (atomic operations).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from velocities.</span>
+
+<span class="sd">    Example</span>
+<span class="sd">    -------</span>
+<span class="sd">    &gt;&gt;&gt; # Compute current temperature</span>
+<span class="sd">    &gt;&gt;&gt; ke = wp.empty(1, dtype=wp.float64, device=device)</span>
+<span class="sd">    &gt;&gt;&gt; compute_kinetic_energy(velocities, masses, ke)</span>
+<span class="sd">    &gt;&gt;&gt; T_current = wp.empty(1, dtype=wp.float64, device=device)</span>
+<span class="sd">    &gt;&gt;&gt; compute_temperature(ke, T_current, num_atoms=100)</span>
+<span class="sd">    &gt;&gt;&gt;</span>
+<span class="sd">    &gt;&gt;&gt; # Compute rescaling factor</span>
+<span class="sd">    &gt;&gt;&gt; factor = _compute_rescale_factor(T_current, T_target)</span>
+<span class="sd">    &gt;&gt;&gt; scale = wp.array([factor], dtype=wp.float32, device=device)</span>
+<span class="sd">    &gt;&gt;&gt;</span>
+<span class="sd">    &gt;&gt;&gt; # Apply rescaling</span>
+<span class="sd">    &gt;&gt;&gt; velocity_rescale(velocities, scale)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dispatch_family</span><span class="p">(</span>
+        <span class="n">velocity_rescale_families</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">inputs_single</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">scale_factor</span><span class="p">,</span> <span class="n">velocities</span><span class="p">],</span>
+        <span class="n">inputs_batch</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">scale_factor</span><span class="p">,</span> <span class="n">velocities</span><span class="p">],</span>
+        <span class="n">inputs_ptr</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">atom_ptr</span><span class="p">,</span> <span class="n">scale_factor</span><span class="p">,</span> <span class="n">velocities</span><span class="p">],</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="velocity_rescale_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.velocity_rescaling.velocity_rescale_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">velocity_rescale_out</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">scale_factor</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Rescale velocities to achieve target temperature (non-mutating).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,).</span>
+<span class="sd">    scale_factor : wp.array</span>
+<span class="sd">        Scaling factor(s). Shape (1,) for single system, (B,) for batched.</span>
+<span class="sd">    velocities_out : wp.array</span>
+<span class="sd">        Pre-allocated output array.  Must match ``velocities`` in shape,</span>
+<span class="sd">        dtype, and device.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. For batched mode (atomic operations).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Rescaled velocities (same object as ``velocities_out``).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">validate_out_array</span><span class="p">(</span><span class="n">velocities_out</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="s2">&quot;velocities_out&quot;</span><span class="p">)</span>
+    <span class="n">dispatch_family</span><span class="p">(</span>
+        <span class="n">velocity_rescale_families</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">inputs_single</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">scale_factor</span><span class="p">,</span> <span class="n">velocities_out</span><span class="p">],</span>
+        <span class="n">inputs_batch</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">scale_factor</span><span class="p">,</span> <span class="n">velocities_out</span><span class="p">],</span>
+        <span class="n">inputs_ptr</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">atom_ptr</span><span class="p">,</span> <span class="n">scale_factor</span><span class="p">,</span> <span class="n">velocities_out</span><span class="p">],</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">velocities_out</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

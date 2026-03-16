@@ -54,7 +54,7 @@ First, we'll import the necessary modules and set up our batch parameters.
 The low-level D3 kernels use atomic units internally (Bohr for distances,
 Hartree for energies), so we'll need conversion constants.
 
-.. GENERATED FROM PYTHON SOURCE LINES 52-88
+.. GENERATED FROM PYTHON SOURCE LINES 52-84
 
 .. code-block:: Python
 
@@ -76,13 +76,9 @@ Hartree for energies), so we'll need conversion constants.
         save_dftd3_parameters,
     )
 
-    from nvalchemiops.interactions.dispersion.dftd3 import (
-        dftd3,
-    )
-    from nvalchemiops.neighborlist import (
-        estimate_max_neighbors,
-        neighbor_list,
-    )
+    from nvalchemiops.torch.interactions.dispersion import dftd3
+    from nvalchemiops.torch.neighbors import neighbor_list
+    from nvalchemiops.torch.neighbors.neighbor_utils import estimate_max_neighbors
 
     # Configuration
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -109,14 +105,14 @@ Hartree for energies), so we'll need conversion constants.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 89-93
+.. GENERATED FROM PYTHON SOURCE LINES 85-89
 
 Load DFT-D3 Parameters
 ----------------------
 Load the cached DFT-D3 parameters that contain element-specific C6 coefficients
 and covalent radii. These were downloaded in example 01.
 
-.. GENERATED FROM PYTHON SOURCE LINES 93-111
+.. GENERATED FROM PYTHON SOURCE LINES 89-107
 
 .. code-block:: Python
 
@@ -151,14 +147,14 @@ and covalent radii. These were downloaded in example 01.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 112-116
+.. GENERATED FROM PYTHON SOURCE LINES 108-112
 
 Utility Function: Lattice Parameters to Matrix
 -----------------------------------------------
 Crystals are often described by lattice parameters (lengths and angles).
 We need to convert these to a matrix representation for calculations.
 
-.. GENERATED FROM PYTHON SOURCE LINES 116-162
+.. GENERATED FROM PYTHON SOURCE LINES 112-158
 
 .. code-block:: Python
 
@@ -215,7 +211,7 @@ We need to convert these to a matrix representation for calculations.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 163-171
+.. GENERATED FROM PYTHON SOURCE LINES 159-167
 
 Load Crystal Structure from COD
 --------------------------------
@@ -226,12 +222,17 @@ Crystallography Open Database (COD). The structure contains:
 - Atomic positions in fractional coordinates
 - Element symbols and atomic numbers
 
-.. GENERATED FROM PYTHON SOURCE LINES 171-196
+.. GENERATED FROM PYTHON SOURCE LINES 167-197
 
 .. code-block:: Python
 
 
-    with open("./4300813.json") as read_file:
+    try:
+        _script_dir = Path(__file__).parent
+    except NameError:
+        _script_dir = Path.cwd()
+
+    with open(_script_dir / "4300813.json") as read_file:
         data = json.load(read_file)
 
     num_atoms = len(data["atoms"])
@@ -277,14 +278,14 @@ Crystallography Open Database (COD). The structure contains:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 197-201
+.. GENERATED FROM PYTHON SOURCE LINES 198-202
 
 Extract Atomic Positions and Numbers
 -------------------------------------
 Crystal structures are typically given in fractional coordinates (relative to
 lattice vectors). We'll convert these to Cartesian coordinates for calculations.
 
-.. GENERATED FROM PYTHON SOURCE LINES 201-221
+.. GENERATED FROM PYTHON SOURCE LINES 202-222
 
 .. code-block:: Python
 
@@ -322,7 +323,7 @@ lattice vectors). We'll convert these to Cartesian coordinates for calculations.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 222-234
+.. GENERATED FROM PYTHON SOURCE LINES 223-235
 
 Create Batch of Structures
 ---------------------------
@@ -337,7 +338,7 @@ multiple times. In practice, each structure in the batch could be:
 For this example, we'll use the same structure replicated with small
 random perturbations.
 
-.. GENERATED FROM PYTHON SOURCE LINES 234-250
+.. GENERATED FROM PYTHON SOURCE LINES 235-251
 
 .. code-block:: Python
 
@@ -373,7 +374,7 @@ random perturbations.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 251-258
+.. GENERATED FROM PYTHON SOURCE LINES 252-259
 
 Set Up Batch Indexing
 ---------------------
@@ -383,7 +384,7 @@ structure. We use two tensors for this:
 - ``ptr``: Pointer array marking structure boundaries [0, N, 2N, ..., BATCH_SIZE*N]
 - ``batch_idx``: Per-atom array indicating structure membership [0,0,...,1,1,...,2,2,...]
 
-.. GENERATED FROM PYTHON SOURCE LINES 258-276
+.. GENERATED FROM PYTHON SOURCE LINES 259-277
 
 .. code-block:: Python
 
@@ -420,7 +421,7 @@ structure. We use two tensors for this:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 277-288
+.. GENERATED FROM PYTHON SOURCE LINES 278-289
 
 Compute Batch Neighbor Lists
 -----------------------------
@@ -434,19 +435,29 @@ Key features:
 - Handles periodic boundary conditions automatically
 - Returns shifts for atoms interacting across periodic boundaries
 
-.. GENERATED FROM PYTHON SOURCE LINES 288-331
+.. GENERATED FROM PYTHON SOURCE LINES 289-342
 
 .. code-block:: Python
 
 
-    # Estimate the number of neighbors per atom using 'sensible' parameters;
-    # knowledge of the system will improve the estimate and overallocating
-    # neighbor matrices. The example structure is relatively sparse.
+    # Estimate the number of neighbors per atom
+    # For this sparse crystal structure (COD 4300813), we need to adjust the estimation
+    # parameters based on the actual atomic density within the cutoff sphere.
+    #
+    # The crystal has a relatively low atomic density. To avoid over-allocation,
+    # we compute a more accurate atomic_density estimate:
+    #   - Cutoff sphere volume: (4/3) * π * (20 Å)³ ≈ 33,510 Ų
+    #   - Unit cell volume can be computed from lattice parameters
+    #   - For this structure: ~279 actual neighbors suggests density ≈ 0.001 atoms/ų
+    #
+    # Strategy: Use a conservative estimate based on material type rather than
+    # generic defaults. For molecular crystals with organic/light elements,
+    # atomic_density ≈ 0.001-0.003 atoms/ų is typical in Bohr units.
     cutoff_bohr = CUTOFF / BOHR_TO_ANGSTROM
     max_neighbors = estimate_max_neighbors(
         cutoff_bohr,
-        atomic_density=0.05,  # the example structure is quite sparse
-        safety_factor=0.5,
+        atomic_density=0.0015,  # Adjusted for sparse molecular crystal
+        safety_factor=1.5,  # Modest safety margin for variations
     )
 
     # Build neighbor list (in Bohr to match positions)
@@ -474,7 +485,7 @@ Key features:
             f"  WARNING: Actual max neighbors ({num_neighbors_per_atom.max()})"
             f" exceeds estimated max neighbors ({max_neighbors})"
         )
-    elif num_neighbors_per_atom.max() * 0.5 < max_neighbors:
+    elif num_neighbors_per_atom.max() < max_neighbors * 0.5:
         print(
             f"  WARNING: Actual max neighbors ({num_neighbors_per_atom.max()})"
             f" is less than 50% of estimated max neighbors ({max_neighbors})"
@@ -491,16 +502,15 @@ Key features:
 
 
     Neighbor list computed:
-      Neighbor matrix shape: torch.Size([448, 5664])
+      Neighbor matrix shape: torch.Size([448, 512])
       Average neighbors per atom: 249.3
       Max neighbors: 279
-      Estimated max neighbors: 5664
-      WARNING: Actual max neighbors (279) is less than 50% of estimated max neighbors (5664)
+      Estimated max neighbors: 512
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 332-348
+.. GENERATED FROM PYTHON SOURCE LINES 343-359
 
 Calculate DFT-D3 Dispersion
 ----------------------------
@@ -519,7 +529,7 @@ We use PBE0 functional parameters:
    distances, Hartree for energies). We'll convert back to eV/Angstrom
    for output.
 
-.. GENERATED FROM PYTHON SOURCE LINES 348-368
+.. GENERATED FROM PYTHON SOURCE LINES 359-379
 
 .. code-block:: Python
 
@@ -558,14 +568,14 @@ We use PBE0 functional parameters:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 369-373
+.. GENERATED FROM PYTHON SOURCE LINES 380-384
 
 Results and Analysis
 --------------------
 Convert results from atomic units (Hartree, Bohr) to conventional units
 (eV, Angstrom) for easier interpretation.
 
-.. GENERATED FROM PYTHON SOURCE LINES 373-398
+.. GENERATED FROM PYTHON SOURCE LINES 384-409
 
 .. code-block:: Python
 
@@ -642,7 +652,7 @@ Convert results from atomic units (Hartree, Bohr) to conventional units
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.212 seconds)
+   **Total running time of the script:** (0 minutes 0.192 seconds)
 
 
 .. _sphx_glr_download_examples_dispersion_02_dftd3_batch_crystals.py:

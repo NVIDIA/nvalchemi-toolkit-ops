@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +14,6 @@
 # limitations under the License.
 
 """
-DFT-D3 Dispersion Correction for a Molecule
-============================================
 DFT-D3 Dispersion Correction for a Molecule
 ============================================
 
@@ -60,7 +58,7 @@ from utils import (
     save_dftd3_parameters,
 )
 
-from nvalchemiops.neighborlist.neighborlist import neighbor_list
+from nvalchemiops.torch.neighbors import neighbor_list
 
 # Check for cached parameters, download if needed
 # This step downloads ~500 KB of reference data from the Grimme group
@@ -105,7 +103,12 @@ d3_module = DFTD3(
 # where the first line contains the number of atoms, the second line is a
 # comment, and subsequent lines contain: element symbol, x, y, z coordinates.
 
-with open("./dimer.xyz") as f:
+try:
+    _script_dir = Path(__file__).parent
+except NameError:
+    _script_dir = Path.cwd()
+
+with open(_script_dir / "dimer.xyz") as f:
     lines = f.readlines()
     num_atoms = int(lines[0])
     coords = torch.zeros(num_atoms, 3, device=device, dtype=dtype)

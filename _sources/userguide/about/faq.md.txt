@@ -34,7 +34,7 @@ benefit the community, please start a discussion on Github [Issues][issues_].
 The two algorithm families have different computational complexity:
 
 - `cell_list()` uses spatial decomposition for O(N) scaling. It is optimized
-  for large systems (roughly >5000 atoms) where the cutoff is small relative
+  for large systems (roughly >2000 atoms) where the cutoff is small relative
   to the simulation box.
 - `naive_neighbor_list()` computes all pairwise distances for O(N²) scaling.
   It has lower overhead and can be faster for smaller systems.
@@ -54,6 +54,20 @@ implementations. ALCHEMI Toolkit-Ops differs in several ways:
 
 The acceleration is substantial, particularly for larger system sizes
 where GPU utilization is amortized.
+
+### When should I set `wrap_positions=False`?
+
+When you know that all atom positions are already inside the primary simulation
+cell.  Common scenarios include:
+
+- After an MD integration step that wraps coordinates (e.g. via
+  `wrap_positions_to_cell`)
+- When positions come from a code that always keeps coordinates within the box
+
+Setting `wrap_positions=False` skips two GPU kernel launches per neighbor list
+call, which can noticeably reduce overhead in tight inner loops.  If positions
+are **not** wrapped and you set this to `False`, the neighbor list will be
+incorrect.
 
 ## Troubleshooting
 

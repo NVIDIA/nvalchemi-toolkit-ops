@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Electrostatics &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+    <title>Electrostatics &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
   
   
   
@@ -42,9 +42,9 @@
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
-    <script src="../../_static/doctools.js?v=9bcbadda"></script>
-    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -55,7 +55,7 @@
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Coulomb Electrostatic Interactions" href="01_coulomb_example.html" />
-    <link rel="prev" title="DFT-D3 Dispersion Correction for Batched Crystals" href="../dispersion/02_dftd3_batch_crystals.html" />
+    <link rel="prev" title="Variable-Cell FIRE2 Optimization with LJ Potential" href="../dynamics/11_fire2_variable_cell.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
@@ -167,6 +167,13 @@
                     <li class="nav-item">
                       <a class="nav-link nav-internal" href="../../benchmarks/index.html">
                         Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
                       </a>
                     </li>
                 
@@ -297,6 +304,13 @@ document.write(`
                 
 
                     <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
                       <a class="nav-link nav-internal" href="../../modules/index.html">
                         API
                       </a>
@@ -352,20 +366,35 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
 </ul>
 <ul class="current nav bd-sidenav">
-<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Dispersion Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="../dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
-
 <li class="toctree-l2"><a class="reference internal" href="../dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/03_jax_dftd3_molecule.html">JAX DFT-D3 Dispersion Correction for a Molecule</a></li>
 </ul>
 </li>
-<li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Electrostatics</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dynamics/index.html">Dynamics Examples</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/01_langevin_integration.html">Langevin Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/02_velocity_verlet_integration.html">Velocity Verlet Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/03_nph_integration.html">NPH Dynamics (MTK) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/04_npt_integration.html">NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/05_batched_langevin_dynamics.html">Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/06_fire_optimization.html">FIRE Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/07_fire_variable_cell.html">Variable-Cell FIRE Optimization with LJ Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/08_fire_batched.html">Batched FIRE Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/09_fire2_optimization.html">FIRE2 Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/10_fire2_batched.html">Batched FIRE2 Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/11_fire2_variable_cell.html">Variable-Cell FIRE2 Optimization with LJ Potential</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Electrostatics</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
 <li class="toctree-l2"><a class="reference internal" href="01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
 <li class="toctree-l2"><a class="reference internal" href="02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
 <li class="toctree-l2"><a class="reference internal" href="03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="04_jax_pme_example.html">Particle Mesh Ewald (PME) with JAX</a></li>
 </ul>
 </li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../neighborlist/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="../neighborlist/01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../neighbors/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-4"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
 
 
 
@@ -375,7 +404,7 @@ document.write(`
 
 
 
-<li class="toctree-l2"><a class="reference internal" href="../neighborlist/02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
 
 
 
@@ -384,13 +413,24 @@ document.write(`
 
 
 
-<li class="toctree-l2"><a class="reference internal" href="../neighborlist/03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
 
 
 
 
 
-<li class="toctree-l2"><a class="reference internal" href="../neighborlist/04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/05_jax_neighbor_list.html">JAX Neighbor List Example</a></li>
 
 
 
@@ -472,14 +512,17 @@ Mesh Ewald (PME).</p>
 <li><p>Leverage autograd for computing forces and gradients</p></li>
 </ul>
 <div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute Coulomb electrostatic interactions using GPU-accelerated kernels. The implementation supports both direct (undamped) Coulomb interactions and damped interactions used as the real-space component in Ewald/PME methods."><img alt="" src="../../_images/sphx_glr_01_coulomb_example_thumb.png" />
-<p><a class="reference internal" href="01_coulomb_example.html#sphx-glr-examples-electrostatics-01-coulomb-example-py"><span class="std std-ref">Coulomb Electrostatic Interactions</span></a></p>
+<p><a class="reference internal" href="01_coulomb_example.html"><span class="doc">Coulomb Electrostatic Interactions</span></a></p>
   <div class="sphx-glr-thumbnail-title">Coulomb Electrostatic Interactions</div>
 </div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions in periodic systems using the Ewald summation method. Ewald splits the slowly converging Coulomb sum into rapidly converging real-space and reciprocal-space components."><img alt="" src="../../_images/sphx_glr_02_ewald_summation_example_thumb.png" />
-<p><a class="reference internal" href="02_ewald_summation_example.html#sphx-glr-examples-electrostatics-02-ewald-summation-example-py"><span class="std std-ref">Ewald Summation for Long-Range Electrostatics</span></a></p>
+<p><a class="reference internal" href="02_ewald_summation_example.html"><span class="doc">Ewald Summation for Long-Range Electrostatics</span></a></p>
   <div class="sphx-glr-thumbnail-title">Ewald Summation for Long-Range Electrostatics</div>
 </div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions using the Particle Mesh Ewald (PME) method. PME achieves O(N log N) scaling by using FFT-based mesh interpolation for the reciprocal-space contribution."><img alt="" src="../../_images/sphx_glr_03_pme_example_thumb.png" />
-<p><a class="reference internal" href="03_pme_example.html#sphx-glr-examples-electrostatics-03-pme-example-py"><span class="std std-ref">Particle Mesh Ewald (PME) for Long-Range Electrostatics</span></a></p>
+<p><a class="reference internal" href="03_pme_example.html"><span class="doc">Particle Mesh Ewald (PME) for Long-Range Electrostatics</span></a></p>
   <div class="sphx-glr-thumbnail-title">Particle Mesh Ewald (PME) for Long-Range Electrostatics</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute long-range electrostatic interactions using the Particle Mesh Ewald (PME) method with the JAX backend. PME achieves O(N log N) scaling through FFT-based mesh interpolation."><img alt="" src="../../_images/sphx_glr_04_jax_pme_example_thumb.png" />
+<p><a class="reference internal" href="04_jax_pme_example.html"><span class="doc">Particle Mesh Ewald (PME) with JAX</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Particle Mesh Ewald (PME) with JAX</div>
 </div></div><div class="toctree-wrapper compound">
 </div>
 </section>
@@ -495,12 +538,12 @@ Mesh Ewald (PME).</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../dispersion/02_dftd3_batch_crystals.html"
+       href="../dynamics/11_fire2_variable_cell.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">DFT-D3 Dispersion Correction for Batched Crystals</p>
+        <p class="prev-next-title">Variable-Cell FIRE2 Optimization with LJ Potential</p>
       </div>
     </a>
     <a class="right-next"
@@ -565,7 +608,7 @@ Mesh Ewald (PME).</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
     <br/>
   </p>
 </div>

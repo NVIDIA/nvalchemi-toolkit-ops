@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>API Reference &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+    <title>API Reference &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
   
   
   
@@ -42,9 +42,9 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=95e61db4"></script>
-    <script src="../_static/doctools.js?v=9bcbadda"></script>
-    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -54,8 +54,8 @@
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/index';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="nvalchemiops.neighborlist: Neighbor Lists" href="neighborlist.html" />
-    <link rel="prev" title="DFT-D3 Dispersion Benchmarks" href="../benchmarks/dftd3.html" />
+    <link rel="next" title="nvalchemiops.torch.neighbors: Neighbor Lists" href="torch/neighbors.html" />
+    <link rel="prev" title="Change Log" href="../changes.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
@@ -167,6 +167,13 @@
                     <li class="nav-item">
                       <a class="nav-link nav-internal" href="../benchmarks/index.html">
                         Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../changes.html">
+                        Change Log
                       </a>
                     </li>
                 
@@ -296,6 +303,13 @@ document.write(`
                     </li>
                 
 
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
                     <li class="nav-item current active">
                       <a class="nav-link nav-internal" href="#">
                         API
@@ -349,10 +363,22 @@ document.write(`
      aria-label="Section Navigation">
   <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
   <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="neighborlist.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist</span></code>: Neighbor Lists</a></li>
-<li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
-<li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions</a></li>
-<li class="toctree-l1"><a class="reference internal" href="utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.types</span></code>: Utilities</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.types</span></code>: Utilities</a></li>
 </ul>
 </div>
 </nav></div>
@@ -412,38 +438,109 @@ document.write(`
 <p>This is the API reference for NVIDIA ALCHEMI Toolkit-Ops. Please refer to the full user
 guide and examples for further details on how to use this package as API documentation
 alone may not provide sufficient information.</p>
+<section id="pytorch-reference">
+<h2>PyTorch Reference<a class="headerlink" href="#pytorch-reference" title="Link to this heading">#</a></h2>
 <div class="toctree-wrapper compound">
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="neighborlist.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist</span></code>: Neighbor Lists</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#high-level-interface">High-Level Interface</a></li>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#single-system-algorithms">Single System Algorithms</a></li>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#cell-list-sub-algorithms">Cell List (Sub-)Algorithms</a></li>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#batch-processing-algorithms">Batch Processing Algorithms</a></li>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#batch-cell-list-sub-algorithms">Batch Cell List (Sub-)Algorithms</a></li>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#dual-cutoff-algorithms">Dual Cutoff Algorithms</a></li>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#rebuild-detection">Rebuild Detection</a></li>
-<li class="toctree-l2"><a class="reference internal" href="neighborlist.html#utility-functions">Utility Functions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="torch/neighbors.html#high-level-interface">High-Level Interface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/neighbors.html#unbatched-algorithms">Unbatched Algorithms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/neighbors.html#batched-algorithms">Batched Algorithms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/neighbors.html#rebuild-detection">Rebuild Detection</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/neighbors.html#utility-functions">Utility Functions</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="dispersion.html#high-level-interface">High-Level Interface</a></li>
-<li class="toctree-l2"><a class="reference internal" href="dispersion.html#data-structures">Data Structures</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="torch/dispersion.html#high-level-interface">High-Level Interface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/dispersion.html#data-structures">Data Structures</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/dispersion.html#internal-custom-operators">Internal Custom Operators</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="electrostatics.html#electrostatics-interactions-module">Electrostatics Interactions Module</a></li>
-<li class="toctree-l2"><a class="reference internal" href="electrostatics.html#high-level-interface">High-Level Interface</a></li>
-<li class="toctree-l2"><a class="reference internal" href="electrostatics.html#parameter-estimation">Parameter Estimation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="electrostatics.html#utility-functions">Utility Functions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="torch/electrostatics.html#high-level-interface">High-Level Interface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/electrostatics.html#coulomb-interactions">Coulomb Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/electrostatics.html#dsf-coulomb">DSF Coulomb</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/electrostatics.html#ewald-components">Ewald Components</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/electrostatics.html#pme-components">PME Components</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/electrostatics.html#k-vector-generation">K-Vector Generation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/electrostatics.html#parameter-estimation">Parameter Estimation</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.types</span></code>: Utilities</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="utilities.html#module-nvalchemiops.math">Mathematical Utilities</a></li>
-<li class="toctree-l2"><a class="reference internal" href="utilities.html#module-nvalchemiops.types">Type Conversion Utilities</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="torch/dynamics.html#pytorch-adapters-for-nvalchemiops">PyTorch Adapters for nvalchemiops</a></li>
+<li class="toctree-l2"><a class="reference internal" href="torch/dynamics.html#fire2-optimizer">FIRE2 Optimizer</a></li>
 </ul>
 </li>
 </ul>
 </div>
+</section>
+<section id="jax-reference">
+<h2>JAX Reference<a class="headerlink" href="#jax-reference" title="Link to this heading">#</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="jax/neighbors.html#high-level-interface">High-Level Interface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/neighbors.html#unbatched-algorithms">Unbatched Algorithms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/neighbors.html#batched-algorithms">Batched Algorithms</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/neighbors.html#rebuild-detection">Rebuild Detection</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/neighbors.html#exceptions">Exceptions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/neighbors.html#utility-functions">Utility Functions</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="jax/dispersion.html#high-level-interface">High-Level Interface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/dispersion.html#data-structures">Data Structures</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/dispersion.html#internal-implementation">Internal Implementation</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="jax/electrostatics.html#high-level-interface">High-Level Interface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/electrostatics.html#coulomb-interactions">Coulomb Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/electrostatics.html#ewald-components">Ewald Components</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/electrostatics.html#pme-components">PME Components</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/electrostatics.html#k-vector-generation">K-Vector Generation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="jax/electrostatics.html#parameter-estimation">Parameter Estimation</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="warp-reference">
+<h2>Warp Reference<a class="headerlink" href="#warp-reference" title="Link to this heading">#</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="warp/neighbors.html#warp-level-interface">Warp-Level Interface</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="warp/dispersion.html#warp-level-interface">Warp-Level Interface</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="warp/electrostatics.html#electrostatics-interactions-module">Electrostatics Interactions Module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/electrostatics.html#core-warp-kernels">Core Warp Kernels</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#dynamics-module">Dynamics Module</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#warp-level-interface">Warp-Level Interface</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#integrators">Integrators</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#optimizers">Optimizers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#thermostat-utilities">Thermostat Utilities</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#cell-utilities">Cell Utilities</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#cell-filter-utilities-variable-cell-optimization">Cell Filter Utilities (Variable-Cell Optimization)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="warp/dynamics.html#constraint-utilities-shake-rattle">Constraint Utilities (SHAKE/RATTLE)</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.types</span></code>: Utilities</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#module-nvalchemiops.math">Mathematical Utilities</a></li>
+<li class="toctree-l2"><a class="reference internal" href="utilities.html#module-nvalchemiops.torch.types">Type Conversion Utilities</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
 </section>
 
 
@@ -457,20 +554,20 @@ alone may not provide sufficient information.</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../benchmarks/dftd3.html"
+       href="../changes.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">DFT-D3 Dispersion Benchmarks</p>
+        <p class="prev-next-title">Change Log</p>
       </div>
     </a>
     <a class="right-next"
-       href="neighborlist.html"
+       href="torch/neighbors.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighborlist</span></code>: Neighbor Lists</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -483,6 +580,20 @@ alone may not provide sufficient information.</p>
               
                 <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
 
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pytorch-reference">PyTorch Reference</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#jax-reference">JAX Reference</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-reference">Warp Reference</a></li>
+</ul>
+  </nav></div>
 
   <div class="sidebar-secondary-item">
 
@@ -527,7 +638,7 @@ alone may not provide sufficient information.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
     <br/>
   </p>
 </div>

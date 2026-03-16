@@ -1,0 +1,1215 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.jax.neighbors.rebuild_detection &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/jax/neighbors/rebuild_detection';</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="../neighbors.html" class="nav-link">nvalchemiops.jax.neighbors</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.jax.neighbors.rebuild_detection</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;JAX bindings for rebuild detection.</span>
+
+<span class="sd">This module provides JAX functions for detecting when cell lists and neighbor lists</span>
+<span class="sd">need to be rebuilt.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">warp.jax_experimental</span><span class="w"> </span><span class="kn">import</span> <span class="n">jax_kernel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.rebuild_detection</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_check_atoms_changed_cells_overload</span><span class="p">,</span>
+    <span class="n">_check_atoms_moved_beyond_skin_overload</span><span class="p">,</span>
+    <span class="n">_check_atoms_moved_beyond_skin_pbc_overload</span><span class="p">,</span>
+    <span class="n">_check_batch_atoms_changed_cells_overload</span><span class="p">,</span>
+    <span class="n">_check_batch_atoms_moved_beyond_skin_overload</span><span class="p">,</span>
+    <span class="n">_check_batch_atoms_moved_beyond_skin_pbc_overload</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;cell_list_needs_rebuild&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;neighbor_list_needs_rebuild&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;check_cell_list_rebuild_needed&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;check_neighbor_list_rebuild_needed&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;batch_neighbor_list_needs_rebuild&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;batch_cell_list_needs_rebuild&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;check_batch_neighbor_list_rebuild_needed&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;check_batch_cell_list_rebuild_needed&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># JAX Kernel Wrappers</span>
+<span class="c1"># ==============================================================================</span>
+
+<span class="c1"># Cell list rebuild detection kernel wrappers</span>
+<span class="n">_jax_check_cells_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_check_cells_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Neighbor list rebuild detection kernel wrappers</span>
+<span class="n">_jax_check_skin_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_check_skin_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Batch neighbor list rebuild detection kernel wrappers</span>
+<span class="n">_jax_batch_check_skin_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_batch_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_check_skin_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_batch_atoms_moved_beyond_skin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># MIC neighbor list rebuild detection kernel wrappers</span>
+<span class="n">_jax_check_skin_pbc_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_check_skin_pbc_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flag&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># MIC batch neighbor list rebuild detection kernel wrappers</span>
+<span class="n">_jax_batch_check_skin_pbc_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_batch_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_check_skin_pbc_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_batch_atoms_moved_beyond_skin_pbc_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Batch cell list rebuild detection kernel wrappers</span>
+<span class="n">_jax_batch_check_cells_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_batch_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_check_cells_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_check_batch_atoms_changed_cells_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;rebuild_flags&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Cell List Rebuild Detection</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="cell_list_needs_rebuild">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.cell_list_needs_rebuild">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">cell_list_needs_rebuild</span><span class="p">(</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cells_per_dimension</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect if spatial cell list requires rebuilding due to atomic motion.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic coordinates in Cartesian space.</span>
+<span class="sd">    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32</span>
+<span class="sd">        3D cell coordinates for each atom from the existing cell list.</span>
+<span class="sd">    cells_per_dimension : jax.Array, shape (3,), dtype=int32</span>
+<span class="sd">        Number of spatial cells in x, y, z directions.</span>
+<span class="sd">    cell : jax.Array, shape (1, 3, 3)</span>
+<span class="sd">        Unit cell matrix for coordinate transformations.</span>
+<span class="sd">    pbc : jax.Array, shape (3,), dtype=bool</span>
+<span class="sd">        Periodic boundary condition flags for x, y, z directions.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    rebuild_needed : jax.Array, shape (1,), dtype=bool</span>
+<span class="sd">        True if any atom has moved to a different cell requiring rebuild.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This function is not differentiable and should not be used in JAX transformations</span>
+<span class="sd">    that require gradients.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    nvalchemiops.neighbors.rebuild_detection.check_cell_list_rebuild : Core warp launcher</span>
+<span class="sd">    check_cell_list_rebuild_needed : Convenience wrapper that returns Python bool</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">total_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="kc">False</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="c1"># Ensure cell dtype matches positions dtype so warp overload dispatch is consistent</span>
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="c1"># Ensure pbc is bool</span>
+    <span class="n">pbc</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="c1"># Squeeze cells_per_dimension to 1D if needed</span>
+    <span class="n">cells_1d</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">cells_per_dimension</span><span class="o">.</span><span class="n">squeeze</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">cells_per_dimension</span><span class="o">.</span><span class="n">ndim</span> <span class="o">==</span> <span class="mi">2</span>
+        <span class="k">else</span> <span class="n">cells_per_dimension</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Allocate output</span>
+    <span class="n">rebuild_flag</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="kc">False</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="c1"># Select kernel based on dtype</span>
+    <span class="k">if</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+        <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_check_cells_f64</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_check_cells_f32</span>
+        <span class="n">current_positions</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="c1"># Call kernel</span>
+    <span class="p">(</span><span class="n">rebuild_flag</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">cells_1d</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="p">,</span>
+        <span class="n">rebuild_flag</span><span class="p">,</span>
+        <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">rebuild_flag</span></div>
+
+
+
+<div class="viewcode-block" id="neighbor_list_needs_rebuild">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.neighbor_list_needs_rebuild">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">neighbor_list_needs_rebuild</span><span class="p">(</span>
+    <span class="n">reference_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">skin_distance_threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect if neighbor list requires rebuilding due to excessive atomic motion.</span>
+
+<span class="sd">    When ``cell``, ``cell_inv`` and ``pbc`` are all provided, uses minimum-image</span>
+<span class="sd">    convention (MIC) so atoms crossing periodic boundaries are not spuriously</span>
+<span class="sd">    flagged.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    reference_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Atomic positions when the neighbor list was last built.</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic positions to compare against reference.</span>
+<span class="sd">    skin_distance_threshold : float</span>
+<span class="sd">        Maximum allowed displacement before neighbor list becomes invalid.</span>
+<span class="sd">    cell : jax.Array or None, optional</span>
+<span class="sd">        Unit cell matrix, shape (1, 3, 3).</span>
+<span class="sd">    cell_inv : jax.Array or None, optional</span>
+<span class="sd">        Inverse cell matrix, same shape as ``cell``.</span>
+<span class="sd">    pbc : jax.Array or None, optional</span>
+<span class="sd">        PBC flags, shape (3,), dtype=bool.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    rebuild_needed : jax.Array, shape (1,), dtype=bool</span>
+<span class="sd">        True if any atom has moved beyond skin distance.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This function is not differentiable and should not be used in JAX</span>
+<span class="sd">    transformations that require gradients.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    nvalchemiops.neighbors.rebuild_detection.check_neighbor_list_rebuild : Core warp launcher</span>
+<span class="sd">    check_neighbor_list_rebuild_needed : Convenience wrapper that returns Python bool</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">shape</span> <span class="o">!=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="kc">True</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">total_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="kc">False</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="n">rebuild_flag</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="kc">False</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="n">use_pbc</span> <span class="o">=</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell_inv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">use_pbc</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+            <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">cell_inv</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+            <span class="n">cell_inv</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">pbc</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_check_skin_pbc_f64</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_check_skin_pbc_f32</span>
+            <span class="n">reference_positions</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">current_positions</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="p">(</span><span class="n">rebuild_flag</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
+            <span class="n">reference_positions</span><span class="p">,</span>
+            <span class="n">current_positions</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">cell_inv</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="p">,</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
+            <span class="n">rebuild_flag</span><span class="p">,</span>
+            <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_check_skin_f64</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_check_skin_f32</span>
+            <span class="n">reference_positions</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">current_positions</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="p">(</span><span class="n">rebuild_flag</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
+            <span class="n">reference_positions</span><span class="p">,</span>
+            <span class="n">current_positions</span><span class="p">,</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
+            <span class="n">rebuild_flag</span><span class="p">,</span>
+            <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">rebuild_flag</span></div>
+
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># High-level API Functions</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="check_cell_list_rebuild_needed">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.check_cell_list_rebuild_needed">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">check_cell_list_rebuild_needed</span><span class="p">(</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cells_per_dimension</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Determine if spatial cell list requires rebuilding based on atomic motion.</span>
+
+<span class="sd">    This high-level convenience function determines if a spatial cell list needs to be</span>
+<span class="sd">    reconstructed due to atomic movement. It uses GPU acceleration to efficiently detect</span>
+<span class="sd">    when atoms have moved between spatial cells.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic coordinates to check against existing cell assignments.</span>
+<span class="sd">    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32</span>
+<span class="sd">        3D cell coordinates assigned to each atom from existing cell list.</span>
+<span class="sd">    cells_per_dimension : jax.Array, shape (3,), dtype=int32</span>
+<span class="sd">        Number of spatial cells in x, y, z directions from existing cell list.</span>
+<span class="sd">    cell : jax.Array, shape (1, 3, 3)</span>
+<span class="sd">        Current unit cell matrix for coordinate transformations.</span>
+<span class="sd">    pbc : jax.Array, shape (3,), dtype=bool</span>
+<span class="sd">        Current periodic boundary condition flags for x, y, z directions.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    needs_rebuild : bool</span>
+<span class="sd">        True if any atom has moved to a different cell requiring cell list rebuild.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This function is not differentiable and should not be used in JAX transformations</span>
+<span class="sd">    that require gradients.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    cell_list_needs_rebuild : Returns jax.Array instead of bool</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rebuild_tensor</span> <span class="o">=</span> <span class="n">cell_list_needs_rebuild</span><span class="p">(</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">rebuild_tensor</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span></div>
+
+
+
+<div class="viewcode-block" id="check_neighbor_list_rebuild_needed">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.check_neighbor_list_rebuild_needed">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">check_neighbor_list_rebuild_needed</span><span class="p">(</span>
+    <span class="n">reference_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">skin_distance_threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Determine if neighbor list requires rebuilding based on atomic motion.</span>
+
+<span class="sd">    When ``cell``, ``cell_inv`` and ``pbc`` are all provided, uses MIC</span>
+<span class="sd">    displacement so periodic boundary crossings are handled correctly.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    reference_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Atomic coordinates when the neighbor list was last constructed.</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic coordinates to compare against reference positions.</span>
+<span class="sd">    skin_distance_threshold : float</span>
+<span class="sd">        Maximum allowed atomic displacement before neighbor list becomes invalid.</span>
+<span class="sd">    cell : jax.Array or None, optional</span>
+<span class="sd">        Unit cell matrix, shape (1, 3, 3).</span>
+<span class="sd">    cell_inv : jax.Array or None, optional</span>
+<span class="sd">        Inverse cell matrix, same shape as ``cell``.</span>
+<span class="sd">    pbc : jax.Array or None, optional</span>
+<span class="sd">        PBC flags, shape (3,), dtype=bool.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    needs_rebuild : bool</span>
+<span class="sd">        True if any atom has moved beyond skin distance requiring rebuild.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    neighbor_list_needs_rebuild : Returns jax.Array instead of bool</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rebuild_tensor</span> <span class="o">=</span> <span class="n">neighbor_list_needs_rebuild</span><span class="p">(</span>
+        <span class="n">reference_positions</span><span class="p">,</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">skin_distance_threshold</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">cell_inv</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">rebuild_tensor</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span></div>
+
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Batch Rebuild Detection</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">batch_neighbor_list_needs_rebuild</span><span class="p">(</span>
+    <span class="n">reference_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">skin_distance_threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect per-system if neighbor lists require rebuilding due to atomic motion.</span>
+
+<span class="sd">    When ``cell``, ``cell_inv`` and ``pbc`` are all provided, uses MIC</span>
+<span class="sd">    displacement so periodic boundary crossings are handled correctly.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    reference_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Atomic positions when each system&#39;s neighbor list was last built.</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic positions to compare against reference.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32</span>
+<span class="sd">        System index for each atom.</span>
+<span class="sd">    skin_distance_threshold : float</span>
+<span class="sd">        Maximum allowed displacement before neighbor list becomes invalid.</span>
+<span class="sd">    num_systems : int</span>
+<span class="sd">        Number of systems in the batch.</span>
+<span class="sd">    cell : jax.Array or None, optional</span>
+<span class="sd">        Per-system cell matrices, shape (num_systems, 3, 3).</span>
+<span class="sd">    cell_inv : jax.Array or None, optional</span>
+<span class="sd">        Inverse cell matrices, same shape as ``cell``.</span>
+<span class="sd">    pbc : jax.Array or None, optional</span>
+<span class="sd">        PBC flags, shape (num_systems, 3), dtype=bool.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool</span>
+<span class="sd">        Per-system flags; True if any atom in that system moved beyond skin</span>
+<span class="sd">        distance.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This function is not differentiable and should not be used in JAX</span>
+<span class="sd">    transformations that require gradients.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    neighbor_list_needs_rebuild : Single-system version</span>
+<span class="sd">    check_batch_neighbor_list_rebuild_needed : Convenience wrapper</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">total_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="n">rebuild_flags</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+    <span class="n">use_pbc</span> <span class="o">=</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell_inv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+    <span class="k">if</span> <span class="n">use_pbc</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+            <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">cell_inv</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+            <span class="n">cell_inv</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">pbc</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_batch_check_skin_pbc_f64</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_batch_check_skin_pbc_f32</span>
+            <span class="n">reference_positions</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">current_positions</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="p">(</span><span class="n">rebuild_flags</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
+            <span class="n">reference_positions</span><span class="p">,</span>
+            <span class="n">current_positions</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">cell_inv</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="p">,</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
+            <span class="n">rebuild_flags</span><span class="p">,</span>
+            <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_batch_check_skin_f64</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_batch_check_skin_f32</span>
+            <span class="n">reference_positions</span> <span class="o">=</span> <span class="n">reference_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+            <span class="n">current_positions</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+        <span class="p">(</span><span class="n">rebuild_flags</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
+            <span class="n">reference_positions</span><span class="p">,</span>
+            <span class="n">current_positions</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">skin_distance_threshold</span><span class="p">),</span>
+            <span class="n">rebuild_flags</span><span class="p">,</span>
+            <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">rebuild_flags</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">batch_cell_list_needs_rebuild</span><span class="p">(</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cells_per_dimension</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Detect per-system if cell lists require rebuilding due to atomic motion.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic coordinates in Cartesian space.</span>
+<span class="sd">    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32</span>
+<span class="sd">        3D cell coordinates for each atom from the existing cell lists.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32</span>
+<span class="sd">        System index for each atom.</span>
+<span class="sd">    cells_per_dimension : jax.Array, shape (num_systems, 3), dtype=int32</span>
+<span class="sd">        Number of spatial cells in x, y, z directions per system.</span>
+<span class="sd">    cell : jax.Array, shape (num_systems, 3, 3)</span>
+<span class="sd">        Per-system unit cell matrices for coordinate transformations.</span>
+<span class="sd">    pbc : jax.Array, shape (num_systems, 3), dtype=bool</span>
+<span class="sd">        Per-system periodic boundary condition flags.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    rebuild_flags : jax.Array, shape (num_systems,), dtype=bool</span>
+<span class="sd">        Per-system flags; True if any atom in that system changed cells.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This function is not differentiable and should not be used in JAX transformations</span>
+<span class="sd">    that require gradients.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    cell_list_needs_rebuild : Single-system version</span>
+<span class="sd">    check_batch_cell_list_rebuild_needed : Convenience wrapper returning list[bool]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">total_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="n">pbc</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="n">rebuild_flags</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+        <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_batch_check_cells_f64</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">_jax_check</span> <span class="o">=</span> <span class="n">_jax_batch_check_cells_f32</span>
+        <span class="n">current_positions</span> <span class="o">=</span> <span class="n">current_positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="p">(</span><span class="n">rebuild_flags</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_check</span><span class="p">(</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="p">,</span>
+        <span class="n">rebuild_flags</span><span class="p">,</span>
+        <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">rebuild_flags</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># High-level Batch API Functions</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">check_batch_neighbor_list_rebuild_needed</span><span class="p">(</span>
+    <span class="n">reference_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">skin_distance_threshold</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">num_systems</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bool</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Determine per-system if neighbor lists require rebuilding.</span>
+
+<span class="sd">    When ``cell``, ``cell_inv`` and ``pbc`` are all provided, uses MIC</span>
+<span class="sd">    displacement so periodic boundary crossings are handled correctly.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    reference_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Atomic positions when each system&#39;s neighbor list was last built.</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic positions to compare against reference.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32</span>
+<span class="sd">        System index for each atom.</span>
+<span class="sd">    skin_distance_threshold : float</span>
+<span class="sd">        Maximum allowed displacement before neighbor list becomes invalid.</span>
+<span class="sd">    num_systems : int</span>
+<span class="sd">        Number of systems in the batch.</span>
+<span class="sd">    cell : jax.Array or None, optional</span>
+<span class="sd">        Per-system cell matrices, shape (num_systems, 3, 3).</span>
+<span class="sd">    cell_inv : jax.Array or None, optional</span>
+<span class="sd">        Inverse cell matrices, same shape as ``cell``.</span>
+<span class="sd">    pbc : jax.Array or None, optional</span>
+<span class="sd">        PBC flags, shape (num_systems, 3), dtype=bool.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    needs_rebuild : list[bool]</span>
+<span class="sd">        Per-system flags; True if neighbor list for that system needs rebuilding.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    batch_neighbor_list_needs_rebuild : Returns jax.Array instead of list[bool]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rebuild_flags</span> <span class="o">=</span> <span class="n">batch_neighbor_list_needs_rebuild</span><span class="p">(</span>
+        <span class="n">reference_positions</span><span class="p">,</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">skin_distance_threshold</span><span class="p">,</span>
+        <span class="n">num_systems</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">cell_inv</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">[</span><span class="nb">bool</span><span class="p">(</span><span class="n">flag</span><span class="p">)</span> <span class="k">for</span> <span class="n">flag</span> <span class="ow">in</span> <span class="n">rebuild_flags</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">check_batch_cell_list_rebuild_needed</span><span class="p">(</span>
+    <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cells_per_dimension</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bool</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Determine per-system if cell lists require rebuilding based on atomic motion.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    current_positions : jax.Array, shape (total_atoms, 3)</span>
+<span class="sd">        Current atomic coordinates in Cartesian space.</span>
+<span class="sd">    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32</span>
+<span class="sd">        3D cell coordinates for each atom from the existing cell lists.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32</span>
+<span class="sd">        System index for each atom.</span>
+<span class="sd">    cells_per_dimension : jax.Array, shape (num_systems, 3), dtype=int32</span>
+<span class="sd">        Number of spatial cells in x, y, z directions per system.</span>
+<span class="sd">    cell : jax.Array, shape (num_systems, 3, 3)</span>
+<span class="sd">        Per-system unit cell matrices for coordinate transformations.</span>
+<span class="sd">    pbc : jax.Array, shape (num_systems, 3), dtype=bool</span>
+<span class="sd">        Per-system periodic boundary condition flags.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    needs_rebuild : list[bool]</span>
+<span class="sd">        Per-system flags; True if cell list for that system needs rebuilding.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This function is not differentiable and should not be used in JAX transformations</span>
+<span class="sd">    that require gradients.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    batch_cell_list_needs_rebuild : Returns jax.Array instead of list[bool]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">rebuild_flags</span> <span class="o">=</span> <span class="n">batch_cell_list_needs_rebuild</span><span class="p">(</span>
+        <span class="n">current_positions</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">[</span><span class="nb">bool</span><span class="p">(</span><span class="n">flag</span><span class="p">)</span> <span class="k">for</span> <span class="n">flag</span> <span class="ow">in</span> <span class="n">rebuild_flags</span><span class="p">]</span>
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

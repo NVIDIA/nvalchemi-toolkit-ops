@@ -1,0 +1,1224 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.jax.neighbors.batch_cell_list &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/jax/neighbors/batch_cell_list';</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="../neighbors.html" class="nav-link">nvalchemiops.jax.neighbors</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.jax.neighbors.batch_cell_list</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;JAX bindings for batched cell list O(N) neighbor list construction.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">warp.jax_experimental</span><span class="w"> </span><span class="kn">import</span> <span class="n">jax_kernel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.neighbors.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">allocate_cell_list</span><span class="p">,</span>
+    <span class="n">get_neighbor_list_from_neighbor_matrix</span><span class="p">,</span>
+    <span class="n">prepare_batch_idx_ptr</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.batch_cell_list</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">_batch_cell_list_bin_atoms_overload</span><span class="p">,</span>
+    <span class="n">_batch_cell_list_build_neighbor_matrix_overload</span><span class="p">,</span>
+    <span class="n">_batch_cell_list_build_neighbor_matrix_selective_overload</span><span class="p">,</span>
+    <span class="n">_batch_cell_list_construct_bin_size_overload</span><span class="p">,</span>
+    <span class="n">_batch_cell_list_count_atoms_per_bin_overload</span><span class="p">,</span>
+    <span class="n">_compute_cells_per_system</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.neighbors.neighbor_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">estimate_max_neighbors</span>
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># JAX Kernel Wrappers</span>
+<span class="c1"># ==============================================================================</span>
+
+<span class="c1"># Build step 1: Construct bin sizes (per system)</span>
+<span class="n">_jax_batch_construct_bin_size_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_construct_bin_size_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;cells_per_dimension&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_construct_bin_size_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_construct_bin_size_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;cells_per_dimension&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Helper: Compute cells per system</span>
+<span class="n">_jax_compute_cells_per_system</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_compute_cells_per_system</span><span class="p">,</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;cells_per_system&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Build step 2: Count atoms per bin</span>
+<span class="n">_jax_batch_count_atoms_per_bin_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_count_atoms_per_bin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;atoms_per_cell_count&quot;</span><span class="p">,</span> <span class="s2">&quot;atom_periodic_shifts&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_count_atoms_per_bin_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_count_atoms_per_bin_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;atoms_per_cell_count&quot;</span><span class="p">,</span> <span class="s2">&quot;atom_periodic_shifts&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Build step 3: Bin atoms into cells</span>
+<span class="n">_jax_batch_bin_atoms_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_bin_atoms_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;atom_to_cell_mapping&quot;</span><span class="p">,</span> <span class="s2">&quot;atoms_per_cell_count&quot;</span><span class="p">,</span> <span class="s2">&quot;cell_atom_list&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_bin_atoms_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_bin_atoms_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;atom_to_cell_mapping&quot;</span><span class="p">,</span> <span class="s2">&quot;atoms_per_cell_count&quot;</span><span class="p">,</span> <span class="s2">&quot;cell_atom_list&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Query: Build neighbor matrix from batch cell list</span>
+<span class="n">_jax_batch_build_neighbor_matrix_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_build_neighbor_matrix_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;neighbor_matrix&quot;</span><span class="p">,</span> <span class="s2">&quot;neighbor_matrix_shifts&quot;</span><span class="p">,</span> <span class="s2">&quot;num_neighbors&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_build_neighbor_matrix_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_build_neighbor_matrix_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;neighbor_matrix&quot;</span><span class="p">,</span> <span class="s2">&quot;neighbor_matrix_shifts&quot;</span><span class="p">,</span> <span class="s2">&quot;num_neighbors&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Selective query: Build neighbor matrix from batch cell list (skips non-rebuilt systems)</span>
+<span class="n">_jax_batch_build_neighbor_matrix_selective_f32</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_build_neighbor_matrix_selective_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;neighbor_matrix&quot;</span><span class="p">,</span> <span class="s2">&quot;neighbor_matrix_shifts&quot;</span><span class="p">,</span> <span class="s2">&quot;num_neighbors&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">_jax_batch_build_neighbor_matrix_selective_f64</span> <span class="o">=</span> <span class="n">jax_kernel</span><span class="p">(</span>
+    <span class="n">_batch_cell_list_build_neighbor_matrix_selective_overload</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="n">num_outputs</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">in_out_argnames</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;neighbor_matrix&quot;</span><span class="p">,</span> <span class="s2">&quot;neighbor_matrix_shifts&quot;</span><span class="p">,</span> <span class="s2">&quot;num_neighbors&quot;</span><span class="p">],</span>
+    <span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;batch_cell_list&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;batch_build_cell_list&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;batch_query_cell_list&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;estimate_batch_cell_list_sizes&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<div class="viewcode-block" id="estimate_batch_cell_list_sizes">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.estimate_batch_cell_list_sizes">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">estimate_batch_cell_list_sizes</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">buffer_factor</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Estimate required batch cell list sizes.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64</span>
+<span class="sd">        Atomic coordinates.</span>
+<span class="sd">    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional</span>
+<span class="sd">        Cumulative atom counts.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional</span>
+<span class="sd">        Batch indices for each atom.</span>
+<span class="sd">    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional</span>
+<span class="sd">        Cell matrices for each system.</span>
+<span class="sd">    cutoff : float, optional</span>
+<span class="sd">        Cutoff distance. Default is 5.0.</span>
+<span class="sd">    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional</span>
+<span class="sd">        PBC flags.</span>
+<span class="sd">    buffer_factor : float, optional</span>
+<span class="sd">        Buffer multiplier. Default is 1.5.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    max_total_cells : int</span>
+<span class="sd">        Maximum total cells to allocate.</span>
+<span class="sd">    cells_per_dimension : jax.Array, shape (num_systems, 3)</span>
+<span class="sd">        Cells per dimension for each system.</span>
+<span class="sd">    neighbor_search_radius : jax.Array, shape (num_systems, 3)</span>
+<span class="sd">        Search radius for each system.</span>
+
+<span class="sd">    .. warning::</span>
+
+<span class="sd">        This function is **not compatible with** ``jax.jit``. The returned</span>
+<span class="sd">        ``max_total_cells`` is used to determine array allocation sizes, which</span>
+<span class="sd">        must be concrete (statically known) at JAX trace time. When using</span>
+<span class="sd">        ``batch_cell_list`` or ``batch_build_cell_list`` inside ``jax.jit``,</span>
+<span class="sd">        provide ``max_total_cells`` explicitly to bypass this function.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Prepare batch info</span>
+    <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span> <span class="o">=</span> <span class="n">prepare_batch_idx_ptr</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>
+
+    <span class="c1"># Simple estimation per system</span>
+    <span class="n">max_total_cells</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">cells_per_dim_list</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">search_radius_list</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">for</span> <span class="n">sys_idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_systems</span><span class="p">):</span>
+        <span class="n">start_idx</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="n">sys_idx</span><span class="p">]</span>
+        <span class="n">end_idx</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="p">[</span><span class="n">sys_idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="n">num_atoms_in_sys</span> <span class="o">=</span> <span class="n">end_idx</span> <span class="o">-</span> <span class="n">start_idx</span>
+
+        <span class="k">if</span> <span class="n">num_atoms_in_sys</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">cells_per_dim_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+            <span class="n">search_radius_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+            <span class="k">continue</span>
+
+        <span class="c1"># Volume estimation</span>
+        <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">det</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">[</span><span class="n">sys_idx</span><span class="p">])</span>
+            <span class="n">volume</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">det</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">volume</span> <span class="o">=</span> <span class="mf">1000.0</span>  <span class="c1"># Default assumption</span>
+
+        <span class="n">cell_volume</span> <span class="o">=</span> <span class="n">cutoff</span><span class="o">**</span><span class="mi">3</span>
+        <span class="c1"># TODO: This estimation derives array sizes from traced input data (cell</span>
+        <span class="c1"># geometry), which is fundamentally incompatible with jax.jit compilation.</span>
+        <span class="c1"># The JAX bindings need a refactored usage pattern where sizing is always</span>
+        <span class="c1"># performed outside the JIT boundary, or a fixed upper-bound allocation</span>
+        <span class="c1"># strategy is adopted.</span>
+        <span class="n">num_cells_est</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">volume</span> <span class="o">/</span> <span class="n">cell_volume</span> <span class="o">*</span> <span class="n">buffer_factor</span><span class="p">),</span> <span class="mi">8</span><span class="p">)</span>
+        <span class="n">max_total_cells</span> <span class="o">+=</span> <span class="n">num_cells_est</span>
+
+        <span class="n">cells_per_dim</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">num_cells_est</span> <span class="o">**</span> <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="mi">3</span><span class="p">))</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">cells_per_dim_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cells_per_dim</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+        <span class="n">search_radius_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">))</span>
+
+    <span class="n">cells_per_dimension</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">cells_per_dim_list</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">search_radius_list</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">max_total_cells</span><span class="p">,</span> <span class="n">cells_per_dimension</span><span class="p">,</span> <span class="n">neighbor_search_radius</span></div>
+
+
+
+<div class="viewcode-block" id="batch_build_cell_list">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_build_cell_list">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">batch_build_cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span><span class="p">,</span>
+    <span class="n">max_total_cells</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+<span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build spatial cell lists for batch of systems.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64</span>
+<span class="sd">        Atomic coordinates.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional</span>
+<span class="sd">        Batch indices.</span>
+<span class="sd">    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional</span>
+<span class="sd">        Cumulative atom counts.</span>
+<span class="sd">    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional</span>
+<span class="sd">        Cell matrices.</span>
+<span class="sd">    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional</span>
+<span class="sd">        PBC flags.</span>
+<span class="sd">    cutoff : float, optional</span>
+<span class="sd">        Cutoff distance. Default is 5.0.</span>
+<span class="sd">    max_total_cells : int, optional</span>
+<span class="sd">        Maximum cells. If None, will be estimated.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    cells_per_dimension : jax.Array, shape (num_systems, 3), dtype=int32</span>
+<span class="sd">        Number of cells in x, y, z directions for each system.</span>
+<span class="sd">    atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32</span>
+<span class="sd">        Periodic boundary crossings for each atom.</span>
+<span class="sd">    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32</span>
+<span class="sd">        3D cell coordinates for each atom.</span>
+<span class="sd">    atoms_per_cell_count : jax.Array, shape (max_total_cells,), dtype=int32</span>
+<span class="sd">        Number of atoms in each cell.</span>
+<span class="sd">    cell_atom_start_indices : jax.Array, shape (max_total_cells,), dtype=int32</span>
+<span class="sd">        Starting index in ``cell_atom_list`` for each cell.</span>
+<span class="sd">    cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32</span>
+<span class="sd">        Flattened list of atom indices organized by cell.</span>
+<span class="sd">    neighbor_search_radius : jax.Array, shape (num_systems, 3), dtype=int32</span>
+<span class="sd">        Search radius in neighboring cells for each system.</span>
+<span class="sd">    cell_origin : jax.Array, shape (3,), dtype same as positions</span>
+<span class="sd">        Cell origin point (currently zeros).</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    When calling inside ``jax.jit``, ``max_total_cells`` **must** be provided</span>
+<span class="sd">    to avoid calling ``estimate_batch_cell_list_sizes``, which is not JIT-compatible.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Prepare batch info</span>
+    <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span> <span class="o">=</span> <span class="n">prepare_batch_idx_ptr</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>
+
+    <span class="k">if</span> <span class="n">max_total_cells</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">max_total_cells</span><span class="p">,</span> <span class="n">cells_per_dim_est</span><span class="p">,</span> <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">estimate_batch_cell_list_sizes</span><span class="p">(</span>
+                <span class="n">positions</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">cutoff</span><span class="p">,</span> <span class="n">pbc</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+        <span class="c1"># Ensure neighbor_search_radius is on the correct device</span>
+        <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">neighbor_search_radius</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">neighbor_search_radius</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+    <span class="c1"># Allocate cell list tensors</span>
+    <span class="p">(</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">neighbor_search_radius</span><span class="p">,</span>
+        <span class="n">atom_periodic_shifts</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+        <span class="n">cell_atom_start_indices</span><span class="p">,</span>
+        <span class="n">cell_atom_list</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">=</span> <span class="n">allocate_cell_list</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">max_total_cells</span><span class="p">,</span>
+        <span class="n">neighbor_search_radius</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Select kernels based on dtype</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+        <span class="n">_construct</span> <span class="o">=</span> <span class="n">_jax_batch_construct_bin_size_f64</span>
+        <span class="n">_count</span> <span class="o">=</span> <span class="n">_jax_batch_count_atoms_per_bin_f64</span>
+        <span class="n">_bin</span> <span class="o">=</span> <span class="n">_jax_batch_bin_atoms_f64</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">_construct</span> <span class="o">=</span> <span class="n">_jax_batch_construct_bin_size_f32</span>
+        <span class="n">_count</span> <span class="o">=</span> <span class="n">_jax_batch_count_atoms_per_bin_f32</span>
+        <span class="n">_bin</span> <span class="o">=</span> <span class="n">_jax_batch_bin_atoms_f32</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="c1"># Ensure cell dtype matches positions</span>
+    <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="c1"># Ensure pbc is bool with shape (num_systems, 3)</span>
+    <span class="k">if</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">pbc_bool</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">pbc_bool</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Step 1: Construct bin sizes (one thread per system)</span>
+    <span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_construct</span><span class="p">(</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc_bool</span><span class="p">,</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">),</span>
+        <span class="nb">int</span><span class="p">(</span><span class="n">max_total_cells</span><span class="p">),</span>
+        <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Step 2: Compute cells_per_system and cell_offsets</span>
+    <span class="n">cells_per_system</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="p">(</span><span class="n">cells_per_system</span><span class="p">,)</span> <span class="o">=</span> <span class="n">_jax_compute_cells_per_system</span><span class="p">(</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">cells_per_system</span><span class="p">,</span>
+        <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,),</span>
+    <span class="p">)</span>
+    <span class="n">cell_offsets</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">cells_per_system</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Step 3: Count atoms per bin</span>
+    <span class="n">atoms_per_cell_count</span><span class="p">,</span> <span class="n">atom_periodic_shifts</span> <span class="o">=</span> <span class="n">_count</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc_bool</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">cell_offsets</span><span class="p">,</span>
+        <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+        <span class="n">atom_periodic_shifts</span><span class="p">,</span>
+        <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Step 4: Compute exclusive prefix sum (replaces wp.utils.array_scan)</span>
+    <span class="n">cell_atom_start_indices</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">atoms_per_cell_count</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Step 5: Zero counts before second pass</span>
+    <span class="n">atoms_per_cell_count</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">atoms_per_cell_count</span><span class="p">)</span>
+
+    <span class="c1"># Step 6: Bin atoms</span>
+    <span class="n">atom_to_cell_mapping</span><span class="p">,</span> <span class="n">atoms_per_cell_count</span><span class="p">,</span> <span class="n">cell_atom_list</span> <span class="o">=</span> <span class="n">_bin</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc_bool</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">cell_offsets</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+        <span class="n">cell_atom_start_indices</span><span class="p">,</span>
+        <span class="n">cell_atom_list</span><span class="p">,</span>
+        <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+    <span class="p">)</span>
+
+    <span class="n">cell_origin</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">atom_periodic_shifts</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+        <span class="n">cell_atom_start_indices</span><span class="p">,</span>
+        <span class="n">cell_atom_list</span><span class="p">,</span>
+        <span class="n">neighbor_search_radius</span><span class="p">,</span>
+        <span class="n">cell_origin</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="batch_query_cell_list">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_query_cell_list">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">batch_query_cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cells_per_dimension</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_periodic_shifts</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_atom_start_indices</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_atom_list</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atoms_per_cell_count</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">neighbor_search_radius</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_neighbors</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">neighbor_matrix</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">num_neighbors</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">neighbor_matrix_shifts</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">rebuild_flags</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Query batch cell lists to find neighbors.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64</span>
+<span class="sd">        Atomic coordinates.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional</span>
+<span class="sd">        Batch indices.</span>
+<span class="sd">    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional</span>
+<span class="sd">        Cumulative atom counts.</span>
+<span class="sd">    cutoff : float, optional</span>
+<span class="sd">        Cutoff distance.</span>
+<span class="sd">    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional</span>
+<span class="sd">        Cell matrices.</span>
+<span class="sd">    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional</span>
+<span class="sd">        PBC flags.</span>
+<span class="sd">    cells_per_dimension : jax.Array, shape (num_systems, 3), dtype=int32, optional</span>
+<span class="sd">        Cells per dimension.</span>
+<span class="sd">    atom_periodic_shifts : jax.Array, shape (total_atoms, 3), dtype=int32, optional</span>
+<span class="sd">        Periodic shifts for each atom (output from ``batch_build_cell_list``).</span>
+<span class="sd">    atom_to_cell_mapping : jax.Array, shape (total_atoms, 3), dtype=int32, optional</span>
+<span class="sd">        Cell mappings.</span>
+<span class="sd">    cell_atom_start_indices : jax.Array, shape (max_total_cells,), dtype=int32, optional</span>
+<span class="sd">        Start indices.</span>
+<span class="sd">    cell_atom_list : jax.Array, shape (total_atoms,), dtype=int32, optional</span>
+<span class="sd">        Cell atom list.</span>
+<span class="sd">    atoms_per_cell_count : jax.Array, shape (max_total_cells,), dtype=int32, optional</span>
+<span class="sd">        Number of atoms assigned to each cell. Output from ``batch_build_cell_list``.</span>
+<span class="sd">    neighbor_search_radius : jax.Array, shape (num_systems, 3), dtype=int32, optional</span>
+<span class="sd">        Search radius.</span>
+<span class="sd">    max_neighbors : int, optional</span>
+<span class="sd">        Maximum neighbors per atom.</span>
+<span class="sd">    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated neighbor matrix.</span>
+<span class="sd">    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated neighbors count array.</span>
+<span class="sd">    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated shift vectors array. Pass in a pre-shaped array to hint buffer</span>
+<span class="sd">        reuse to XLA; note that JAX returns a new array rather than mutating the input.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32</span>
+<span class="sd">        Neighbor matrix.</span>
+<span class="sd">    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32</span>
+<span class="sd">        Neighbors count.</span>
+<span class="sd">    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32</span>
+<span class="sd">        Periodic shifts for each neighbor relationship.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">max_neighbors</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">max_neighbors</span> <span class="o">=</span> <span class="n">estimate_max_neighbors</span><span class="p">(</span><span class="n">cutoff</span><span class="p">)</span>
+
+    <span class="c1"># Prepare batch info</span>
+    <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span> <span class="o">=</span> <span class="n">prepare_batch_idx_ptr</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="p">)</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">batch_ptr</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">1</span>
+
+    <span class="k">if</span> <span class="n">neighbor_matrix</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">neighbor_matrix</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">full</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">max_neighbors</span><span class="p">),</span>
+            <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">elif</span> <span class="n">rebuild_flags</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">neighbor_matrix</span> <span class="o">=</span> <span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">at</span><span class="p">[:]</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+
+    <span class="k">if</span> <span class="n">num_neighbors</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">num_neighbors</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">rebuild_flags</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">num_neighbors</span> <span class="o">=</span> <span class="n">num_neighbors</span><span class="o">.</span><span class="n">at</span><span class="p">[:]</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+
+    <span class="c1"># Select kernel based on dtype</span>
+    <span class="k">if</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span>
+        <span class="n">_query_kernel</span> <span class="o">=</span> <span class="n">_jax_batch_build_neighbor_matrix_f64</span>
+        <span class="n">_query_kernel_selective</span> <span class="o">=</span> <span class="n">_jax_batch_build_neighbor_matrix_selective_f64</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">_query_kernel</span> <span class="o">=</span> <span class="n">_jax_batch_build_neighbor_matrix_f32</span>
+        <span class="n">_query_kernel_selective</span> <span class="o">=</span> <span class="n">_jax_batch_build_neighbor_matrix_selective_f32</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+
+    <span class="c1"># Ensure cell dtype matches positions</span>
+    <span class="k">if</span> <span class="n">cell</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">cell</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="c1"># Ensure pbc is bool with shape (num_systems, 3)</span>
+    <span class="k">if</span> <span class="n">pbc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">pbc_bool</span> <span class="o">=</span> <span class="n">pbc</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">pbc_bool</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">ones</span><span class="p">((</span><span class="n">num_systems</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+
+    <span class="n">total_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">neighbor_matrix_shifts</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">neighbor_matrix_shifts</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">total_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+            <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">elif</span> <span class="n">rebuild_flags</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">neighbor_matrix_shifts</span> <span class="o">=</span> <span class="n">neighbor_matrix_shifts</span><span class="o">.</span><span class="n">at</span><span class="p">[:]</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">atoms_per_cell_count</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">max_total_cells</span> <span class="o">=</span> <span class="n">cell_atom_start_indices</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">atoms_per_cell_count</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">max_total_cells</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+    <span class="c1"># Compute cell_offsets from cells_per_dimension</span>
+    <span class="n">cells_per_system</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">prod</span><span class="p">(</span><span class="n">cells_per_dimension</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">cell_offsets</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">concatenate</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">jnp</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">cells_per_system</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="n">batch_idx_i32</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">rebuild_flags</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">rf</span> <span class="o">=</span> <span class="n">rebuild_flags</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">bool_</span><span class="p">)</span>
+        <span class="n">atom_rebuild</span> <span class="o">=</span> <span class="n">rf</span><span class="p">[</span><span class="n">batch_idx_i32</span><span class="p">]</span>
+        <span class="n">num_neighbors</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+            <span class="n">atom_rebuild</span><span class="p">,</span> <span class="n">jnp</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">num_neighbors</span><span class="p">),</span> <span class="n">num_neighbors</span>
+        <span class="p">)</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span><span class="p">,</span> <span class="n">num_neighbors</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">_query_kernel_selective</span><span class="p">(</span>
+                <span class="n">positions</span><span class="p">,</span>
+                <span class="n">cell</span><span class="p">,</span>
+                <span class="n">pbc_bool</span><span class="p">,</span>
+                <span class="n">batch_idx_i32</span><span class="p">,</span>
+                <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">),</span>
+                <span class="n">cells_per_dimension</span><span class="p">,</span>
+                <span class="n">neighbor_search_radius</span><span class="p">,</span>
+                <span class="n">atom_periodic_shifts</span><span class="p">,</span>
+                <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+                <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+                <span class="n">cell_atom_start_indices</span><span class="p">,</span>
+                <span class="n">cell_atom_list</span><span class="p">,</span>
+                <span class="n">cell_offsets</span><span class="p">,</span>
+                <span class="n">neighbor_matrix</span><span class="p">,</span>
+                <span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+                <span class="n">num_neighbors</span><span class="p">,</span>
+                <span class="kc">False</span><span class="p">,</span>  <span class="c1"># half_fill</span>
+                <span class="n">rf</span><span class="p">,</span>
+                <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span><span class="p">,</span> <span class="n">num_neighbors</span> <span class="o">=</span> <span class="n">_query_kernel</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">pbc_bool</span><span class="p">,</span>
+            <span class="n">batch_idx_i32</span><span class="p">,</span>
+            <span class="nb">float</span><span class="p">(</span><span class="n">cutoff</span><span class="p">),</span>
+            <span class="n">cells_per_dimension</span><span class="p">,</span>
+            <span class="n">neighbor_search_radius</span><span class="p">,</span>
+            <span class="n">atom_periodic_shifts</span><span class="p">,</span>
+            <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+            <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+            <span class="n">cell_atom_start_indices</span><span class="p">,</span>
+            <span class="n">cell_atom_list</span><span class="p">,</span>
+            <span class="n">cell_offsets</span><span class="p">,</span>
+            <span class="n">neighbor_matrix</span><span class="p">,</span>
+            <span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+            <span class="n">num_neighbors</span><span class="p">,</span>
+            <span class="kc">False</span><span class="p">,</span>  <span class="c1"># half_fill</span>
+            <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span></div>
+
+
+
+<div class="viewcode-block" id="batch_cell_list">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.batch_cell_list">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">batch_cell_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
+    <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">batch_ptr</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_neighbors</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_total_cells</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">neighbor_matrix_shifts</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">return_neighbor_list</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build and query spatial cell lists for batch of systems.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : jax.Array, shape (total_atoms, 3), dtype=float32 or float64</span>
+<span class="sd">        Atomic coordinates.</span>
+<span class="sd">    cutoff : float</span>
+<span class="sd">        Cutoff distance for neighbor detection.</span>
+<span class="sd">    cell : jax.Array, shape (num_systems, 3, 3), dtype=float32 or float64, optional</span>
+<span class="sd">        Cell matrices defining lattice vectors. Default is identity matrix.</span>
+<span class="sd">    pbc : jax.Array, shape (num_systems, 3), dtype=bool, optional</span>
+<span class="sd">        Periodic boundary condition flags. Default is all True.</span>
+<span class="sd">    batch_idx : jax.Array, shape (total_atoms,), dtype=int32, optional</span>
+<span class="sd">        Batch indices for each atom.</span>
+<span class="sd">    batch_ptr : jax.Array, shape (num_systems + 1,), dtype=int32, optional</span>
+<span class="sd">        Cumulative atom counts defining system boundaries.</span>
+<span class="sd">    max_neighbors : int, optional</span>
+<span class="sd">        Maximum number of neighbors per atom. If None, will be estimated.</span>
+<span class="sd">    max_total_cells : int, optional</span>
+<span class="sd">        Maximum number of cells to allocate. If None, will be estimated.</span>
+<span class="sd">    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional</span>
+<span class="sd">        Pre-allocated shift vectors array. If None, will be allocated internally.</span>
+<span class="sd">        Pass in a pre-shaped array to hint buffer reuse to XLA; note that JAX returns</span>
+<span class="sd">        a new array rather than mutating the input.</span>
+<span class="sd">    return_neighbor_list : bool, optional</span>
+<span class="sd">        If True, convert result to COO neighbor list format. Default is False.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    neighbor_data : jax.Array</span>
+<span class="sd">        If ``return_neighbor_list=False`` (default): ``neighbor_matrix`` with shape</span>
+<span class="sd">        (total_atoms, max_neighbors), dtype int32.</span>
+<span class="sd">        If ``return_neighbor_list=True``: ``neighbor_list`` with shape</span>
+<span class="sd">        (2, num_pairs), dtype int32, in COO format.</span>
+<span class="sd">    neighbor_count : jax.Array</span>
+<span class="sd">        If ``return_neighbor_list=False``: ``num_neighbors`` with shape</span>
+<span class="sd">        (total_atoms,), dtype int32.</span>
+<span class="sd">        If ``return_neighbor_list=True``: ``neighbor_ptr`` with shape</span>
+<span class="sd">        (total_atoms + 1,), dtype int32.</span>
+<span class="sd">    shift_data : jax.Array</span>
+<span class="sd">        If ``return_neighbor_list=False`` (default): ``neighbor_matrix_shifts`` with shape</span>
+<span class="sd">        (total_atoms, max_neighbors, 3), dtype int32.</span>
+<span class="sd">        If ``return_neighbor_list=True``: ``neighbor_list_shifts`` with shape</span>
+<span class="sd">        (num_pairs, 3), dtype int32.</span>
+<span class="sd">        Periodic shift vectors for each neighbor relationship.</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    batch_build_cell_list : Build cell list separately</span>
+<span class="sd">    batch_query_cell_list : Query cell list separately</span>
+<span class="sd">    batch_naive_neighbor_list : Naive O(N^2) method</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Prepare batch info</span>
+    <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span> <span class="o">=</span> <span class="n">prepare_batch_idx_ptr</span><span class="p">(</span>
+        <span class="n">batch_idx</span><span class="p">,</span> <span class="n">batch_ptr</span><span class="p">,</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Build cell list</span>
+    <span class="p">(</span>
+        <span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">atom_periodic_shifts</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">atoms_per_cell_count</span><span class="p">,</span>
+        <span class="n">cell_atom_start_indices</span><span class="p">,</span>
+        <span class="n">cell_atom_list</span><span class="p">,</span>
+        <span class="n">neighbor_search_radius</span><span class="p">,</span>
+        <span class="n">cell_origin</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">=</span> <span class="n">batch_build_cell_list</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">batch_ptr</span><span class="o">=</span><span class="n">batch_ptr</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="o">=</span><span class="n">cutoff</span><span class="p">,</span>
+        <span class="n">max_total_cells</span><span class="o">=</span><span class="n">max_total_cells</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Query cell list</span>
+    <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span> <span class="o">=</span> <span class="n">batch_query_cell_list</span><span class="p">(</span>
+        <span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">batch_ptr</span><span class="o">=</span><span class="n">batch_ptr</span><span class="p">,</span>
+        <span class="n">cutoff</span><span class="o">=</span><span class="n">cutoff</span><span class="p">,</span>
+        <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span>
+        <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span>
+        <span class="n">cells_per_dimension</span><span class="o">=</span><span class="n">cells_per_dimension</span><span class="p">,</span>
+        <span class="n">atom_periodic_shifts</span><span class="o">=</span><span class="n">atom_periodic_shifts</span><span class="p">,</span>
+        <span class="n">atom_to_cell_mapping</span><span class="o">=</span><span class="n">atom_to_cell_mapping</span><span class="p">,</span>
+        <span class="n">atoms_per_cell_count</span><span class="o">=</span><span class="n">atoms_per_cell_count</span><span class="p">,</span>
+        <span class="n">cell_atom_start_indices</span><span class="o">=</span><span class="n">cell_atom_start_indices</span><span class="p">,</span>
+        <span class="n">cell_atom_list</span><span class="o">=</span><span class="n">cell_atom_list</span><span class="p">,</span>
+        <span class="n">neighbor_search_radius</span><span class="o">=</span><span class="n">neighbor_search_radius</span><span class="p">,</span>
+        <span class="n">max_neighbors</span><span class="o">=</span><span class="n">max_neighbors</span><span class="p">,</span>
+        <span class="n">neighbor_matrix_shifts</span><span class="o">=</span><span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">return_neighbor_list</span><span class="p">:</span>
+        <span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_list_shifts</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">get_neighbor_list_from_neighbor_matrix</span><span class="p">(</span>
+                <span class="n">neighbor_matrix</span><span class="p">,</span>
+                <span class="n">num_neighbors</span><span class="o">=</span><span class="n">num_neighbors</span><span class="p">,</span>
+                <span class="n">neighbor_shift_matrix</span><span class="o">=</span><span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+                <span class="n">fill_value</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_list_shifts</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

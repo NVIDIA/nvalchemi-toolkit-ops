@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,13 +67,9 @@ from utils import (
     save_dftd3_parameters,
 )
 
-from nvalchemiops.interactions.dispersion.dftd3 import (
-    dftd3,
-)
-from nvalchemiops.neighborlist import (
-    estimate_max_neighbors,
-    neighbor_list,
-)
+from nvalchemiops.torch.interactions.dispersion import dftd3
+from nvalchemiops.torch.neighbors import neighbor_list
+from nvalchemiops.torch.neighbors.neighbor_utils import estimate_max_neighbors
 
 # Configuration
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -169,7 +165,12 @@ def lattice_params_to_matrix(
 # - Atomic positions in fractional coordinates
 # - Element symbols and atomic numbers
 
-with open("./4300813.json") as read_file:
+try:
+    _script_dir = Path(__file__).parent
+except NameError:
+    _script_dir = Path.cwd()
+
+with open(_script_dir / "4300813.json") as read_file:
     data = json.load(read_file)
 
 num_atoms = len(data["atoms"])
@@ -286,14 +287,24 @@ print(f"  batch_idx shape: {batch_idx.shape}")
 # - Handles periodic boundary conditions automatically
 # - Returns shifts for atoms interacting across periodic boundaries
 
-# Estimate the number of neighbors per atom using 'sensible' parameters;
-# knowledge of the system will improve the estimate and overallocating
-# neighbor matrices. The example structure is relatively sparse.
+# Estimate the number of neighbors per atom
+# For this sparse crystal structure (COD 4300813), we need to adjust the estimation
+# parameters based on the actual atomic density within the cutoff sphere.
+#
+# The crystal has a relatively low atomic density. To avoid over-allocation,
+# we compute a more accurate atomic_density estimate:
+#   - Cutoff sphere volume: (4/3) * π * (20 Å)³ ≈ 33,510 Ų
+#   - Unit cell volume can be computed from lattice parameters
+#   - For this structure: ~279 actual neighbors suggests density ≈ 0.001 atoms/ų
+#
+# Strategy: Use a conservative estimate based on material type rather than
+# generic defaults. For molecular crystals with organic/light elements,
+# atomic_density ≈ 0.001-0.003 atoms/ų is typical in Bohr units.
 cutoff_bohr = CUTOFF / BOHR_TO_ANGSTROM
 max_neighbors = estimate_max_neighbors(
     cutoff_bohr,
-    atomic_density=0.05,  # the example structure is quite sparse
-    safety_factor=0.5,
+    atomic_density=0.0015,  # Adjusted for sparse molecular crystal
+    safety_factor=1.5,  # Modest safety margin for variations
 )
 
 # Build neighbor list (in Bohr to match positions)
@@ -321,7 +332,7 @@ if num_neighbors_per_atom.max() > max_neighbors:
         f"  WARNING: Actual max neighbors ({num_neighbors_per_atom.max()})"
         f" exceeds estimated max neighbors ({max_neighbors})"
     )
-elif num_neighbors_per_atom.max() * 0.5 < max_neighbors:
+elif num_neighbors_per_atom.max() < max_neighbors * 0.5:
     print(
         f"  WARNING: Actual max neighbors ({num_neighbors_per_atom.max()})"
         f" is less than 50% of estimated max neighbors ({max_neighbors})"

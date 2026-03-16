@@ -39,14 +39,14 @@ In this example you will learn:
     This script is intended as an API demonstration. Do not use this script
     for performance benchmarking; refer to the `benchmarks` folder instead.
 
-.. GENERATED FROM PYTHON SOURCE LINES 35-39
+.. GENERATED FROM PYTHON SOURCE LINES 40-44
 
 Setup and Imports
 -----------------
 First, we import the necessary modules. The Coulomb API provides three main
 functions: ``coulomb_energy``, ``coulomb_forces``, and ``coulomb_energy_forces``.
 
-.. GENERATED FROM PYTHON SOURCE LINES 39-49
+.. GENERATED FROM PYTHON SOURCE LINES 44-54
 
 .. code-block:: Python
 
@@ -55,7 +55,7 @@ functions: ``coulomb_energy``, ``coulomb_forces``, and ``coulomb_energy_forces``
 
     import torch
 
-    from nvalchemiops.interactions.electrostatics.coulomb import (
+    from nvalchemiops.torch.interactions.electrostatics import (
         coulomb_energy,
         coulomb_energy_forces,
     )
@@ -67,13 +67,13 @@ functions: ``coulomb_energy``, ``coulomb_forces``, and ``coulomb_energy_forces``
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 50-53
+.. GENERATED FROM PYTHON SOURCE LINES 55-58
 
 Configure Device
 ----------------
 We use CUDA if available for GPU acceleration.
 
-.. GENERATED FROM PYTHON SOURCE LINES 53-61
+.. GENERATED FROM PYTHON SOURCE LINES 58-66
 
 .. code-block:: Python
 
@@ -98,7 +98,7 @@ We use CUDA if available for GPU acceleration.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 62-77
+.. GENERATED FROM PYTHON SOURCE LINES 67-82
 
 Basic Coulomb Calculation
 -------------------------
@@ -116,7 +116,7 @@ The damped Coulomb (Ewald real-space) energy is:
 .. math::
     E = \frac{q_i q_j \, \mathrm{erfc}(\alpha r)}{r}
 
-.. GENERATED FROM PYTHON SOURCE LINES 77-107
+.. GENERATED FROM PYTHON SOURCE LINES 82-112
 
 .. code-block:: Python
 
@@ -167,13 +167,13 @@ The damped Coulomb (Ewald real-space) energy is:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 108-111
+.. GENERATED FROM PYTHON SOURCE LINES 113-116
 
 Undamped Coulomb
 ~~~~~~~~~~~~~~~~
 With α=0, we get the direct Coulomb interaction.
 
-.. GENERATED FROM PYTHON SOURCE LINES 111-133
+.. GENERATED FROM PYTHON SOURCE LINES 116-138
 
 .. code-block:: Python
 
@@ -216,14 +216,14 @@ With α=0, we get the direct Coulomb interaction.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 134-138
+.. GENERATED FROM PYTHON SOURCE LINES 139-143
 
 Damped Coulomb (Ewald Real-Space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 With α > 0, the interaction is damped by erfc(αr). This is the short-range
 component used in Ewald/PME methods.
 
-.. GENERATED FROM PYTHON SOURCE LINES 138-155
+.. GENERATED FROM PYTHON SOURCE LINES 143-160
 
 .. code-block:: Python
 
@@ -261,13 +261,13 @@ component used in Ewald/PME methods.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 156-159
+.. GENERATED FROM PYTHON SOURCE LINES 161-164
 
 Newton's Third Law Check
 ~~~~~~~~~~~~~~~~~~~~~~~~
 The sum of forces should be zero for an isolated system.
 
-.. GENERATED FROM PYTHON SOURCE LINES 159-165
+.. GENERATED FROM PYTHON SOURCE LINES 164-170
 
 .. code-block:: Python
 
@@ -293,14 +293,14 @@ The sum of forces should be zero for an isolated system.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 166-170
+.. GENERATED FROM PYTHON SOURCE LINES 171-175
 
 Autograd vs Explicit Forces
 ---------------------------
 The Coulomb functions support automatic differentiation. Forces computed via
 autograd should match the explicit forces returned by the kernel.
 
-.. GENERATED FROM PYTHON SOURCE LINES 170-199
+.. GENERATED FROM PYTHON SOURCE LINES 175-204
 
 .. code-block:: Python
 
@@ -348,11 +348,11 @@ autograd should match the explicit forces returned by the kernel.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 200-201
+.. GENERATED FROM PYTHON SOURCE LINES 205-206
 
 Get explicit forces from the kernel:
 
-.. GENERATED FROM PYTHON SOURCE LINES 201-217
+.. GENERATED FROM PYTHON SOURCE LINES 206-222
 
 .. code-block:: Python
 
@@ -389,11 +389,11 @@ Get explicit forces from the kernel:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 218-219
+.. GENERATED FROM PYTHON SOURCE LINES 223-224
 
 Get autograd forces via backpropagation:
 
-.. GENERATED FROM PYTHON SOURCE LINES 219-243
+.. GENERATED FROM PYTHON SOURCE LINES 224-248
 
 .. code-block:: Python
 
@@ -443,7 +443,7 @@ Get autograd forces via backpropagation:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 244-252
+.. GENERATED FROM PYTHON SOURCE LINES 249-257
 
 Neighbor List vs Neighbor Matrix Format
 ---------------------------------------
@@ -454,7 +454,7 @@ The Coulomb functions support two neighbor formats:
 
 Both formats produce identical results.
 
-.. GENERATED FROM PYTHON SOURCE LINES 252-274
+.. GENERATED FROM PYTHON SOURCE LINES 257-279
 
 .. code-block:: Python
 
@@ -495,11 +495,11 @@ Both formats produce identical results.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 275-276
+.. GENERATED FROM PYTHON SOURCE LINES 280-281
 
 Neighbor list format (COO):
 
-.. GENERATED FROM PYTHON SOURCE LINES 276-298
+.. GENERATED FROM PYTHON SOURCE LINES 281-303
 
 .. code-block:: Python
 
@@ -539,11 +539,11 @@ Neighbor list format (COO):
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 299-300
+.. GENERATED FROM PYTHON SOURCE LINES 304-305
 
 Neighbor matrix format:
 
-.. GENERATED FROM PYTHON SOURCE LINES 300-333
+.. GENERATED FROM PYTHON SOURCE LINES 305-338
 
 .. code-block:: Python
 
@@ -597,14 +597,14 @@ Neighbor matrix format:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 334-338
+.. GENERATED FROM PYTHON SOURCE LINES 339-343
 
 Batch Evaluation
 ----------------
 Multiple independent systems can be evaluated simultaneously using the
 ``batch_idx`` parameter. Each atom is assigned to a system index.
 
-.. GENERATED FROM PYTHON SOURCE LINES 338-363
+.. GENERATED FROM PYTHON SOURCE LINES 343-368
 
 .. code-block:: Python
 
@@ -647,11 +647,11 @@ Multiple independent systems can be evaluated simultaneously using the
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 364-365
+.. GENERATED FROM PYTHON SOURCE LINES 369-370
 
 Batch calculation:
 
-.. GENERATED FROM PYTHON SOURCE LINES 365-397
+.. GENERATED FROM PYTHON SOURCE LINES 370-402
 
 .. code-block:: Python
 
@@ -695,21 +695,21 @@ Batch calculation:
 
  .. code-block:: none
 
-    Single system energy: -0.200000
+    Single system energy: -0.400000
     Batch system 0 energy: -0.400000
     Batch system 1 energy: -0.400000
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 398-402
+.. GENERATED FROM PYTHON SOURCE LINES 403-407
 
 Charge Gradients
 ----------------
 The autograd support extends to charge gradients, enabling sensitivity analysis
 and optimization with respect to charges.
 
-.. GENERATED FROM PYTHON SOURCE LINES 402-435
+.. GENERATED FROM PYTHON SOURCE LINES 407-440
 
 .. code-block:: Python
 
@@ -757,12 +757,12 @@ and optimization with respect to charges.
 
     Charge Gradients
     Two atoms at r=3.0 Å, charges: [ 1. -1.]
-    Total energy: -0.166667
+    Total energy: -0.333333
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 436-442
+.. GENERATED FROM PYTHON SOURCE LINES 441-447
 
 Verify against analytical result:
 
@@ -771,7 +771,7 @@ For E = q₀q₁/r:
 - ∂E/∂q₀ = q₁/r = -1/3 ≈ -0.333
 - ∂E/∂q₁ = q₀/r = 1/3 ≈ 0.333
 
-.. GENERATED FROM PYTHON SOURCE LINES 442-450
+.. GENERATED FROM PYTHON SOURCE LINES 447-455
 
 .. code-block:: Python
 
@@ -792,14 +792,14 @@ For E = q₀q₁/r:
  .. code-block:: none
 
 
-    ∂E/∂q₀ = -0.166667 (expected: -0.333333)
-    ∂E/∂q₁ = 0.166667 (expected: 0.333333)
-    Match: ✗
+    ∂E/∂q₀ = -0.333333 (expected: -0.333333)
+    ∂E/∂q₁ = 0.333333 (expected: 0.333333)
+    Match: ✓
 
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 451-464
+.. GENERATED FROM PYTHON SOURCE LINES 456-469
 
 Summary
 -------
@@ -815,7 +815,7 @@ This example demonstrated:
 For visualization of energy/force profiles as a function of distance,
 see the separate visualization scripts in the examples folder.
 
-.. GENERATED FROM PYTHON SOURCE LINES 464-466
+.. GENERATED FROM PYTHON SOURCE LINES 469-471
 
 .. code-block:: Python
 
@@ -838,7 +838,7 @@ see the separate visualization scripts in the examples folder.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 2.610 seconds)
+   **Total running time of the script:** (0 minutes 0.037 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_01_coulomb_example.py:

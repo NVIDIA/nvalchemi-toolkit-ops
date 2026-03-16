@@ -1,0 +1,1076 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>JAX Neighbor List Example &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'examples/neighbors/05_jax_neighbor_list';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Benchmarks" href="../../benchmarks/index.html" />
+    <link rel="prev" title="Torch.compile Performance Benefits Example" href="04_neighbors_list_torch_compile_performance.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Dispersion Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/03_jax_dftd3_molecule.html">JAX DFT-D3 Dispersion Correction for a Molecule</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dynamics/index.html">Dynamics Examples</a><input class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/01_langevin_integration.html">Langevin Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/02_velocity_verlet_integration.html">Velocity Verlet Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/03_nph_integration.html">NPH Dynamics (MTK) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/04_npt_integration.html">NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/05_batched_langevin_dynamics.html">Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/06_fire_optimization.html">FIRE Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/07_fire_variable_cell.html">Variable-Cell FIRE Optimization with LJ Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/08_fire_batched.html">Batched FIRE Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/09_fire2_optimization.html">FIRE2 Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/10_fire2_batched.html">Batched FIRE2 Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dynamics/11_fire2_variable_cell.html">Variable-Cell FIRE2 Optimization with LJ Potential</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../electrostatics/index.html">Electrostatics</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/04_jax_pme_example.html">Particle Mesh Ewald (PME) with JAX</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Neighbor Lists</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-4"><i class="fa-solid fa-chevron-down"></i></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">JAX Neighbor List Example</a></li>
+
+
+
+
+
+
+
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Examples Gallery</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="index.html" class="nav-link">Neighbor Lists</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">JAX...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <div class="sphx-glr-download-link-note admonition note">
+<p class="admonition-title">Note</p>
+<p><a class="reference internal" href="#sphx-glr-download-examples-neighbors-05-jax-neighbor-list-py"><span class="std std-ref">Go to the end</span></a>
+to download the full example code.</p>
+</div>
+<section class="sphx-glr-example-title" id="jax-neighbor-list-example">
+<span id="sphx-glr-examples-neighbors-05-jax-neighbor-list-py"></span><h1>JAX Neighbor List Example<a class="headerlink" href="#jax-neighbor-list-example" title="Link to this heading">#</a></h1>
+<p>This example demonstrates how to use the JAX neighbor list API in nvalchemiops
+for computing neighbor lists in periodic systems.</p>
+<p>In this example you will learn:</p>
+<ul class="simple">
+<li><p>How to use the unified <code class="docutils literal notranslate"><span class="pre">neighbor_list()</span></code> API with JAX arrays</p></li>
+<li><p>Matrix format vs COO (list) format outputs</p></li>
+<li><p>Comparing <code class="docutils literal notranslate"><span class="pre">naive_neighbor_list</span></code> and <code class="docutils literal notranslate"><span class="pre">cell_list</span></code> algorithms</p></li>
+<li><p>Using <code class="docutils literal notranslate"><span class="pre">half_fill</span></code> mode for symmetric neighbor lists</p></li>
+<li><p>Validating neighbor distances are within cutoff</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">jax.jit</span></code> compilation of the neighbor matrix</p></li>
+</ul>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>This example is for educational purposes. Do not use it for performance
+benchmarking, as the code includes print statements and small system sizes
+that are not representative of production workloads.</p>
+</div>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
+    <span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="s2">&quot;This example requires JAX. Install with: pip install &#39;nvalchemi-toolkit-ops[jax]&#39;&quot;</span>
+    <span class="p">)</span>
+    <a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><span class="n">sys</span><span class="o">.</span><span class="n">exit</span></a><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.neighbors</span><span class="w"> </span><span class="kn">import</span> <span class="n">neighbor_list</span>
+<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;JAX/Warp backend unavailable (</span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">). This example requires a CUDA-backed runtime.&quot;</span>
+    <span class="p">)</span>
+    <a href="https://docs.python.org/3/library/sys.html#sys.exit" title="sys.exit" class="sphx-glr-backref-module-sys sphx-glr-backref-type-py-function"><span class="n">sys</span><span class="o">.</span><span class="n">exit</span></a><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.neighbors.cell_list</span><span class="w"> </span><span class="kn">import</span> <span class="n">cell_list</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.neighbors.naive</span><span class="w"> </span><span class="kn">import</span> <span class="n">naive_neighbor_list</span>
+</pre></div>
+</div>
+</section>
+<section id="setup">
+<h1>Setup<a class="headerlink" href="#setup" title="Link to this heading">#</a></h1>
+<p>JAX handles device placement automatically. We’ll create a random periodic
+system to demonstrate the neighbor list API.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;JAX NEIGHBOR LIST EXAMPLE&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># System parameters</span>
+<a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_atoms</span></a> <span class="o">=</span> <span class="mi">200</span>
+<a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">box_size</span></a> <span class="o">=</span> <span class="mf">15.0</span>
+<a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a> <span class="o">=</span> <span class="mf">5.0</span>
+
+<span class="c1"># Create random atomic positions using JAX random</span>
+<span class="n">key</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.random.PRNGKey.html#jax.random.PRNGKey" title="jax.random.PRNGKey" class="sphx-glr-backref-module-jax-random sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span></a><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">positions</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.random.uniform.html#jax.random.uniform" title="jax.random.uniform" class="sphx-glr-backref-module-jax-random sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span></a><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">(</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_atoms</span></a><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.float32.html#jax.numpy.float32" title="jax.numpy.float32" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span></a><span class="p">)</span> <span class="o">*</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">box_size</span></a>
+
+<span class="c1"># Create a cubic periodic cell: (1, 3, 3) shape</span>
+<span class="n">cell</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.eye.html#jax.numpy.eye" title="jax.numpy.eye" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">eye</span></a><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.float32.html#jax.numpy.float32" title="jax.numpy.float32" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span></a><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">*</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">box_size</span></a>
+
+<span class="c1"># Enable periodic boundary conditions in all directions: (1, 3) shape</span>
+<span class="n">pbc</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.array.html#jax.numpy.array" title="jax.numpy.array" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">array</span></a><span class="p">([[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">]])</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">System configuration:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Number of atoms: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_atoms</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Box size: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">box_size</span></a><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Cutoff distance: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Positions shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">positions</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Cell shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">cell</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  PBC shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">pbc</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+JAX NEIGHBOR LIST EXAMPLE
+======================================================================
+
+System configuration:
+  Number of atoms: 200
+  Box size: 15.0 Å
+  Cutoff distance: 5.0 Å
+  Positions shape: (200, 3)
+  Cell shape: (1, 3, 3)
+  PBC shape: (1, 3)
+</pre></div>
+</div>
+</section>
+<section id="unified-api-matrix-format-default">
+<h1>Unified API - Matrix Format (default)<a class="headerlink" href="#unified-api-matrix-format-default" title="Link to this heading">#</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">neighbor_list()</span></code> function automatically selects the best algorithm
+based on system size. For small systems (&lt; 5000 atoms), it uses the naive
+O(N²) algorithm. For larger systems, it uses the cell list O(N) algorithm.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;UNIFIED API - MATRIX FORMAT&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Call the unified API (returns matrix format by default)</span>
+<span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">num_neighbors</span><span class="p">,</span> <span class="n">shifts</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Returned neighbor matrix format:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  neighbor_matrix shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">neighbor_matrix</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  num_neighbors shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">num_neighbors</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  shifts shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">shifts</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Statistics:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total neighbor pairs: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_neighbors</span><span class="o">.</span><span class="n">sum</span></a><span class="p">())</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Average neighbors per atom: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.mean.html#jax.Array.mean" title="jax.Array.mean" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_neighbors</span><span class="o">.</span><span class="n">mean</span></a><span class="p">())</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max neighbors for any atom: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.max.html#jax.Array.max" title="jax.Array.max" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_neighbors</span><span class="o">.</span><span class="n">max</span></a><span class="p">())</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Min neighbors for any atom: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.min.html#jax.Array.min" title="jax.Array.min" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_neighbors</span><span class="o">.</span><span class="n">min</span></a><span class="p">())</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Show first few neighbors of atom 0</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">First 5 neighbors of atom 0:&quot;</span><span class="p">)</span>
+<span class="k">for</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">num_neighbors</span><span class="p">[</span><span class="mi">0</span><span class="p">]))):</span>
+    <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">neighbor_idx</span></a> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">neighbor_matrix</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">])</span>
+    <a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">shift</span></a> <span class="o">=</span> <span class="n">shifts</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Neighbor </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="si">}</span><span class="s2">: atom </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">neighbor_idx</span></a><span class="si">}</span><span class="s2">, shift </span><span class="si">{</span><a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">shift</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+UNIFIED API - MATRIX FORMAT
+======================================================================
+
+Returned neighbor matrix format:
+  neighbor_matrix shape: (200, 112)
+  num_neighbors shape: (200,)
+  shifts shape: (200, 112, 3)
+
+Statistics:
+  Total neighbor pairs: 6166
+  Average neighbors per atom: 30.83
+  Max neighbors for any atom: 43
+  Min neighbors for any atom: 13
+
+First 5 neighbors of atom 0:
+  Neighbor 0: atom 145, shift [0, 0, 0]
+  Neighbor 1: atom 148, shift [0, 0, 0]
+  Neighbor 2: atom 151, shift [0, 0, 0]
+  Neighbor 3: atom 155, shift [0, 0, 0]
+  Neighbor 4: atom 156, shift [0, 0, 0]
+</pre></div>
+</div>
+</section>
+<section id="unified-api-coo-format">
+<h1>Unified API - COO Format<a class="headerlink" href="#unified-api-coo-format" title="Link to this heading">#</a></h1>
+<p>The COO (coordinate) format is often preferred for graph neural networks.
+Set <code class="docutils literal notranslate"><span class="pre">return_neighbor_list=True</span></code> to get this format.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;UNIFIED API - COO FORMAT&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Get neighbor list in COO format</span>
+<span class="n">neighbor_list_coo</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">shifts_coo</span> <span class="o">=</span> <span class="n">neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Returned COO format:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  neighbor_list shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2"> (2 x num_pairs)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  neighbor_ptr shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">neighbor_ptr</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2"> (CSR pointers)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  shifts shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">shifts_coo</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">source_atoms</span> <span class="o">=</span> <span class="n">neighbor_list_coo</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">target_atoms</span> <span class="o">=</span> <span class="n">neighbor_list_coo</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Statistics:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total pairs: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span></a><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Source atoms range: [</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.min.html#jax.Array.min" title="jax.Array.min" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">source_atoms</span><span class="o">.</span><span class="n">min</span></a><span class="p">())</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.max.html#jax.Array.max" title="jax.Array.max" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">source_atoms</span><span class="o">.</span><span class="n">max</span></a><span class="p">())</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Target atoms range: [</span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.min.html#jax.Array.min" title="jax.Array.min" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">target_atoms</span><span class="o">.</span><span class="n">min</span></a><span class="p">())</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.max.html#jax.Array.max" title="jax.Array.max" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">target_atoms</span><span class="o">.</span><span class="n">max</span></a><span class="p">())</span><span class="si">}</span><span class="s2">]&quot;</span><span class="p">)</span>
+
+<span class="c1"># Show first few pairs</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">First 5 neighbor pairs:&quot;</span><span class="p">)</span>
+<span class="k">for</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">neighbor_list_coo</span><span class="o">.</span><span class="n">shape</span></a><span class="p">[</span><span class="mi">1</span><span class="p">])):</span>
+    <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">src</span></a> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">source_atoms</span><span class="p">[</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">])</span>
+    <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">tgt</span></a> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">target_atoms</span><span class="p">[</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">])</span>
+    <a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">shift</span></a> <span class="o">=</span> <span class="n">shifts_coo</span><span class="p">[</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Pair </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="si">}</span><span class="s2">: atom </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">src</span></a><span class="si">}</span><span class="s2"> -&gt; atom </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">tgt</span></a><span class="si">}</span><span class="s2">, shift </span><span class="si">{</span><a href="https://docs.python.org/3/library/stdtypes.html#list" title="builtins.list" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">shift</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+UNIFIED API - COO FORMAT
+======================================================================
+
+Returned COO format:
+  neighbor_list shape: (2, 6166) (2 x num_pairs)
+  neighbor_ptr shape: (201,) (CSR pointers)
+  shifts shape: (6166, 3)
+
+Statistics:
+  Total pairs: 6166
+  Source atoms range: [0, 199]
+  Target atoms range: [0, 199]
+
+First 5 neighbor pairs:
+  Pair 0: atom 0 -&gt; atom 145, shift [0, 0, 0]
+  Pair 1: atom 0 -&gt; atom 148, shift [0, 0, 0]
+  Pair 2: atom 0 -&gt; atom 151, shift [0, 0, 0]
+  Pair 3: atom 0 -&gt; atom 155, shift [0, 0, 0]
+  Pair 4: atom 0 -&gt; atom 156, shift [0, 0, 0]
+</pre></div>
+</div>
+</section>
+<section id="algorithm-comparison">
+<h1>Algorithm Comparison<a class="headerlink" href="#algorithm-comparison" title="Link to this heading">#</a></h1>
+<p>The nvalchemiops library provides two main algorithms:
+- <code class="docutils literal notranslate"><span class="pre">naive_neighbor_list</span></code>: O(N²) - best for small systems
+- <code class="docutils literal notranslate"><span class="pre">cell_list</span></code>: O(N) - best for large systems</p>
+<p>Both should produce identical results.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;ALGORITHM COMPARISON&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Direct call to naive algorithm</span>
+<span class="n">nm_naive</span><span class="p">,</span> <span class="n">num_naive</span><span class="p">,</span> <span class="n">shifts_naive</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span>
+<span class="p">)</span>
+
+<span class="c1"># Direct call to cell list algorithm</span>
+<span class="n">nm_cell</span><span class="p">,</span> <span class="n">num_cell</span><span class="p">,</span> <span class="n">shifts_cell</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Naive algorithm (O(N²)):&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total pairs: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_naive</span><span class="o">.</span><span class="n">sum</span></a><span class="p">())</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Average neighbors: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.mean.html#jax.Array.mean" title="jax.Array.mean" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_naive</span><span class="o">.</span><span class="n">mean</span></a><span class="p">())</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Cell list algorithm (O(N)):&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Total pairs: </span><span class="si">{</span><span class="nb">int</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.sum.html#jax.Array.sum" title="jax.Array.sum" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_cell</span><span class="o">.</span><span class="n">sum</span></a><span class="p">())</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Average neighbors: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.mean.html#jax.Array.mean" title="jax.Array.mean" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">num_cell</span><span class="o">.</span><span class="n">mean</span></a><span class="p">())</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># Verify they find the same number of pairs per atom</span>
+<span class="n">pairs_match</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.allclose.html#jax.numpy.allclose" title="jax.numpy.allclose" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">allclose</span></a><span class="p">(</span><span class="n">num_naive</span><span class="p">,</span> <span class="n">num_cell</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Results match: </span><span class="si">{</span><span class="n">pairs_match</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1">#</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+ALGORITHM COMPARISON
+======================================================================
+
+Naive algorithm (O(N²)):
+  Total pairs: 6166
+  Average neighbors: 30.83
+
+Cell list algorithm (O(N)):
+  Total pairs: 6166
+  Average neighbors: 30.83
+
+Results match: True
+</pre></div>
+</div>
+</section>
+<section id="distance-validation">
+<h1>Distance Validation<a class="headerlink" href="#distance-validation" title="Link to this heading">#</a></h1>
+<p>Let’s verify that all neighbor pairs are actually within the cutoff distance.</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;DISTANCE VALIDATION&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+<span class="c1"># Get neighbor list in COO format for easy distance computation</span>
+<span class="n">nlist</span><span class="p">,</span> <span class="n">nptr</span><span class="p">,</span> <span class="n">nshifts</span> <span class="o">=</span> <span class="n">naive_neighbor_list</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="o">=</span><span class="n">pbc</span><span class="p">,</span> <span class="n">return_neighbor_list</span><span class="o">=</span><span class="kc">True</span>
+<span class="p">)</span>
+
+<span class="k">if</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">nlist</span><span class="o">.</span><span class="n">shape</span></a><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="c1"># Extract source and target positions</span>
+    <span class="n">src_idx</span> <span class="o">=</span> <span class="n">nlist</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">tgt_idx</span> <span class="o">=</span> <span class="n">nlist</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="n">pos_src</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">src_idx</span><span class="p">]</span>
+    <span class="n">pos_tgt</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">tgt_idx</span><span class="p">]</span>
+
+    <span class="c1"># Compute Cartesian shift from lattice shift</span>
+    <span class="c1"># shifts are in lattice coordinates, multiply by cell vectors</span>
+    <span class="n">cell_squeezed</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.squeeze.html#jax.Array.squeeze" title="jax.Array.squeeze" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">cell</span><span class="o">.</span><span class="n">squeeze</span></a><span class="p">(</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># (3, 3)</span>
+    <span class="n">cartesian_shifts</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.einsum.html#jax.numpy.einsum" title="jax.numpy.einsum" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">einsum</span></a><span class="p">(</span>
+        <span class="s2">&quot;ij,jk-&gt;ik&quot;</span><span class="p">,</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.astype.html#jax.Array.astype" title="jax.Array.astype" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">nshifts</span><span class="o">.</span><span class="n">astype</span></a><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.float32.html#jax.numpy.float32" title="jax.numpy.float32" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-class"><span class="n">jnp</span><span class="o">.</span><span class="n">float32</span></a><span class="p">),</span> <span class="n">cell_squeezed</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Compute distances: r_j - r_i + shift</span>
+    <span class="n">diff</span> <span class="o">=</span> <span class="n">pos_tgt</span> <span class="o">-</span> <span class="n">pos_src</span> <span class="o">+</span> <span class="n">cartesian_shifts</span>
+    <span class="n">distances</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.linalg.norm.html#jax.numpy.linalg.norm" title="jax.numpy.linalg.norm" class="sphx-glr-backref-module-jax-numpy-linalg sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span></a><span class="p">(</span><span class="n">diff</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Computed distances for </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">distances</span><span class="p">)</span><span class="si">}</span><span class="s2"> neighbor pairs:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Min distance: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.min.html#jax.Array.min" title="jax.Array.min" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">distances</span><span class="o">.</span><span class="n">min</span></a><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Max distance: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.max.html#jax.Array.max" title="jax.Array.max" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">distances</span><span class="o">.</span><span class="n">max</span></a><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Mean distance: </span><span class="si">{</span><span class="nb">float</span><span class="p">(</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.mean.html#jax.Array.mean" title="jax.Array.mean" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-method"><span class="n">distances</span><span class="o">.</span><span class="n">mean</span></a><span class="p">())</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Cutoff: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Check if all distances are within cutoff (with small tolerance)</span>
+    <span class="n">within_cutoff</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.all.html#jax.numpy.all" title="jax.numpy.all" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">all</span></a><span class="p">(</span><span class="n">distances</span> <span class="o">&lt;=</span> <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a> <span class="o">+</span> <span class="mf">1e-5</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">  All distances within cutoff: </span><span class="si">{</span><span class="n">within_cutoff</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># Show distribution of first 10 distances</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">First 10 neighbor distances:&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">min</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">distances</span><span class="p">))):</span>
+        <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">src</span></a> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">src_idx</span><span class="p">[</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">])</span>
+        <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">tgt</span></a> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">tgt_idx</span><span class="p">[</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">])</span>
+        <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">dist</span></a> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">distances</span><span class="p">[</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">])</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Atom </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">src</span></a><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">tgt</span></a><span class="si">}</span><span class="s2">: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">dist</span></a><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Å&quot;</span><span class="p">)</span>
+
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">No neighbor pairs found (empty system or cutoff too small)&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+DISTANCE VALIDATION
+======================================================================
+
+Computed distances for 6166 neighbor pairs:
+  Min distance: 0.4676 Å
+  Max distance: 4.9992 Å
+  Mean distance: 3.7425 Å
+  Cutoff: 5.0 Å
+
+  All distances within cutoff: True
+
+First 10 neighbor distances:
+  Atom 0 -&gt; 145: 2.7335 Å
+  Atom 0 -&gt; 148: 3.8481 Å
+  Atom 0 -&gt; 151: 3.7375 Å
+  Atom 0 -&gt; 155: 4.6850 Å
+  Atom 0 -&gt; 156: 4.9675 Å
+  Atom 0 -&gt; 105: 3.8244 Å
+  Atom 0 -&gt; 127: 4.6600 Å
+  Atom 0 -&gt; 163: 4.1604 Å
+  Atom 0 -&gt; 167: 3.6606 Å
+  Atom 0 -&gt; 173: 2.9997 Å
+</pre></div>
+</div>
+</section>
+<section id="jit-compilation">
+<h1>JIT compilation<a class="headerlink" href="#jit-compilation" title="Link to this heading">#</a></h1>
+<p>Demonstrate usage of <cite>jax.jit</cite> to include neighborhood computation</p>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;JIT compilation example&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+
+
+<span class="nd">@jax</span><span class="o">.</span><span class="n">jit</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">run_compute_loop</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">,</span>
+    <span class="n">cell</span><span class="p">,</span>
+    <span class="n">pbc</span><span class="p">,</span>
+    <span class="n">max_neighbors</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span>
+    <span class="n">max_total_cells</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span><span class="p">,</span>
+    <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">6.0</span><span class="p">,</span>
+    <span class="n">max_num_atoms</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">200</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="jax.Array" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-class"><span class="n">jax</span><span class="o">.</span><span class="n">Array</span></a><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Example of encapsulating a compute loop&quot;&quot;&quot;</span>
+    <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_loops</span></a> <span class="o">=</span> <span class="mi">100</span>
+    <span class="n">all_neighbors</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.zeros.html#jax.numpy.zeros" title="jax.numpy.zeros" class="sphx-glr-backref-module-jax-numpy sphx-glr-backref-type-py-function"><span class="n">jnp</span><span class="o">.</span><span class="n">zeros</span></a><span class="p">(</span>
+        <span class="p">(</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_loops</span></a><span class="p">,</span> <span class="n">max_num_atoms</span><span class="p">,</span> <span class="n">max_neighbors</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.dtype.html#jax.Array.dtype" title="jax.Array.dtype" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span></a>
+    <span class="p">)</span>
+    <span class="c1"># generate some random positions</span>
+    <span class="n">key</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.random.PRNGKey.html#jax.random.PRNGKey" title="jax.random.PRNGKey" class="sphx-glr-backref-module-jax-random sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">PRNGKey</span></a><span class="p">(</span><span class="mi">64</span><span class="p">)</span>
+    <span class="k">for</span> <a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_loops</span></a><span class="p">):</span>
+        <span class="n">new_positions</span> <span class="o">=</span> <span class="p">(</span>
+            <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.random.normal.html#jax.random.normal" title="jax.random.normal" class="sphx-glr-backref-module-jax-random sphx-glr-backref-type-py-function"><span class="n">jax</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">normal</span></a><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="p">(</span><span class="n">max_num_atoms</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.dtype.html#jax.Array.dtype" title="jax.Array.dtype" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span></a><span class="p">)</span>
+            <span class="o">+</span> <span class="n">positions</span>
+        <span class="p">)</span>
+        <span class="c1"># for JIT compilation, max_neighbors and total cells **must** be specified to</span>
+        <span class="c1"># accommoate for static array shapes</span>
+        <span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span> <span class="o">=</span> <span class="n">cell_list</span><span class="p">(</span>
+            <span class="n">new_positions</span><span class="p">,</span>
+            <a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">cutoff</span></a><span class="p">,</span>
+            <span class="n">cell</span> <span class="o">*</span> <span class="mf">1.5</span><span class="p">,</span>
+            <span class="n">pbc</span><span class="p">,</span>
+            <span class="n">max_neighbors</span><span class="o">=</span><span class="n">max_neighbors</span><span class="p">,</span>
+            <span class="n">max_total_cells</span><span class="o">=</span><span class="n">max_total_cells</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="c1"># in this example we don&#39;t do any additional computation</span>
+        <span class="c1"># other than neighborhoods; include your computation logic</span>
+        <span class="c1"># within this scope</span>
+        <span class="n">all_neighbors</span> <span class="o">=</span> <a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.at.html#jax.Array.at" title="jax.Array.at" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">all_neighbors</span><span class="o">.</span><span class="n">at</span></a><span class="p">[</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="p">]</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">neighbor_matrix</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">all_neighbors</span>
+
+
+<span class="c1"># run the compute loop N times</span>
+<a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_loops</span></a> <span class="o">=</span> <span class="mi">100</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Run neighbor computation loop </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">num_loops</span></a><span class="si">}</span><span class="s2"> times.&quot;</span><span class="p">)</span>
+<span class="n">all_neighbors</span> <span class="o">=</span> <span class="n">run_compute_loop</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">pbc</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Returned neighbor matrix shape: </span><span class="si">{</span><a href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.shape.html#jax.Array.shape" title="jax.Array.shape" class="sphx-glr-backref-module-jax sphx-glr-backref-type-py-property"><span class="n">all_neighbors</span><span class="o">.</span><span class="n">shape</span></a><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+JIT compilation example
+======================================================================
+
+Run neighbor computation loop 100 times.
+Returned neighbor matrix shape: (100, 200, 128)
+</pre></div>
+</div>
+</section>
+<section id="summary">
+<h1>Summary<a class="headerlink" href="#summary" title="Link to this heading">#</a></h1>
+<p>This example demonstrated the JAX neighbor list API in nvalchemiops:</p>
+<ul class="simple">
+<li><p><strong>Unified API</strong>: <code class="docutils literal notranslate"><span class="pre">neighbor_list()</span></code> automatically selects the best algorithm</p></li>
+<li><p><strong>Matrix format</strong>: Dense (N, max_neighbors) format for neighbor indices</p></li>
+<li><p><strong>COO format</strong>: Sparse (2, num_pairs) format for graph neural networks</p></li>
+<li><p><strong>Algorithm choice</strong>: O(N²) naive vs O(N) cell list for different system sizes</p></li>
+<li><p><strong>Half-fill mode</strong>: Store only unique pairs to save memory</p></li>
+<li><p><strong>Distance validation</strong>: Verify all pairs are within cutoff</p></li>
+</ul>
+<div class="highlight-Python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;SUMMARY&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">70</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Key takeaways:&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  - Use neighbor_list() for automatic algorithm selection&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  - Use return_neighbor_list=True for COO format (GNNs)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  - Use half_fill=True to store only unique pairs&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  - naive_neighbor_list: O(N²), best for &lt; 5000 atoms&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  - cell_list: O(N), best for &gt;= 5000 atoms&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example completed successfully!&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>======================================================================
+SUMMARY
+======================================================================
+
+Key takeaways:
+  - Use neighbor_list() for automatic algorithm selection
+  - Use return_neighbor_list=True for COO format (GNNs)
+  - Use half_fill=True to store only unique pairs
+  - naive_neighbor_list: O(N²), best for &lt; 5000 atoms
+  - cell_list: O(N), best for &gt;= 5000 atoms
+
+Example completed successfully!
+</pre></div>
+</div>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 8.659 seconds)</p>
+<div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighbors-05-jax-neighbor-list-py">
+<div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/90b798e785032850e81e9861b6a309cb/05_jax_neighbor_list.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">05_jax_neighbor_list.ipynb</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-python docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/fb1c13b41cdcc190afaa4a09d8568634/05_jax_neighbor_list.py"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Python</span> <span class="pre">source</span> <span class="pre">code:</span> <span class="pre">05_jax_neighbor_list.py</span></code></a></p>
+</div>
+<div class="sphx-glr-download sphx-glr-download-zip docutils container">
+<p><a class="reference download internal" download="" href="../../_downloads/491173de1f5987563332bea6537ee17d/05_jax_neighbor_list.zip"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">zipped:</span> <span class="pre">05_jax_neighbor_list.zip</span></code></a></p>
+</div>
+</div>
+<p class="sphx-glr-signature"><a class="reference external" href="https://sphinx-gallery.github.io">Gallery generated by Sphinx-Gallery</a></p>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="04_neighbors_list_torch_compile_performance.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Torch.compile Performance Benefits Example</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../../benchmarks/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Benchmarks</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#">JAX Neighbor List Example</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#setup">Setup</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#unified-api-matrix-format-default">Unified API - Matrix Format (default)</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#unified-api-coo-format">Unified API - COO Format</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#algorithm-comparison">Algorithm Comparison</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#distance-validation">Distance Validation</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#jit-compilation">JIT compilation</a></li>
+<li class="toc-h1 nav-item toc-entry"><a class="reference internal nav-link" href="#summary">Summary</a></li>
+</ul>
+
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/examples/neighbors/05_jax_neighbor_list.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

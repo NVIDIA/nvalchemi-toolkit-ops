@@ -20,8 +20,6 @@
 
 DFT-D3 Dispersion Correction for a Molecule
 ============================================
-DFT-D3 Dispersion Correction for a Molecule
-============================================
 
 This example demonstrates how to compute the DFT-D3 dispersion energy
 and forces for a single molecular system using GPU-accelerated kernels.
@@ -42,7 +40,7 @@ In this example you will learn:
     This script is intended as an API demonstration. Do not use this script
     for performance benchmarking; refer to the `benchmarks` folder instead.
 
-.. GENERATED FROM PYTHON SOURCE LINES 43-48
+.. GENERATED FROM PYTHON SOURCE LINES 41-46
 
 Setup and Parameter Loading
 ----------------------------
@@ -50,7 +48,7 @@ First, we need to import the necessary modules and load the DFT-D3 parameters.
 The parameters contain element-specific C6 coefficients and radii that are
 used in the dispersion energy calculation.
 
-.. GENERATED FROM PYTHON SOURCE LINES 48-78
+.. GENERATED FROM PYTHON SOURCE LINES 46-76
 
 .. code-block:: Python
 
@@ -69,7 +67,7 @@ used in the dispersion energy calculation.
         save_dftd3_parameters,
     )
 
-    from nvalchemiops.neighborlist.neighborlist import neighbor_list
+    from nvalchemiops.torch.neighbors import neighbor_list
 
     # Check for cached parameters, download if needed
     # This step downloads ~500 KB of reference data from the Grimme group
@@ -97,7 +95,7 @@ used in the dispersion energy calculation.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 79-87
+.. GENERATED FROM PYTHON SOURCE LINES 77-85
 
 Configure Device and Initialize D3 Module
 ------------------------------------------
@@ -108,7 +106,7 @@ initialized with functional-specific parameters. Here we use PBE0 parameters:
 - s8: scales the C8/R^8 term (functional-specific)
 - a1, a2: Becke-Johnson damping parameters (functional-specific)
 
-.. GENERATED FROM PYTHON SOURCE LINES 87-101
+.. GENERATED FROM PYTHON SOURCE LINES 85-99
 
 .. code-block:: Python
 
@@ -139,7 +137,7 @@ initialized with functional-specific parameters. Here we use PBE0 parameters:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 102-107
+.. GENERATED FROM PYTHON SOURCE LINES 100-105
 
 Load Molecular Structure
 ------------------------
@@ -147,12 +145,17 @@ We'll load a molecular dimer from an XYZ file. This is a simple text format
 where the first line contains the number of atoms, the second line is a
 comment, and subsequent lines contain: element symbol, x, y, z coordinates.
 
-.. GENERATED FROM PYTHON SOURCE LINES 107-130
+.. GENERATED FROM PYTHON SOURCE LINES 105-133
 
 .. code-block:: Python
 
 
-    with open("./dimer.xyz") as f:
+    try:
+        _script_dir = Path(__file__).parent
+    except NameError:
+        _script_dir = Path.cwd()
+
+    with open(_script_dir / "dimer.xyz") as f:
         lines = f.readlines()
         num_atoms = int(lines[0])
         coords = torch.zeros(num_atoms, 3, device=device, dtype=dtype)
@@ -188,7 +191,7 @@ comment, and subsequent lines contain: element symbol, x, y, z coordinates.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 131-138
+.. GENERATED FROM PYTHON SOURCE LINES 134-141
 
 Compute Neighbor List
 ---------------------
@@ -198,7 +201,7 @@ range of each other. We use the GPU-accelerated neighbor list from nvalchemiops.
 For a non-periodic (molecular) system, we create a large cubic cell and set
 periodic boundary conditions (PBC) to False.
 
-.. GENERATED FROM PYTHON SOURCE LINES 138-157
+.. GENERATED FROM PYTHON SOURCE LINES 141-160
 
 .. code-block:: Python
 
@@ -235,7 +238,7 @@ periodic boundary conditions (PBC) to False.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 158-165
+.. GENERATED FROM PYTHON SOURCE LINES 161-168
 
 Calculate Dispersion Energy and Forces
 ---------------------------------------
@@ -245,7 +248,7 @@ Now we can compute the DFT-D3 dispersion correction. The module returns:
 - forces: dispersion forces on each atom (eV/Angstrom)
 - coord_num: coordination numbers (used internally for C6 calculation)
 
-.. GENERATED FROM PYTHON SOURCE LINES 165-172
+.. GENERATED FROM PYTHON SOURCE LINES 168-175
 
 .. code-block:: Python
 
@@ -263,14 +266,14 @@ Now we can compute the DFT-D3 dispersion correction. The module returns:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 173-177
+.. GENERATED FROM PYTHON SOURCE LINES 176-180
 
 Results
 -------
 The total dispersion energy is the sum of atomic contributions.
 Forces point in the direction that would lower the energy.
 
-.. GENERATED FROM PYTHON SOURCE LINES 177-185
+.. GENERATED FROM PYTHON SOURCE LINES 180-188
 
 .. code-block:: Python
 
@@ -308,7 +311,7 @@ Forces point in the direction that would lower the energy.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.215 seconds)
+   **Total running time of the script:** (0 minutes 0.321 seconds)
 
 
 .. _sphx_glr_download_examples_dispersion_01_dftd3_molecule.py:

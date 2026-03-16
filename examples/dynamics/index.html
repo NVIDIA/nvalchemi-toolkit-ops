@@ -1,0 +1,830 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>Dynamics Examples &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'examples/dynamics/index';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Langevin Dynamics with Lennard-Jones Potential" href="01_langevin_integration.html" />
+    <link rel="prev" title="JAX DFT-D3 Dispersion Correction for a Molecule" href="../dispersion/03_jax_dftd3_molecule.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../01_bspline_visualization.html">B-Spline Interpolation for Particle Mesh Methods</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 has-children"><a class="reference internal" href="../dispersion/index.html">Dispersion Interactions</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-1"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/01_dftd3_molecule.html">DFT-D3 Dispersion Correction for a Molecule</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/02_dftd3_batch_crystals.html">DFT-D3 Dispersion Correction for Batched Crystals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../dispersion/03_jax_dftd3_molecule.html">JAX DFT-D3 Dispersion Correction for a Molecule</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Dynamics Examples</a><input checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-2"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="01_langevin_integration.html">Langevin Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="02_velocity_verlet_integration.html">Velocity Verlet Dynamics with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="03_nph_integration.html">NPH Dynamics (MTK) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="04_npt_integration.html">NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="05_batched_langevin_dynamics.html">Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="06_fire_optimization.html">FIRE Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="07_fire_variable_cell.html">Variable-Cell FIRE Optimization with LJ Potential</a></li>
+<li class="toctree-l2"><a class="reference internal" href="08_fire_batched.html">Batched FIRE Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="09_fire2_optimization.html">FIRE2 Geometry Optimization (LJ Cluster)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="10_fire2_batched.html">Batched FIRE2 Optimization with LJ Clusters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="11_fire2_variable_cell.html">Variable-Cell FIRE2 Optimization with LJ Potential</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../electrostatics/index.html">Electrostatics</a><input class="toctree-checkbox" id="toctree-checkbox-3" name="toctree-checkbox-3" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-3"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/01_coulomb_example.html">Coulomb Electrostatic Interactions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/02_ewald_summation_example.html">Ewald Summation for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/03_pme_example.html">Particle Mesh Ewald (PME) for Long-Range Electrostatics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../electrostatics/04_jax_pme_example.html">Particle Mesh Ewald (PME) with JAX</a></li>
+</ul>
+</li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../neighbors/index.html">Neighbor Lists</a><input class="toctree-checkbox" id="toctree-checkbox-4" name="toctree-checkbox-4" type="checkbox"/><label class="toctree-toggle" for="toctree-checkbox-4"><i class="fa-solid fa-chevron-down"></i></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/01_simple_neighbor_list.html">Simple Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/02_batch_neighbor_list.html">Batch Neighbor List Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/03_rebuild_neighborlist_detection.html">Neighbor List Rebuild Detection Example</a></li>
+
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/04_neighbors_list_torch_compile_performance.html">Torch.compile Performance Benefits Example</a></li>
+
+
+
+
+
+
+
+<li class="toctree-l2"><a class="reference internal" href="../neighbors/05_jax_neighbor_list.html">JAX Neighbor List Example</a></li>
+
+
+
+
+
+
+
+</ul>
+</li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Examples Gallery</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">Dynamics Examples</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="dynamics-examples">
+<span id="sphx-glr-examples-dynamics"></span><h1>Dynamics Examples<a class="headerlink" href="#dynamics-examples" title="Link to this heading">#</a></h1>
+<p>This directory contains examples demonstrating the molecular dynamics integrators
+and geometry optimization algorithms in nvalchemiops.</p>
+<p>All examples use realistic Lennard-Jones (LJ) argon systems to demonstrate
+practical workflows with neighbor list management and periodic boundaries.</p>
+<section id="md-integration-examples">
+<h2>MD Integration Examples<a class="headerlink" href="#md-integration-examples" title="Link to this heading">#</a></h2>
+<dl class="simple">
+<dt>01_langevin_integration.py</dt><dd><p>Langevin (BAOAB) dynamics in the NVT ensemble.</p>
+<ul class="simple">
+<li><p>Simulates liquid argon near the triple point (94.4 K)</p></li>
+<li><p>BAOAB splitting for configurational sampling</p></li>
+<li><p>Temperature monitoring and equilibration</p></li>
+</ul>
+</dd>
+<dt>02_velocity_verlet_integration.py</dt><dd><p>Velocity Verlet dynamics in the NVE ensemble.</p>
+<ul class="simple">
+<li><p>Symplectic, time-reversible integrator</p></li>
+<li><p>Energy conservation diagnostics</p></li>
+<li><p>Stability considerations for LJ systems</p></li>
+</ul>
+</dd>
+<dt>03_nph_integration.py</dt><dd><p>NPH dynamics with MTK barostat.</p>
+<ul class="simple">
+<li><p>Constant enthalpy and pressure ensemble</p></li>
+<li><p>Martyna-Tobias-Klein extended-system barostat</p></li>
+<li><p>Pressure coupling mechanics</p></li>
+</ul>
+</dd>
+<dt>04_npt_integration.py</dt><dd><p>NPT dynamics with MTK barostat + Nosé-Hoover chain thermostat.</p>
+<ul class="simple">
+<li><p>Isothermal-isobaric ensemble</p></li>
+<li><p>Combined temperature and pressure control</p></li>
+<li><p>Volume fluctuations under constant pressure</p></li>
+</ul>
+</dd>
+<dt>05_batched_langevin_dynamics.py</dt><dd><p>Batched Langevin dynamics for multiple independent systems.</p>
+<ul class="simple">
+<li><p>Multiple systems packed into single arrays</p></li>
+<li><p>Per-system temperature targets</p></li>
+<li><p>Improved GPU utilization for small systems</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="geometry-optimization-examples">
+<h2>Geometry Optimization Examples<a class="headerlink" href="#geometry-optimization-examples" title="Link to this heading">#</a></h2>
+<dl class="simple">
+<dt>06_fire_optimization.py</dt><dd><p>FIRE geometry optimization for a single LJ cluster.</p>
+<ul class="simple">
+<li><p>Fast Inertial Relaxation Engine (FIRE) algorithm</p></li>
+<li><p>Adaptive timestep and velocity mixing</p></li>
+<li><p>Convergence monitoring (energy, max force)</p></li>
+</ul>
+</dd>
+<dt>07_fire_variable_cell.py</dt><dd><p>Variable-cell FIRE optimization for joint atom + cell relaxation.</p>
+<ul class="simple">
+<li><p>Cell alignment to upper-triangular form</p></li>
+<li><p>Virial → stress → cell force conversion</p></li>
+<li><p>Pack/unpack utilities for extended DOF arrays</p></li>
+<li><p>External pressure equilibration</p></li>
+</ul>
+</dd>
+<dt>08_fire_batched.py</dt><dd><p>Batched FIRE optimization with two indexing strategies:</p>
+<ul class="simple">
+<li><p><strong>batch_idx mode</strong>: Each atom tagged with system index</p></li>
+<li><p><strong>atom_ptr mode (CSR)</strong>: Atom ranges via pointers</p></li>
+<li><p>Per-system FIRE parameters adapt independently</p></li>
+<li><p>Uses <code class="docutils literal notranslate"><span class="pre">nvalchemiops.batch_utils</span></code> for reductions</p></li>
+</ul>
+</dd>
+<dt>09_fire2_optimization.py</dt><dd><p>FIRE2 geometry optimization for a single LJ cluster.</p>
+<ul class="simple">
+<li><p>Improved FIRE variant (Guenole et al., 2020)</p></li>
+<li><p>Adaptive damping and coupled step/dt scaling</p></li>
+<li><p>Requires <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> even for single-system mode</p></li>
+<li><p>Hyperparameters are Python scalars (no per-system arrays)</p></li>
+</ul>
+</dd>
+<dt>10_fire2_batched.py</dt><dd><p>Batched FIRE2 optimization with <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> batching.</p>
+<ul class="simple">
+<li><p>Multiple independent LJ clusters optimized in parallel</p></li>
+<li><p>Per-system FIRE2 parameters adapt independently</p></li>
+<li><p>Only supports <code class="docutils literal notranslate"><span class="pre">batch_idx</span></code> mode (no <code class="docutils literal notranslate"><span class="pre">atom_ptr</span></code> variant)</p></li>
+</ul>
+</dd>
+<dt>11_fire2_variable_cell.py</dt><dd><p>Variable-cell FIRE2 optimization for joint atom + cell relaxation.</p>
+<ul class="simple">
+<li><p>Same pack/unpack workflow as <code class="docutils literal notranslate"><span class="pre">07_fire_variable_cell.py</span></code></p></li>
+<li><p>Uses <code class="docutils literal notranslate"><span class="pre">fire2_step</span></code> on extended DOF arrays</p></li>
+<li><p>Simpler state than FIRE (no masses, fewer per-system arrays)</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="key-concepts">
+<h2>Key Concepts<a class="headerlink" href="#key-concepts" title="Link to this heading">#</a></h2>
+<section id="state-management">
+<h3>State Management<a class="headerlink" href="#state-management" title="Link to this heading">#</a></h3>
+<p>All algorithms use <code class="docutils literal notranslate"><span class="pre">&#64;wp.struct</span></code> containers for clean organization:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">MDState</span></code>: positions, velocities, forces, masses</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FIREState</span></code>: MDState + adaptive parameters (dt, alpha, n_positive)</p></li>
+<li><p>Integration parameters: <code class="docutils literal notranslate"><span class="pre">VerletParams</span></code>, <code class="docutils literal notranslate"><span class="pre">LangevinParams</span></code>, <code class="docutils literal notranslate"><span class="pre">FIREParams</span></code></p></li>
+</ul>
+<p>Structs are dtype-agnostic: use <code class="docutils literal notranslate"><span class="pre">wp.vec3f</span></code>/<code class="docutils literal notranslate"><span class="pre">wp.float32</span></code> for single
+precision or <code class="docutils literal notranslate"><span class="pre">wp.vec3d</span></code>/<code class="docutils literal notranslate"><span class="pre">wp.float64</span></code> for double precision.</p>
+</section>
+<section id="two-pass-integrators">
+<h3>Two-Pass Integrators<a class="headerlink" href="#two-pass-integrators" title="Link to this heading">#</a></h3>
+<p>MD integrators use a two-pass design for flexibility:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># Pass 1: Update positions and half-step velocities</span>
+<span class="n">velocity_verlet_position_update</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+
+<span class="c1"># User computes forces at new positions</span>
+<span class="n">compute_forces</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">positions</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">forces</span><span class="p">)</span>
+
+<span class="c1"># Pass 2: Complete velocity update</span>
+<span class="n">velocity_verlet_velocity_finalize</span><span class="p">(</span><span class="n">state</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">forces</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>This allows any force calculation method to be used between the passes.</p>
+</section>
+<section id="batching-modes">
+<h3>Batching Modes<a class="headerlink" href="#batching-modes" title="Link to this heading">#</a></h3>
+<p>For processing multiple systems efficiently:</p>
+<ul class="simple">
+<li><p><strong>batch_idx</strong>: Array mapping each atom to its system index. Flexible for
+heterogeneous systems but requires atomic accumulation.</p></li>
+<li><p><strong>atom_ptr (CSR)</strong>: Pointer array where system <em>s</em> owns atoms
+<code class="docutils literal notranslate"><span class="pre">[atom_ptr[s],</span> <span class="pre">atom_ptr[s+1])</span></code>. More efficient for homogeneous batches.</p></li>
+</ul>
+<p>Use <code class="docutils literal notranslate"><span class="pre">nvalchemiops.batch_utils</span></code> for conversions and per-system reductions.</p>
+</section>
+<section id="variable-cell-optimization">
+<h3>Variable-Cell Optimization<a class="headerlink" href="#variable-cell-optimization" title="Link to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">cell_filter</span></code> utilities enable joint optimization of positions and cell:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Align cell to upper-triangular form</span>
+<span class="n">positions</span><span class="p">,</span> <span class="n">cell</span> <span class="o">=</span> <span class="n">align_cell</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">)</span>
+
+<span class="c1"># 2. Pack atomic + cell DOFs into extended arrays</span>
+<span class="n">extended_pos</span> <span class="o">=</span> <span class="n">pack_positions_with_cell</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="n">extended_forces</span> <span class="o">=</span> <span class="n">pack_forces_with_cell</span><span class="p">(</span><span class="n">forces</span><span class="p">,</span> <span class="n">cell_force</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+
+<span class="c1"># 3. Run optimizer on extended arrays</span>
+<span class="n">fire_step</span><span class="p">(</span><span class="n">extended_pos</span><span class="p">,</span> <span class="n">extended_vel</span><span class="p">,</span> <span class="n">extended_forces</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+
+<span class="c1"># 4. Unpack results</span>
+<span class="n">positions</span><span class="p">,</span> <span class="n">cell</span> <span class="o">=</span> <span class="n">unpack_positions_with_cell</span><span class="p">(</span><span class="n">extended_pos</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="running-the-examples">
+<h2>Running the Examples<a class="headerlink" href="#running-the-examples" title="Link to this heading">#</a></h2>
+<p>Make sure you have warp installed:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">pip</span> <span class="n">install</span> <span class="n">warp</span><span class="o">-</span><span class="n">lang</span>
+</pre></div>
+</div>
+<p>Run from the repository root:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">python</span> <span class="n">examples</span><span class="o">/</span><span class="n">dynamics</span><span class="o">/</span><span class="mi">01</span><span class="n">_langevin_integration</span><span class="o">.</span><span class="n">py</span>
+<span class="n">python</span> <span class="n">examples</span><span class="o">/</span><span class="n">dynamics</span><span class="o">/</span><span class="mi">06</span><span class="n">_fire_optimization</span><span class="o">.</span><span class="n">py</span>
+<span class="n">python</span> <span class="n">examples</span><span class="o">/</span><span class="n">dynamics</span><span class="o">/</span><span class="mi">08</span><span class="n">_fire_batched</span><span class="o">.</span><span class="n">py</span>
+</pre></div>
+</div>
+<p>Or run interactively in VS Code or Jupyter by executing cell-by-cell
+(sections marked with <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">%%</span></code>).</p>
+<div class="sphx-glr-thumbnails"><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates GPU-accelerated molecular dynamics using the Langevin (BAOAB) thermostat with a Lennard-Jones potential."><img alt="" src="../../_images/sphx_glr_01_langevin_integration_thumb.png" />
+<p><a class="reference internal" href="01_langevin_integration.html"><span class="doc">Langevin Dynamics with Lennard-Jones Potential</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Langevin Dynamics with Lennard-Jones Potential</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates GPU-accelerated molecular dynamics using the Velocity Verlet integrator with a Lennard-Jones (LJ) potential."><img alt="" src="../../_images/sphx_glr_02_velocity_verlet_integration_thumb.png" />
+<p><a class="reference internal" href="02_velocity_verlet_integration.html"><span class="doc">Velocity Verlet Dynamics with Lennard-Jones Potential</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Velocity Verlet Dynamics with Lennard-Jones Potential</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates isothermal-free (no thermostat) NPH dynamics using the Martyna-Tobias-Klein (MTK) barostat and the Lennard-Jones (LJ) potential."><img alt="" src="../../_images/sphx_glr_03_nph_integration_thumb.png" />
+<p><a class="reference internal" href="03_nph_integration.html"><span class="doc">NPH Dynamics (MTK) with Lennard-Jones Potential</span></a></p>
+  <div class="sphx-glr-thumbnail-title">NPH Dynamics (MTK) with Lennard-Jones Potential</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates isothermal-isobaric (NPT) dynamics using the Martyna-Tobias-Klein (MTK) barostat coupled with a Nosé-Hoover chain (NHC) thermostat, driven by the Lennard-Jones (LJ) potential."><img alt="" src="../../_images/sphx_glr_04_npt_integration_thumb.png" />
+<p><a class="reference internal" href="04_npt_integration.html"><span class="doc">NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential</span></a></p>
+  <div class="sphx-glr-thumbnail-title">NPT Dynamics (MTK + Nosé-Hoover Chain) with Lennard-Jones Potential</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates batched molecular dynamics: multiple independent systems are packed into a single set of arrays, and we integrate all systems in one go on the GPU."><img alt="" src="../../_images/sphx_glr_05_batched_langevin_dynamics_thumb.png" />
+<p><a class="reference internal" href="05_batched_langevin_dynamics.html"><span class="doc">Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Batched Langevin Dynamics (BAOAB) with Lennard-Jones Potential</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates geometry optimization with the FIRE optimizer using: - The package LJ implementation (neighbor-list accelerated) - The package FIRE kernels (nvalchemiops.dynamics.optimizers) - The shared example utilities in examples.dynamics._dynamics_utils"><img alt="" src="../../_images/sphx_glr_06_fire_optimization_thumb.png" />
+<p><a class="reference internal" href="06_fire_optimization.html"><span class="doc">FIRE Geometry Optimization (LJ Cluster)</span></a></p>
+  <div class="sphx-glr-thumbnail-title">FIRE Geometry Optimization (LJ Cluster)</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates joint optimization of atomic positions and cell parameters using the FIRE optimizer with the cell filter utilities on a realistic LJ argon crystal."><img alt="" src="../../_images/sphx_glr_07_fire_variable_cell_thumb.png" />
+<p><a class="reference internal" href="07_fire_variable_cell.html"><span class="doc">Variable-Cell FIRE Optimization with LJ Potential</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Variable-Cell FIRE Optimization with LJ Potential</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates batched geometry optimization using the FIRE optimizer with two different batching strategies:"><img alt="" src="../../_images/sphx_glr_08_fire_batched_thumb.png" />
+<p><a class="reference internal" href="08_fire_batched.html"><span class="doc">Batched FIRE Optimization with LJ Clusters</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Batched FIRE Optimization with LJ Clusters</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates geometry optimization with the FIRE2 optimizer (Guenole et al., 2020) using:"><img alt="" src="../../_images/sphx_glr_09_fire2_optimization_thumb.png" />
+<p><a class="reference internal" href="09_fire2_optimization.html"><span class="doc">FIRE2 Geometry Optimization (LJ Cluster)</span></a></p>
+  <div class="sphx-glr-thumbnail-title">FIRE2 Geometry Optimization (LJ Cluster)</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates batched geometry optimization using the FIRE2 optimizer (Guenole et al., 2020) with batch_idx batching."><img alt="" src="../../_images/sphx_glr_10_fire2_batched_thumb.png" />
+<p><a class="reference internal" href="10_fire2_batched.html"><span class="doc">Batched FIRE2 Optimization with LJ Clusters</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Batched FIRE2 Optimization with LJ Clusters</div>
+</div><div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates joint optimization of atomic positions and cell parameters using the FIRE2 optimizer (Guenole et al., 2020) with manual pack/unpack of extended arrays."><img alt="" src="../../_images/sphx_glr_11_fire2_variable_cell_thumb.png" />
+<p><a class="reference internal" href="11_fire2_variable_cell.html"><span class="doc">Variable-Cell FIRE2 Optimization with LJ Potential</span></a></p>
+  <div class="sphx-glr-thumbnail-title">Variable-Cell FIRE2 Optimization with LJ Potential</div>
+</div></div><div class="toctree-wrapper compound">
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../dispersion/03_jax_dftd3_molecule.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">JAX DFT-D3 Dispersion Correction for a Molecule</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="01_langevin_integration.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Langevin Dynamics with Lennard-Jones Potential</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#md-integration-examples">MD Integration Examples</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#geometry-optimization-examples">Geometry Optimization Examples</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#key-concepts">Key Concepts</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#state-management">State Management</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#two-pass-integrators">Two-Pass Integrators</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batching-modes">Batching Modes</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#variable-cell-optimization">Variable-Cell Optimization</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-the-examples">Running the Examples</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/examples/dynamics/index.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

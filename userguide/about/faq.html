@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Frequently Asked Questions &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+    <title>Frequently Asked Questions &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
   
   
   
@@ -42,9 +42,9 @@
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
-    <script src="../../_static/doctools.js?v=9bcbadda"></script>
-    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -55,7 +55,7 @@
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Neighbor Lists" href="../components/neighborlist.html" />
-    <link rel="prev" title="Introduction to ALCHEMI Toolkit-Ops" href="intro.html" />
+    <link rel="prev" title="Migration Guide (v0.3.0)" href="migration.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
@@ -167,6 +167,13 @@
                     <li class="nav-item">
                       <a class="nav-link nav-internal" href="../../benchmarks/index.html">
                         Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
                       </a>
                     </li>
                 
@@ -297,6 +304,13 @@ document.write(`
                 
 
                     <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
                       <a class="nav-link nav-internal" href="../../modules/index.html">
                         API
                       </a>
@@ -352,6 +366,7 @@ document.write(`
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide (v0.3.0)</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -359,6 +374,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../components/neighborlist.html">Neighbor Lists</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/electrostatics.html">Electrostatic Interactions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../components/dispersion.html">DFT-D3(BJ) Dispersion Correction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../components/dynamics.html">Molecular Dynamics Integrators</a></li>
 </ul>
 </div>
 </nav></div>
@@ -451,7 +467,7 @@ benefit the community, please start a discussion on Github <a class="reference e
 <p>The two algorithm families have different computational complexity:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">cell_list()</span></code> uses spatial decomposition for O(N) scaling. It is optimized
-for large systems (roughly &gt;5000 atoms) where the cutoff is small relative
+for large systems (roughly &gt;2000 atoms) where the cutoff is small relative
 to the simulation box.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">naive_neighbor_list()</span></code> computes all pairwise distances for O(N²) scaling.
 It has lower overhead and can be faster for smaller systems.</p></li>
@@ -471,6 +487,20 @@ implementations. ALCHEMI Toolkit-Ops differs in several ways:</p>
 </ul>
 <p>The acceleration is substantial, particularly for larger system sizes
 where GPU utilization is amortized.</p>
+</section>
+<section id="when-should-i-set-wrap-positions-false">
+<h3>When should I set <code class="docutils literal notranslate"><span class="pre">wrap_positions=False</span></code>?<a class="headerlink" href="#when-should-i-set-wrap-positions-false" title="Link to this heading">#</a></h3>
+<p>When you know that all atom positions are already inside the primary simulation
+cell.  Common scenarios include:</p>
+<ul class="simple">
+<li><p>After an MD integration step that wraps coordinates (e.g. via
+<code class="docutils literal notranslate"><span class="pre">wrap_positions_to_cell</span></code>)</p></li>
+<li><p>When positions come from a code that always keeps coordinates within the box</p></li>
+</ul>
+<p>Setting <code class="docutils literal notranslate"><span class="pre">wrap_positions=False</span></code> skips two GPU kernel launches per neighbor list
+call, which can noticeably reduce overhead in tight inner loops.  If positions
+are <strong>not</strong> wrapped and you set this to <code class="docutils literal notranslate"><span class="pre">False</span></code>, the neighbor list will be
+incorrect.</p>
 </section>
 </section>
 <section id="troubleshooting">
@@ -503,12 +533,12 @@ please open a Github <a class="reference external" href="https://www.github.com/
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="intro.html"
+       href="migration.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Introduction to ALCHEMI Toolkit-Ops</p>
+        <p class="prev-next-title">Migration Guide (v0.3.0)</p>
       </div>
     </a>
     <a class="right-next"
@@ -547,6 +577,7 @@ please open a Github <a class="reference external" href="https://www.github.com/
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-lists">Neighbor Lists</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-the-difference-between-cell-list-and-naive-algorithms">What is the difference between cell_list and naive algorithms?</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#how-does-this-compare-to-ase-neighbor-lists">How does this compare to ASE neighbor lists?</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-should-i-set-wrap-positions-false">When should I set <code class="docutils literal notranslate"><span class="pre">wrap_positions=False</span></code>?</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a><ul class="visible nav section-nav flex-column">
@@ -599,7 +630,7 @@ please open a Github <a class="reference external" href="https://www.github.com/
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
     <br/>
   </p>
 </div>

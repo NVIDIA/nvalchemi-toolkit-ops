@@ -2,11 +2,11 @@
 
 .. _sphx_glr_examples_dispersion:
 
-Interactions
-============
+Dispersion Interactions
+=======================
 
-Examples demonstrating GPU-accelerated computation of atomic interactions,
-including DFT-D3 dispersion corrections with environment-dependent C6 coefficients.
+Examples demonstrating GPU-accelerated computation of DFT-D3
+dispersion corrections with environment-dependent C6 coefficients.
 
 These examples show how to:
 
@@ -31,7 +31,7 @@ These examples show how to:
   .. image:: /examples/dispersion/images/thumb/sphx_glr_01_dftd3_molecule_thumb.png
     :alt:
 
-  :ref:`sphx_glr_examples_dispersion_01_dftd3_molecule.py`
+  :doc:`/examples/dispersion/01_dftd3_molecule`
 
 .. raw:: html
 
@@ -48,11 +48,28 @@ These examples show how to:
   .. image:: /examples/dispersion/images/thumb/sphx_glr_02_dftd3_batch_crystals_thumb.png
     :alt:
 
-  :ref:`sphx_glr_examples_dispersion_02_dftd3_batch_crystals.py`
+  :doc:`/examples/dispersion/02_dftd3_batch_crystals`
 
 .. raw:: html
 
       <div class="sphx-glr-thumbnail-title">DFT-D3 Dispersion Correction for Batched Crystals</div>
+    </div>
+
+
+.. raw:: html
+
+    <div class="sphx-glr-thumbcontainer" tooltip="This example demonstrates how to compute the DFT-D3 dispersion energy and forces for a single molecular system using the JAX API with GPU-accelerated Warp kernels.">
+
+.. only:: html
+
+  .. image:: /examples/dispersion/images/thumb/sphx_glr_03_jax_dftd3_molecule_thumb.png
+    :alt:
+
+  :doc:`/examples/dispersion/03_jax_dftd3_molecule`
+
+.. raw:: html
+
+      <div class="sphx-glr-thumbnail-title">JAX DFT-D3 Dispersion Correction for a Molecule</div>
     </div>
 
 
@@ -68,4 +85,5 @@ These examples show how to:
 
    /examples/dispersion/01_dftd3_molecule
    /examples/dispersion/02_dftd3_batch_crystals
+   /examples/dispersion/03_jax_dftd3_molecule
 

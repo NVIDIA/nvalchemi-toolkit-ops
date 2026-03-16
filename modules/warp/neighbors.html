@@ -1,0 +1,1431 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>nvalchemiops.neighbors: Neighbor Lists &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'modules/warp/neighbors';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="nvalchemiops.interactions.dispersion: Dispersion Corrections" href="dispersion.html" />
+    <link rel="prev" title="nvalchemiops.jax.interactions.electrostatics: Electrostatics" href="../jax/electrostatics.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../jax/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.types</span></code>: Utilities</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><code...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="module-nvalchemiops.neighbors">
+<span id="nvalchemiops-neighbors-neighbor-lists"></span><h1><a class="reference internal" href="#module-nvalchemiops.neighbors" title="nvalchemiops.neighbors"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code></a>: Neighbor Lists<a class="headerlink" href="#module-nvalchemiops.neighbors" title="Link to this heading">#</a></h1>
+<p>Core warp interface for neighbor list operations.</p>
+<p>This module exports warp launchers that accept warp arrays directly.
+For PyTorch users, use <cite>nvalchemiops.torch.neighbors</cite> instead.</p>
+<section id="warp-level-interface">
+<h2>Warp-Level Interface<a class="headerlink" href="#warp-level-interface" title="Link to this heading">#</a></h2>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>This is the low-level Warp interface that operates on <code class="docutils literal notranslate"><span class="pre">warp.array</span></code> objects.
+For PyTorch tensor support, see <a class="reference internal" href="../torch/neighbors.html"><span class="doc">nvalchemiops.torch.neighbors: Neighbor Lists</span></a>.</p>
+</div>
+<section id="naive-algorithm">
+<h3>Naive Algorithm<a class="headerlink" href="#naive-algorithm" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.naive.naive_neighbor_matrix">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.naive.</span></span><span class="sig-name descname"><span class="pre">naive_neighbor_matrix</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/naive.html#naive_neighbor_matrix"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.naive.naive_neighbor_matrix" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for naive neighbor matrix construction (no PBC).</p>
+<p>Computes pairwise distances and fills the neighbor matrix with atom indices
+within the cutoff distance using pure warp operations. No periodic boundary
+conditions are applied.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Atomic coordinates in Cartesian space.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Cutoff distance for neighbor detection in Cartesian units.
+Must be positive. Atoms within this distance are considered neighbors.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor matrix to be filled with neighbor atom indices.
+Must be pre-allocated. Entries are filled with atom indices.</p></li>
+<li><p><strong>num_neighbors</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom.
+Must be pre-allocated. Updated in-place with actual neighbor counts.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store relationships where i &lt; j to avoid double counting.
+If False, store all neighbor relationships symmetrically.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>array</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc" title="nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc"><code class="xref py py-obj docutils literal notranslate"><span class="pre">naive_neighbor_matrix_pbc</span></code></a></dt><dd><p>Version with periodic boundary conditions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix</span></code></dt><dd><p>Kernel that performs the computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">wrap_positions_single</span></code></dt><dd><p>Preprocessing step that wraps positions</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.naive.</span></span><span class="sig-name descname"><span class="pre">naive_neighbor_matrix_pbc</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shift_range</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_positions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/naive.html#naive_neighbor_matrix_pbc"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for naive neighbor matrix construction with PBC.</p>
+<p>Computes neighbor relationships between atoms across periodic boundaries using
+pure warp operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Atomic coordinates in Cartesian space.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Cutoff distance for neighbor detection in Cartesian units.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Cell matrix defining lattice vectors in Cartesian coordinates.</p></li>
+<li><p><strong>shift_range</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Shift range per dimension for the single system.</p></li>
+<li><p><strong>num_shifts</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Number of periodic shifts for the single system.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor matrix to be filled with neighbor atom indices.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Matrix storing shift vectors for each neighbor relationship.</p></li>
+<li><p><strong>num_neighbors</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store relationships where i &lt; j.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – When provided, the kernel checks this flag on the GPU and skips
+work when False (no CPU-GPU sync).</p></li>
+<li><p><strong>wrap_positions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, wrap input positions into the primary cell before
+neighbor search.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">wrap_positions</span></code> is True, positions are wrapped into the primary cell in a
+preprocessing step before the neighbor search kernel.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.naive.naive_neighbor_matrix" title="nvalchemiops.neighbors.naive.naive_neighbor_matrix"><code class="xref py py-obj docutils literal notranslate"><span class="pre">naive_neighbor_matrix</span></code></a></dt><dd><p>Version without periodic boundary conditions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix_pbc</span></code></dt><dd><p>Kernel that performs the computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix_pbc_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">wrap_positions_single</span></code></dt><dd><p>Preprocessing step that wraps positions</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="cell-list-algorithm">
+<h3>Cell List Algorithm<a class="headerlink" href="#cell-list-algorithm" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.cell_list.build_cell_list">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.cell_list.</span></span><span class="sig-name descname"><span class="pre">build_cell_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pbc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_per_dimension</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_periodic_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_to_cell_mapping</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atoms_per_cell_count</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_start_indices</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_list</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/cell_list.html#build_cell_list"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.cell_list.build_cell_list" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for building spatial cell list.</p>
+<p>Constructs a spatial decomposition data structure for efficient neighbor searching
+using pure warp operations. This function launches warp kernels to organize atoms
+into spatial cells.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Atomic coordinates in Cartesian space.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Unit cell matrix defining the simulation box.</p></li>
+<li><p><strong>pbc</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – Periodic boundary condition flags for x, y, z directions.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Maximum distance for neighbor search.</p></li>
+<li><p><strong>cells_per_dimension</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of cells created in x, y, z directions.</p></li>
+<li><p><strong>atom_periodic_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Periodic boundary crossings for each atom.</p></li>
+<li><p><strong>atom_to_cell_mapping</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: 3D cell coordinates assigned to each atom.</p></li>
+<li><p><strong>atoms_per_cell_count</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of atoms in each cell. Must be zeroed by caller before first use.</p></li>
+<li><p><strong>cell_atom_start_indices</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Starting index in cell_atom_list for each cell’s atoms.
+Must be filled with cumulative sums by caller between kernel launches.</p></li>
+<li><p><strong>cell_atom_list</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Flattened list of atom indices organized by cell.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. Caller must ensure atoms_per_cell_count is zeroed.</p></li>
+<li><p>atoms_per_cell_count must be zeroed before calling this function.</p></li>
+<li><p>This function handles the cumsum internally using wp.utils.array_scan.</p></li>
+<li><p>For framework bindings, use the torch/jax wrappers instead.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.cell_list.query_cell_list" title="nvalchemiops.neighbors.cell_list.query_cell_list"><code class="xref py py-obj docutils literal notranslate"><span class="pre">query_cell_list</span></code></a></dt><dd><p>Query cell list to build neighbor matrix (call after this)</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">wp.utils.array_scan</span></code></dt><dd><p>Warp utility for computing prefix sums</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_cell_list_construct_bin_size</span></code></dt><dd><p>Kernel for computing cell dimensions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_cell_list_count_atoms_per_bin</span></code></dt><dd><p>Kernel for counting atoms per cell</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_cell_list_bin_atoms</span></code></dt><dd><p>Kernel for binning atoms into cells</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.cell_list.query_cell_list">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.cell_list.</span></span><span class="sig-name descname"><span class="pre">query_cell_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pbc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_per_dimension</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_search_radius</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_periodic_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_to_cell_mapping</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atoms_per_cell_count</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_start_indices</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_list</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/cell_list.html#query_cell_list"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.cell_list.query_cell_list" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for querying spatial cell list to build neighbor matrix.</p>
+<p>Uses pre-built cell list data structures to efficiently find all atom pairs
+within the specified cutoff distance using pure warp operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Atomic coordinates in Cartesian space.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Unit cell matrix for periodic boundary coordinate shifts.</p></li>
+<li><p><strong>pbc</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – Periodic boundary condition flags.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Maximum distance for considering atoms as neighbors.</p></li>
+<li><p><strong>cells_per_dimension</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Number of cells in x, y, z directions from build_cell_list_warp.</p></li>
+<li><p><strong>neighbor_search_radius</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Radius of neighboring cells to search in each dimension.</p></li>
+<li><p><strong>atom_periodic_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Periodic boundary crossings for each atom from build_cell_list_warp.</p></li>
+<li><p><strong>atom_to_cell_mapping</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – 3D cell coordinates for each atom from build_cell_list_warp.</p></li>
+<li><p><strong>atoms_per_cell_count</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Number of atoms in each cell from build_cell_list_warp.</p></li>
+<li><p><strong>cell_atom_start_indices</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Starting index in cell_atom_list for each cell from build_cell_list_warp.</p></li>
+<li><p><strong>cell_atom_list</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Flattened list of atom indices organized by cell from build_cell_list_warp.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor matrix to be filled with neighbor atom indices.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Matrix storing shift vectors for each neighbor relationship.</p></li>
+<li><p><strong>num_neighbors</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store half of the neighbor relationships (i &lt; j).</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – GPU-resident flag; False → kernel returns immediately.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays (neighbor_matrix, neighbor_matrix_shifts, num_neighbors) should be
+pre-allocated by caller.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.cell_list.build_cell_list" title="nvalchemiops.neighbors.cell_list.build_cell_list"><code class="xref py py-obj docutils literal notranslate"><span class="pre">build_cell_list</span></code></a></dt><dd><p>Build cell list data structures (call before this)</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_cell_list_build_neighbor_matrix</span></code></dt><dd><p>Kernel that performs the neighbor search</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="batched-naive-algorithm">
+<h3>Batched Naive Algorithm<a class="headerlink" href="#batched-naive-algorithm" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.batch_naive.</span></span><span class="sig-name descname"><span class="pre">batch_naive_neighbor_matrix</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_ptr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/batch_naive.html#batch_naive_neighbor_matrix"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for batched naive neighbor matrix construction (no PBC).</p>
+<p>Computes pairwise distances and fills the neighbor matrix for multiple systems
+in a batch using pure warp operations. No periodic boundary conditions are applied.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Concatenated Cartesian coordinates for all systems.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Cutoff distance for neighbor detection in Cartesian units.</p></li>
+<li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
+<li><p><strong>batch_ptr</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems + 1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Cumulative atom counts defining system boundaries.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor matrix to be filled with neighbor atom indices.</p></li>
+<li><p><strong>num_neighbors</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store relationships where i &lt; j to avoid double counting.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – Per-system rebuild flags. If provided, only systems where rebuild_flags[i]
+is True are processed; others are skipped on the GPU without CPU sync.
+Call selective_zero_num_neighbors before this launcher to reset counts.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix_pbc" title="nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix_pbc"><code class="xref py py-obj docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix_pbc</span></code></a></dt><dd><p>Version with periodic boundary conditions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix</span></code></dt><dd><p>Kernel that performs the computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix_pbc">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.batch_naive.</span></span><span class="sig-name descname"><span class="pre">batch_naive_neighbor_matrix_pbc</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_ptr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shift_range</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_shifts_arr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_shifts_per_system</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_atoms_per_system</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_positions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/batch_naive.html#batch_naive_neighbor_matrix_pbc"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix_pbc" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for batched naive neighbor matrix construction with PBC.</p>
+<p>Computes neighbor relationships between atoms across periodic boundaries for
+multiple systems in a batch using pure warp operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Concatenated Cartesian coordinates for all systems.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Cell matrices for each system.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Cutoff distance for neighbor detection.</p></li>
+<li><p><strong>batch_ptr</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems + 1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Cumulative atom counts defining system boundaries.</p></li>
+<li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
+<li><p><strong>shift_range</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Shift range per dimension per system.</p></li>
+<li><p><strong>num_shifts_arr</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Number of shifts per system.</p></li>
+<li><p><strong>max_shifts_per_system</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum per-system shift count (launch dimension).</p></li>
+<li><p><strong>neighbor_matrix</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor matrix.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Shift vectors for each neighbor.</p></li>
+<li><p><strong>num_neighbors</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors per atom.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>max_atoms_per_system</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum number of atoms in any single system.</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store half of the neighbor relationships.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – Per-system rebuild flags.</p></li>
+<li><p><strong>wrap_positions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, wrap input positions into the primary cell.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">wrap_positions</span></code> is True, positions are wrapped into the primary cell in a
+preprocessing step before the neighbor search kernel.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix" title="nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix"><code class="xref py py-obj docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix</span></code></a></dt><dd><p>Version without periodic boundary conditions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix_pbc</span></code></dt><dd><p>Kernel that performs the computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix_pbc_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">wrap_positions_batch</span></code></dt><dd><p>Preprocessing step that wraps positions</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="batched-cell-list-algorithm">
+<h3>Batched Cell List Algorithm<a class="headerlink" href="#batched-cell-list-algorithm" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.batch_cell_list.batch_build_cell_list">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.batch_cell_list.</span></span><span class="sig-name descname"><span class="pre">batch_build_cell_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pbc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_per_dimension</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_offsets</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_per_system</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_periodic_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_to_cell_mapping</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atoms_per_cell_count</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_start_indices</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_list</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/batch_cell_list.html#batch_build_cell_list"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.batch_cell_list.batch_build_cell_list" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for building batch spatial cell lists.</p>
+<p>Constructs spatial decomposition data structures for multiple systems using
+pure warp operations. This function launches warp kernels to organize atoms
+into spatial cells across all systems in the batch.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Concatenated atomic coordinates for all systems in the batch.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Unit cell matrices for each system in the batch.</p></li>
+<li><p><strong>pbc</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – Periodic boundary condition flags for each system and dimension.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Neighbor search cutoff distance.</p></li>
+<li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
+<li><p><strong>cells_per_dimension</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Number of cells in x, y, z directions for each system.</p></li>
+<li><p><strong>cell_offsets</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Starting index in global cell arrays for each system.
+Computed internally via exclusive scan of cells_per_dimension products.</p></li>
+<li><p><strong>cells_per_system</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – SCRATCH: Temporary buffer for total cells per system.
+Used as input to exclusive scan for computing cell_offsets.
+Must be pre-allocated by caller.</p></li>
+<li><p><strong>atom_periodic_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Periodic boundary crossings for each atom.</p></li>
+<li><p><strong>atom_to_cell_mapping</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: 3D cell coordinates assigned to each atom.</p></li>
+<li><p><strong>atoms_per_cell_count</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of atoms in each cell. Must be zeroed by caller before first use.</p></li>
+<li><p><strong>cell_atom_start_indices</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Starting index in cell_atom_list for each cell’s atoms.</p></li>
+<li><p><strong>cell_atom_list</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Flattened list of atom indices organized by cell.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. Caller must ensure atoms_per_cell_count is zeroed.</p></li>
+<li><p>atoms_per_cell_count must be zeroed before calling this function.</p></li>
+<li><p>cell_offsets is computed internally after cells_per_dimension is determined.</p></li>
+<li><p>This function handles the internal cumsum for cell_atom_start_indices using wp.utils.array_scan.</p></li>
+<li><p>For framework bindings, use the torch/jax wrappers instead.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list" title="nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list"><code class="xref py py-obj docutils literal notranslate"><span class="pre">batch_query_cell_list</span></code></a></dt><dd><p>Query cell list to build neighbor matrix (call after this)</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_batch_cell_list_construct_bin_size</span></code></dt><dd><p>Kernel for computing cell dimensions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_batch_cell_list_count_atoms_per_bin</span></code></dt><dd><p>Kernel for counting atoms per cell</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_batch_cell_list_bin_atoms</span></code></dt><dd><p>Kernel for binning atoms into cells</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.batch_cell_list.</span></span><span class="sig-name descname"><span class="pre">batch_query_cell_list</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pbc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_per_dimension</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_search_radius</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_offsets</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_periodic_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_to_cell_mapping</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atoms_per_cell_count</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_start_indices</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_atom_list</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/batch_cell_list.html#batch_query_cell_list"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for querying batch spatial cell lists to build neighbor matrices.</p>
+<p>Uses pre-built cell list data structures to efficiently find all atom pairs
+within the specified cutoff distance for multiple systems using pure warp operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Concatenated atomic coordinates for all systems in the batch.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Unit cell matrices for each system in the batch.</p></li>
+<li><p><strong>pbc</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – Periodic boundary condition flags for each system and dimension.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Neighbor search cutoff distance.</p></li>
+<li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
+<li><p><strong>cells_per_dimension</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Number of cells in x, y, z directions for each system.</p></li>
+<li><p><strong>neighbor_search_radius</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Radius of neighboring cells to search for each system.</p></li>
+<li><p><strong>cell_offsets</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Starting index in global cell arrays for each system.
+Output from batch_build_cell_list.</p></li>
+<li><p><strong>atom_periodic_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Periodic boundary crossings for each atom. Output from batch_build_cell_list.</p></li>
+<li><p><strong>atom_to_cell_mapping</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – 3D cell coordinates for each atom. Output from batch_build_cell_list.</p></li>
+<li><p><strong>atoms_per_cell_count</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Number of atoms in each cell. Output from batch_build_cell_list.</p></li>
+<li><p><strong>cell_atom_start_indices</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>max_total_cells</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Starting index in cell_atom_list for each cell. Output from batch_build_cell_list.</p></li>
+<li><p><strong>cell_atom_list</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Flattened list of atom indices organized by cell. Output from batch_build_cell_list.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor matrix to be filled with neighbor atom indices.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Matrix storing shift vectors for each neighbor relationship.</p></li>
+<li><p><strong>num_neighbors</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store half of the neighbor relationships (i &lt; j).</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – Per-system rebuild flags. If provided, only systems where rebuild_flags[i]
+is True are processed; others are skipped on the GPU without CPU sync.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.batch_cell_list.batch_build_cell_list" title="nvalchemiops.neighbors.batch_cell_list.batch_build_cell_list"><code class="xref py py-obj docutils literal notranslate"><span class="pre">batch_build_cell_list</span></code></a></dt><dd><p>Build cell list data structures (call before this)</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_batch_cell_list_build_neighbor_matrix</span></code></dt><dd><p>Kernel that performs the neighbor search</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_batch_cell_list_build_neighbor_matrix_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="naive-dual-cutoff-algorithm">
+<h3>Naive Dual Cutoff Algorithm<a class="headerlink" href="#naive-dual-cutoff-algorithm" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.naive_dual_cutoff.</span></span><span class="sig-name descname"><span class="pre">naive_neighbor_matrix_dual_cutoff</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/naive_dual_cutoff.html#naive_neighbor_matrix_dual_cutoff"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for naive dual cutoff neighbor matrix construction (no PBC).</p>
+<p>Computes pairwise distances and fills two neighbor matrices with atom indices
+within different cutoff distances using pure warp operations. No periodic boundary
+conditions are applied.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Atomic coordinates in Cartesian space.</p></li>
+<li><p><strong>cutoff1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – First cutoff distance (typically smaller).</p></li>
+<li><p><strong>cutoff2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Second cutoff distance (typically larger).</p></li>
+<li><p><strong>neighbor_matrix1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors1</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: First neighbor matrix to be filled.</p></li>
+<li><p><strong>num_neighbors1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom within cutoff1.</p></li>
+<li><p><strong>neighbor_matrix2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors2</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Second neighbor matrix to be filled.</p></li>
+<li><p><strong>num_neighbors2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom within cutoff2.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store relationships where i &lt; j to avoid double counting.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – Per-system rebuild flags. If provided, only rebuilds when rebuild_flags[0]
+is True; otherwise skips on the GPU without CPU sync.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff" title="nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff"><code class="xref py py-obj docutils literal notranslate"><span class="pre">naive_neighbor_matrix_pbc_dual_cutoff</span></code></a></dt><dd><p>Version with periodic boundary conditions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix_dual_cutoff</span></code></dt><dd><p>Kernel that performs the computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix_dual_cutoff_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.naive_dual_cutoff.</span></span><span class="sig-name descname"><span class="pre">naive_neighbor_matrix_pbc_dual_cutoff</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shift_range</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_shifts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_positions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/naive_dual_cutoff.html#naive_neighbor_matrix_pbc_dual_cutoff"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for naive dual cutoff neighbor matrix construction with PBC.</p>
+<p>Computes neighbor relationships between atoms across periodic boundaries for
+two different cutoff distances using pure warp operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Atomic coordinates in Cartesian space.</p></li>
+<li><p><strong>cutoff1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – First cutoff distance (typically smaller).</p></li>
+<li><p><strong>cutoff2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Second cutoff distance (typically larger).</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Cell matrix defining lattice vectors in Cartesian coordinates.</p></li>
+<li><p><strong>shift_range</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Shift range per dimension for the single system.</p></li>
+<li><p><strong>num_shifts</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Number of periodic shifts for the single system.</p></li>
+<li><p><strong>neighbor_matrix1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors1</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: First neighbor matrix to be filled.</p></li>
+<li><p><strong>neighbor_matrix2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors2</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Second neighbor matrix to be filled.</p></li>
+<li><p><strong>neighbor_matrix_shifts1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors1</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Shift vectors for first neighbor matrix.</p></li>
+<li><p><strong>neighbor_matrix_shifts2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors2</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Shift vectors for second neighbor matrix.</p></li>
+<li><p><strong>num_neighbors1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom within cutoff1.</p></li>
+<li><p><strong>num_neighbors2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Number of neighbors found for each atom within cutoff2.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store relationships where i &lt; j to avoid double counting.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – Per-system rebuild flags. If provided, only rebuilds when rebuild_flags[0]
+is True; otherwise skips on the GPU without CPU sync.</p></li>
+<li><p><strong>wrap_positions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, wrap input positions into the primary cell before
+neighbor search. Set to False when positions are already
+wrapped (e.g. by a preceding integration step) to save two
+GPU kernel launches per call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">wrap_positions</span></code> is True, positions are wrapped into the primary cell in a
+preprocessing step before the neighbor search kernel.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff" title="nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff"><code class="xref py py-obj docutils literal notranslate"><span class="pre">naive_neighbor_matrix_dual_cutoff</span></code></a></dt><dd><p>Version without periodic boundary conditions</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix_pbc_dual_cutoff</span></code></dt><dd><p>Kernel that performs the computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_naive_neighbor_matrix_pbc_dual_cutoff_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">wrap_positions_single</span></code></dt><dd><p>Preprocessing step that wraps positions</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="batched-naive-dual-cutoff-algorithm">
+<h3>Batched Naive Dual Cutoff Algorithm<a class="headerlink" href="#batched-naive-dual-cutoff-algorithm" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.batch_naive_dual_cutoff.</span></span><span class="sig-name descname"><span class="pre">batch_naive_neighbor_matrix_dual_cutoff</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_ptr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/batch_naive_dual_cutoff.html#batch_naive_neighbor_matrix_dual_cutoff"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for batched naive dual cutoff neighbor matrix construction (no PBC).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Concatenated Cartesian coordinates for all systems.</p></li>
+<li><p><strong>cutoff1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – First cutoff distance (typically smaller).</p></li>
+<li><p><strong>cutoff2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Second cutoff distance (typically larger).</p></li>
+<li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom.</p></li>
+<li><p><strong>batch_ptr</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems + 1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Cumulative atom counts defining system boundaries.</p></li>
+<li><p><strong>neighbor_matrix1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors1</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: First neighbor matrix.</p></li>
+<li><p><strong>num_neighbors1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor counts for cutoff1.</p></li>
+<li><p><strong>neighbor_matrix2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors2</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Second neighbor matrix.</p></li>
+<li><p><strong>num_neighbors2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor counts for cutoff2.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store relationships where i &lt; j.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – Per-system rebuild flags. If provided, only systems where rebuild_flags[i]
+is True are processed; others are skipped on the GPU without CPU sync.
+Call selective_zero_num_neighbors before this launcher to reset counts.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff" title="nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff"><code class="xref py py-obj docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix_pbc_dual_cutoff</span></code></a></dt><dd><p>Version with PBC</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix_dual_cutoff</span></code></dt><dd><p>Kernel that performs computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix_dual_cutoff_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.batch_naive_dual_cutoff.</span></span><span class="sig-name descname"><span class="pre">batch_naive_neighbor_matrix_pbc_dual_cutoff</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_ptr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">shift_range</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_shifts_arr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_shifts_per_system</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">num_neighbors2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_atoms_per_system</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">half_fill</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wrap_positions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/batch_naive_dual_cutoff.html#batch_naive_neighbor_matrix_pbc_dual_cutoff"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for batched naive dual cutoff neighbor matrix construction with PBC.</p>
+<p>Computes neighbor relationships between atoms across periodic boundaries for
+two different cutoff distances using pure warp operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Concatenated Cartesian coordinates for all systems.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Cell matrices for each system in the batch.</p></li>
+<li><p><strong>cutoff1</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – First cutoff distance (typically smaller).</p></li>
+<li><p><strong>cutoff2</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Second cutoff distance (typically larger).</p></li>
+<li><p><strong>batch_ptr</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems + 1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Cumulative atom counts defining system boundaries.</p></li>
+<li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – System index for each atom. Required for the position-wrapping
+preprocessing step that maps atoms to their system’s cell.</p></li>
+<li><p><strong>shift_range</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Shift range per dimension per system.</p></li>
+<li><p><strong>num_shifts_arr</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Number of shifts per system.</p></li>
+<li><p><strong>max_shifts_per_system</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum per-system shift count (launch dimension).</p></li>
+<li><p><strong>neighbor_matrix1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors1</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: First neighbor matrix.</p></li>
+<li><p><strong>neighbor_matrix2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors2</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Second neighbor matrix.</p></li>
+<li><p><strong>neighbor_matrix_shifts1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors1</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Shift vectors for first neighbor matrix.</p></li>
+<li><p><strong>neighbor_matrix_shifts2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>max_neighbors2</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – OUTPUT: Shift vectors for second neighbor matrix.</p></li>
+<li><p><strong>num_neighbors1</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor counts for cutoff1.</p></li>
+<li><p><strong>num_neighbors2</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – OUTPUT: Neighbor counts for cutoff2.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>max_atoms_per_system</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum number of atoms in any single system.</p></li>
+<li><p><strong>half_fill</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, only store half of the neighbor relationships.</p></li>
+<li><p><strong>rebuild_flags</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>num_systems</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em><em>, </em><em>optional</em>) – Per-system rebuild flags. If provided, only systems where rebuild_flags[i]
+is True are processed; others are skipped on the GPU without CPU sync.
+Call selective_zero_num_neighbors before this launcher to reset counts.</p></li>
+<li><p><strong>wrap_positions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=True</em>) – If True, wrap input positions into the primary cell before
+neighbor search. Set to False when positions are already
+wrapped (e.g. by a preceding integration step) to save two
+GPU kernel launches per call.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>Output arrays must be pre-allocated by caller.</p></li>
+<li><p>When <code class="docutils literal notranslate"><span class="pre">wrap_positions</span></code> is True, positions are wrapped into the primary cell in a
+preprocessing step before the neighbor search kernel.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff" title="nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff"><code class="xref py py-obj docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix_dual_cutoff</span></code></a></dt><dd><p>Version without PBC</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix_pbc_dual_cutoff</span></code></dt><dd><p>Kernel that performs computation</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective</span></code></dt><dd><p>Selective-skip kernel variant</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">wrap_positions_batch</span></code></dt><dd><p>Preprocessing step that wraps positions</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="rebuild-detection">
+<h3>Rebuild Detection<a class="headerlink" href="#rebuild-detection" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.rebuild_detection.check_cell_list_rebuild">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.rebuild_detection.</span></span><span class="sig-name descname"><span class="pre">check_cell_list_rebuild</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">current_positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atom_to_cell_mapping</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_per_dimension</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pbc</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/rebuild_detection.html#check_cell_list_rebuild"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.rebuild_detection.check_cell_list_rebuild" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for detecting if cell list needs rebuilding.</p>
+<p>Checks if any atoms have moved between spatial cells since the cell list was built.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>current_positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Current atomic coordinates in Cartesian space.</p></li>
+<li><p><strong>atom_to_cell_mapping</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3i</em>) – Previously computed cell coordinates for each atom.</p></li>
+<li><p><strong>cells_per_dimension</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.int32</em>) – Number of cells in x, y, z directions.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.mat33*</em>) – Unit cell matrix for coordinate transformations.</p></li>
+<li><p><strong>pbc</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>3</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – Periodic boundary condition flags.</p></li>
+<li><p><strong>rebuild_flag</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – OUTPUT: Flag set to True if rebuild is needed.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>)</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>rebuild_flag must be pre-allocated and initialized to False by caller.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_check_atoms_changed_cells</span></code></dt><dd><p>Kernel that performs the check</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.rebuild_detection.check_neighbor_list_rebuild">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.rebuild_detection.</span></span><span class="sig-name descname"><span class="pre">check_neighbor_list_rebuild</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">reference_positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">current_positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">skin_distance_threshold</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">rebuild_flag</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wp_dtype</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">update_reference_positions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_inv</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">pbc</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/rebuild_detection.html#check_neighbor_list_rebuild"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.rebuild_detection.check_neighbor_list_rebuild" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for detecting if neighbor list needs rebuilding.</p>
+<p>Checks if any atoms have moved beyond the skin distance since the neighbor
+list was built.  When <code class="docutils literal notranslate"><span class="pre">cell</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_inv</span></code> and <code class="docutils literal notranslate"><span class="pre">pbc</span></code> are all provided
+the check uses minimum-image convention (MIC) so that atoms crossing
+periodic boundaries are not spuriously flagged.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>reference_positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Atomic positions when the neighbor list was last built.</p></li>
+<li><p><strong>current_positions</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>total_atoms</em><em>, </em><em>3</em><em>)</em><em>, </em><em>dtype=wp.vec3*</em>) – Current atomic positions to compare against reference.</p></li>
+<li><p><strong>skin_distance_threshold</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Maximum allowed displacement before neighbor list becomes invalid.</p></li>
+<li><p><strong>rebuild_flag</strong> (<em>wp.array</em><em>, </em><em>shape</em><em> (</em><em>1</em><em>,</em><em>)</em><em>, </em><em>dtype=wp.bool</em>) – OUTPUT: Flag set to True if rebuild is needed.</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>) – Warp dtype (wp.float32, wp.float64, or wp.float16).</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+<li><p><strong>update_reference_positions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>optional</em>) – If True, overwrite <code class="docutils literal notranslate"><span class="pre">reference_positions</span></code> with <code class="docutils literal notranslate"><span class="pre">current_positions</span></code>
+for all atoms when a rebuild is detected. The update runs in a second
+kernel launch after the detection kernel, so every atom is guaranteed
+to be updated with no race conditions. Default False.</p></li>
+<li><p><strong>cell</strong> (<em>wp.array</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Unit cell matrix, shape (1,), dtype=wp.mat33*.  Required together with
+<code class="docutils literal notranslate"><span class="pre">cell_inv</span></code> and <code class="docutils literal notranslate"><span class="pre">pbc</span></code> to enable MIC displacement.</p></li>
+<li><p><strong>cell_inv</strong> (<em>wp.array</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Precomputed inverse of the cell matrix, same shape/dtype as <code class="docutils literal notranslate"><span class="pre">cell</span></code>.</p></li>
+<li><p><strong>pbc</strong> (<em>wp.array</em><em> or </em><em>None</em><em>, </em><em>optional</em>) – Periodic boundary condition flags, shape (3,), dtype=wp.bool.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface. For framework bindings, use torch/jax wrappers.</p></li>
+<li><p>rebuild_flag must be pre-allocated and initialized to False by caller.</p></li>
+</ul>
+<dl class="field-list simple">
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/exceptions.html#ValueError" title="(in Python v3.14)"><strong>ValueError</strong></a> – If only a subset of <code class="docutils literal notranslate"><span class="pre">cell</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_inv</span></code>, and <code class="docutils literal notranslate"><span class="pre">pbc</span></code> are provided.
+    All three must be supplied together to enable MIC displacement.</p>
+</dd>
+<dt class="field-even">Parameters<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><strong>reference_positions</strong> (<em>array</em>)</p></li>
+<li><p><strong>current_positions</strong> (<em>array</em>)</p></li>
+<li><p><strong>skin_distance_threshold</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
+<li><p><strong>rebuild_flag</strong> (<em>array</em>)</p></li>
+<li><p><strong>wp_dtype</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#type" title="(in Python v3.14)"><em>type</em></a>)</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>)</p></li>
+<li><p><strong>update_reference_positions</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
+<li><p><strong>cell</strong> (<em>array</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>cell_inv</strong> (<em>array</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>pbc</strong> (<em>array</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_check_atoms_moved_beyond_skin</span></code></dt><dd><p>Euclidean kernel</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_check_atoms_moved_beyond_skin_pbc</span></code></dt><dd><p>PBC kernel for periodic systems</p>
+</dd>
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">update_ref_positions</span></code></dt><dd><p>Standalone reference-position update launcher</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="utility-functions">
+<h3>Utility Functions<a class="headerlink" href="#utility-functions" title="Link to this heading">#</a></h3>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.neighbor_utils.zero_array">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.neighbor_utils.</span></span><span class="sig-name descname"><span class="pre">zero_array</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">array</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/neighbor_utils.html#zero_array"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.neighbor_utils.zero_array" title="Link to this definition">#</a></dt>
+<dd><p>Core warp launcher for zeroing an array.</p>
+<p>Zeros all elements of an array in parallel using pure warp operations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>array</strong> (<em>wp.array</em><em>, </em><em>dtype=Any</em>) – OUTPUT: Array to be zeroed.</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a>) – Warp device string (e.g., ‘cuda:0’, ‘cpu’).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>This is a low-level warp interface.</p></li>
+<li><p>Operates on arrays of any dtype.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><code class="xref py py-obj docutils literal notranslate"><span class="pre">_zero_array_kernel</span></code></dt><dd><p>Kernel that performs the zeroing</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.neighbors.neighbor_utils.estimate_max_neighbors">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.neighbors.neighbor_utils.</span></span><span class="sig-name descname"><span class="pre">estimate_max_neighbors</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">atomic_density</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.2</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">safety_factor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1.0</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/neighbors/neighbor_utils.html#estimate_max_neighbors"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.neighbors.neighbor_utils.estimate_max_neighbors" title="Link to this definition">#</a></dt>
+<dd><p>Estimate maximum neighbors per atom based on volume calculations.</p>
+<p>Uses atomic density and cutoff volume to estimate a conservative upper bound
+on the number of neighbors any atom could have. This is a pure Python function
+with no framework dependencies.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Maximum distance for considering atoms as neighbors.</p></li>
+<li><p><strong>atomic_density</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Atomic density in atoms per unit volume. Default is 0.2.</p></li>
+<li><p><strong>safety_factor</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Safety factor to multiply the estimated number of neighbors. Default is 1.0.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>max_neighbors_estimate</strong> – Conservative estimate of maximum neighbors per atom. Returns 0 for
+empty systems.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a></p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>The estimation uses the formula:</p>
+<div class="math notranslate nohighlight">
+\[\text{neighbors} = \text{safety\_factor} \times \text{density} \times V_{\text{sphere}}\]</div>
+<p>where the cutoff sphere volume is:</p>
+<div class="math notranslate nohighlight">
+\[V_{\text{sphere}} = \frac{4}{3}\pi r^3\]</div>
+<p>The result is rounded up to the multiple of 16 for memory alignment.</p>
+</dd></dl>
+
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../jax/electrostatics.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="dispersion.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-level-interface">Warp-Level Interface</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#naive-algorithm">Naive Algorithm</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.naive.naive_neighbor_matrix"><code class="docutils literal notranslate"><span class="pre">naive_neighbor_matrix()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.naive.naive_neighbor_matrix_pbc"><code class="docutils literal notranslate"><span class="pre">naive_neighbor_matrix_pbc()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cell-list-algorithm">Cell List Algorithm</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.cell_list.build_cell_list"><code class="docutils literal notranslate"><span class="pre">build_cell_list()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.cell_list.query_cell_list"><code class="docutils literal notranslate"><span class="pre">query_cell_list()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batched-naive-algorithm">Batched Naive Algorithm</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix"><code class="docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.batch_naive.batch_naive_neighbor_matrix_pbc"><code class="docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix_pbc()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batched-cell-list-algorithm">Batched Cell List Algorithm</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.batch_cell_list.batch_build_cell_list"><code class="docutils literal notranslate"><span class="pre">batch_build_cell_list()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.batch_cell_list.batch_query_cell_list"><code class="docutils literal notranslate"><span class="pre">batch_query_cell_list()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#naive-dual-cutoff-algorithm">Naive Dual Cutoff Algorithm</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff"><code class="docutils literal notranslate"><span class="pre">naive_neighbor_matrix_dual_cutoff()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff"><code class="docutils literal notranslate"><span class="pre">naive_neighbor_matrix_pbc_dual_cutoff()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batched-naive-dual-cutoff-algorithm">Batched Naive Dual Cutoff Algorithm</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_dual_cutoff"><code class="docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix_dual_cutoff()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.batch_naive_dual_cutoff.batch_naive_neighbor_matrix_pbc_dual_cutoff"><code class="docutils literal notranslate"><span class="pre">batch_naive_neighbor_matrix_pbc_dual_cutoff()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#rebuild-detection">Rebuild Detection</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.rebuild_detection.check_cell_list_rebuild"><code class="docutils literal notranslate"><span class="pre">check_cell_list_rebuild()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.rebuild_detection.check_neighbor_list_rebuild"><code class="docutils literal notranslate"><span class="pre">check_neighbor_list_rebuild()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#utility-functions">Utility Functions</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.neighbor_utils.zero_array"><code class="docutils literal notranslate"><span class="pre">zero_array()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.neighbors.neighbor_utils.estimate_max_neighbors"><code class="docutils literal notranslate"><span class="pre">estimate_max_neighbors()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/modules/warp/neighbors.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

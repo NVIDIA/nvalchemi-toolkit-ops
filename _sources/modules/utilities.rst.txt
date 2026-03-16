@@ -1,5 +1,5 @@
-:mod:`nvalchemiops.math` and :mod:`nvalchemiops.types`: Utilities
-=================================================================
+:mod:`nvalchemiops.math` and :mod:`nvalchemiops.torch.types`: Utilities
+=======================================================================
 
 Mathematical Utilities
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -14,14 +14,14 @@ Mathematical Utilities
 Type Conversion Utilities
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: nvalchemiops.types
+.. automodule:: nvalchemiops.torch.types
     :members:
     :undoc-members:
     :show-inheritance:
 
-.. autofunction:: nvalchemiops.types.get_wp_dtype
+.. autofunction:: nvalchemiops.torch.types.get_wp_dtype
     :no-index:
-.. autofunction:: nvalchemiops.types.get_wp_vec_dtype
+.. autofunction:: nvalchemiops.torch.types.get_wp_vec_dtype
     :no-index:
-.. autofunction:: nvalchemiops.types.get_wp_mat_dtype
+.. autofunction:: nvalchemiops.torch.types.get_wp_mat_dtype
     :no-index:

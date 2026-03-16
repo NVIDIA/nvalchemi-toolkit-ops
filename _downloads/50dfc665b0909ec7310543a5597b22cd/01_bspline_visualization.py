@@ -1,12 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction,
-# disclosure or distribution of this material and related documentation
-# without an express license agreement from NVIDIA CORPORATION or
-# its affiliates is strictly prohibited.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 B-Spline Interpolation for Particle Mesh Methods
@@ -47,7 +52,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from nvalchemiops.spline import bspline_weight, spline_gather, spline_spread
+from nvalchemiops.torch.spline import bspline_weight, spline_gather, spline_spread
 
 # %%
 # B-Spline Basis Functions
@@ -71,7 +76,9 @@ order_names = ["Constant", "Linear", "Quadratic", "Cubic"]
 for idx, (order, name) in enumerate(zip(orders, order_names)):
     ax = axes[idx]
     u_vals = np.linspace(-0.5, order + 0.5, 500)
-    weights = np.array([bspline_weight(u, order) for u in u_vals])
+    # weights = np.array([bspline_weight(u, order) for u in u_vals])
+    u_tensor = torch.from_numpy(u_vals).to(dtype=torch.float64)
+    weights = bspline_weight(u_tensor, order).numpy()
 
     ax.plot(u_vals, weights, "b-", linewidth=2)
     ax.fill_between(u_vals, weights, alpha=0.3)
@@ -133,7 +140,7 @@ for ax, atom_x in zip(axes.flatten(), atom_positions_1d):
     positions = torch.tensor([[atom_x, 5.0, 0.5]], dtype=torch.float64)
     charges = torch.tensor([1.0], dtype=torch.float64)
 
-    mesh = spline_spread(positions, charges, cell, [mesh_size, mesh_size, 1], 4)
+    mesh = spline_spread(positions, charges, cell, (mesh_size, mesh_size, 1), 4)
     y_idx = int(5.0 / dx)
     weights_1d = mesh[:, y_idx, 0].cpu().numpy()
 
@@ -187,7 +194,7 @@ for atom_x in atom_positions_1d:
     cell = torch.diag(torch.tensor([cell_size, cell_size, 1.0], dtype=torch.float64))
     positions = torch.tensor([[atom_x, 5.0, 0.5]], dtype=torch.float64)
     charges = torch.tensor([1.0], dtype=torch.float64)
-    mesh = spline_spread(positions, charges, cell, [mesh_size, mesh_size, 1], 4)
+    mesh = spline_spread(positions, charges, cell, (mesh_size, mesh_size, 1), 4)
     total_weight = mesh.sum().item()
     print(f"  Atom at x={atom_x}: total weight = {total_weight:.6f}")
 
@@ -205,7 +212,7 @@ def visualize_spread_2d(
     mesh_size: int,
     spline_order: int,
     ax: plt.Axes,
-    title: str = None,
+    title: str | None = None,
 ):
     """Visualize 2D spreading with scatter plot."""
     cell_size = cell[0, 0].item()
@@ -213,7 +220,7 @@ def visualize_spread_2d(
 
     # Spread charges
     mesh = spline_spread(
-        positions, charges, cell, [mesh_size, mesh_size, 1], spline_order
+        positions, charges, cell, (mesh_size, mesh_size, 1), spline_order
     )
     mesh_2d = mesh[:, :, 0].cpu().numpy()
 
@@ -347,7 +354,7 @@ def visualize_gather_2d(
     spline_order: int,
     n_sample: int,
     ax: plt.Axes,
-    title: str = None,
+    title: str | None = None,
 ):
     """Visualize 2D gathering with scatter plot."""
     cell_size = cell[0, 0].item()
@@ -428,7 +435,7 @@ orders = [1, 2, 3, 4]
 
 for i, order in enumerate(orders):
     mesh = spline_spread(
-        positions_dip, charges_dip, cell_dip, [mesh_size, mesh_size, 1], order
+        positions_dip, charges_dip, cell_dip, (mesh_size, mesh_size, 1), order
     )
 
     # Spread visualization

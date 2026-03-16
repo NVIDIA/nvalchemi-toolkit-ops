@@ -1,0 +1,1825 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.dynamics.utils.constraints &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/dynamics/utils/constraints';</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.dynamics.utils.constraints</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">SHAKE and RATTLE Constraint Algorithms</span>
+<span class="sd">======================================</span>
+
+<span class="sd">GPU-accelerated Warp kernels for holonomic bond constraints in molecular dynamics.</span>
+
+<span class="sd">This module provides both mutating (in-place) and non-mutating versions</span>
+<span class="sd">of each kernel for gradient tracking compatibility.</span>
+
+<span class="sd">MATHEMATICAL FORMULATION</span>
+<span class="sd">========================</span>
+
+<span class="sd">SHAKE Algorithm (Position Constraints)</span>
+<span class="sd">--------------------------------------</span>
+
+<span class="sd">For each constrained bond (i, j) with target distance d_ij:</span>
+
+<span class="sd">1. Compute constraint violation: σ = |r_ij|² - d_ij²</span>
+<span class="sd">2. Compute Lagrange multiplier: λ = σ / (2 * (1/m_i + 1/m_j) * r_ij · r_ij_old)</span>
+<span class="sd">3. Update positions:</span>
+<span class="sd">   - r_i += λ * r_ij_old / m_i</span>
+<span class="sd">   - r_j -= λ * r_ij_old / m_j</span>
+
+<span class="sd">Iterate until all constraints are satisfied within tolerance.</span>
+
+<span class="sd">RATTLE Algorithm (Velocity Constraints)</span>
+<span class="sd">---------------------------------------</span>
+
+<span class="sd">After SHAKE, velocities must also satisfy constraints:</span>
+
+<span class="sd">For each constrained bond (i, j):</span>
+
+<span class="sd">1. Compute velocity constraint violation: κ = v_ij · r_ij</span>
+<span class="sd">2. Compute Lagrange multiplier: μ = κ / ((1/m_i + 1/m_j) * |r_ij|²)</span>
+<span class="sd">3. Update velocities:</span>
+<span class="sd">   - v_i -= μ * r_ij / m_i</span>
+<span class="sd">   - v_j += μ * r_ij / m_j</span>
+
+<span class="sd">USAGE</span>
+<span class="sd">=====</span>
+
+<span class="sd">SHAKE is applied after position updates but before force calculation:</span>
+
+<span class="sd">    # Position update (unconstrained)</span>
+<span class="sd">    velocity_verlet_position_update(positions, velocities, forces, masses, dt)</span>
+
+<span class="sd">    # Apply SHAKE to fix bond lengths</span>
+<span class="sd">    shake_converged = shake_constraints(</span>
+<span class="sd">        positions, positions_old, masses,</span>
+<span class="sd">        bond_pairs, bond_lengths, tolerance=1e-6, max_iter=100</span>
+<span class="sd">    )</span>
+
+<span class="sd">    # Compute forces at constrained positions</span>
+<span class="sd">    forces = compute_forces(positions)</span>
+
+<span class="sd">    # Velocity update</span>
+<span class="sd">    velocity_verlet_velocity_finalize(velocities, forces, masses, dt)</span>
+
+<span class="sd">    # Apply RATTLE to fix velocity constraints</span>
+<span class="sd">    rattle_constraints(positions, velocities, masses, bond_pairs, bond_lengths)</span>
+
+<span class="sd">REFERENCES</span>
+<span class="sd">==========</span>
+
+<span class="sd">- Ryckaert et al. (1977). J. Comput. Phys. 23, 327 (SHAKE)</span>
+<span class="sd">- Andersen (1983). J. Comput. Phys. 52, 24 (RATTLE)</span>
+<span class="sd">- Allen &amp; Tildesley (1987). Computer Simulation of Liquids</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># SHAKE - Mutating</span>
+    <span class="s2">&quot;shake_constraints&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;shake_iteration&quot;</span><span class="p">,</span>
+    <span class="c1"># SHAKE - Non-mutating</span>
+    <span class="s2">&quot;shake_constraints_out&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;shake_iteration_out&quot;</span><span class="p">,</span>
+    <span class="c1"># RATTLE - Mutating</span>
+    <span class="s2">&quot;rattle_constraints&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;rattle_iteration&quot;</span><span class="p">,</span>
+    <span class="c1"># RATTLE - Non-mutating</span>
+    <span class="s2">&quot;rattle_constraints_out&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;rattle_iteration_out&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># SHAKE Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+<span class="c1"># Tile block size for cooperative reductions</span>
+<span class="n">TILE_DIM</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;NVALCHEMIOPS_DYNAMICS_TILE_DIM&quot;</span><span class="p">,</span> <span class="mi">256</span><span class="p">))</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_shake_iteration_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single SHAKE iteration for one bond (in-place).</span>
+
+<span class="sd">    Updates positions to satisfy bond length constraint.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_bonds]</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current positions. MODIFIED in-place.</span>
+<span class="sd">    positions_old : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Positions before unconstrained update.</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses.</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond.</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond.</span>
+<span class="sd">    bond_lengths_sq : wp.array</span>
+<span class="sd">        Target bond length squared for each bond.</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Maximum constraint error (atomic max).</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    This kernel uses atomic operations on positions, which may cause</span>
+<span class="sd">    race conditions when atoms participate in multiple bonds.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">r_i_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">d_sq</span> <span class="o">=</span> <span class="n">bond_lengths_sq</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="c1"># Current bond vector</span>
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+
+    <span class="c1"># Old bond vector</span>
+    <span class="n">r_ij_old</span> <span class="o">=</span> <span class="n">r_i_old</span> <span class="o">-</span> <span class="n">r_j_old</span>
+
+    <span class="c1"># Current distance squared</span>
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="c1"># Constraint violation</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">r_sq</span> <span class="o">-</span> <span class="n">d_sq</span>
+
+    <span class="c1"># Track maximum error</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">sigma</span><span class="p">)))</span>
+
+    <span class="c1"># Dot product r_ij · r_ij_old</span>
+    <span class="n">dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij_old</span><span class="p">)</span>
+
+    <span class="c1"># Inverse masses</span>
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="c1"># Lagrange multiplier</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dot</span><span class="p">)(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">dot</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">lam</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="c1"># Position corrections</span>
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="c1"># Apply corrections atomically</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_sub</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_shake_iteration_tiled_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single SHAKE iteration with tile reductions for error tracking.</span>
+
+<span class="sd">    Updates positions to satisfy bond length constraint using atomic operations</span>
+<span class="sd">    for position corrections. Uses tile reductions for max error computation.</span>
+
+<span class="sd">    Launch Grid: dim = [num_bonds], block_dim = TILE_DIM</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - Atomic operations on positions still required due to data dependencies</span>
+<span class="sd">    - Tile reductions reduce atomic contention for max_error tracking</span>
+<span class="sd">    - Data dependencies (atoms in multiple bonds) limit parallelization</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">r_i_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">d_sq</span> <span class="o">=</span> <span class="n">bond_lengths_sq</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="c1"># Current bond vector</span>
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+
+    <span class="c1"># Old bond vector</span>
+    <span class="n">r_ij_old</span> <span class="o">=</span> <span class="n">r_i_old</span> <span class="o">-</span> <span class="n">r_j_old</span>
+
+    <span class="c1"># Current distance squared</span>
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="c1"># Constraint violation</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">r_sq</span> <span class="o">-</span> <span class="n">d_sq</span>
+
+    <span class="c1"># Compute local error</span>
+    <span class="n">local_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">sigma</span><span class="p">))</span>
+
+    <span class="c1"># Tile reduction for max error</span>
+    <span class="n">t_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">local_error</span><span class="p">)</span>
+    <span class="n">max_tile_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile_reduce</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">,</span> <span class="n">t_error</span><span class="p">)</span>
+    <span class="n">block_max_error</span> <span class="o">=</span> <span class="n">max_tile_error</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Only first thread in block updates max error</span>
+    <span class="k">if</span> <span class="n">bond_idx</span> <span class="o">%</span> <span class="n">TILE_DIM</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">block_max_error</span><span class="p">)</span>
+
+    <span class="c1"># Dot product r_ij · r_ij_old</span>
+    <span class="n">dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij_old</span><span class="p">)</span>
+
+    <span class="c1"># Inverse masses</span>
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="c1"># Lagrange multiplier</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dot</span><span class="p">)(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">dot</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">lam</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="c1"># Position corrections</span>
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="c1"># Apply corrections atomically (required due to data dependencies)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_sub</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_shake_iteration_out_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">position_corrections</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single SHAKE iteration computing corrections (non-mutating).</span>
+
+<span class="sd">    Computes position corrections without applying them.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_bonds]</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current positions.</span>
+<span class="sd">    positions_old : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Positions before unconstrained update.</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses.</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond.</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond.</span>
+<span class="sd">    bond_lengths_sq : wp.array</span>
+<span class="sd">        Target bond length squared.</span>
+<span class="sd">    position_corrections : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Output corrections for each atom. Shape (N,).</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Maximum constraint error.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">r_i_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">d_sq</span> <span class="o">=</span> <span class="n">bond_lengths_sq</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+    <span class="n">r_ij_old</span> <span class="o">=</span> <span class="n">r_i_old</span> <span class="o">-</span> <span class="n">r_j_old</span>
+
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">r_sq</span> <span class="o">-</span> <span class="n">d_sq</span>
+
+    <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">sigma</span><span class="p">)))</span>
+
+    <span class="n">dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij_old</span><span class="p">)</span>
+
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="n">denom</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dot</span><span class="p">)(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">dot</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">lam</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="o">-</span><span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">position_corrections</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">position_corrections</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_shake_iteration_out_tiled_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">position_corrections</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single SHAKE iteration with tile reductions (non-mutating).</span>
+
+<span class="sd">    Launch Grid: dim = [num_bonds], block_dim = TILE_DIM</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">r_i_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j_old</span> <span class="o">=</span> <span class="n">positions_old</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">d_sq</span> <span class="o">=</span> <span class="n">bond_lengths_sq</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+    <span class="n">r_ij_old</span> <span class="o">=</span> <span class="n">r_i_old</span> <span class="o">-</span> <span class="n">r_j_old</span>
+
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+    <span class="n">sigma</span> <span class="o">=</span> <span class="n">r_sq</span> <span class="o">-</span> <span class="n">d_sq</span>
+
+    <span class="c1"># Compute local error</span>
+    <span class="n">local_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">sigma</span><span class="p">))</span>
+
+    <span class="c1"># Tile reduction for max error</span>
+    <span class="n">t_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">local_error</span><span class="p">)</span>
+    <span class="n">max_tile_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile_reduce</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">,</span> <span class="n">t_error</span><span class="p">)</span>
+    <span class="n">block_max_error</span> <span class="o">=</span> <span class="n">max_tile_error</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Only first thread in block updates max error</span>
+    <span class="k">if</span> <span class="n">bond_idx</span> <span class="o">%</span> <span class="n">TILE_DIM</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">block_max_error</span><span class="p">)</span>
+
+    <span class="n">dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij_old</span><span class="p">)</span>
+
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="n">denom</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dot</span><span class="p">)(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">dot</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">lam</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="o">-</span><span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">lam</span> <span class="o">*</span> <span class="n">r_ij_old</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="c1"># Atomic operations still required due to data dependencies</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">position_corrections</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">position_corrections</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># RATTLE Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_rattle_iteration_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single RATTLE iteration for velocity constraints (in-place).</span>
+
+<span class="sd">    Ensures velocities are perpendicular to bond vectors.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_bonds]</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current (constrained) positions.</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Velocities. MODIFIED in-place.</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses.</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond.</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond.</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Maximum constraint error.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">v_i</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">v_j</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+
+    <span class="c1"># Bond vector</span>
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+
+    <span class="c1"># Relative velocity</span>
+    <span class="n">v_ij</span> <span class="o">=</span> <span class="n">v_i</span> <span class="o">-</span> <span class="n">v_j</span>
+
+    <span class="c1"># Velocity constraint: v_ij · r_ij = 0</span>
+    <span class="n">kappa</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">v_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="c1"># Track maximum error</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">kappa</span><span class="p">)))</span>
+
+    <span class="c1"># Bond length squared</span>
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="c1"># Inverse masses</span>
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="c1"># Lagrange multiplier</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_sq</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">mu</span> <span class="o">=</span> <span class="n">kappa</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="c1"># Velocity corrections</span>
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="o">-</span><span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="c1"># Apply corrections atomically</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_sub</span><span class="p">(</span><span class="n">velocities</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">velocities</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_rattle_iteration_out_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">velocity_corrections</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single RATTLE iteration computing corrections (non-mutating).</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_bonds]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">v_i</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">v_j</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+    <span class="n">v_ij</span> <span class="o">=</span> <span class="n">v_i</span> <span class="o">-</span> <span class="n">v_j</span>
+
+    <span class="n">kappa</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">v_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">kappa</span><span class="p">)))</span>
+
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="n">denom</span> <span class="o">=</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_sq</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">mu</span> <span class="o">=</span> <span class="n">kappa</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="o">-</span><span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">velocity_corrections</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">velocity_corrections</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_rattle_iteration_tiled_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single RATTLE iteration with tile reductions for error tracking.</span>
+
+<span class="sd">    Updates velocities to satisfy velocity constraints using atomic operations</span>
+<span class="sd">    for velocity corrections. Uses tile reductions for max error computation.</span>
+
+<span class="sd">    Launch Grid: dim = [num_bonds], block_dim = TILE_DIM</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - Atomic operations on velocities still required due to data dependencies</span>
+<span class="sd">    - Tile reductions reduce atomic contention for max_error tracking</span>
+<span class="sd">    - Data dependencies (atoms in multiple bonds) limit parallelization</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">v_i</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">v_j</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+
+    <span class="c1"># Bond vector</span>
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+
+    <span class="c1"># Relative velocity</span>
+    <span class="n">v_ij</span> <span class="o">=</span> <span class="n">v_i</span> <span class="o">-</span> <span class="n">v_j</span>
+
+    <span class="c1"># Velocity constraint: v_ij · r_ij = 0</span>
+    <span class="n">kappa</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">v_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="c1"># Compute local error</span>
+    <span class="n">local_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">kappa</span><span class="p">))</span>
+
+    <span class="c1"># Tile reduction for max error</span>
+    <span class="n">t_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">local_error</span><span class="p">)</span>
+    <span class="n">max_tile_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile_reduce</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">,</span> <span class="n">t_error</span><span class="p">)</span>
+    <span class="n">block_max_error</span> <span class="o">=</span> <span class="n">max_tile_error</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Only first thread in block updates max error</span>
+    <span class="k">if</span> <span class="n">bond_idx</span> <span class="o">%</span> <span class="n">TILE_DIM</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">block_max_error</span><span class="p">)</span>
+
+    <span class="c1"># Bond length squared</span>
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="c1"># Inverse masses</span>
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="c1"># Lagrange multiplier</span>
+    <span class="n">denom</span> <span class="o">=</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_sq</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">mu</span> <span class="o">=</span> <span class="n">kappa</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="c1"># Velocity corrections</span>
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="o">-</span><span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="c1"># Apply corrections atomically (required due to data dependencies)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_sub</span><span class="p">(</span><span class="n">velocities</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">velocities</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_rattle_iteration_out_tiled_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">velocity_corrections</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Single RATTLE iteration with tile reductions (non-mutating).</span>
+
+<span class="sd">    Launch Grid: dim = [num_bonds], block_dim = TILE_DIM</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">bond_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">i</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+    <span class="n">j</span> <span class="o">=</span> <span class="n">bond_atom_j</span><span class="p">[</span><span class="n">bond_idx</span><span class="p">]</span>
+
+    <span class="n">r_i</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">r_j</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">v_i</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">v_j</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+    <span class="n">m_i</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="n">m_j</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+
+    <span class="n">r_ij</span> <span class="o">=</span> <span class="n">r_i</span> <span class="o">-</span> <span class="n">r_j</span>
+    <span class="n">v_ij</span> <span class="o">=</span> <span class="n">v_i</span> <span class="o">-</span> <span class="n">v_j</span>
+
+    <span class="n">kappa</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">v_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="c1"># Compute local error</span>
+    <span class="n">local_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">kappa</span><span class="p">))</span>
+
+    <span class="c1"># Tile reduction for max error</span>
+    <span class="n">t_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">local_error</span><span class="p">)</span>
+    <span class="n">max_tile_error</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tile_reduce</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">,</span> <span class="n">t_error</span><span class="p">)</span>
+    <span class="n">block_max_error</span> <span class="o">=</span> <span class="n">max_tile_error</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Only first thread in block updates max error</span>
+    <span class="k">if</span> <span class="n">bond_idx</span> <span class="o">%</span> <span class="n">TILE_DIM</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_max</span><span class="p">(</span><span class="n">max_error</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">block_max_error</span><span class="p">)</span>
+
+    <span class="n">r_sq</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">r_ij</span><span class="p">,</span> <span class="n">r_ij</span><span class="p">)</span>
+
+    <span class="n">inv_m_i</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_i</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_i</span>
+    <span class="n">inv_m_j</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m_j</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">m_j</span>
+
+    <span class="n">denom</span> <span class="o">=</span> <span class="p">(</span><span class="n">inv_m_i</span> <span class="o">+</span> <span class="n">inv_m_j</span><span class="p">)</span> <span class="o">*</span> <span class="n">r_sq</span>
+    <span class="k">if</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">denom</span><span class="p">)</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">denom</span><span class="p">)(</span><span class="mf">1e-30</span><span class="p">):</span>
+        <span class="n">mu</span> <span class="o">=</span> <span class="n">kappa</span> <span class="o">/</span> <span class="n">denom</span>
+
+        <span class="n">corr_i</span> <span class="o">=</span> <span class="o">-</span><span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_i</span>
+        <span class="n">corr_j</span> <span class="o">=</span> <span class="n">mu</span> <span class="o">*</span> <span class="n">r_ij</span> <span class="o">*</span> <span class="n">inv_m_j</span>
+
+        <span class="c1"># Atomic operations still required due to data dependencies</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">velocity_corrections</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">corr_i</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">velocity_corrections</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">corr_j</span><span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Kernel Overloads for Explicit Typing</span>
+<span class="c1"># ==============================================================================</span>
+
+<span class="n">_T</span> <span class="o">=</span> <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">]</span>  <span class="c1"># Scalar types</span>
+<span class="n">_V</span> <span class="o">=</span> <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">]</span>  <span class="c1"># Vector types</span>
+
+<span class="n">_shake_iteration_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_shake_iteration_out_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_shake_iteration_tiled_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_shake_iteration_out_tiled_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_rattle_iteration_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_rattle_iteration_out_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_rattle_iteration_tiled_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_rattle_iteration_out_tiled_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="k">for</span> <span class="n">t</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">_T</span><span class="p">,</span> <span class="n">_V</span><span class="p">):</span>
+    <span class="n">_shake_iteration_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_shake_iteration_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_shake_iteration_out_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_shake_iteration_out_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_rattle_iteration_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_rattle_iteration_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_rattle_iteration_out_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_rattle_iteration_out_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_shake_iteration_tiled_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_shake_iteration_tiled_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_shake_iteration_out_tiled_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_shake_iteration_out_tiled_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_rattle_iteration_tiled_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_rattle_iteration_tiled_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_rattle_iteration_out_tiled_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_rattle_iteration_out_tiled_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># SHAKE Functional Interface</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="shake_iteration">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.shake_iteration">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">shake_iteration</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Perform single SHAKE iteration (in-place).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current positions. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    positions_old : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Positions before unconstrained update. Shape (N,).</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_lengths_sq : wp.array</span>
+<span class="sd">        Target bond length squared. Shape (M,).</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Output array to store max error. Shape (1,).</span>
+<span class="sd">        Zeroed internally before each use.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array(dtype=wp.float64)</span>
+<span class="sd">        Maximum constraint error :math:`|r^2_{ij} - d^2_{ij}|`. Shape (1,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">max_error</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">num_bonds</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_shake_iteration_tiled_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_bonds</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">positions_old</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">bond_atom_i</span><span class="p">,</span>
+            <span class="n">bond_atom_j</span><span class="p">,</span>
+            <span class="n">bond_lengths_sq</span><span class="p">,</span>
+            <span class="n">max_error</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">block_dim</span><span class="o">=</span><span class="n">TILE_DIM</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">max_error</span></div>
+
+
+
+<div class="viewcode-block" id="shake_constraints">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.shake_constraints">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">shake_constraints</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">num_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply SHAKE constraints for a fixed number of iterations (in-place).</span>
+
+<span class="sd">    This function runs a fixed number of SHAKE iterations without convergence</span>
+<span class="sd">    checking during the loop. The final error is returned as a wp.array.</span>
+<span class="sd">    The caller can check convergence by inspecting the error value.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current positions. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    positions_old : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Positions before unconstrained update. Shape (N,).</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_lengths_sq : wp.array</span>
+<span class="sd">        Target bond length squared. Shape (M,).</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Scratch array for max error tracking. Shape (1,).</span>
+<span class="sd">        Caller must pre-allocate. Zeroed internally between iterations.</span>
+<span class="sd">    num_iter : int, optional</span>
+<span class="sd">        Number of iterations to run. Default 10.</span>
+<span class="sd">        Typical values: 3-20 depending on constraint stiffness.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array(dtype=wp.float64)</span>
+<span class="sd">        Final constraint error :math:`|r^2_{ij} - d^2_{ij}|`. Shape (1,).</span>
+
+<span class="sd">    Example</span>
+<span class="sd">    -------</span>
+<span class="sd">    &gt;&gt;&gt; # After unconstrained position update</span>
+<span class="sd">    &gt;&gt;&gt; max_error = wp.empty(1, dtype=wp.float64, device=device)</span>
+<span class="sd">    &gt;&gt;&gt; final_error = shake_constraints(</span>
+<span class="sd">    ...     positions, positions_old, masses,</span>
+<span class="sd">    ...     bond_i, bond_j, bond_lengths_sq, max_error,</span>
+<span class="sd">    ...     num_iter=10</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_iter</span><span class="p">):</span>
+        <span class="n">max_error</span> <span class="o">=</span> <span class="n">shake_iteration</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">positions_old</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">bond_atom_i</span><span class="p">,</span>
+            <span class="n">bond_atom_j</span><span class="p">,</span>
+            <span class="n">bond_lengths_sq</span><span class="p">,</span>
+            <span class="n">max_error</span><span class="p">,</span>
+            <span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">max_error</span></div>
+
+
+
+<div class="viewcode-block" id="shake_iteration_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.shake_iteration_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">shake_iteration_out</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">position_corrections</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute SHAKE corrections without applying (non-mutating).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current positions. Shape (N,).</span>
+<span class="sd">    positions_old : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Positions before unconstrained update. Shape (N,).</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_lengths_sq : wp.array</span>
+<span class="sd">        Target bond length squared. Shape (M,).</span>
+<span class="sd">    position_corrections : wp.array</span>
+<span class="sd">        Output corrections. Shape (N,). Zeroed internally before each use.</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Output max error. Shape (1,). Zeroed internally before each use.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[wp.array, wp.array]</span>
+<span class="sd">        (position_corrections, max_error)</span>
+<span class="sd">        max_error is shape (1,)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">position_corrections</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">max_error</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">num_bonds</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_shake_iteration_out_tiled_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_bonds</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">positions_old</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">bond_atom_i</span><span class="p">,</span>
+            <span class="n">bond_atom_j</span><span class="p">,</span>
+            <span class="n">bond_lengths_sq</span><span class="p">,</span>
+            <span class="n">position_corrections</span><span class="p">,</span>
+            <span class="n">max_error</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">block_dim</span><span class="o">=</span><span class="n">TILE_DIM</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">position_corrections</span><span class="p">,</span> <span class="n">max_error</span></div>
+
+
+
+<div class="viewcode-block" id="shake_constraints_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.shake_constraints_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">shake_constraints_out</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions_old</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_lengths_sq</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">num_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply SHAKE constraints (non-mutating).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current positions. Shape (N,).</span>
+<span class="sd">    positions_old : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Positions before unconstrained update. Shape (N,).</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_lengths_sq : wp.array</span>
+<span class="sd">        Target bond length squared. Shape (M,).</span>
+<span class="sd">    positions_out : wp.array</span>
+<span class="sd">        Output positions. Shape (N,). Caller must pre-allocate.</span>
+<span class="sd">        Caller must copy input positions into this array before calling</span>
+<span class="sd">        (e.g., via ``wp.copy(positions_out, positions)``).</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Scratch array for max error tracking. Shape (1,).</span>
+<span class="sd">        Caller must pre-allocate. Zeroed internally between iterations.</span>
+<span class="sd">    num_iter : int, optional</span>
+<span class="sd">        Number of iterations to run. Default 10.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[wp.array, wp.array]</span>
+<span class="sd">        (positions_out, final_error)</span>
+<span class="sd">        final_error is shape (1,)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">error</span> <span class="o">=</span> <span class="n">shake_constraints</span><span class="p">(</span>
+        <span class="n">positions_out</span><span class="p">,</span>
+        <span class="n">positions_old</span><span class="p">,</span>
+        <span class="n">masses</span><span class="p">,</span>
+        <span class="n">bond_atom_i</span><span class="p">,</span>
+        <span class="n">bond_atom_j</span><span class="p">,</span>
+        <span class="n">bond_lengths_sq</span><span class="p">,</span>
+        <span class="n">max_error</span><span class="p">,</span>
+        <span class="n">num_iter</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">positions_out</span><span class="p">,</span> <span class="n">error</span></div>
+
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># RATTLE Functional Interface</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="rattle_iteration">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.rattle_iteration">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">rattle_iteration</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Perform single RATTLE iteration (in-place).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current (constrained) positions. Shape (N,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Velocities. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Output array to store max error. Shape (1,).</span>
+<span class="sd">        Zeroed internally before each use.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array(dtype=wp.float64)</span>
+<span class="sd">        Maximum velocity constraint error :math:`|v_{ij} \cdot r_{ij}|`. Shape (1,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">max_error</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">num_bonds</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_rattle_iteration_tiled_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_bonds</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">bond_atom_i</span><span class="p">,</span> <span class="n">bond_atom_j</span><span class="p">,</span> <span class="n">max_error</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">block_dim</span><span class="o">=</span><span class="n">TILE_DIM</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">max_error</span></div>
+
+
+
+<div class="viewcode-block" id="rattle_constraints">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.rattle_constraints">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">rattle_constraints</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">num_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply RATTLE velocity constraints for a fixed number of iterations (in-place).</span>
+
+<span class="sd">    This function runs a fixed number of RATTLE iterations without convergence</span>
+<span class="sd">    checking during the loop. The final error is returned as a wp.array.</span>
+<span class="sd">    The caller can check convergence by inspecting the error value.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current (constrained) positions. Shape (N,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Velocities. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Scratch array for max error tracking. Shape (1,).</span>
+<span class="sd">        Caller must pre-allocate. Zeroed internally between iterations.</span>
+<span class="sd">    num_iter : int, optional</span>
+<span class="sd">        Number of iterations to run. Default 10.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array(dtype=wp.float64)</span>
+<span class="sd">        Final constraint error :math:`|v_{ij} \cdot r_{ij}|`. Shape (1,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_iter</span><span class="p">):</span>
+        <span class="n">max_error</span> <span class="o">=</span> <span class="n">rattle_iteration</span><span class="p">(</span>
+            <span class="n">positions</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">bond_atom_i</span><span class="p">,</span> <span class="n">bond_atom_j</span><span class="p">,</span> <span class="n">max_error</span><span class="p">,</span> <span class="n">device</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">max_error</span></div>
+
+
+
+<div class="viewcode-block" id="rattle_iteration_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.rattle_iteration_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">rattle_iteration_out</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocity_corrections</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute RATTLE corrections without applying (non-mutating).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current (constrained) positions. Shape (N,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Velocities. Shape (N,).</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    velocity_corrections : wp.array</span>
+<span class="sd">        Output corrections. Shape (N,). Zeroed internally before each use.</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Output max error. Shape (1,). Zeroed internally before each use.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[wp.array, wp.array]</span>
+<span class="sd">        (velocity_corrections, max_error)</span>
+<span class="sd">        max_error is shape (1,)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">velocity_corrections</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">max_error</span><span class="o">.</span><span class="n">zero_</span><span class="p">()</span>
+    <span class="n">num_bonds</span> <span class="o">=</span> <span class="n">bond_atom_i</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_rattle_iteration_out_tiled_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_bonds</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">bond_atom_i</span><span class="p">,</span>
+            <span class="n">bond_atom_j</span><span class="p">,</span>
+            <span class="n">velocity_corrections</span><span class="p">,</span>
+            <span class="n">max_error</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">block_dim</span><span class="o">=</span><span class="n">TILE_DIM</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">velocity_corrections</span><span class="p">,</span> <span class="n">max_error</span></div>
+
+
+
+<div class="viewcode-block" id="rattle_constraints_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.constraints.rattle_constraints_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">rattle_constraints_out</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_i</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">bond_atom_j</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">max_error</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">num_iter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply RATTLE velocity constraints (non-mutating).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Current (constrained) positions. Shape (N,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Velocities. Shape (N,).</span>
+<span class="sd">    masses : wp.array</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    bond_atom_i : wp.array(dtype=wp.int32)</span>
+<span class="sd">        First atom index for each bond. Shape (M,).</span>
+<span class="sd">    bond_atom_j : wp.array(dtype=wp.int32)</span>
+<span class="sd">        Second atom index for each bond. Shape (M,).</span>
+<span class="sd">    velocities_out : wp.array</span>
+<span class="sd">        Output velocities. Shape (N,). Caller must pre-allocate.</span>
+<span class="sd">        Caller must copy input velocities into this array before calling</span>
+<span class="sd">        (e.g., via ``wp.copy(velocities_out, velocities)``).</span>
+<span class="sd">    max_error : wp.array(dtype=wp.float64)</span>
+<span class="sd">        Scratch array for max error tracking. Shape (1,).</span>
+<span class="sd">        Caller must pre-allocate. Zeroed internally between iterations.</span>
+<span class="sd">    num_iter : int, optional</span>
+<span class="sd">        Number of iterations to run. Default 10.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[wp.array, wp.array]</span>
+<span class="sd">        (velocities_out, final_error)</span>
+<span class="sd">        final_error is shape (1,)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">error</span> <span class="o">=</span> <span class="n">rattle_constraints</span><span class="p">(</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">velocities_out</span><span class="p">,</span>
+        <span class="n">masses</span><span class="p">,</span>
+        <span class="n">bond_atom_i</span><span class="p">,</span>
+        <span class="n">bond_atom_j</span><span class="p">,</span>
+        <span class="n">max_error</span><span class="p">,</span>
+        <span class="n">num_iter</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">velocities_out</span><span class="p">,</span> <span class="n">error</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

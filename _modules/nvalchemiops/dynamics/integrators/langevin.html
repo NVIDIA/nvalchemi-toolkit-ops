@@ -1,0 +1,1649 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.dynamics.integrators.langevin &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/dynamics/integrators/langevin';</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.dynamics.integrators.langevin</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Langevin Dynamics Kernels</span>
+<span class="sd">=========================</span>
+
+<span class="sd">GPU-accelerated Warp kernels for Langevin dynamics (NVT ensemble) using</span>
+<span class="sd">the BAOAB splitting scheme for optimal configurational sampling.</span>
+
+<span class="sd">This module provides both mutating (in-place) and non-mutating versions</span>
+<span class="sd">of each kernel for gradient tracking compatibility.</span>
+
+<span class="sd">MATHEMATICAL FORMULATION</span>
+<span class="sd">========================</span>
+
+<span class="sd">Langevin equation of motion:</span>
+
+<span class="sd">.. math::</span>
+
+<span class="sd">    m\\ddot{\\mathbf{r}} = \\mathbf{F} - \\gamma m \\mathbf{v}</span>
+<span class="sd">                         + \\sqrt{2 \\gamma m k_B T} \\boldsymbol{\\eta}(t)</span>
+
+<span class="sd">BAOAB SPLITTING SCHEME</span>
+<span class="sd">======================</span>
+
+<span class="sd">The BAOAB splitting provides optimal configurational sampling accuracy:</span>
+
+<span class="sd">.. math::</span>
+
+<span class="sd">    B: \\quad \\mathbf{v} \\leftarrow \\mathbf{v} + \\frac{\\Delta t}{2m}\\mathbf{F}</span>
+
+<span class="sd">    A: \\quad \\mathbf{r} \\leftarrow \\mathbf{r} + \\frac{\\Delta t}{2}\\mathbf{v}</span>
+
+<span class="sd">    O: \\quad \\mathbf{v} \\leftarrow c_1 \\mathbf{v} + c_2 \\boldsymbol{\\xi}</span>
+
+<span class="sd">    A: \\quad \\mathbf{r} \\leftarrow \\mathbf{r} + \\frac{\\Delta t}{2}\\mathbf{v}</span>
+
+<span class="sd">    B: \\quad \\mathbf{v} \\leftarrow \\mathbf{v} + \\frac{\\Delta t}{2m}\\mathbf{F}</span>
+
+<span class="sd">where:</span>
+<span class="sd">- :math:`c_1 = e^{-\\gamma \\Delta t}` (velocity damping factor)</span>
+<span class="sd">- :math:`c_2 = \\sqrt{k_B T (1 - c_1^2)/m}` (noise amplitude)</span>
+<span class="sd">- :math:`\\boldsymbol{\\xi} \\sim \\mathcal{N}(0, 1)` (standard normal)</span>
+
+<span class="sd">BATCH MODE</span>
+<span class="sd">==========</span>
+
+<span class="sd">Supports three execution modes:</span>
+
+<span class="sd">**Single System Mode**::</span>
+
+<span class="sd">    dt = wp.array([0.001], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    temperature = wp.array([1.0], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    friction = wp.array([1.0], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">    langevin_baoab_half_step(</span>
+<span class="sd">        positions, velocities, forces, masses, dt, temperature, friction,</span>
+<span class="sd">        random_seed=42</span>
+<span class="sd">    )</span>
+
+<span class="sd">**Batch Mode with batch_idx**::</span>
+
+<span class="sd">    # Per-system parameters (different T, gamma, dt for each system)</span>
+<span class="sd">    batch_idx = wp.array([0]*N0 + [1]*N1 + [2]*N2, dtype=wp.int32, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    dt = wp.array([dt0, dt1, dt2], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    temperature = wp.array([T0, T1, T2], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    friction = wp.array([gamma0, gamma1, gamma2], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">    langevin_baoab_half_step(</span>
+<span class="sd">        positions, velocities, forces, masses, dt, temperature, friction,</span>
+<span class="sd">        random_seed=42, batch_idx=batch_idx</span>
+<span class="sd">    )</span>
+
+<span class="sd">**Batch Mode with atom_ptr**::</span>
+
+<span class="sd">    atom_ptr = wp.array([0, N0, N0+N1, N0+N1+N2], dtype=wp.int32, device=&quot;cuda:0&quot;)</span>
+<span class="sd">    # Same per-system parameters as batch_idx mode</span>
+
+<span class="sd">    langevin_baoab_half_step(</span>
+<span class="sd">        positions, velocities, forces, masses, dt, temperature, friction,</span>
+<span class="sd">        random_seed=42, atom_ptr=atom_ptr</span>
+<span class="sd">    )</span>
+
+<span class="sd">REFERENCES</span>
+<span class="sd">==========</span>
+
+<span class="sd">- Leimkuhler &amp; Matthews (2013). J. Chem. Phys. 138, 174102 (BAOAB integrator)</span>
+<span class="sd">- Leimkuhler &amp; Matthews (2015). Molecular Dynamics (textbook)</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.utils.launch_helpers</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">build_family_dict</span><span class="p">,</span>
+    <span class="n">dispatch_family</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.dynamics.utils.shared_kernels</span><span class="w"> </span><span class="kn">import</span> <span class="n">velocity_kick_families</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.warp_dispatch</span><span class="w"> </span><span class="kn">import</span> <span class="n">validate_out_array</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># Mutating (in-place) APIs</span>
+    <span class="s2">&quot;langevin_baoab_half_step&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;langevin_baoab_finalize&quot;</span><span class="p">,</span>
+    <span class="c1"># Non-mutating (output) APIs</span>
+    <span class="s2">&quot;langevin_baoab_half_step_out&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;langevin_baoab_finalize_out&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Mutating Kernels (in-place updates)</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_langevin_baoab_half_step_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;BAOAB Langevin half-step: B-A-O-A sequence (in-place).</span>
+
+<span class="sd">    Performs the first four operations of BAOAB:</span>
+<span class="sd">    B: v += (dt/2m)*F</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+<span class="sd">    O: v = c1*v + c2*xi (thermostat)</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    temperature : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Temperature (kT). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    friction : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Friction coefficient. Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">pos</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">vel</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">force</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">mass</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+
+    <span class="n">dt_val</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">kT</span> <span class="o">=</span> <span class="n">temperature</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">gamma</span> <span class="o">=</span> <span class="n">friction</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">mass</span>
+    <span class="n">half_dt</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dt_val</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dt_val</span>
+
+    <span class="c1"># B step: v += (dt/2m)*F</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">vel</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">force</span> <span class="o">*</span> <span class="n">inv_mass</span>
+
+    <span class="c1"># A step: r += (dt/2)*v</span>
+    <span class="n">pos_step</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="c1"># O step: Ornstein-Uhlenbeck thermostat</span>
+    <span class="n">gamma_dt</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">c1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">gamma_dt</span><span class="p">)</span>
+    <span class="n">c2_sq</span> <span class="o">=</span> <span class="n">kT</span> <span class="o">*</span> <span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">-</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">c1</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_mass</span>
+    <span class="n">c2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">c2_sq</span><span class="p">)</span>
+
+    <span class="c1"># Generate Gaussian random numbers using Box-Muller</span>
+    <span class="n">rng_state</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">rand_init</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">random_seed</span><span class="p">),</span> <span class="n">atom_idx</span><span class="p">)</span>
+
+    <span class="n">xi</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">vel</span><span class="p">)(</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+    <span class="p">)</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">vel_step</span> <span class="o">+</span> <span class="n">c2</span> <span class="o">*</span> <span class="n">xi</span>
+
+    <span class="c1"># A step: r += (dt/2)*v</span>
+    <span class="n">pos_step2</span> <span class="o">=</span> <span class="n">pos_step</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pos_step2</span>
+    <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">vel_step</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Non-Mutating Kernels (write to output arrays)</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_langevin_baoab_half_step_out_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;BAOAB Langevin half-step: B-A-O-A sequence (non-mutating).</span>
+
+<span class="sd">    Performs the first four operations of BAOAB:</span>
+<span class="sd">    B: v += (dt/2m)*F</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+<span class="sd">    O: v = c1*v + c2*xi (thermostat)</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,).</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    temperature : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Temperature (kT). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    friction : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Friction coefficient. Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+<span class="sd">    positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Output atomic positions. Shape (N,).</span>
+<span class="sd">    velocities_out : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Output atomic velocities. Shape (N,).</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+
+    <span class="n">pos</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">vel</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">force</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">mass</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+
+    <span class="n">dt_val</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">kT</span> <span class="o">=</span> <span class="n">temperature</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">gamma</span> <span class="o">=</span> <span class="n">friction</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">inv_mass</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">mass</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">mass</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">))</span>
+    <span class="n">half_dt</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dt_val</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dt_val</span>
+
+    <span class="c1"># B step</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">vel</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">force</span> <span class="o">*</span> <span class="n">inv_mass</span>
+
+    <span class="c1"># A step</span>
+    <span class="n">pos_step</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="c1"># O step</span>
+    <span class="n">gamma_dt</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">c1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">gamma_dt</span><span class="p">)</span>
+    <span class="n">c2_sq</span> <span class="o">=</span> <span class="n">kT</span> <span class="o">*</span> <span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">-</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">c1</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_mass</span>
+    <span class="n">c2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">c2_sq</span><span class="p">)</span>
+
+    <span class="n">rng_state</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">rand_init</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">random_seed</span><span class="p">),</span> <span class="n">atom_idx</span><span class="p">)</span>
+
+    <span class="n">xi</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">vel</span><span class="p">)(</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+    <span class="p">)</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">vel_step</span> <span class="o">+</span> <span class="n">c2</span> <span class="o">*</span> <span class="n">xi</span>
+
+    <span class="c1"># A step</span>
+    <span class="n">pos_step2</span> <span class="o">=</span> <span class="n">pos_step</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="n">positions_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pos_step2</span>
+    <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">vel_step</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Batched Mutating Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_batch_langevin_baoab_half_step_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;BAOAB Langevin half-step for batched systems (in-place).</span>
+
+<span class="sd">    Performs the first four operations of BAOAB:</span>
+<span class="sd">    B: v += (dt/2m)*F</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+<span class="sd">    O: v = c1*v + c2*xi (thermostat)</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32)</span>
+<span class="sd">        System index for each atom. Shape (N,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    temperature : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Temperature (kT). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    friction : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Friction coefficient. Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms_total]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">system_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+
+    <span class="n">pos</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">vel</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">force</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">mass</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+
+    <span class="n">dt_val</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">system_id</span><span class="p">]</span>
+    <span class="n">kT</span> <span class="o">=</span> <span class="n">temperature</span><span class="p">[</span><span class="n">system_id</span><span class="p">]</span>
+    <span class="n">gamma</span> <span class="o">=</span> <span class="n">friction</span><span class="p">[</span><span class="n">system_id</span><span class="p">]</span>
+
+    <span class="c1"># Guard against division by zero: if mass is zero, set inv_mass to zero</span>
+    <span class="k">if</span> <span class="n">mass</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">):</span>
+        <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">mass</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">half_dt</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dt_val</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dt_val</span>
+
+    <span class="c1"># B step</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">vel</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">force</span> <span class="o">*</span> <span class="n">inv_mass</span>
+
+    <span class="c1"># A step</span>
+    <span class="n">pos_step</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="c1"># O step</span>
+    <span class="n">gamma_dt</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">c1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">gamma_dt</span><span class="p">)</span>
+    <span class="n">c2_sq</span> <span class="o">=</span> <span class="n">kT</span> <span class="o">*</span> <span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">-</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">c1</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_mass</span>
+    <span class="n">c2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">c2_sq</span><span class="p">)</span>
+
+    <span class="n">rng_state</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">rand_init</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">random_seed</span><span class="p">),</span> <span class="n">atom_idx</span><span class="p">)</span>
+
+    <span class="n">xi</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">vel</span><span class="p">)(</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+    <span class="p">)</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">vel_step</span> <span class="o">+</span> <span class="n">c2</span> <span class="o">*</span> <span class="n">xi</span>
+
+    <span class="c1"># A step</span>
+    <span class="n">pos_step2</span> <span class="o">=</span> <span class="n">pos_step</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pos_step2</span>
+    <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">vel_step</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Batched Non-Mutating Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_batch_langevin_baoab_half_step_out_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;BAOAB Langevin half-step for batched systems (non-mutating).</span>
+
+<span class="sd">    Performs the first four operations of BAOAB:</span>
+<span class="sd">    B: v += (dt/2m)*F</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+<span class="sd">    O: v = c1*v + c2*xi (thermostat)</span>
+<span class="sd">    A: r += (dt/2)*v</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,).</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32)</span>
+<span class="sd">        System index for each atom. Shape (N,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    temperature : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Temperature (kT). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    friction : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Friction coefficient. Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+<span class="sd">    positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Output atomic positions. Shape (N,).</span>
+<span class="sd">    velocities_out : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Output atomic velocities. Shape (N,).</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms_total]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">system_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+
+    <span class="n">pos</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">vel</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">force</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">mass</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+
+    <span class="n">dt_val</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">system_id</span><span class="p">]</span>
+    <span class="n">kT</span> <span class="o">=</span> <span class="n">temperature</span><span class="p">[</span><span class="n">system_id</span><span class="p">]</span>
+    <span class="n">gamma</span> <span class="o">=</span> <span class="n">friction</span><span class="p">[</span><span class="n">system_id</span><span class="p">]</span>
+
+    <span class="c1"># Guard against division by zero: if mass is zero, set inv_mass to zero</span>
+    <span class="k">if</span> <span class="n">mass</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">):</span>
+        <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">mass</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">half_dt</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dt_val</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dt_val</span>
+
+    <span class="c1"># B step</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">vel</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">force</span> <span class="o">*</span> <span class="n">inv_mass</span>
+
+    <span class="c1"># A step</span>
+    <span class="n">pos_step</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="c1"># O step</span>
+    <span class="n">gamma_dt</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">c1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">gamma_dt</span><span class="p">)</span>
+    <span class="n">c2_sq</span> <span class="o">=</span> <span class="n">kT</span> <span class="o">*</span> <span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">-</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">c1</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_mass</span>
+    <span class="n">c2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">c2_sq</span><span class="p">)</span>
+
+    <span class="n">rng_state</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">rand_init</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">random_seed</span><span class="p">),</span> <span class="n">atom_idx</span><span class="p">)</span>
+
+    <span class="n">xi</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">vel</span><span class="p">)(</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+    <span class="p">)</span>
+    <span class="n">vel_step</span> <span class="o">=</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">vel_step</span> <span class="o">+</span> <span class="n">c2</span> <span class="o">*</span> <span class="n">xi</span>
+
+    <span class="n">pos_step2</span> <span class="o">=</span> <span class="n">pos_step</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+    <span class="n">positions_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pos_step2</span>
+    <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">vel_step</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Pointer-Based (CSR) Mutating Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_langevin_baoab_half_step_ptr_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;BAOAB Langevin half-step using atom_ptr (in-place).</span>
+
+<span class="sd">    Each thread processes one system&#39;s atoms sequentially.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (num_atoms_total,). MODIFIED in-place.</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (num_atoms_total,). MODIFIED in-place.</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms. Shape (num_atoms_total,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (num_atoms_total,).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32)</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep per system. Shape (num_systems,).</span>
+<span class="sd">    temperature : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Temperature (kT) per system. Shape (num_systems,).</span>
+<span class="sd">    friction : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Friction coefficient per system. Shape (num_systems,).</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_systems]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">a0</span> <span class="o">=</span> <span class="n">atom_ptr</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">a1</span> <span class="o">=</span> <span class="n">atom_ptr</span><span class="p">[</span><span class="n">sys_id</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+
+    <span class="n">dt_val</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">kT</span> <span class="o">=</span> <span class="n">temperature</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">gamma</span> <span class="o">=</span> <span class="n">friction</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="n">half_dt</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dt_val</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">gamma_dt</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">c1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">gamma_dt</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">a0</span><span class="p">,</span> <span class="n">a1</span><span class="p">):</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">vel</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">force</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">mass</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+        <span class="c1"># Guard against division by zero: if mass is zero, set inv_mass to zero</span>
+        <span class="k">if</span> <span class="n">mass</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">):</span>
+            <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">mass</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
+
+        <span class="c1"># B step: v += (dt/2m)*F</span>
+        <span class="n">vel_step</span> <span class="o">=</span> <span class="n">vel</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">force</span> <span class="o">*</span> <span class="n">inv_mass</span>
+
+        <span class="c1"># A step: r += (dt/2)*v</span>
+        <span class="n">pos_step</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+        <span class="c1"># O step: Ornstein-Uhlenbeck thermostat</span>
+        <span class="n">c2_sq</span> <span class="o">=</span> <span class="n">kT</span> <span class="o">*</span> <span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">-</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">c1</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_mass</span>
+        <span class="n">c2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">c2_sq</span><span class="p">)</span>
+
+        <span class="c1"># Generate Gaussian random numbers</span>
+        <span class="n">rng_state</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">rand_init</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">random_seed</span><span class="p">),</span> <span class="n">i</span><span class="p">)</span>
+        <span class="n">xi</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">vel</span><span class="p">)(</span>
+            <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+            <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+            <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="p">)</span>
+        <span class="n">vel_step</span> <span class="o">=</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">vel_step</span> <span class="o">+</span> <span class="n">c2</span> <span class="o">*</span> <span class="n">xi</span>
+
+        <span class="c1"># A step: r += (dt/2)*v</span>
+        <span class="n">pos_step2</span> <span class="o">=</span> <span class="n">pos_step</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+        <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">pos_step2</span>
+        <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">vel_step</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Pointer-Based (CSR) Non-Mutating Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_langevin_baoab_half_step_ptr_out_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;BAOAB Langevin half-step using atom_ptr (non-mutating).</span>
+
+<span class="sd">    Each thread processes one system&#39;s atoms sequentially.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (num_atoms_total,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (num_atoms_total,).</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms. Shape (num_atoms_total,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (num_atoms_total,).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32)</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep per system. Shape (num_systems,).</span>
+<span class="sd">    temperature : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Temperature (kT) per system. Shape (num_systems,).</span>
+<span class="sd">    friction : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Friction coefficient per system. Shape (num_systems,).</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+<span class="sd">    positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Output positions. Shape (num_atoms_total,).</span>
+<span class="sd">    velocities_out : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Output velocities. Shape (num_atoms_total,).</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_systems]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">a0</span> <span class="o">=</span> <span class="n">atom_ptr</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">a1</span> <span class="o">=</span> <span class="n">atom_ptr</span><span class="p">[</span><span class="n">sys_id</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
+
+    <span class="n">dt_val</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">kT</span> <span class="o">=</span> <span class="n">temperature</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">gamma</span> <span class="o">=</span> <span class="n">friction</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="n">half_dt</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">dt_val</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">gamma_dt</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">*</span> <span class="n">dt_val</span>
+    <span class="n">c1</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="n">gamma_dt</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">a0</span><span class="p">,</span> <span class="n">a1</span><span class="p">):</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">vel</span> <span class="o">=</span> <span class="n">velocities</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">force</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+        <span class="n">mass</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+
+        <span class="c1"># Guard against division by zero: if mass is zero, set inv_mass to zero</span>
+        <span class="k">if</span> <span class="n">mass</span> <span class="o">&gt;</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">):</span>
+            <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">mass</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">inv_mass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">mass</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
+
+        <span class="c1"># B step</span>
+        <span class="n">vel_step</span> <span class="o">=</span> <span class="n">vel</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">force</span> <span class="o">*</span> <span class="n">inv_mass</span>
+
+        <span class="c1"># A step</span>
+        <span class="n">pos_step</span> <span class="o">=</span> <span class="n">pos</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+        <span class="c1"># O step</span>
+        <span class="n">c2_sq</span> <span class="o">=</span> <span class="n">kT</span> <span class="o">*</span> <span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">-</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">c1</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_mass</span>
+        <span class="n">c2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">c2_sq</span><span class="p">)</span>
+
+        <span class="n">rng_state</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">rand_init</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">random_seed</span><span class="p">),</span> <span class="n">i</span><span class="p">)</span>
+        <span class="n">xi</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">vel</span><span class="p">)(</span>
+            <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+            <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+            <span class="nb">type</span><span class="p">(</span><span class="n">kT</span><span class="p">)(</span><span class="n">wp</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">rng_state</span><span class="p">)),</span>
+        <span class="p">)</span>
+        <span class="n">vel_step</span> <span class="o">=</span> <span class="n">c1</span> <span class="o">*</span> <span class="n">vel_step</span> <span class="o">+</span> <span class="n">c2</span> <span class="o">*</span> <span class="n">xi</span>
+
+        <span class="c1"># A step</span>
+        <span class="n">pos_step2</span> <span class="o">=</span> <span class="n">pos_step</span> <span class="o">+</span> <span class="n">half_dt</span> <span class="o">*</span> <span class="n">vel_step</span>
+
+        <span class="n">positions_out</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">pos_step2</span>
+        <span class="n">velocities_out</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">vel_step</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Kernel Overloads via KernelFamily</span>
+<span class="c1"># ==============================================================================</span>
+
+<span class="c1"># Half-step (inplace) -- keyed by vec_dtype</span>
+<span class="n">_half_step_families</span> <span class="o">=</span> <span class="n">build_family_dict</span><span class="p">(</span>
+    <span class="n">_langevin_baoab_half_step_kernel</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">v</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="p">[</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+    <span class="p">],</span>
+    <span class="n">_batch_langevin_baoab_half_step_kernel</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">v</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="p">[</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+    <span class="p">],</span>
+    <span class="n">_langevin_baoab_half_step_ptr_kernel</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">v</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="p">[</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+
+<span class="c1"># Half-step (out) -- keyed by vec_dtype</span>
+<span class="n">_half_step_out_families</span> <span class="o">=</span> <span class="n">build_family_dict</span><span class="p">(</span>
+    <span class="n">_langevin_baoab_half_step_out_kernel</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">v</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="p">[</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+    <span class="p">],</span>
+    <span class="n">_batch_langevin_baoab_half_step_out_kernel</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">v</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="p">[</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+    <span class="p">],</span>
+    <span class="n">_langevin_baoab_half_step_ptr_out_kernel</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">v</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="p">[</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">,</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Functional Interface - Mutating</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="langevin_baoab_half_step">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_half_step">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">langevin_baoab_half_step</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Perform BAOAB Langevin half-step (B-A-O-A sequence) in-place.</span>
+
+<span class="sd">    This function performs the first four operations of the BAOAB splitting:</span>
+<span class="sd">    B (velocity), A (position), O (thermostat), A (position).</span>
+
+<span class="sd">    After calling this function, recalculate forces at the new positions,</span>
+<span class="sd">    then call langevin_baoab_finalize() to complete the step.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    temperature : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Temperature (kT). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    friction : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Friction coefficient. Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. For batched mode (atomic operations).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from positions.</span>
+
+<span class="sd">    Example</span>
+<span class="sd">    -------</span>
+<span class="sd">    Single system NVT simulation::</span>
+
+<span class="sd">        import warp as wp</span>
+<span class="sd">        import numpy as np</span>
+
+<span class="sd">        # Setup</span>
+<span class="sd">        positions = wp.array(np.random.randn(100, 3), dtype=wp.vec3d, device=&quot;cuda:0&quot;)</span>
+<span class="sd">        velocities = wp.array(np.random.randn(100, 3), dtype=wp.vec3d, device=&quot;cuda:0&quot;)</span>
+<span class="sd">        forces = wp.array(np.random.randn(100, 3), dtype=wp.vec3d, device=&quot;cuda:0&quot;)</span>
+<span class="sd">        masses = wp.array(np.ones(100), dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">        dt = wp.array([0.001], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">        temperature = wp.array([1.0], dtype=wp.float64, device=&quot;cuda:0&quot;)  # kT in energy units</span>
+<span class="sd">        friction = wp.array([1.0], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">        # BAOAB half-step</span>
+<span class="sd">        langevin_baoab_half_step(</span>
+<span class="sd">            positions, velocities, forces, masses, dt, temperature, friction,</span>
+<span class="sd">            random_seed=42</span>
+<span class="sd">        )</span>
+
+<span class="sd">    Complete BAOAB step::</span>
+
+<span class="sd">        for step in range(num_steps):</span>
+<span class="sd">            # Step 1: BAOAB half-step (B-A-O-A)</span>
+<span class="sd">            langevin_baoab_half_step(</span>
+<span class="sd">                positions, velocities, forces, masses, dt, temperature, friction,</span>
+<span class="sd">                random_seed=step</span>
+<span class="sd">            )</span>
+
+<span class="sd">            # Step 2: Recalculate forces</span>
+<span class="sd">            forces = compute_forces(positions)</span>
+
+<span class="sd">            # Step 3: Final B step</span>
+<span class="sd">            langevin_baoab_finalize(velocities, forces, masses, dt)</span>
+
+<span class="sd">    Batched mode::</span>
+
+<span class="sd">        # With batch_idx (3 systems)</span>
+<span class="sd">        batch_idx = wp.array([0]*30 + [1]*40 + [2]*30, dtype=wp.int32, device=&quot;cuda:0&quot;)</span>
+<span class="sd">        dt = wp.array([0.001, 0.002, 0.0015], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">        temperature = wp.array([1.0, 1.5, 1.2], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+<span class="sd">        friction = wp.array([1.0, 1.0, 1.0], dtype=wp.float64, device=&quot;cuda:0&quot;)</span>
+
+<span class="sd">        langevin_baoab_half_step(</span>
+<span class="sd">            positions, velocities, forces, masses, dt, temperature, friction,</span>
+<span class="sd">            random_seed=42, batch_idx=batch_idx</span>
+<span class="sd">        )</span>
+
+<span class="sd">    See Also</span>
+<span class="sd">    --------</span>
+<span class="sd">    langevin_baoab_finalize : Complete the BAOAB step</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">seed</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">(</span><span class="n">random_seed</span><span class="p">)</span>
+    <span class="n">dispatch_family</span><span class="p">(</span>
+        <span class="n">_half_step_families</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">inputs_single</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">forces</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">temperature</span><span class="p">,</span>
+            <span class="n">friction</span><span class="p">,</span>
+            <span class="n">seed</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">inputs_batch</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">forces</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">temperature</span><span class="p">,</span>
+            <span class="n">friction</span><span class="p">,</span>
+            <span class="n">seed</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">inputs_ptr</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">forces</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">atom_ptr</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">temperature</span><span class="p">,</span>
+            <span class="n">friction</span><span class="p">,</span>
+            <span class="n">seed</span><span class="p">,</span>
+        <span class="p">],</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="langevin_baoab_finalize">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_finalize">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">langevin_baoab_finalize</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">forces_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Finalize BAOAB Langevin step (final B step) in-place.</span>
+
+<span class="sd">    Completes the BAOAB sequence with the final velocity half-step update</span>
+<span class="sd">    using forces calculated at the new positions.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    forces_new : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces at new positions. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    dt : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. For batched mode (atomic operations).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from velocities.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">dispatch_family</span><span class="p">(</span>
+        <span class="n">velocity_kick_families</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">inputs_single</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces_new</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">velocities</span><span class="p">],</span>
+        <span class="n">inputs_batch</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces_new</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">velocities</span><span class="p">],</span>
+        <span class="n">inputs_ptr</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces_new</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">atom_ptr</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">velocities</span><span class="p">],</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Functional Interface - Non-Mutating</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="langevin_baoab_half_step_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_half_step_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">langevin_baoab_half_step_out</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">friction</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">random_seed</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Perform BAOAB Langevin half-step (B-A-O-A sequence) non-mutating.</span>
+
+<span class="sd">    Writes new positions and velocities to output arrays.</span>
+<span class="sd">    Input arrays are NOT modified.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions at time t. Shape (N,).</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic velocities at time t. Shape (N,).</span>
+<span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces on atoms at time t. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    dt : wp.array</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    temperature : wp.array</span>
+<span class="sd">        Temperature (kT). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    friction : wp.array</span>
+<span class="sd">        Friction coefficient. Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    random_seed : int</span>
+<span class="sd">        Random seed for stochastic forces.</span>
+<span class="sd">    positions_out : wp.array</span>
+<span class="sd">        Pre-allocated output array for new positions.  Must match</span>
+<span class="sd">        ``positions`` in shape, dtype, and device.</span>
+<span class="sd">    velocities_out : wp.array</span>
+<span class="sd">        Pre-allocated output array for new velocities.  Must match</span>
+<span class="sd">        ``velocities`` in shape, dtype, and device.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. For batched mode (atomic operations).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from positions.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[wp.array, wp.array]</span>
+<span class="sd">        (positions_out, velocities_out) - New positions and velocities.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">validate_out_array</span><span class="p">(</span><span class="n">positions_out</span><span class="p">,</span> <span class="n">positions</span><span class="p">,</span> <span class="s2">&quot;positions_out&quot;</span><span class="p">)</span>
+    <span class="n">validate_out_array</span><span class="p">(</span><span class="n">velocities_out</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="s2">&quot;velocities_out&quot;</span><span class="p">)</span>
+    <span class="n">seed</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">uint64</span><span class="p">(</span><span class="n">random_seed</span><span class="p">)</span>
+    <span class="n">dispatch_family</span><span class="p">(</span>
+        <span class="n">_half_step_out_families</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">inputs_single</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">forces</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">temperature</span><span class="p">,</span>
+            <span class="n">friction</span><span class="p">,</span>
+            <span class="n">seed</span><span class="p">,</span>
+            <span class="n">positions_out</span><span class="p">,</span>
+            <span class="n">velocities_out</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">inputs_batch</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">forces</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">batch_idx</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">temperature</span><span class="p">,</span>
+            <span class="n">friction</span><span class="p">,</span>
+            <span class="n">seed</span><span class="p">,</span>
+            <span class="n">positions_out</span><span class="p">,</span>
+            <span class="n">velocities_out</span><span class="p">,</span>
+        <span class="p">],</span>
+        <span class="n">inputs_ptr</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">positions</span><span class="p">,</span>
+            <span class="n">velocities</span><span class="p">,</span>
+            <span class="n">forces</span><span class="p">,</span>
+            <span class="n">masses</span><span class="p">,</span>
+            <span class="n">atom_ptr</span><span class="p">,</span>
+            <span class="n">dt</span><span class="p">,</span>
+            <span class="n">temperature</span><span class="p">,</span>
+            <span class="n">friction</span><span class="p">,</span>
+            <span class="n">seed</span><span class="p">,</span>
+            <span class="n">positions_out</span><span class="p">,</span>
+            <span class="n">velocities_out</span><span class="p">,</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">positions_out</span><span class="p">,</span> <span class="n">velocities_out</span></div>
+
+
+
+<div class="viewcode-block" id="langevin_baoab_finalize_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.integrators.langevin.langevin_baoab_finalize_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">langevin_baoab_finalize_out</span><span class="p">(</span>
+    <span class="n">velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">forces_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">atom_ptr</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Finalize BAOAB Langevin step (final B step) non-mutating.</span>
+
+<span class="sd">    Writes full-step velocities to output array.</span>
+<span class="sd">    Input arrays are NOT modified.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Velocities after half-step. Shape (N,).</span>
+<span class="sd">    forces_new : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Forces at new positions. Shape (N,).</span>
+<span class="sd">    masses : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Atomic masses. Shape (N,).</span>
+<span class="sd">    dt : wp.array</span>
+<span class="sd">        Timestep(s). Shape (1,) for single, (B,) for batched.</span>
+<span class="sd">    velocities_out : wp.array</span>
+<span class="sd">        Pre-allocated output array for final velocities.  Must match</span>
+<span class="sd">        ``velocities`` in shape, dtype, and device.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. For batched mode (atomic operations).</span>
+<span class="sd">    atom_ptr : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        CSR-style pointers. Shape (num_systems + 1,). For batched mode (sequential per-system).</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from velocities.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Full-step velocities.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">validate_out_array</span><span class="p">(</span><span class="n">velocities_out</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="s2">&quot;velocities_out&quot;</span><span class="p">)</span>
+    <span class="n">dispatch_family</span><span class="p">(</span>
+        <span class="n">velocity_kick_families</span><span class="p">,</span>
+        <span class="n">velocities</span><span class="p">,</span>
+        <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+        <span class="n">atom_ptr</span><span class="o">=</span><span class="n">atom_ptr</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">inputs_single</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces_new</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">velocities_out</span><span class="p">],</span>
+        <span class="n">inputs_batch</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces_new</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">velocities_out</span><span class="p">],</span>
+        <span class="n">inputs_ptr</span><span class="o">=</span><span class="p">[</span><span class="n">velocities</span><span class="p">,</span> <span class="n">forces_new</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">atom_ptr</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="n">velocities_out</span><span class="p">],</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">velocities_out</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

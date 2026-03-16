@@ -1,0 +1,67 @@
+
+:orphan:
+
+.. _sphx_glr_examples_dynamics_sg_execution_times:
+
+
+Computation times
+=================
+**00:27.209** total execution time for 11 files **from examples/dynamics**:
+
+.. container::
+
+  .. raw:: html
+
+    <style scoped>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet" />
+    </style>
+    <script src="https://code.jquery.com/jquery-3.7.0.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    <script type="text/javascript" class="init">
+    $(document).ready( function () {
+        $('table.sg-datatable').DataTable({order: [[1, 'desc']]});
+    } );
+    </script>
+
+  .. list-table::
+   :header-rows: 1
+   :class: table table-striped sg-datatable
+
+   * - Example
+     - Time
+     - Mem (MB)
+   * - :ref:`sphx_glr_examples_dynamics_04_npt_integration.py` (``04_npt_integration.py``)
+     - 00:04.234
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_03_nph_integration.py` (``03_nph_integration.py``)
+     - 00:04.195
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_02_velocity_verlet_integration.py` (``02_velocity_verlet_integration.py``)
+     - 00:03.666
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_01_langevin_integration.py` (``01_langevin_integration.py``)
+     - 00:03.206
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_08_fire_batched.py` (``08_fire_batched.py``)
+     - 00:02.821
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_09_fire2_optimization.py` (``09_fire2_optimization.py``)
+     - 00:02.034
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_06_fire_optimization.py` (``06_fire_optimization.py``)
+     - 00:01.582
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_10_fire2_batched.py` (``10_fire2_batched.py``)
+     - 00:01.559
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_05_batched_langevin_dynamics.py` (``05_batched_langevin_dynamics.py``)
+     - 00:01.456
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_07_fire_variable_cell.py` (``07_fire_variable_cell.py``)
+     - 00:01.249
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_11_fire2_variable_cell.py` (``11_fire2_variable_cell.py``)
+     - 00:01.207
+     - 0.0

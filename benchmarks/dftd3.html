@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>DFT-D3 Dispersion Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+    <title>DFT-D3 Dispersion Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
   
   
   
@@ -42,9 +42,9 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=95e61db4"></script>
-    <script src="../_static/doctools.js?v=9bcbadda"></script>
-    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,11 +52,11 @@
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'benchmarks/dftd3';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="API Reference" href="../modules/index.html" />
+    <link rel="next" title="Dynamics Benchmarks" href="dynamics.html" />
     <link rel="prev" title="Electrostatics Benchmarks" href="electrostatics.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -169,6 +169,13 @@
                     <li class="nav-item current active">
                       <a class="nav-link nav-internal" href="index.html">
                         Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../changes.html">
+                        Change Log
                       </a>
                     </li>
                 
@@ -299,6 +306,13 @@ document.write(`
                 
 
                     <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
                       <a class="nav-link nav-internal" href="../modules/index.html">
                         API
                       </a>
@@ -354,6 +368,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="neighborlist.html">Neighbor List Benchmarks</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html">Electrostatics Benchmarks</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">DFT-D3 Dispersion Benchmarks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dynamics.html">Dynamics Benchmarks</a></li>
 </ul>
 </div>
 </nav></div>
@@ -443,88 +458,118 @@ Backend Comparison</label><div class="sd-tab-content docutils">
 <p>Simple comparison of single (non-batched) system computations between backends,
 where we scale up the size of the supercell.</p>
 <p class="rubric" id="time-scaling">Time Scaling</p>
-<figure class="align-center" id="id7">
+<figure class="align-center" id="id10">
 <a class="reference internal image-reference" href="../_images/dftd3_scaling_comparison_h100-80gb-hbm3.png"><img alt="DFT-D3 backend time comparison" src="../_images/dftd3_scaling_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Median execution time comparison between backends for single systems.</span><a class="headerlink" href="#id7" title="Link to this image">#</a></p>
+<p><span class="caption-text">Median execution time comparison between backends for single systems.</span><a class="headerlink" href="#id10" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="throughput">Throughput</p>
-<figure class="align-center" id="id8">
+<figure class="align-center" id="id11">
 <a class="reference internal image-reference" href="../_images/dftd3_throughput_comparison_h100-80gb-hbm3.png"><img alt="DFT-D3 backend throughput comparison" src="../_images/dftd3_throughput_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.</span><a class="headerlink" href="#id8" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.</span><a class="headerlink" href="#id11" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="memory-usage">Memory Usage</p>
-<figure class="align-center" id="id9">
+<figure class="align-center" id="id12">
 <a class="reference internal image-reference" href="../_images/dftd3_memory_comparison_h100-80gb-hbm3.png"><img alt="DFT-D3 backend memory comparison" src="../_images/dftd3_memory_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-text">Peak GPU memory consumption comparison between backends. Lower is better,
-indicating that the backend has lower memory requirements.</span><a class="headerlink" href="#id9" title="Link to this image">#</a></p>
+indicating that the backend has lower memory requirements.</span><a class="headerlink" href="#id12" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </div>
 <input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-1">
-nvalchemiops</label><div class="sd-tab-content docutils">
-<p>Scaling of single and batched computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> backend.
+nvalchemiops (Torch)</label><div class="sd-tab-content docutils">
+<p>Scaling of single and batched computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Torch backend.
 Shows how performance scales with different batch sizes.</p>
 <p class="rubric" id="id1">Time Scaling</p>
-<figure class="align-center" id="id10">
-<a class="reference internal image-reference" href="../_images/dftd3_scaling_nvalchemiops_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops time scaling" src="../_images/dftd3_scaling_nvalchemiops_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id10" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id2">Throughput</p>
-<figure class="align-center" id="id11">
-<a class="reference internal image-reference" href="../_images/dftd3_throughput_nvalchemiops_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops throughput" src="../_images/dftd3_throughput_nvalchemiops_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id11" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-<p class="rubric" id="id3">Memory Usage</p>
-<figure class="align-center" id="id12">
-<a class="reference internal image-reference" href="../_images/dftd3_memory_nvalchemiops_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops memory usage" src="../_images/dftd3_memory_nvalchemiops_h100-80gb-hbm3.png" style="width: 90%;" />
-</a>
-<figcaption>
-<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id12" title="Link to this image">#</a></p>
-</figcaption>
-</figure>
-</div>
-<input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
-<label class="sd-tab-label" for="sd-tab-item-2">
-torch-dftd</label><div class="sd-tab-content docutils">
-<p>Scaling of single and batched computation with the <code class="docutils literal notranslate"><span class="pre">torch-dftd</span></code> backend.
-Shows how performance scales with different batch sizes.</p>
-<p class="rubric" id="id4">Time Scaling</p>
 <figure class="align-center" id="id13">
-<a class="reference internal image-reference" href="../_images/dftd3_scaling_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd time scaling" src="../_images/dftd3_scaling_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+<a class="reference internal image-reference" href="../_images/dftd3_scaling_torch_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops (Torch) time scaling" src="../_images/dftd3_scaling_torch_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id13" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
-<p class="rubric" id="id5">Throughput</p>
+<p class="rubric" id="id2">Throughput</p>
 <figure class="align-center" id="id14">
-<a class="reference internal image-reference" href="../_images/dftd3_throughput_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd throughput" src="../_images/dftd3_throughput_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+<a class="reference internal image-reference" href="../_images/dftd3_throughput_torch_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops (Torch) throughput" src="../_images/dftd3_throughput_torch_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id14" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
-<p class="rubric" id="id6">Memory Usage</p>
+<p class="rubric" id="id3">Memory Usage</p>
 <figure class="align-center" id="id15">
-<a class="reference internal image-reference" href="../_images/dftd3_memory_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd memory usage" src="../_images/dftd3_memory_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+<a class="reference internal image-reference" href="../_images/dftd3_memory_torch_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops (Torch) memory usage" src="../_images/dftd3_memory_torch_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id15" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-2">
+nvalchemiops (JAX)</label><div class="sd-tab-content docutils">
+<p>Scaling of single and batched computation with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> JAX backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id4">Time Scaling</p>
+<figure class="align-center" id="id16">
+<a class="reference internal image-reference" href="../_images/dftd3_scaling_jax_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops (JAX) time scaling" src="../_images/dftd3_scaling_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id16" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id5">Throughput</p>
+<figure class="align-center" id="id17">
+<a class="reference internal image-reference" href="../_images/dftd3_throughput_jax_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops (JAX) throughput" src="../_images/dftd3_throughput_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id17" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id6">Memory Usage</p>
+<figure class="align-center" id="id18">
+<a class="reference internal image-reference" href="../_images/dftd3_memory_jax_h100-80gb-hbm3.png"><img alt="DFT-D3 nvalchemiops (JAX) memory usage" src="../_images/dftd3_memory_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id18" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-3" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-3">
+torch-dftd</label><div class="sd-tab-content docutils">
+<p>Scaling of single and batched computation with the <code class="docutils literal notranslate"><span class="pre">torch-dftd</span></code> backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id7">Time Scaling</p>
+<figure class="align-center" id="id19">
+<a class="reference internal image-reference" href="../_images/dftd3_scaling_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd time scaling" src="../_images/dftd3_scaling_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for single and batched systems.</span><a class="headerlink" href="#id19" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id8">Throughput</p>
+<figure class="align-center" id="id20">
+<a class="reference internal image-reference" href="../_images/dftd3_throughput_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd throughput" src="../_images/dftd3_throughput_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for single and batched systems.</span><a class="headerlink" href="#id20" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id9">Memory Usage</p>
+<figure class="align-center" id="id21">
+<a class="reference internal image-reference" href="../_images/dftd3_memory_torch_dftd_h100-80gb-hbm3.png"><img alt="DFT-D3 torch-dftd memory usage" src="../_images/dftd3_memory_torch_dftd_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for single and batched systems.</span><a class="headerlink" href="#id21" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </div>
@@ -614,18 +659,28 @@ energy/force calculation.</p>
 <section id="running-your-own-benchmarks">
 <h2>Running Your Own Benchmarks<a class="headerlink" href="#running-your-own-benchmarks" title="Link to this heading">#</a></h2>
 <p>To generate benchmark results for your hardware:</p>
-<section id="nvalchemiops-backend-default">
-<h3><code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Backend (default)<a class="headerlink" href="#nvalchemiops-backend-default" title="Link to this heading">#</a></h3>
+<section id="torch-backend-default">
+<h3><code class="docutils literal notranslate"><span class="pre">torch</span></code> Backend (default)<a class="headerlink" href="#torch-backend-default" title="Link to this heading">#</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/dispersion
 python<span class="w"> </span>benchmark_dftd3.py<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
-<span class="w">    </span>--backend<span class="w"> </span>warp<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>torch<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output-dir<span class="w"> </span>../../../docs/benchmarks/benchmark_results
+</pre></div>
+</div>
+</section>
+<section id="jax-backend">
+<h3><code class="docutils literal notranslate"><span class="pre">jax</span></code> Backend<a class="headerlink" href="#jax-backend" title="Link to this heading">#</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/dispersion
+python<span class="w"> </span>benchmark_dftd3.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--backend<span class="w"> </span>jax<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--output-dir<span class="w"> </span>../../../docs/benchmarks/benchmark_results
 </pre></div>
 </div>
 </section>
 <section id="torch-dftd-backend">
-<h3><code class="docutils literal notranslate"><span class="pre">torch-dftd</span></code> Backend<a class="headerlink" href="#torch-dftd-backend" title="Link to this heading">#</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">torch_dftd</span></code> Backend<a class="headerlink" href="#torch-dftd-backend" title="Link to this heading">#</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>benchmarks/interactions/dispersion
 python<span class="w"> </span>benchmark_dftd3.py<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--config<span class="w"> </span>benchmark_config.yaml<span class="w"> </span><span class="se">\</span>
@@ -636,8 +691,8 @@ python<span class="w"> </span>benchmark_dftd3.py<span class="w"> </span><span cl
 </section>
 <section id="options">
 <h3>Options<a class="headerlink" href="#options" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">{warp,torch_dftd}</span></code>
-: Select backend (default: <code class="docutils literal notranslate"><span class="pre">warp</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">--backend</span> <span class="pre">{torch,jax,torch_dftd}</span></code>
+: Select backend (default: <code class="docutils literal notranslate"><span class="pre">torch</span></code>).</p>
 <p><code class="docutils literal notranslate"><span class="pre">--gpu-sku</span> <span class="pre">&lt;name&gt;</span></code>
 : Override GPU SKU name for output files (default: auto-detect).</p>
 <p><code class="docutils literal notranslate"><span class="pre">--config</span> <span class="pre">&lt;path&gt;</span></code>
@@ -668,11 +723,11 @@ during the next documentation build.</p>
       </div>
     </a>
     <a class="right-next"
-       href="../modules/index.html"
+       href="dynamics.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">API Reference</p>
+        <p class="prev-next-title">Dynamics Benchmarks</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -703,8 +758,9 @@ during the next documentation build.</p>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#interpreting-results">Interpreting Results</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-your-own-benchmarks">Running Your Own Benchmarks</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops-backend-default"><code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Backend (default)</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#torch-dftd-backend"><code class="docutils literal notranslate"><span class="pre">torch-dftd</span></code> Backend</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#torch-backend-default"><code class="docutils literal notranslate"><span class="pre">torch</span></code> Backend (default)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#jax-backend"><code class="docutils literal notranslate"><span class="pre">jax</span></code> Backend</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#torch-dftd-backend"><code class="docutils literal notranslate"><span class="pre">torch_dftd</span></code> Backend</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#options">Options</a></li>
 </ul>
 </li>
@@ -754,7 +810,7 @@ during the next documentation build.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
     <br/>
   </p>
 </div>

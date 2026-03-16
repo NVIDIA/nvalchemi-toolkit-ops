@@ -43,6 +43,20 @@ dependency resolution. `uv` can be obtained through their installation
 page found [here](https://docs.astral.sh/uv/getting-started/installation/).
 ```
 
+### JAX Support
+
+To use the JAX bindings, install with the optional JAX extra:
+
+```bash
+$ pip install 'nvalchemi-toolkit-ops[jax]'
+```
+
+This installs JAX with CUDA 12 support. You can verify the JAX bindings are available:
+
+```bash
+$ python -c "from nvalchemiops.jax import neighbors; print('JAX bindings available')"
+```
+
 ### From Github Source
 
 This approach is useful for obtain nightly builds by installing directly

@@ -1,0 +1,1661 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
+    <title>nvalchemiops.jax.interactions.electrostatics: Electrostatics &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'modules/jax/electrostatics';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="nvalchemiops.neighbors: Neighbor Lists" href="../warp/neighbors.html" />
+    <link rel="prev" title="nvalchemiops.jax.interactions.dispersion: Dispersion Corrections" href="dispersion.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+    <label class="sidebar-toggle secondary-toggle" for="__secondary" tabindex="0">
+      <span class="fa-solid fa-outdent"></span>
+    </label>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <div class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item current active">
+                      <a class="nav-link nav-internal" href="../index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../torch/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../warp/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../warp/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../warp/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code>: Electrostatic Interactions (Warp)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../warp/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.dynamics</span></code>: Molecular Dynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../utilities.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> and <code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.types</span></code>: Utilities</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">API Reference</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><code...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="nvalchemiops-jax-interactions-electrostatics-electrostatics">
+<h1><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.electrostatics</span></code>: Electrostatics<a class="headerlink" href="#nvalchemiops-jax-interactions-electrostatics-electrostatics" title="Link to this heading">#</a></h1>
+<p>The electrostatics module provides GPU-accelerated implementations of
+long-range electrostatic interactions for molecular simulations with <strong>JAX</strong> bindings.
+These functions accept standard <code class="docutils literal notranslate"><span class="pre">jax.Array</span></code> inputs.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>For the underlying framework-agnostic Warp kernels, see <a class="reference internal" href="../warp/electrostatics.html"><span class="doc">nvalchemiops.interactions.electrostatics: Electrostatic Interactions (Warp)</span></a>.</p>
+</div>
+<section id="high-level-interface">
+<h2>High-Level Interface<a class="headerlink" href="#high-level-interface" title="Link to this heading">#</a></h2>
+<p>These are the primary entry points for most users; these methods should
+be <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code> compatible.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.ewald_summation">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">ewald_summation</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_vectors</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_cutoff</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">miller_bounds</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_atoms_per_system</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_list</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mask_value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_virial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">accuracy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-6</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/ewald.html#ewald_summation"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.ewald_summation" title="Link to this definition">#</a></dt>
+<dd><p>Compute complete Ewald summation (real + reciprocal space).</p>
+<dl class="simple">
+<dt>The Ewald method splits long-range Coulomb into:</dt><dd><p>E_total = E_real + E_reciprocal - E_self - E_background</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Atomic partial charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrices.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> or </em><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> or </em><em>None</em>) – Ewald splitting parameter. If None, estimated automatically.</p></li>
+<li><p><strong>k_vectors</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em>) – Reciprocal lattice vectors. If None, generated automatically.
+Shape (K, 3) for single system, (B, K, 3) for batch.</p></li>
+<li><p><strong>k_cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> | </em><em>None</em>) – K-space cutoff. Used only if k_vectors is None.</p></li>
+<li><p><strong>miller_bounds</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>] </em><em>| </em><em>None</em><em>, </em><em>optional</em>) – Precomputed maximum Miller indices (M_h, M_k, M_l). Forwarded to
+<a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_ewald_summation" title="nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_ewald_summation"><code class="xref py py-func docutils literal notranslate"><span class="pre">generate_k_vectors_ewald_summation()</span></code></a> when <code class="docutils literal notranslate"><span class="pre">k_vectors</span></code> is <code class="docutils literal notranslate"><span class="pre">None</span></code>.
+When provided, makes k-vector generation compatible with <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code>.
+Use <a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.generate_miller_indices" title="nvalchemiops.jax.interactions.electrostatics.generate_miller_indices"><code class="xref py py-func docutils literal notranslate"><span class="pre">generate_miller_indices()</span></code></a> to precompute. Ignored when
+<code class="docutils literal notranslate"><span class="pre">k_vectors</span></code> is explicitly provided.</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – System index for each atom.</p></li>
+<li><p><strong>max_atoms_per_system</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Maximum number of atoms in any single system in the batch.
+Required when using <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code> with batched inputs. If None,
+inferred from data (fails under JIT).</p></li>
+<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>2</em><em>, </em><em>M</em><em>)</em>) – Neighbor list in COO format.</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N+1</em><em>,</em><em>)</em>) – CSR row pointers for neighbor list.</p></li>
+<li><p><strong>neighbor_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>, </em><em>3</em><em>)</em>) – Periodic image shifts for neighbor list.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>)</em>) – Dense neighbor matrix format.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em>) – Periodic image shifts for neighbor_matrix.</p></li>
+<li><p><strong>mask_value</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>) – Value indicating invalid entries in neighbor_matrix.</p></li>
+<li><p><strong>compute_forces</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute forces.</p></li>
+<li><p><strong>compute_virial</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute the virial tensor.</p></li>
+<li><p><strong>accuracy</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=1e-6</em>) – Target accuracy for automatic parameter estimation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>energies</strong> (<em>jax.Array, shape (N,)</em>) – Per-atom total Ewald energy.</p></li>
+<li><p><strong>forces</strong> (<em>jax.Array, shape (N, 3), optional</em>) – Forces (if compute_forces=True).</p></li>
+<li><p><strong>virial</strong> (<em>jax.Array, shape (1, 3, 3) or (B, 3, 3), optional</em>) – Virial tensor (if compute_virial=True). Always last in the return tuple.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, …]</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Complete Ewald summation with automatic parameters</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.particle_mesh_ewald">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">particle_mesh_ewald</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_dimensions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">spline_order</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_vectors</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_squared</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_list</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mask_value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_charge_gradients</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_virial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">accuracy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-6</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/pme.html#particle_mesh_ewald"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.particle_mesh_ewald" title="Link to this definition">#</a></dt>
+<dd><p>Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.</p>
+<p>Computes total Coulomb energy using the PME method, which achieves O(N log N)
+scaling through FFT-based reciprocal space calculations. Combines:
+1. Real-space contribution (short-range, erfc-damped)
+2. Reciprocal-space contribution (long-range, FFT + B-spline interpolation)
+3. Self-energy and background corrections</p>
+<dl class="simple">
+<dt>Total Energy Formula:</dt><dd><p>E_total = E_real + E_reciprocal - E_self - E_background</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Atomic partial charges in elementary charge units.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrices with lattice vectors as rows. Shape (3, 3) is
+automatically promoted to (1, 3, 3) for single-system mode.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, or </em><em>None</em><em>, </em><em>default=None</em>) – Ewald splitting parameter controlling real/reciprocal space balance.
+- float: Same α for all systems
+- Array shape (B,): Per-system α values
+- None: Automatically estimated using Kolafa-Perram formula</p></li>
+<li><p><strong>mesh_spacing</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Target mesh spacing. Mesh dimensions computed as ceil(cell_length / mesh_spacing).</p></li>
+<li><p><strong>mesh_dimensions</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>optional</em>) – Explicit FFT mesh dimensions (nx, ny, nz). Power-of-2 values recommended.</p></li>
+<li><p><strong>spline_order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=4</em>) – B-spline interpolation order (4 = cubic B-splines, recommended).</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em><em>, </em><em>optional</em>) – System index for each atom (0 to B-1). Determines execution mode:
+- None: Single-system optimized kernels
+- Provided: Batched kernels for multiple independent systems</p></li>
+<li><p><strong>k_vectors</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Precomputed k-vectors from generate_k_vectors_pme. Providing this
+along with k_squared skips k-vector generation.</p></li>
+<li><p><strong>k_squared</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Precomputed k² values from generate_k_vectors_pme.</p></li>
+<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – CSR-format neighbor list indices. See ewald_real_space.</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – CSR-format neighbor list pointers. See ewald_real_space.</p></li>
+<li><p><strong>neighbor_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Periodic image shifts for neighbor list. See ewald_real_space.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Dense neighbor matrix. Alternative to CSR format.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Shifts for dense neighbor matrix.</p></li>
+<li><p><strong>mask_value</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>optional</em>) – Mask value for invalid neighbors in dense format.</p></li>
+<li><p><strong>compute_forces</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, compute per-atom forces.</p></li>
+<li><p><strong>compute_charge_gradients</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, compute per-atom charge gradients dE/dq.</p></li>
+<li><p><strong>compute_virial</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, compute the virial tensor W = -dE/d(epsilon).
+Stress = virial / volume.</p></li>
+<li><p><strong>accuracy</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=1e-6</em>) – Target accuracy for automatic parameter estimation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>energies</strong> (<em>jax.Array, shape (N,)</em>) – Per-atom total electrostatic energies.</p></li>
+<li><p><strong>forces</strong> (<em>jax.Array, shape (N, 3), optional</em>) – Per-atom forces (only if compute_forces=True).</p></li>
+<li><p><strong>charge_gradients</strong> (<em>jax.Array, shape (N,), optional</em>) – Per-atom charge gradients (only if compute_charge_gradients=True).</p></li>
+<li><p><strong>virial</strong> (<em>jax.Array, shape (1, 3, 3) or (B, 3, 3), optional</em>) – Virial tensor (only if compute_virial=True). Always last in the return tuple.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>] | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>] | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>]</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<dl class="simple">
+<dt>Automatic Parameter Estimation (when alpha is None):</dt><dd><p>Uses Kolafa-Perram formula for optimal α and mesh dimensions based on
+requested accuracy.</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<p>Basic usage:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">mesh_dimensions</span><span class="o">=</span><span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">),</span>
+<span class="gp">... </span>    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+<p>With forces and automatic parameters:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">mesh_spacing</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">accuracy</span><span class="o">=</span><span class="mf">1e-5</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Batched systems:</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space" title="nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space"><code class="xref py py-obj docutils literal notranslate"><span class="pre">pme_reciprocal_space</span></code></a></dt><dd><p>Reciprocal-space component only</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.ewald_real_space" title="nvalchemiops.jax.interactions.electrostatics.ewald_real_space"><code class="xref py py-obj docutils literal notranslate"><span class="pre">ewald_real_space</span></code></a></dt><dd><p>Real-space component</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.estimate_pme_parameters" title="nvalchemiops.jax.interactions.electrostatics.estimate_pme_parameters"><code class="xref py py-obj docutils literal notranslate"><span class="pre">estimate_pme_parameters</span></code></a></dt><dd><p>Automatic parameter estimation</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="coulomb-interactions">
+<h2>Coulomb Interactions<a class="headerlink" href="#coulomb-interactions" title="Link to this heading">#</a></h2>
+<p>Direct pairwise Coulomb interactions.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.coulomb_energy">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">coulomb_energy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_list</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fill_value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/coulomb.html#coulomb_energy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.coulomb_energy" title="Link to this definition">#</a></dt>
+<dd><p>Compute Coulomb electrostatic energies.</p>
+<p>Computes pairwise electrostatic energies using the Coulomb law,
+with optional erfc damping for Ewald/PME real-space calculations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Atomic charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrix. Shape (B, 3, 3) for batched calculations.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Cutoff distance for interactions.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=0.0</em>) – Ewald splitting parameter. Use 0.0 for undamped Coulomb.</p></li>
+<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>2</em><em>, </em><em>num_pairs</em><em>)</em>) – Neighbor pairs in COO format. Row 0 = source, Row 1 = target.</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N+1</em><em>,</em><em>)</em>) – CSR row pointers for neighbor list. Required with neighbor_list.
+Provided by neighborlist module.</p></li>
+<li><p><strong>neighbor_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>num_pairs</em><em>, </em><em>3</em><em>)</em>) – Integer unit cell shifts for neighbor list format.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>)</em>) – Neighbor indices in matrix format.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em>) – Integer unit cell shifts for matrix format.</p></li>
+<li><p><strong>fill_value</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>) – Fill value for neighbor matrix padding.</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Batch indices for each atom.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>energies</strong> – Per-atom energies. Sum to get total energy.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (N,)</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Direct Coulomb (undamped)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span> <span class="o">=</span> <span class="n">coulomb_energy</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span>
+<span class="gp">... </span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">total_energy</span> <span class="o">=</span> <span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Ewald/PME real-space (damped)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span> <span class="o">=</span> <span class="n">coulomb_energy</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.coulomb_forces">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">coulomb_forces</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_list</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fill_value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/coulomb.html#coulomb_forces"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.coulomb_forces" title="Link to this definition">#</a></dt>
+<dd><p>Compute Coulomb electrostatic forces.</p>
+<p>Convenience wrapper that returns only forces (no energies).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>descriptions.</strong> (<em>See coulomb_energy for parameter</em>)</p></li>
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>)</p></li>
+<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>neighbor_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>fill_value</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>forces</strong> – Forces on each atom.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (N, 3)</p>
+</dd>
+</dl>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.coulomb_energy_forces" title="nvalchemiops.jax.interactions.electrostatics.coulomb_energy_forces"><code class="xref py py-obj docutils literal notranslate"><span class="pre">coulomb_energy_forces</span></code></a></dt><dd><p>Compute both energies and forces</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.coulomb_energy_forces">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">coulomb_energy_forces</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_list</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">fill_value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/coulomb.html#coulomb_energy_forces"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.coulomb_energy_forces" title="Link to this definition">#</a></dt>
+<dd><p>Compute Coulomb electrostatic energies and forces.</p>
+<p>Computes pairwise electrostatic energies and forces using the Coulomb law,
+with optional erfc damping for Ewald/PME real-space calculations.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Atomic charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrix. Shape (B, 3, 3) for batched calculations.</p></li>
+<li><p><strong>cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Cutoff distance for interactions.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=0.0</em>) – Ewald splitting parameter. Use 0.0 for undamped Coulomb.</p></li>
+<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>2</em><em>, </em><em>num_pairs</em><em>)</em>) – Neighbor pairs in COO format.</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N+1</em><em>,</em><em>)</em>) – CSR row pointers for neighbor list. Required with neighbor_list.
+Provided by neighborlist module.</p></li>
+<li><p><strong>neighbor_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>num_pairs</em><em>, </em><em>3</em><em>)</em>) – Integer unit cell shifts for neighbor list format.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>)</em>) – Neighbor indices in matrix format.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em>) – Integer unit cell shifts for matrix format.</p></li>
+<li><p><strong>fill_value</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em>) – Fill value for neighbor matrix padding.</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Batch indices for each atom.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>energies</strong> (<em>jax.Array, shape (N,)</em>) – Per-atom energies.</p></li>
+<li><p><strong>forces</strong> (<em>jax.Array, shape (N, 3)</em>) – Forces on each atom.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>]</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Direct Coulomb</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">coulomb_energy_forces</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">neighbor_list</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">neighbor_ptr</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">neighbor_shifts</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="c1"># Ewald/PME real-space</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span> <span class="o">=</span> <span class="n">coulomb_energy_forces</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">cutoff</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">neighbor_matrix</span><span class="o">=</span><span class="n">neighbor_matrix</span><span class="p">,</span> <span class="n">neighbor_matrix_shifts</span><span class="o">=</span><span class="n">neighbor_matrix_shifts</span><span class="p">,</span>
+<span class="gp">... </span>    <span class="n">fill_value</span><span class="o">=</span><span class="n">num_atoms</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+</section>
+<section id="ewald-components">
+<h2>Ewald Components<a class="headerlink" href="#ewald-components" title="Link to this heading">#</a></h2>
+<p>Individual components of the Ewald summation method.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.ewald_real_space">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">ewald_real_space</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_list</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_ptr</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">neighbor_matrix_shifts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mask_value</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_charge_gradients</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_virial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/ewald.html#ewald_real_space"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.ewald_real_space" title="Link to this definition">#</a></dt>
+<dd><p>Compute real-space Ewald energy and optionally forces, charge gradients, and virial.</p>
+<p>Computes the damped Coulomb interactions for atom pairs within the real-space
+cutoff. The complementary error function (erfc) damping ensures rapid
+convergence in real space.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Atomic partial charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrices.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> or </em><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Ewald splitting parameter. Can be a float or array of shape (1,) or (B,).</p></li>
+<li><p><strong>neighbor_list</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>2</em><em>, </em><em>M</em><em>)</em>) – Neighbor list in COO format.</p></li>
+<li><p><strong>neighbor_ptr</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N+1</em><em>,</em><em>)</em>) – CSR row pointers for neighbor list.</p></li>
+<li><p><strong>neighbor_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>M</em><em>, </em><em>3</em><em>)</em>) – Periodic image shifts for neighbor list.</p></li>
+<li><p><strong>neighbor_matrix</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>)</em>) – Dense neighbor matrix format.</p></li>
+<li><p><strong>neighbor_matrix_shifts</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>max_neighbors</em><em>, </em><em>3</em><em>)</em>) – Periodic image shifts for neighbor_matrix.</p></li>
+<li><p><strong>mask_value</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Value indicating invalid entries in neighbor_matrix.
+If None (default), uses num_atoms as the mask value.</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – System index for each atom.</p></li>
+<li><p><strong>compute_forces</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute explicit forces.</p></li>
+<li><p><strong>compute_charge_gradients</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute charge gradients.</p></li>
+<li><p><strong>compute_virial</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute the virial tensor.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>energies</strong> (<em>jax.Array, shape (N,)</em>) – Per-atom real-space energy.</p></li>
+<li><p><strong>forces</strong> (<em>jax.Array, shape (N, 3), optional</em>) – Forces (if compute_forces=True or compute_charge_gradients=True).</p></li>
+<li><p><strong>charge_gradients</strong> (<em>jax.Array, shape (N,), optional</em>) – Charge gradients (if compute_charge_gradients=True).</p></li>
+<li><p><strong>virial</strong> (<em>jax.Array, shape (1, 3, 3) or (B, 3, 3), optional</em>) – Virial tensor (if compute_virial=True). Always last in the return tuple.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, …]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.ewald_reciprocal_space">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">ewald_reciprocal_space</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_vectors</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_atoms_per_system</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_charge_gradients</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_virial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/ewald.html#ewald_reciprocal_space"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.ewald_reciprocal_space" title="Link to this definition">#</a></dt>
+<dd><p>Compute reciprocal-space Ewald energy and optionally forces, charge gradients, and virial.</p>
+<p>Computes the smooth long-range electrostatic contribution using structure
+factors in reciprocal space. Includes self-energy and background corrections.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Atomic partial charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>1</em><em>, </em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrices.</p></li>
+<li><p><strong>k_vectors</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Reciprocal lattice vectors. Shape (K, 3) for single system, (B, K, 3) for batch.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> or </em><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Ewald splitting parameter. Can be a float or array of shape (1,) or (B,).</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – System index for each atom.</p></li>
+<li><p><strong>max_atoms_per_system</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em> | </em><em>None</em><em>, </em><em>optional</em>) – Maximum number of atoms in any single system in the batch.
+Required when using <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code> with batched inputs. If None,
+inferred from data (fails under JIT).</p></li>
+<li><p><strong>compute_forces</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute explicit forces.</p></li>
+<li><p><strong>compute_charge_gradients</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute charge gradients.</p></li>
+<li><p><strong>compute_virial</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – Whether to compute the virial tensor.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>energies</strong> (<em>jax.Array, shape (N,)</em>) – Per-atom reciprocal-space energy (with corrections applied).</p></li>
+<li><p><strong>forces</strong> (<em>jax.Array, shape (N, 3), optional</em>) – Forces (if compute_forces=True or compute_charge_gradients=True).</p></li>
+<li><p><strong>charge_gradients</strong> (<em>jax.Array, shape (N,), optional</em>) – Charge gradients (if compute_charge_gradients=True).</p></li>
+<li><p><strong>virial</strong> (<em>jax.Array, shape (1, 3, 3) or (B, 3, 3), optional</em>) – Virial tensor (if compute_virial=True). Always last in the return tuple.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, …]</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="pme-components">
+<h2>PME Components<a class="headerlink" href="#pme-components" title="Link to this heading">#</a></h2>
+<p>Individual components of the Particle Mesh Ewald method.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">pme_reciprocal_space</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_dimensions</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_spacing</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">spline_order</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_vectors</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_squared</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_forces</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_charge_gradients</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">compute_virial</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/pme.html#pme_reciprocal_space"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space" title="Link to this definition">#</a></dt>
+<dd><p>Compute PME reciprocal-space contribution.</p>
+<p>Implements the FFT-based long-range component of PME using B-spline
+interpolation and convolution with the Green’s function.</p>
+<dl class="simple">
+<dt>Pipeline:</dt><dd><ol class="arabic simple">
+<li><p>Spread charges to mesh (spline_spread)</p></li>
+<li><p>FFT → frequency space</p></li>
+<li><p>Compute Green’s function and structure factor</p></li>
+<li><p>Convolve: mesh_fft * G(k) / C²(k)</p></li>
+<li><p>IFFT → potential mesh</p></li>
+<li><p>Gather potential at atoms (spline_gather)</p></li>
+<li><p>Apply self-energy and background corrections</p></li>
+<li><p>(Optional) Compute forces via Fourier gradient</p></li>
+</ol>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em>) – Atomic partial charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrices with lattice vectors as rows.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Ewald splitting parameter.
+- Single-system: shape (1,) or scalar
+- Batch: shape (B,)</p></li>
+<li><p><strong>mesh_dimensions</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em><em>, </em><em>optional</em>) – FFT mesh dimensions (nx, ny, nz).</p></li>
+<li><p><strong>mesh_spacing</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>optional</em>) – Target mesh spacing. Used to compute mesh_dimensions if not provided.</p></li>
+<li><p><strong>spline_order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=4</em>) – B-spline interpolation order (4 = cubic).</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>default=None</em>) – System index for each atom.</p></li>
+<li><p><strong>k_vectors</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Precomputed k-vectors from generate_k_vectors_pme.</p></li>
+<li><p><strong>k_squared</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Precomputed k² values from generate_k_vectors_pme.</p></li>
+<li><p><strong>compute_forces</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, compute forces via Fourier gradient.</p></li>
+<li><p><strong>compute_charge_gradients</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, compute charge gradients dE/dq.</p></li>
+<li><p><strong>compute_virial</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a><em>, </em><em>default=False</em>) – If True, compute the virial tensor W = -dE/d(epsilon).
+Stress = virial / volume.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>energies</strong> (<em>jax.Array, shape (N,)</em>) – Per-atom reciprocal-space energies.</p></li>
+<li><p><strong>forces</strong> (<em>jax.Array, shape (N, 3), optional</em>) – Per-atom forces (only if compute_forces=True).</p></li>
+<li><p><strong>charge_gradients</strong> (<em>jax.Array, shape (N,), optional</em>) – Per-atom charge gradients (only if compute_charge_gradients=True).</p></li>
+<li><p><strong>virial</strong> (<em>jax.Array, shape (1, 3, 3) or (B, 3, 3), optional</em>) – Virial tensor (only if compute_virial=True). Always last in the return tuple.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a> | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>] | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>] | <a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>]</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>Output dtype for energy/forces matches the input positions dtype</p></li>
+<li><p>FFT/convolution and spline operations all respect the input dtype</p></li>
+<li><p>Automatically determines mesh_dimensions if not provided</p></li>
+<li><p>Virial is computed in k-space and uses the same dtype as k_squared</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.pme_green_structure_factor">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">pme_green_structure_factor</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">k_squared</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_dimensions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">spline_order</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">4</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/pme.html#pme_green_structure_factor"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.pme_green_structure_factor" title="Link to this definition">#</a></dt>
+<dd><p>Compute Green’s function and B-spline structure factor correction.</p>
+<p>Computes the Coulomb Green’s function with volume normalization and the
+B-spline aliasing correction factor for PME.</p>
+<dl class="simple">
+<dt>Green’s function (volume-normalized):</dt><dd><p>G(k) = (2π/V) * exp(-k²/(4α²)) / k²</p>
+</dd>
+<dt>Structure factor correction (for B-spline deconvolution):</dt><dd><p>C²(k) = [sinc(m_x/N_x) · sinc(m_y/N_y) · sinc(m_z/N_z)]^(2p)</p>
+</dd>
+</dl>
+<p>where p is the spline order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>k_squared</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – <a href="#id1"><span class="problematic" id="id2">|</span></a>k|² values at each FFT grid point.
+- Single-system: shape (Nx, Ny, Nz_rfft)
+- Batch: shape (B, Nx, Ny, Nz_rfft)</p></li>
+<li><p><strong>mesh_dimensions</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em>) – Full mesh dimensions (Nx, Ny, Nz) before rfft.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Ewald splitting parameter.
+- Single-system: shape (1,) or scalar
+- Batch: shape (B,)</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Unit cell matrices.
+- Single-system: shape (3, 3) or (1, 3, 3)
+- Batch: shape (B, 3, 3)</p></li>
+<li><p><strong>spline_order</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><em>default=4</em>) – B-spline interpolation order (typically 4 for cubic B-splines).</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>default=None</em>) – If provided, dispatches to batch kernels.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>green_function</strong> (<em>jax.Array</em>) – Volume-normalized Green’s function G(k).
+- Single-system: shape (Nx, Ny, Nz_rfft)
+- Batch: shape (B, Nx, Ny, Nz_rfft)</p></li>
+<li><p><strong>structure_factor_sq</strong> (<em>jax.Array</em>) – Squared structure factor C²(k) for B-spline deconvolution.
+Shape (Nx, Ny, Nz_rfft), shared across batch.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>]</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>G(k=0) is set to zero to avoid singularity</p></li>
+<li><p>The volume normalization in G(k) eliminates later divisions</p></li>
+<li><p>Structure factor is mesh-dependent only, so shared across batch</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">pme_energy_corrections</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">raw_energies</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/pme.html#pme_energy_corrections"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections" title="Link to this definition">#</a></dt>
+<dd><p>Apply self-energy and background corrections to PME energies.</p>
+<p>Converts raw interpolated potential to energy and subtracts corrections:</p>
+<blockquote>
+<div><p>E_i = q_i φ_i - E_self,i - E_background,i</p>
+</div></blockquote>
+<dl class="simple">
+<dt>Self-energy correction (removes Gaussian self-interaction):</dt><dd><p>E_self,i = (α/√π) q_i²</p>
+</dd>
+<dt>Background correction (for non-neutral systems):</dt><dd><p>E_background,i = (π/(2α²V)) q_i Q_total</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>raw_energies</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>) or </em><em>(</em><em>N_total</em><em>,</em><em>)</em>) – Raw potential values φ_i from mesh interpolation.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>) or </em><em>(</em><em>N_total</em><em>,</em><em>)</em>) – Atomic charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Unit cell matrices.
+- Single-system: shape (3, 3) or (1, 3, 3)
+- Batch: shape (B, 3, 3)</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Ewald splitting parameter.
+- Single-system: shape (1,) or scalar
+- Batch: shape (B,)</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>default=None</em>) – System index for each atom. If provided, uses batch kernels.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>corrected_energies</strong> – Final per-atom reciprocal-space energy with corrections applied.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (N,) or (N_total,)</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>For neutral systems, background correction is zero</p></li>
+<li><p>Supports both float32 and float64 dtypes</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections_with_charge_grad">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">pme_energy_corrections_with_charge_grad</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">raw_energies</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charges</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/pme.html#pme_energy_corrections_with_charge_grad"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections_with_charge_grad" title="Link to this definition">#</a></dt>
+<dd><p>Apply energy corrections and compute charge gradients.</p>
+<p>Same as pme_energy_corrections but also returns dE/dq for each atom.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>raw_energies</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>) or </em><em>(</em><em>N_total</em><em>,</em><em>)</em>) – Raw potential values φ_i from mesh interpolation.</p></li>
+<li><p><strong>charges</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>) or </em><em>(</em><em>N_total</em><em>,</em><em>)</em>) – Atomic charges.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Unit cell matrices.
+- Single-system: shape (3, 3) or (1, 3, 3)
+- Batch: shape (B, 3, 3)</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Ewald splitting parameter.
+- Single-system: shape (1,) or scalar
+- Batch: shape (B,)</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em> | </em><em>None</em><em>, </em><em>default=None</em>) – System index for each atom. If provided, uses batch kernels.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>corrected_energies</strong> (<em>jax.Array, shape (N,) or (N_total,)</em>) – Final per-atom reciprocal-space energy with corrections applied.</p></li>
+<li><p><strong>charge_gradients</strong> (<em>jax.Array, shape (N,) or (N_total,)</em>) – Per-atom charge gradients dE/dq.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>]</p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>Useful for training models that predict partial charges</p></li>
+<li><p>Supports both float32 and float64 dtypes</p></li>
+</ul>
+</dd></dl>
+
+</section>
+<section id="k-vector-generation">
+<h2>K-Vector Generation<a class="headerlink" href="#k-vector-generation" title="Link to this heading">#</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.generate_miller_indices">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">generate_miller_indices</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_cutoff</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/k_vectors.html#generate_miller_indices"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.generate_miller_indices" title="Link to this definition">#</a></dt>
+<dd><p>Generate Miller index bounds for Ewald summation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrices with lattice vectors as rows.</p></li>
+<li><p><strong>k_cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> | </em><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Maximum magnitude of k-vectors to include in reciprocal summation.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Array of shape (3,) containing the maximum Miller indices (M_h, M_k, M_l)
+for each lattice direction.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a></p>
+</dd>
+</dl>
+<p class="rubric">Notes</p>
+<p>For batch mode, one shared set of Miller bounds is used for all systems.
+If <code class="docutils literal notranslate"><span class="pre">k_cutoff</span></code> is provided per system, the maximum cutoff across the batch
+is used to build those shared bounds.</p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_ewald_summation">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">generate_k_vectors_ewald_summation</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">k_cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">miller_bounds</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/k_vectors.html#generate_k_vectors_ewald_summation"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_ewald_summation" title="Link to this definition">#</a></dt>
+<dd><p>Generate reciprocal lattice vectors for Ewald summation (half-space).</p>
+<p>Creates k-vectors within the specified cutoff for the reciprocal space
+summation in the Ewald method. Uses half-space optimization to reduce
+computational cost by approximately 2x.</p>
+<section id="half-space-optimization">
+<h3>Half-Space Optimization<a class="headerlink" href="#half-space-optimization" title="Link to this heading">#</a></h3>
+<p>This function generates k-vectors in the positive half-space only, exploiting
+the symmetry S(-k) = S*(k) where S(k) is the structure factor. For each pair
+of k-vectors (k, -k), only one is included.</p>
+<dl class="simple">
+<dt>The half-space condition selects k-vectors where:</dt><dd><ul class="simple">
+<li><p>h &gt; 0, OR</p></li>
+<li><p>(h == 0 AND k &gt; 0), OR</p></li>
+<li><p>(h == 0 AND k == 0 AND l &gt; 0)</p></li>
+</ul>
+</dd>
+</dl>
+<p>The kernels in ewald_kernels.py compensate by doubling the Green’s function
+(using <span class="math notranslate nohighlight">\(8\pi\)</span> instead of <span class="math notranslate nohighlight">\(4\pi\)</span>), so energies, forces, and charge gradients are
+computed correctly.</p>
+</section>
+<section id="mathematical-background">
+<h3>Mathematical Background<a class="headerlink" href="#mathematical-background" title="Link to this heading">#</a></h3>
+<p>For a direct lattice defined by basis vectors {a, b, c} (rows of cell matrix),
+the reciprocal lattice vectors are:</p>
+<div class="math notranslate nohighlight">
+\[ \begin{align}\begin{aligned}\mathbf{a}^* &amp;= \frac{2\pi (\mathbf{b} \times \mathbf{c})}{V}\\\mathbf{b}^* &amp;= \frac{2\pi (\mathbf{c} \times \mathbf{a})}{V}\\\mathbf{c}^* &amp;= \frac{2\pi (\mathbf{a} \times \mathbf{b})}{V}\end{aligned}\end{align} \]</div>
+<p>where <span class="math notranslate nohighlight">\(V = \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c})\)</span> is the cell volume.</p>
+<p>In matrix form: <span class="math notranslate nohighlight">\(\text{reciprocal_matrix} = 2\pi \cdot (\text{cell}^T)^{-1}\)</span></p>
+<p>Each k-vector is: <span class="math notranslate nohighlight">\(\mathbf{k} = h \mathbf{a}^* + k \mathbf{b}^* + l \mathbf{c}^*\)</span>
+where (h, k, l) are Miller indices (integers).</p>
+<dl class="field-list simple">
+<dt class="field-odd">param cell<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Unit cell matrix with lattice vectors as rows.
+Shape (3, 3) for single system or (B, 3, 3) for batch.</p>
+</dd>
+<dt class="field-even">type cell<span class="colon">:</span></dt>
+<dd class="field-even"><p>jax.Array</p>
+</dd>
+<dt class="field-odd">param k_cutoff<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Maximum magnitude of k-vectors to include (<span class="math notranslate nohighlight">\(|\mathbf{k}| \leq k_{\text{cutoff}}\)</span>).
+Typical values: 8-12 <span class="math notranslate nohighlight">\(\text{\AA}^{-1}\)</span> for molecular systems.
+Higher values increase accuracy but also computational cost.</p>
+</dd>
+<dt class="field-even">type k_cutoff<span class="colon">:</span></dt>
+<dd class="field-even"><p>float or jax.Array</p>
+</dd>
+<dt class="field-odd">param miller_bounds<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Precomputed maximum Miller indices (M_h, M_k, M_l) for each lattice
+direction. When provided, the function skips the internal computation
+of bounds from <code class="docutils literal notranslate"><span class="pre">cell</span></code> and <code class="docutils literal notranslate"><span class="pre">k_cutoff</span></code>, making it compatible with
+<code class="docutils literal notranslate"><span class="pre">jax.jit</span></code> (which requires static array shapes).
+Use <a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.generate_miller_indices" title="nvalchemiops.jax.interactions.electrostatics.generate_miller_indices"><code class="xref py py-func docutils literal notranslate"><span class="pre">generate_miller_indices()</span></code></a> to compute these bounds eagerly
+before entering a JIT context. When <code class="docutils literal notranslate"><span class="pre">None</span></code> (default), bounds are
+computed automatically from <code class="docutils literal notranslate"><span class="pre">cell</span></code> and <code class="docutils literal notranslate"><span class="pre">k_cutoff</span></code>.</p>
+</dd>
+<dt class="field-even">type miller_bounds<span class="colon">:</span></dt>
+<dd class="field-even"><p>tuple[int, int, int] | None, optional</p>
+</dd>
+<dt class="field-odd">returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Reciprocal lattice vectors within the cutoff.
+Shape (K, 3) for single system or (B, K, 3) for batch.
+Excludes k=0 and includes only half-space vectors.</p>
+</dd>
+<dt class="field-even">rtype<span class="colon">:</span></dt>
+<dd class="field-even"><p>jax.Array</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<p>Single system with explicit k_cutoff:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">*</span> <span class="mf">10.0</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">k_vectors</span> <span class="o">=</span> <span class="n">generate_k_vectors_ewald_summation</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">k_vectors</span><span class="o">.</span><span class="n">shape</span>
+<span class="go">(...)  # Number depends on cell size and cutoff</span>
+</pre></div>
+</div>
+<p>With automatic parameter estimation:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">estimate_ewald_parameters</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">params</span> <span class="o">=</span> <span class="n">estimate_ewald_parameters</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cell</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">k_vectors</span> <span class="o">=</span> <span class="n">generate_k_vectors_ewald_summation</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">params</span><span class="o">.</span><span class="n">reciprocal_space_cutoff</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>JIT-compatible usage with precomputed bounds:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.jax.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">generate_miller_indices</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">)[</span><span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">*</span> <span class="mf">10.0</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">bounds</span> <span class="o">=</span> <span class="n">generate_miller_indices</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">miller_bounds</span> <span class="o">=</span> <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">bounds</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="nb">int</span><span class="p">(</span><span class="n">bounds</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="nb">int</span><span class="p">(</span><span class="n">bounds</span><span class="p">[</span><span class="mi">2</span><span class="p">]))</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="c1"># This can now be called inside @jax.jit</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">k_vectors</span> <span class="o">=</span> <span class="n">generate_k_vectors_ewald_summation</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">k_cutoff</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span> <span class="n">miller_bounds</span><span class="o">=</span><span class="n">miller_bounds</span><span class="p">)</span>
+</pre></div>
+</div>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>The k=0 vector is always excluded (causes division by zero in Green’s function).</p></li>
+<li><p>For batch mode, the same set of Miller indices is used for all systems but
+transformed using each system’s reciprocal cell. If <code class="docutils literal notranslate"><span class="pre">k_cutoff</span></code> is given
+per system, the maximum cutoff across the batch determines the shared
+Miller bounds.</p></li>
+<li><p>The number of k-vectors K scales as O(k_cutoff³ · V) where V is the cell volume.</p></li>
+<li><p>When using inside <code class="docutils literal notranslate"><span class="pre">jax.jit</span></code>, you <strong>must</strong> provide <code class="docutils literal notranslate"><span class="pre">miller_bounds</span></code>
+as a concrete <code class="docutils literal notranslate"><span class="pre">tuple[int,</span> <span class="pre">int,</span> <span class="pre">int]</span></code>. The bounds determine array shapes
+(via <code class="docutils literal notranslate"><span class="pre">jnp.arange</span></code>), which must be statically known at trace time.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.ewald_reciprocal_space" title="nvalchemiops.jax.interactions.electrostatics.ewald_reciprocal_space"><code class="xref py py-obj docutils literal notranslate"><span class="pre">ewald_reciprocal_space</span></code></a></dt><dd><p>Uses these k-vectors for reciprocal space energy.</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.estimate_ewald_parameters" title="nvalchemiops.jax.interactions.electrostatics.estimate_ewald_parameters"><code class="xref py py-obj docutils literal notranslate"><span class="pre">estimate_ewald_parameters</span></code></a></dt><dd><p>Automatic parameter estimation including k_cutoff.</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.generate_miller_indices" title="nvalchemiops.jax.interactions.electrostatics.generate_miller_indices"><code class="xref py py-obj docutils literal notranslate"><span class="pre">generate_miller_indices</span></code></a></dt><dd><p>Compute Miller bounds for JIT-compatible usage.</p>
+</dd>
+</dl>
+</div>
+</section>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>k_cutoff</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> | </em><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>miller_bounds</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>] </em><em>| </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_pme">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">generate_k_vectors_pme</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_dimensions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reciprocal_cell</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/k_vectors.html#generate_k_vectors_pme"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_pme" title="Link to this definition">#</a></dt>
+<dd><p>Generate reciprocal lattice vectors for Particle Mesh Ewald (PME).</p>
+<p>Creates k-vectors on a regular grid compatible with FFT-based reciprocal
+space calculations in PME. Uses rfft conventions (half-size in z-dimension)
+to exploit Hermitian symmetry of real-valued charge densities.</p>
+<p class="rubric">Notes</p>
+<p>For a direct lattice defined by basis vectors {a, b, c} (rows of cell matrix),
+the reciprocal lattice vectors are:</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\begin{aligned}
+\mathbf{a}^* &amp;= \frac{2\pi (\mathbf{b} \times \mathbf{c})}{V} \\
+\mathbf{b}^* &amp;= \frac{2\pi (\mathbf{c} \times \mathbf{a})}{V} \\
+\mathbf{c}^* &amp;= \frac{2\pi (\mathbf{a} \times \mathbf{b})}{V}
+\end{aligned}\end{split}\]</div>
+<p>where <span class="math notranslate nohighlight">\(V = \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c})\)</span> is the cell volume.</p>
+<p>In matrix form:</p>
+<div class="math notranslate nohighlight">
+\[\text{reciprocal_matrix} = 2\pi \cdot (\text{cell}^T)^{-1}\]</div>
+<p>Each k-vector is then:</p>
+<div class="math notranslate nohighlight">
+\[\mathbf{k} = h \mathbf{a}^* + k \mathbf{b}^* + l \mathbf{c}^*\]</div>
+<p>where (h, k, l) are Miller indices (integers).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Unit cell matrix with lattice vectors as rows.
+Shape (3, 3) for single system or (B, 3, 3) for batch.</p></li>
+<li><p><strong>mesh_dimensions</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em>) – PME mesh grid dimensions (nx, ny, nz). Should typically be chosen
+such that mesh spacing is <span class="math notranslate nohighlight">\(\sim 1 \text{\AA}\)</span> or finer. Power-of-2 dimensions
+are optimal for FFT performance.</p></li>
+<li><p><strong>reciprocal_cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>optional</em>) – Precomputed reciprocal cell matrix (<span class="math notranslate nohighlight">\(2\pi \cdot \text{cell}^{-1}\)</span>). If provided,
+skips the inverse computation. Shape (3, 3) or (B, 3, 3).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>k_vectors</strong> (<em>jax.Array, shape (nx, ny, nz//2+1, 3)</em>) – Cartesian k-vectors at each grid point. Uses rfft convention
+where z-dimension is halved due to Hermitian symmetry.</p></li>
+<li><p><strong>k_squared_safe</strong> (<em>jax.Array, shape (nx, ny, nz//2+1)</em>) – Squared magnitude <span class="math notranslate nohighlight">\(|\mathbf{k}|^2\)</span> for each k-vector, with k=0 set to a
+small positive value (1e-12) to avoid division by zero.</p></li>
+</ul>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>, <a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>]</p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<p>Basic usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">cell</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">jnp</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">*</span> <span class="mf">10.0</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">mesh_dims</span> <span class="o">=</span> <span class="p">(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">k_squared</span> <span class="o">=</span> <span class="n">generate_k_vectors_pme</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">mesh_dims</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">k_vectors</span><span class="o">.</span><span class="n">shape</span>
+<span class="go">(32, 32, 17, 3)</span>
+</pre></div>
+</div>
+<p>With precomputed reciprocal cell:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">reciprocal_cell</span> <span class="o">=</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">pi</span> <span class="o">*</span> <span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv</span><span class="p">(</span><span class="n">cell</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">k_vectors</span><span class="p">,</span> <span class="n">k_squared</span> <span class="o">=</span> <span class="n">generate_k_vectors_pme</span><span class="p">(</span>
+<span class="gp">... </span>    <span class="n">cell</span><span class="p">,</span> <span class="n">mesh_dims</span><span class="p">,</span> <span class="n">reciprocal_cell</span><span class="o">=</span><span class="n">reciprocal_cell</span>
+<span class="gp">... </span><span class="p">)</span>
+</pre></div>
+</div>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>The z-dimension output size is nz//2+1 due to rfft symmetry.</p></li>
+<li><p>Miller indices follow jnp.fft.fftfreq convention (0, 1, 2, …, -2, -1).</p></li>
+<li><p>k_squared_safe has k=0 replaced with 1e-12 to prevent division by zero
+in Green’s function calculations.</p></li>
+</ul>
+<div class="admonition seealso">
+<p class="admonition-title">See also</p>
+<dl class="simple">
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space" title="nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space"><code class="xref py py-obj docutils literal notranslate"><span class="pre">pme_reciprocal_space</span></code></a></dt><dd><p>Uses these k-vectors for PME reciprocal space energy.</p>
+</dd>
+<dt><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.pme_green_structure_factor" title="nvalchemiops.jax.interactions.electrostatics.pme_green_structure_factor"><code class="xref py py-obj docutils literal notranslate"><span class="pre">pme_green_structure_factor</span></code></a></dt><dd><p>Computes Green’s function using k_squared.</p>
+</dd>
+</dl>
+</div>
+</dd></dl>
+
+</section>
+<section id="parameter-estimation">
+<h2>Parameter Estimation<a class="headerlink" href="#parameter-estimation" title="Link to this heading">#</a></h2>
+<p>Functions for automatic parameter estimation based on desired accuracy tolerance.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.estimate_ewald_parameters">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">estimate_ewald_parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">accuracy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-6</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/parameters.html#estimate_ewald_parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.estimate_ewald_parameters" title="Link to this definition">#</a></dt>
+<dd><p>Estimate optimal Ewald summation parameters for a given accuracy.</p>
+<p>Uses the Kolafa-Perram formula to balance real-space and reciprocal-space
+contributions for optimal efficiency at the target accuracy.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrix.</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em><em>, </em><em>optional</em>) – System index for each atom. If None, single-system mode.</p></li>
+<li><p><strong>accuracy</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=1e-6</em>) – Target accuracy (relative error tolerance).</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dataclass containing alpha, real_space_cutoff, reciprocal_space_cutoff
+as <code class="docutils literal notranslate"><span class="pre">jax.Array</span></code> objects.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters" title="nvalchemiops.jax.interactions.electrostatics.EwaldParameters">EwaldParameters</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.estimate_pme_parameters">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">estimate_pme_parameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">positions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">batch_idx</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">accuracy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-6</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/parameters.html#estimate_pme_parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.estimate_pme_parameters" title="Link to this definition">#</a></dt>
+<dd><p>Estimate optimal PME parameters for a given accuracy.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>positions</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>, </em><em>3</em><em>)</em>) – Atomic coordinates.</p></li>
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrix.</p></li>
+<li><p><strong>batch_idx</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>N</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em><em>, </em><em>optional</em>) – System index for each atom.</p></li>
+<li><p><strong>accuracy</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=1e-6</em>) – Target accuracy.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Dataclass containing alpha, mesh dimensions, spacing, and cutoffs.
+Tensor fields are <code class="docutils literal notranslate"><span class="pre">jax.Array</span></code> objects.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters" title="nvalchemiops.jax.interactions.electrostatics.PMEParameters">PMEParameters</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.estimate_pme_mesh_dimensions">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">estimate_pme_mesh_dimensions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">accuracy</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1e-6</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/parameters.html#estimate_pme_mesh_dimensions"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.estimate_pme_mesh_dimensions" title="Link to this definition">#</a></dt>
+<dd><p>Estimate optimal PME mesh dimensions for a given accuracy.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>3</em><em>, </em><em>3</em><em>) or </em><em>(</em><em>B</em><em>, </em><em>3</em><em>, </em><em>3</em><em>)</em>) – Unit cell matrix.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a><em>, </em><em>shape</em><em> (</em><em>B</em><em>,</em><em>)</em>) – Ewald splitting parameter.</p></li>
+<li><p><strong>accuracy</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em>, </em><em>default=1e-6</em>) – Target accuracy.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Maximum mesh dimensions (nx, ny, nz) across all systems in batch.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>, <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>, <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.mesh_spacing_to_dimensions">
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">mesh_spacing_to_dimensions</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_spacing</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/parameters.html#mesh_spacing_to_dimensions"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.mesh_spacing_to_dimensions" title="Link to this definition">#</a></dt>
+<dd><p>Convert mesh spacing to mesh dimensions.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>cell</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Unit cell matrix.</p></li>
+<li><p><strong>mesh_spacing</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a><em> | </em><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>jax.Array</em></a>) – Target mesh spacing.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Mesh dimensions, rounded up to powers of 2.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>, <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>, <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.EwaldParameters">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">EwaldParameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">real_space_cutoff</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reciprocal_space_cutoff</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/parameters.html#EwaldParameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters" title="Link to this definition">#</a></dt>
+<dd><p>Container for Ewald summation parameters.</p>
+<p>All values are arrays of shape (B,), for
+single system calculations, the shape is (1,).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>real_space_cutoff</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>reciprocal_space_cutoff</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.EwaldParameters.alpha">
+<span class="sig-name descname"><span class="pre">alpha</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.alpha" title="Link to this definition">#</a></dt>
+<dd><p>Ewald splitting parameter (inverse length units).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (B,)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.EwaldParameters.real_space_cutoff">
+<span class="sig-name descname"><span class="pre">real_space_cutoff</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.real_space_cutoff" title="Link to this definition">#</a></dt>
+<dd><p>Real-space cutoff distance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (B,)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.EwaldParameters.reciprocal_space_cutoff">
+<span class="sig-name descname"><span class="pre">reciprocal_space_cutoff</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.reciprocal_space_cutoff" title="Link to this definition">#</a></dt>
+<dd><p>Reciprocal-space cutoff (<span class="math notranslate nohighlight">\(|k|\)</span> in inverse length units).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (B,)</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.PMEParameters">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">nvalchemiops.jax.interactions.electrostatics.</span></span><span class="sig-name descname"><span class="pre">PMEParameters</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">alpha</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_dimensions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">mesh_spacing</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">real_space_cutoff</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/jax/interactions/electrostatics/parameters.html#PMEParameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters" title="Link to this definition">#</a></dt>
+<dd><p>Container for PME parameters.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>mesh_dimensions</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)"><em>tuple</em></a><em>[</em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>, </em><a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a><em>]</em>)</p></li>
+<li><p><strong>mesh_spacing</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+<li><p><strong>real_space_cutoff</strong> (<a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)"><em>Array</em></a>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.PMEParameters.alpha">
+<span class="sig-name descname"><span class="pre">alpha</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.alpha" title="Link to this definition">#</a></dt>
+<dd><p>Ewald splitting parameter.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (B,)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_dimensions">
+<span class="sig-name descname"><span class="pre">mesh_dimensions</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_dimensions" title="Link to this definition">#</a></dt>
+<dd><p>Mesh dimensions (nx, ny, nz).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>, <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>, <a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)">int</a>], shape (3,)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_spacing">
+<span class="sig-name descname"><span class="pre">mesh_spacing</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_spacing" title="Link to this definition">#</a></dt>
+<dd><p>Actual mesh spacing in each direction.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (B, 3)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="nvalchemiops.jax.interactions.electrostatics.PMEParameters.real_space_cutoff">
+<span class="sig-name descname"><span class="pre">real_space_cutoff</span></span><a class="headerlink" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.real_space_cutoff" title="Link to this definition">#</a></dt>
+<dd><p>Real-space cutoff distance.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://jax.readthedocs.io/en/latest/_autosummary/jax.Array.html#jax.Array" title="(in JAX)">jax.Array</a>, shape (B,)</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="dispersion.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.interactions.dispersion</span></code>: Dispersion Corrections</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../warp/neighbors.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code>: Neighbor Lists</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#high-level-interface">High-Level Interface</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.ewald_summation"><code class="docutils literal notranslate"><span class="pre">ewald_summation()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.particle_mesh_ewald"><code class="docutils literal notranslate"><span class="pre">particle_mesh_ewald()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#coulomb-interactions">Coulomb Interactions</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.coulomb_energy"><code class="docutils literal notranslate"><span class="pre">coulomb_energy()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.coulomb_forces"><code class="docutils literal notranslate"><span class="pre">coulomb_forces()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.coulomb_energy_forces"><code class="docutils literal notranslate"><span class="pre">coulomb_energy_forces()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ewald-components">Ewald Components</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.ewald_real_space"><code class="docutils literal notranslate"><span class="pre">ewald_real_space()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.ewald_reciprocal_space"><code class="docutils literal notranslate"><span class="pre">ewald_reciprocal_space()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pme-components">PME Components</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.pme_reciprocal_space"><code class="docutils literal notranslate"><span class="pre">pme_reciprocal_space()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.pme_green_structure_factor"><code class="docutils literal notranslate"><span class="pre">pme_green_structure_factor()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections"><code class="docutils literal notranslate"><span class="pre">pme_energy_corrections()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.pme_energy_corrections_with_charge_grad"><code class="docutils literal notranslate"><span class="pre">pme_energy_corrections_with_charge_grad()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#k-vector-generation">K-Vector Generation</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.generate_miller_indices"><code class="docutils literal notranslate"><span class="pre">generate_miller_indices()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_ewald_summation"><code class="docutils literal notranslate"><span class="pre">generate_k_vectors_ewald_summation()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.generate_k_vectors_pme"><code class="docutils literal notranslate"><span class="pre">generate_k_vectors_pme()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#parameter-estimation">Parameter Estimation</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.estimate_ewald_parameters"><code class="docutils literal notranslate"><span class="pre">estimate_ewald_parameters()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.estimate_pme_parameters"><code class="docutils literal notranslate"><span class="pre">estimate_pme_parameters()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.estimate_pme_mesh_dimensions"><code class="docutils literal notranslate"><span class="pre">estimate_pme_mesh_dimensions()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.mesh_spacing_to_dimensions"><code class="docutils literal notranslate"><span class="pre">mesh_spacing_to_dimensions()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters"><code class="docutils literal notranslate"><span class="pre">EwaldParameters</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.alpha"><code class="docutils literal notranslate"><span class="pre">EwaldParameters.alpha</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.real_space_cutoff"><code class="docutils literal notranslate"><span class="pre">EwaldParameters.real_space_cutoff</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.EwaldParameters.reciprocal_space_cutoff"><code class="docutils literal notranslate"><span class="pre">EwaldParameters.reciprocal_space_cutoff</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters"><code class="docutils literal notranslate"><span class="pre">PMEParameters</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.alpha"><code class="docutils literal notranslate"><span class="pre">PMEParameters.alpha</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_dimensions"><code class="docutils literal notranslate"><span class="pre">PMEParameters.mesh_dimensions</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.mesh_spacing"><code class="docutils literal notranslate"><span class="pre">PMEParameters.mesh_spacing</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#nvalchemiops.jax.interactions.electrostatics.PMEParameters.real_space_cutoff"><code class="docutils literal notranslate"><span class="pre">PMEParameters.real_space_cutoff</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+
+  <div class="tocsection sourcelink">
+    <a href="../../_sources/modules/jax/electrostatics.rst.txt">
+      <i class="fa-solid fa-file-lines"></i> Show Source
+    </a>
+  </div>
+</div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

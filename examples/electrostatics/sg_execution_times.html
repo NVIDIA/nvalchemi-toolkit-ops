@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Computation times &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+    <title>Computation times &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
   
   
   
@@ -42,9 +42,9 @@
 <link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../../_static/documentation_options.js?v=95e61db4"></script>
-    <script src="../../_static/doctools.js?v=9bcbadda"></script>
-    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -165,6 +165,13 @@
                     <li class="nav-item">
                       <a class="nav-link nav-internal" href="../../benchmarks/index.html">
                         Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
                       </a>
                     </li>
                 
@@ -297,6 +304,13 @@ document.write(`
                 
 
                     <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
                       <a class="nav-link nav-internal" href="../../modules/index.html">
                         API
                       </a>
@@ -394,7 +408,7 @@ document.write(`
                   
   <section id="computation-times">
 <span id="sphx-glr-examples-electrostatics-sg-execution-times"></span><h1>Computation times<a class="headerlink" href="#computation-times" title="Link to this heading">#</a></h1>
-<p><strong>00:29.732</strong> total execution time for 3 files <strong>from examples/electrostatics</strong>:</p>
+<p><strong>00:20.676</strong> total execution time for 4 files <strong>from examples/electrostatics</strong>:</p>
 <div class="docutils container">
 <style scoped>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet" />
@@ -415,16 +429,20 @@ $(document).ready( function () {
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><a class="reference internal" href="03_pme_example.html#sphx-glr-examples-electrostatics-03-pme-example-py"><span class="std std-ref">Particle Mesh Ewald (PME) for Long-Range Electrostatics</span></a> (<code class="docutils literal notranslate"><span class="pre">03_pme_example.py</span></code>)</p></td>
-<td><p>00:15.372</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="04_jax_pme_example.html#sphx-glr-examples-electrostatics-04-jax-pme-example-py"><span class="std std-ref">Particle Mesh Ewald (PME) with JAX</span></a> (<code class="docutils literal notranslate"><span class="pre">04_jax_pme_example.py</span></code>)</p></td>
+<td><p>00:19.263</p></td>
 <td><p>0.0</p></td>
 </tr>
 <tr class="row-odd"><td><p><a class="reference internal" href="02_ewald_summation_example.html#sphx-glr-examples-electrostatics-02-ewald-summation-example-py"><span class="std std-ref">Ewald Summation for Long-Range Electrostatics</span></a> (<code class="docutils literal notranslate"><span class="pre">02_ewald_summation_example.py</span></code>)</p></td>
-<td><p>00:11.751</p></td>
+<td><p>00:01.161</p></td>
 <td><p>0.0</p></td>
 </tr>
-<tr class="row-even"><td><p><a class="reference internal" href="01_coulomb_example.html#sphx-glr-examples-electrostatics-01-coulomb-example-py"><span class="std std-ref">Coulomb Electrostatic Interactions</span></a> (<code class="docutils literal notranslate"><span class="pre">01_coulomb_example.py</span></code>)</p></td>
-<td><p>00:02.610</p></td>
+<tr class="row-even"><td><p><a class="reference internal" href="03_pme_example.html#sphx-glr-examples-electrostatics-03-pme-example-py"><span class="std std-ref">Particle Mesh Ewald (PME) for Long-Range Electrostatics</span></a> (<code class="docutils literal notranslate"><span class="pre">03_pme_example.py</span></code>)</p></td>
+<td><p>00:00.214</p></td>
+<td><p>0.0</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="01_coulomb_example.html#sphx-glr-examples-electrostatics-01-coulomb-example-py"><span class="std std-ref">Coulomb Electrostatic Interactions</span></a> (<code class="docutils literal notranslate"><span class="pre">01_coulomb_example.py</span></code>)</p></td>
+<td><p>00:00.037</p></td>
 <td><p>0.0</p></td>
 </tr>
 </tbody>
@@ -495,7 +513,7 @@ $(document).ready( function () {
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
     <br/>
   </p>
 </div>

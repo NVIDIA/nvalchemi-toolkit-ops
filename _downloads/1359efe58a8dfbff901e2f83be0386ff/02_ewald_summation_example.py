@@ -1,12 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction,
-# disclosure or distribution of this material and related documentation
-# without an express license agreement from NVIDIA CORPORATION or
-# its affiliates is strictly prohibited.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """
 Ewald Summation for Long-Range Electrostatics
@@ -47,18 +52,14 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from nvalchemiops.interactions.electrostatics import (
+from nvalchemiops.torch.interactions.electrostatics import (
+    estimate_ewald_parameters,
     ewald_real_space,
     ewald_reciprocal_space,
     ewald_summation,
-)
-from nvalchemiops.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
-from nvalchemiops.interactions.electrostatics.parameters import (
-    estimate_ewald_parameters,
-)
-from nvalchemiops.neighborlist import neighbor_list as neighbor_list_fn
+from nvalchemiops.torch.neighbors import neighbor_list as neighbor_list_fn
 
 # %%
 # Configure Device
@@ -66,7 +67,8 @@ from nvalchemiops.neighborlist import neighbor_list as neighbor_list_fn
 
 if torch.cuda.is_available():
     device = torch.device("cuda:0")
-    print(f"Using CUDA device: {torch.cuda.get_device_name(0)}")
+    print("Using CUDA device")
+    print(f"  {torch.cuda.get_device_name(0)}")
 else:
     device = torch.device("cpu")
     print("Using CPU")
@@ -106,8 +108,8 @@ def create_nacl_system(n_cells: int = 2, lattice_constant: float = 5.64):
                     positions.append((pos + offset) * lattice_constant)
                     charges.append(charge)
 
-    positions = torch.tensor(positions, dtype=torch.float64, device=device)
-    charges = torch.tensor(charges, dtype=torch.float64, device=device)
+    positions = torch.tensor(np.array(positions), dtype=torch.float64, device=device)
+    charges = torch.tensor(np.array(charges), dtype=torch.float64, device=device)
     cell = torch.eye(3, dtype=torch.float64, device=device) * lattice_constant * n_cells
     cell = cell.unsqueeze(0)
     pbc = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
@@ -392,27 +394,44 @@ print(
 )
 
 # %%
+# Full Ewald with charge gradients in one call:
+#
+# Instead of calling the components separately, ``ewald_summation`` now supports
+# ``compute_charge_gradients`` directly — matching ``particle_mesh_ewald``.
+
+energies_full, forces_full, charge_grads_full = ewald_summation(
+    positions=positions_4,
+    charges=charges_4,
+    cell=cell_4,
+    neighbor_list=neighbor_list_4,
+    neighbor_ptr=neighbor_ptr_4,
+    neighbor_shifts=neighbor_shifts_4,
+    compute_forces=True,
+    compute_charge_gradients=True,
+    accuracy=1e-4,
+)
+
+print(
+    f"\n  Full Ewald charge gradients range: [{charge_grads_full.min().item():.4f}, {charge_grads_full.max().item():.4f}]"
+)
+
+# Verify unified call matches component-level results
+component_diff = (charge_grads_full - total_charge_grads).abs().max().item()
+print(f"  Unified vs component charge gradient max diff: {component_diff:.2e}")
+
+# %%
 # Verify charge gradients against autograd:
 
 charges_4.requires_grad_(True)
-energies_total = (
-    ewald_real_space(
-        positions=positions_4,
-        charges=charges_4,
-        cell=cell_4,
-        alpha=params_4.alpha,
-        neighbor_list=neighbor_list_4,
-        neighbor_ptr=neighbor_ptr_4,
-        neighbor_shifts=neighbor_shifts_4,
-    ).sum()
-    + ewald_reciprocal_space(
-        positions=positions_4,
-        charges=charges_4,
-        cell=cell_4,
-        k_vectors=k_vectors_4,
-        alpha=params_4.alpha,
-    ).sum()
-)
+energies_total = ewald_summation(
+    positions=positions_4,
+    charges=charges_4,
+    cell=cell_4,
+    neighbor_list=neighbor_list_4,
+    neighbor_ptr=neighbor_ptr_4,
+    neighbor_shifts=neighbor_shifts_4,
+    accuracy=1e-4,
+).sum()
 
 energies_total.backward()
 autograd_charge_grads = charges_4.grad.clone()
@@ -420,8 +439,8 @@ charges_4.requires_grad_(False)
 charges_4.grad = None
 
 # Compare explicit vs autograd charge gradients
-charge_grad_diff = (total_charge_grads - autograd_charge_grads).abs().max().item()
-print(f"\n  Explicit vs Autograd charge gradient max diff: {charge_grad_diff:.2e}")
+charge_grad_diff = (charge_grads_full - autograd_charge_grads).abs().max().item()
+print(f"  Explicit vs Autograd charge gradient max diff: {charge_grad_diff:.2e}")
 
 # %%
 # Batch Evaluation

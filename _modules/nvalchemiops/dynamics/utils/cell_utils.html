@@ -1,0 +1,1648 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.dynamics.utils.cell_utils &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/dynamics/utils/cell_utils';</script>
+    <link rel="index" title="Index" href="../../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.dynamics.utils.cell_utils</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Cell Utilities for NPT/NPH Simulations.</span>
+
+<span class="sd">This module provides utilities for manipulating simulation cells (periodic boxes)</span>
+<span class="sd">in molecular dynamics simulations with variable cell volume/shape (NPT, NPH ensembles).</span>
+
+<span class="sd">The cell is represented as a (B, 3, 3) array of matrices where each matrix contains</span>
+<span class="sd">lattice vectors as columns:</span>
+<span class="sd">    cell[b] = [a, b, c]  (column vectors for system b)</span>
+
+<span class="sd">Even single-system simulations use shape (1, 3, 3).</span>
+
+<span class="sd">Fractional coordinates s relate to Cartesian coordinates r by:</span>
+<span class="sd">    r = cell @ s</span>
+<span class="sd">    s = cell_inv @ r</span>
+
+<span class="sd">Key concepts:</span>
+<span class="sd">- Cell volume: V = det(cell)</span>
+<span class="sd">- Cell inverse: For coordinate transformations</span>
+<span class="sd">- Strain tensor: Deformation from reference cell</span>
+<span class="sd">- Position remapping: Maintain fractional coordinates when cell changes</span>
+
+<span class="sd">All kernels are dtype-agnostic and support both float32 and float64 cell matrices.</span>
+<span class="sd">Functions that require cell_inv accept it as a required parameter; callers</span>
+<span class="sd">must pre-compute via ``compute_cell_inverse`` to avoid redundant inverse</span>
+<span class="sd">computations in MD loops.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># Cell properties</span>
+    <span class="s2">&quot;compute_cell_volume&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;compute_cell_inverse&quot;</span><span class="p">,</span>
+    <span class="c1"># Strain operations</span>
+    <span class="s2">&quot;compute_strain_tensor&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;apply_strain_to_cell&quot;</span><span class="p">,</span>
+    <span class="c1"># Position operations</span>
+    <span class="s2">&quot;scale_positions_with_cell&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;wrap_positions_to_cell&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;cartesian_to_fractional&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;fractional_to_cartesian&quot;</span><span class="p">,</span>
+    <span class="c1"># Non-mutating variants</span>
+    <span class="s2">&quot;scale_positions_with_cell_out&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;wrap_positions_to_cell_out&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Cell Property Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_compute_cell_volume_kernel</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute cell volume V = det(cell) = a · (b × c).</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_systems]</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Cell matrices. Shape (B,).</span>
+<span class="sd">    volumes : wp.array(dtype=wp.float32 or wp.float64)</span>
+<span class="sd">        Output volumes. Shape (B,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="c1"># Cell columns are lattice vectors a, b, c</span>
+    <span class="n">a0</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">a1</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">a2</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">b0</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="n">b1</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="n">b2</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="n">c0</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">c1</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">c2</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+
+    <span class="c1"># det = a · (b × c)</span>
+    <span class="n">det</span> <span class="o">=</span> <span class="n">a0</span> <span class="o">*</span> <span class="p">(</span><span class="n">b1</span> <span class="o">*</span> <span class="n">c2</span> <span class="o">-</span> <span class="n">b2</span> <span class="o">*</span> <span class="n">c1</span><span class="p">)</span> <span class="o">-</span> <span class="n">a1</span> <span class="o">*</span> <span class="p">(</span><span class="n">b0</span> <span class="o">*</span> <span class="n">c2</span> <span class="o">-</span> <span class="n">b2</span> <span class="o">*</span> <span class="n">c0</span><span class="p">)</span> <span class="o">+</span> <span class="n">a2</span> <span class="o">*</span> <span class="p">(</span><span class="n">b0</span> <span class="o">*</span> <span class="n">c1</span> <span class="o">-</span> <span class="n">b1</span> <span class="o">*</span> <span class="n">c0</span><span class="p">)</span>
+
+    <span class="n">volumes</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">det</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_compute_cell_inverse_kernel</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute cell inverse for coordinate transformations.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_systems]</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Cell matrices. Shape (B,).</span>
+<span class="sd">    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Output cell inverses. Shape (B,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="c1"># Cell elements</span>
+    <span class="n">a00</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">a01</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="n">a02</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">a10</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">a11</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="n">a12</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">a20</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
+    <span class="n">a21</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+    <span class="n">a22</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+
+    <span class="c1"># Determinant</span>
+    <span class="n">det</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">a00</span> <span class="o">*</span> <span class="p">(</span><span class="n">a11</span> <span class="o">*</span> <span class="n">a22</span> <span class="o">-</span> <span class="n">a12</span> <span class="o">*</span> <span class="n">a21</span><span class="p">)</span>
+        <span class="o">-</span> <span class="n">a01</span> <span class="o">*</span> <span class="p">(</span><span class="n">a10</span> <span class="o">*</span> <span class="n">a22</span> <span class="o">-</span> <span class="n">a12</span> <span class="o">*</span> <span class="n">a20</span><span class="p">)</span>
+        <span class="o">+</span> <span class="n">a02</span> <span class="o">*</span> <span class="p">(</span><span class="n">a10</span> <span class="o">*</span> <span class="n">a21</span> <span class="o">-</span> <span class="n">a11</span> <span class="o">*</span> <span class="n">a20</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="n">inv_det</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">a00</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">wp</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">det</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">a00</span><span class="p">)(</span><span class="mf">1e-10</span><span class="p">))</span>
+
+    <span class="c1"># Adjugate matrix / det</span>
+    <span class="n">inv00</span> <span class="o">=</span> <span class="p">(</span><span class="n">a11</span> <span class="o">*</span> <span class="n">a22</span> <span class="o">-</span> <span class="n">a12</span> <span class="o">*</span> <span class="n">a21</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv01</span> <span class="o">=</span> <span class="p">(</span><span class="n">a02</span> <span class="o">*</span> <span class="n">a21</span> <span class="o">-</span> <span class="n">a01</span> <span class="o">*</span> <span class="n">a22</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv02</span> <span class="o">=</span> <span class="p">(</span><span class="n">a01</span> <span class="o">*</span> <span class="n">a12</span> <span class="o">-</span> <span class="n">a02</span> <span class="o">*</span> <span class="n">a11</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv10</span> <span class="o">=</span> <span class="p">(</span><span class="n">a12</span> <span class="o">*</span> <span class="n">a20</span> <span class="o">-</span> <span class="n">a10</span> <span class="o">*</span> <span class="n">a22</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv11</span> <span class="o">=</span> <span class="p">(</span><span class="n">a00</span> <span class="o">*</span> <span class="n">a22</span> <span class="o">-</span> <span class="n">a02</span> <span class="o">*</span> <span class="n">a20</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv12</span> <span class="o">=</span> <span class="p">(</span><span class="n">a02</span> <span class="o">*</span> <span class="n">a10</span> <span class="o">-</span> <span class="n">a00</span> <span class="o">*</span> <span class="n">a12</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv20</span> <span class="o">=</span> <span class="p">(</span><span class="n">a10</span> <span class="o">*</span> <span class="n">a21</span> <span class="o">-</span> <span class="n">a11</span> <span class="o">*</span> <span class="n">a20</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv21</span> <span class="o">=</span> <span class="p">(</span><span class="n">a01</span> <span class="o">*</span> <span class="n">a20</span> <span class="o">-</span> <span class="n">a00</span> <span class="o">*</span> <span class="n">a21</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+    <span class="n">inv22</span> <span class="o">=</span> <span class="p">(</span><span class="n">a00</span> <span class="o">*</span> <span class="n">a11</span> <span class="o">-</span> <span class="n">a01</span> <span class="o">*</span> <span class="n">a10</span><span class="p">)</span> <span class="o">*</span> <span class="n">inv_det</span>
+
+    <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">cell</span><span class="p">)(</span>
+        <span class="n">inv00</span><span class="p">,</span> <span class="n">inv01</span><span class="p">,</span> <span class="n">inv02</span><span class="p">,</span> <span class="n">inv10</span><span class="p">,</span> <span class="n">inv11</span><span class="p">,</span> <span class="n">inv12</span><span class="p">,</span> <span class="n">inv20</span><span class="p">,</span> <span class="n">inv21</span><span class="p">,</span> <span class="n">inv22</span>
+    <span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_compute_strain_tensor_kernel</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_ref_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">strains</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute strain tensor: ε = cell @ cell_ref_inv - I.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_systems]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">cell_ref_inv</span> <span class="o">=</span> <span class="n">cells_ref_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="c1"># Compute cell @ cell_ref_inv</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">cell_ref_inv</span><span class="p">)</span>
+    <span class="n">m</span> <span class="o">-=</span> <span class="n">wp</span><span class="o">.</span><span class="n">identity</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">cell</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+    <span class="n">strains</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">m</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_apply_strain_to_cell_kernel</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">strains</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply strain: cell_new = (I + strain) @ cell.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_systems]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">strain</span> <span class="o">=</span> <span class="n">strains</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="n">cells_out</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">identity</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">cell</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span> <span class="o">+</span> <span class="n">strain</span><span class="p">,</span> <span class="n">cell</span><span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Position Transformation Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_scale_positions_single_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_old_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Scale positions for single system (no batch_idx).</span>
+
+<span class="sd">    r_new = cell_new @ cell_old_inv @ r_old</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="c1"># Single system: always index 0</span>
+    <span class="n">coi</span> <span class="o">=</span> <span class="n">cell_old_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">cn</span> <span class="o">=</span> <span class="n">cell_new</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cn</span><span class="p">,</span> <span class="n">coi</span><span class="p">),</span> <span class="n">r</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_scale_positions_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">cells_old_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Scale positions from old cell to new cell maintaining fractional coords.</span>
+
+<span class="sd">    r_new = cell_new @ cell_old_inv @ r_old</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">cell_old_inv</span> <span class="o">=</span> <span class="n">cells_old_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">cell_new</span> <span class="o">=</span> <span class="n">cells_new</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell_new</span><span class="p">,</span> <span class="n">cell_old_inv</span><span class="p">),</span> <span class="n">r</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_scale_positions_out_single_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_old_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Scale positions to output array for single system.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">coi</span> <span class="o">=</span> <span class="n">cell_old_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">cn</span> <span class="o">=</span> <span class="n">cell_new</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">positions_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cn</span><span class="p">,</span> <span class="n">coi</span><span class="p">),</span> <span class="n">r</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_scale_positions_out_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">cells_old_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Scale positions to output array.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">cell_old_inv</span> <span class="o">=</span> <span class="n">cells_old_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">cell_new</span> <span class="o">=</span> <span class="n">cells_new</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="n">positions_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell_new</span><span class="p">,</span> <span class="n">cell_old_inv</span><span class="p">),</span> <span class="n">r</span><span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Wrapping Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_wrap_positions_single_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrap positions for single system (no batch_idx).</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">ci</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># Convert to fractional: s = cell_inv @ r</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">ci</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+
+    <span class="c1"># Wrap to [0, 1) using floor</span>
+    <span class="n">s_wrapped</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">s</span><span class="p">)(</span>
+        <span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Convert back to Cartesian: r_new = cell @ s_wrapped</span>
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">s_wrapped</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_wrap_positions_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrap positions into the primary cell [0, 1) in fractional coordinates.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">cell_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="c1"># Convert to fractional: s = cell_inv @ r</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell_inv</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+
+    <span class="c1"># Wrap to [0, 1) using floor</span>
+    <span class="n">s_wrapped</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">s</span><span class="p">)(</span>
+        <span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Convert back to Cartesian: r_new = cell @ s_wrapped</span>
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">s_wrapped</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_wrap_positions_out_single_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrap positions to output array for single system.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">ci</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">s</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">ci</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+    <span class="n">s_wrapped</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">s</span><span class="p">)(</span>
+        <span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+    <span class="p">)</span>
+    <span class="n">positions_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">s_wrapped</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_wrap_positions_out_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrap positions to output array.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">cell_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="c1"># Convert to fractional: s = cell_inv @ r</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell_inv</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+
+    <span class="c1"># Wrap to [0, 1) using floor</span>
+    <span class="n">s_wrapped</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">s</span><span class="p">)(</span>
+        <span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">-</span> <span class="n">wp</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">s</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Convert back to Cartesian: r_new = cell @ s_wrapped</span>
+    <span class="n">positions_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">s_wrapped</span><span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Coordinate Transformation Kernels</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_cartesian_to_fractional_single_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">fractional</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert Cartesian to fractional for single system.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">ci</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">fractional</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">ci</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_cartesian_to_fractional_kernel</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">fractional</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert Cartesian coordinates to fractional coordinates.</span>
+
+<span class="sd">    s = cell_inv @ r</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">cell_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="n">fractional</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell_inv</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fractional_to_cartesian_single_kernel</span><span class="p">(</span>
+    <span class="n">fractional</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert fractional to Cartesian for single system.</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">fractional</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">cell</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_fractional_to_cartesian_kernel</span><span class="p">(</span>
+    <span class="n">fractional</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Convert fractional coordinates to Cartesian coordinates.</span>
+
+<span class="sd">    r = cell @ s</span>
+
+<span class="sd">    Launch Grid</span>
+<span class="sd">    -----------</span>
+<span class="sd">    dim = [num_atoms]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">atom_idx</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">sys_id</span> <span class="o">=</span> <span class="n">batch_idx</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">fractional</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
+    <span class="n">cell</span> <span class="o">=</span> <span class="n">cells</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+
+    <span class="n">positions</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">cell</span><span class="p">,</span> <span class="n">s</span><span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Kernel Overloads for Explicit Typing</span>
+<span class="c1"># ==============================================================================</span>
+
+<span class="n">_T</span> <span class="o">=</span> <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">]</span>  <span class="c1"># Scalar types</span>
+<span class="n">_V</span> <span class="o">=</span> <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">]</span>  <span class="c1"># Vector types</span>
+<span class="n">_M</span> <span class="o">=</span> <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">mat33f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33d</span><span class="p">]</span>  <span class="c1"># Matrix types</span>
+
+<span class="c1"># Cell property kernel overloads</span>
+<span class="n">_compute_cell_volume_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_compute_cell_inverse_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_compute_strain_tensor_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_apply_strain_to_cell_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="c1"># Position scaling kernel overloads</span>
+<span class="n">_scale_positions_single_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_scale_positions_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_scale_positions_out_single_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_scale_positions_out_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="c1"># Wrapping kernel overloads</span>
+<span class="n">_wrap_positions_single_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_wrap_positions_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_wrap_positions_out_single_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_wrap_positions_out_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="c1"># Coordinate conversion kernel overloads</span>
+<span class="n">_cartesian_to_fractional_single_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_cartesian_to_fractional_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_fractional_to_cartesian_single_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">_fractional_to_cartesian_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="k">for</span> <span class="n">t</span><span class="p">,</span> <span class="n">v</span><span class="p">,</span> <span class="n">m</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">_T</span><span class="p">,</span> <span class="n">_V</span><span class="p">,</span> <span class="n">_M</span><span class="p">):</span>
+    <span class="c1"># Cell property kernels</span>
+    <span class="n">_compute_cell_volume_kernel_overload</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_compute_cell_volume_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">t</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_compute_cell_inverse_kernel_overload</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_compute_cell_inverse_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_compute_strain_tensor_kernel_overload</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_compute_strain_tensor_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_apply_strain_to_cell_kernel_overload</span><span class="p">[</span><span class="n">m</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_apply_strain_to_cell_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">)],</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Position scaling kernels</span>
+    <span class="n">_scale_positions_single_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_scale_positions_single_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_scale_positions_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_scale_positions_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_scale_positions_out_single_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_scale_positions_out_single_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_scale_positions_out_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_scale_positions_out_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Wrapping kernels</span>
+    <span class="n">_wrap_positions_single_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_wrap_positions_single_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_wrap_positions_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_wrap_positions_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_wrap_positions_out_single_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_wrap_positions_out_single_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_wrap_positions_out_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_wrap_positions_out_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Coordinate conversion kernels</span>
+    <span class="n">_cartesian_to_fractional_single_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_cartesian_to_fractional_single_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_cartesian_to_fractional_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_cartesian_to_fractional_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+    <span class="n">_fractional_to_cartesian_single_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_fractional_to_cartesian_single_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">)],</span>
+    <span class="p">)</span>
+    <span class="n">_fractional_to_cartesian_kernel_overload</span><span class="p">[</span><span class="n">v</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_fractional_to_cartesian_kernel</span><span class="p">,</span>
+        <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">m</span><span class="p">),</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">v</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># ==============================================================================</span>
+<span class="c1"># Functional Interfaces</span>
+<span class="c1"># ==============================================================================</span>
+
+
+<div class="viewcode-block" id="compute_cell_volume">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.compute_cell_volume">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_cell_volume</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sa">r</span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute cell volume :math:`V = |\det(cell)|`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Cell matrices. Shape (B,) where B is number of systems.</span>
+<span class="sd">        Even single systems use shape (1,).</span>
+<span class="sd">    volumes : wp.array</span>
+<span class="sd">        Output array for volumes. Shape (B,). Caller must pre-allocate.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from cells.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Cell volumes. Shape (B,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">mat_dtype</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_compute_cell_volume_kernel_overload</span><span class="p">[</span><span class="n">mat_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_systems</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">cells</span><span class="p">,</span> <span class="n">volumes</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">volumes</span></div>
+
+
+
+<div class="viewcode-block" id="compute_cell_inverse">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.compute_cell_inverse">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_cell_inverse</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute cell inverse matrices for coordinate transformations.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Cell matrices. Shape (B,).</span>
+<span class="sd">    cells_inv : wp.array</span>
+<span class="sd">        Output array for inverses. Shape (B,). Caller must pre-allocate.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from cells.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Cell inverse matrices. Shape (B,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">mat_dtype</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_compute_cell_inverse_kernel_overload</span><span class="p">[</span><span class="n">mat_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_systems</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_inv</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">cells_inv</span></div>
+
+
+
+<div class="viewcode-block" id="compute_strain_tensor">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.compute_strain_tensor">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">compute_strain_tensor</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_ref_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">strains</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Compute strain tensor from current and reference cells.</span>
+
+<span class="sd">    The strain tensor ε is defined by: cell = (I + ε) @ cell_ref</span>
+<span class="sd">    So: ε = cell @ cell_ref_inv - I</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Current cell matrices. Shape (B,).</span>
+<span class="sd">    cells_ref_inv : wp.array</span>
+<span class="sd">        Pre-computed inverse of reference cells. Shape (B,).</span>
+<span class="sd">        Caller must pre-compute via ``compute_cell_inverse``.</span>
+<span class="sd">    strains : wp.array</span>
+<span class="sd">        Output strain tensors. Shape (B,). Caller must pre-allocate.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from cells.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Strain tensors. Shape (B,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">mat_dtype</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_compute_strain_tensor_kernel_overload</span><span class="p">[</span><span class="n">mat_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_systems</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_ref_inv</span><span class="p">,</span> <span class="n">strains</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">strains</span></div>
+
+
+
+<div class="viewcode-block" id="apply_strain_to_cell">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.apply_strain_to_cell">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">apply_strain_to_cell</span><span class="p">(</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">strains</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Apply strain tensor to cell: cell_new = (I + strain) @ cell.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Current cell matrices. Shape (B,).</span>
+<span class="sd">    strains : wp.array</span>
+<span class="sd">        Strain tensors to apply. Shape (B,).</span>
+<span class="sd">    cells_out : wp.array</span>
+<span class="sd">        Output cell matrices. Shape (B,). Caller must pre-allocate.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from cells.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Updated cell matrices. Shape (B,).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">mat_dtype</span> <span class="o">=</span> <span class="n">cells</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_apply_strain_to_cell_kernel_overload</span><span class="p">[</span><span class="n">mat_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_systems</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">cells</span><span class="p">,</span> <span class="n">strains</span><span class="p">,</span> <span class="n">cells_out</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">cells_out</span></div>
+
+
+
+<div class="viewcode-block" id="scale_positions_with_cell">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.scale_positions_with_cell">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">scale_positions_with_cell</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_old_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Scale positions when cell changes, maintaining fractional coordinates (in-place).</span>
+
+<span class="sd">    r_new = cell_new @ cell_old_inv @ r_old</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    cells_new : wp.array</span>
+<span class="sd">        New cell matrices. Shape (B,).</span>
+<span class="sd">    cells_old_inv : wp.array</span>
+<span class="sd">        Pre-computed inverse of old cell matrices. Shape (B,).</span>
+<span class="sd">        Caller must pre-compute via ``compute_cell_inverse``.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. Shape (N,). If None, assumes single system.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device. If None, inferred from positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Single-system kernel</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_scale_positions_single_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">cells_old_inv</span><span class="p">,</span> <span class="n">cells_new</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Batched kernel</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_scale_positions_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">cells_old_inv</span><span class="p">,</span> <span class="n">cells_new</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="scale_positions_with_cell_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.scale_positions_with_cell_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">scale_positions_with_cell_out</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_new</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_old_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Scale positions when cell changes (non-mutating).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,).</span>
+<span class="sd">    cells_new : wp.array</span>
+<span class="sd">        New cell matrices. Shape (B,).</span>
+<span class="sd">    cells_old_inv : wp.array</span>
+<span class="sd">        Pre-computed inverse of old cell matrices. Shape (B,).</span>
+<span class="sd">        Caller must pre-compute via ``compute_cell_inverse``.</span>
+<span class="sd">    positions_out : wp.array</span>
+<span class="sd">        Output positions. Shape (N,). Caller must pre-allocate.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. Shape (N,). If None, assumes single system.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Scaled positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_scale_positions_out_single_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">cells_old_inv</span><span class="p">,</span> <span class="n">cells_new</span><span class="p">,</span> <span class="n">positions_out</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_scale_positions_out_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">cells_old_inv</span><span class="p">,</span> <span class="n">cells_new</span><span class="p">,</span> <span class="n">positions_out</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">positions_out</span></div>
+
+
+
+<div class="viewcode-block" id="wrap_positions_to_cell">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.wrap_positions_to_cell">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">wrap_positions_to_cell</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wrap positions into primary cell [0, 1) in fractional coordinates (in-place).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,). MODIFIED in-place.</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Cell matrices. Shape (B,).</span>
+<span class="sd">    cells_inv : wp.array</span>
+<span class="sd">        Pre-computed inverse of cells. Shape (B,).</span>
+<span class="sd">        Caller must pre-compute via ``compute_cell_inverse``.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. Shape (N,). If None, assumes single system.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_wrap_positions_single_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">cells_inv</span><span class="p">,</span> <span class="n">cells</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_wrap_positions_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">cells_inv</span><span class="p">,</span> <span class="n">cells</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="wrap_positions_to_cell_out">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.wrap_positions_to_cell_out">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">wrap_positions_to_cell_out</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Wrap positions into primary cell (non-mutating).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Atomic positions. Shape (N,).</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Cell matrices. Shape (B,).</span>
+<span class="sd">    cells_inv : wp.array</span>
+<span class="sd">        Pre-computed inverse of cells. Shape (B,).</span>
+<span class="sd">        Caller must pre-compute via ``compute_cell_inverse``.</span>
+<span class="sd">    positions_out : wp.array</span>
+<span class="sd">        Output positions. Shape (N,). Caller must pre-allocate.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. Shape (N,). If None, assumes single system.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Wrapped positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_wrap_positions_out_single_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">cells_inv</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">positions_out</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_wrap_positions_out_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">cells_inv</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">positions_out</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">positions_out</span></div>
+
+
+
+<div class="viewcode-block" id="cartesian_to_fractional">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.cartesian_to_fractional">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">cartesian_to_fractional</span><span class="p">(</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">fractional</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convert Cartesian coordinates to fractional coordinates.</span>
+
+<span class="sd">    s = cell_inv @ r</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    positions : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Cartesian positions. Shape (N,).</span>
+<span class="sd">    cells_inv : wp.array</span>
+<span class="sd">        Pre-computed inverse of cells. Shape (B,).</span>
+<span class="sd">        Caller must pre-compute via ``compute_cell_inverse``.</span>
+<span class="sd">    fractional : wp.array</span>
+<span class="sd">        Output fractional coordinates. Shape (N,). Caller must pre-allocate.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. Shape (N,). If None, assumes single system.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Fractional coordinates.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_cartesian_to_fractional_single_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">cells_inv</span><span class="p">,</span> <span class="n">fractional</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_cartesian_to_fractional_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">cells_inv</span><span class="p">,</span> <span class="n">fractional</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">fractional</span></div>
+
+
+
+<div class="viewcode-block" id="fractional_to_cartesian">
+<a class="viewcode-back" href="../../../../modules/warp/dynamics.html#nvalchemiops.dynamics.utils.cell_utils.fractional_to_cartesian">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">fractional_to_cartesian</span><span class="p">(</span>
+    <span class="n">fractional</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">positions</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convert fractional coordinates to Cartesian coordinates.</span>
+
+<span class="sd">    r = cell @ s</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    fractional : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
+<span class="sd">        Fractional coordinates. Shape (N,).</span>
+<span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
+<span class="sd">        Cell matrices. Shape (B,).</span>
+<span class="sd">    positions : wp.array</span>
+<span class="sd">        Output Cartesian positions. Shape (N,). Caller must pre-allocate.</span>
+<span class="sd">    batch_idx : wp.array(dtype=wp.int32), optional</span>
+<span class="sd">        System index for each atom. Shape (N,). If None, assumes single system.</span>
+<span class="sd">    device : str, optional</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Cartesian positions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">fractional</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">fractional</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">vec_dtype</span> <span class="o">=</span> <span class="n">fractional</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_fractional_to_cartesian_single_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">fractional</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">positions</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+            <span class="n">_fractional_to_cartesian_kernel_overload</span><span class="p">[</span><span class="n">vec_dtype</span><span class="p">],</span>
+            <span class="n">dim</span><span class="o">=</span><span class="n">num_atoms</span><span class="p">,</span>
+            <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">fractional</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">positions</span><span class="p">],</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">positions</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

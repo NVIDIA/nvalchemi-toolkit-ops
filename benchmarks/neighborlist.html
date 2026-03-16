@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Neighbor List Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.2.0 documentation</title>
+    <title>Neighbor List Benchmarks &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
   
   
   
@@ -42,9 +42,9 @@
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
   <script src="../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
 
-    <script src="../_static/documentation_options.js?v=95e61db4"></script>
-    <script src="../_static/doctools.js?v=9bcbadda"></script>
-    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script>let toggleHintShow = 'Click to show';</script>
     <script>let toggleHintHide = 'Click to hide';</script>
     <script>let toggleOpenOnPrint = 'true';</script>
@@ -52,7 +52,7 @@
     <script src="../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
     <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
-    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'benchmarks/neighborlist';</script>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
@@ -169,6 +169,13 @@
                     <li class="nav-item current active">
                       <a class="nav-link nav-internal" href="index.html">
                         Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../changes.html">
+                        Change Log
                       </a>
                     </li>
                 
@@ -299,6 +306,13 @@ document.write(`
                 
 
                     <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
                       <a class="nav-link nav-internal" href="../modules/index.html">
                         API
                       </a>
@@ -354,6 +368,7 @@ document.write(`
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Neighbor List Benchmarks</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html">Electrostatics Benchmarks</a></li>
 <li class="toctree-l1"><a class="reference internal" href="dftd3.html">DFT-D3 Dispersion Benchmarks</a></li>
+<li class="toctree-l1"><a class="reference internal" href="dynamics.html">Dynamics Benchmarks</a></li>
 </ul>
 </div>
 </nav></div>
@@ -437,129 +452,396 @@ requirements for your target system.</p>
 <section id="performance-results">
 <h2>Performance Results<a class="headerlink" href="#performance-results" title="Link to this heading">#</a></h2>
 <p>Select a method to view detailed benchmark data and scaling plots:</p>
+<section id="naive">
+<h3>Naive<a class="headerlink" href="#naive" title="Link to this heading">#</a></h3>
+<p>Brute-force <span class="math notranslate nohighlight">\(O(N^2)\)</span> algorithm. Best for very small systems where the overhead of
+cell list construction exceeds the computational savings.</p>
 <div class="sd-tab-set docutils">
 <input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-0">
-Naive</label><div class="sd-tab-content docutils">
-<p>Brute-force <span class="math notranslate nohighlight">\(O(N^2)\)</span> algorithm. Best for very small systems where the overhead of
-cell list construction exceeds the computational savings.</p>
+Backend Comparison</label><div class="sd-tab-content docutils">
+<p>Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.</p>
 <p class="rubric" id="time-scaling">Time Scaling</p>
-<figure class="align-center" id="id10">
-<a class="reference internal image-reference" href="../_images/neighborlist_scaling_naive_h100-80gb-hbm3.png"><img alt="Naive algorithm time scaling" src="../_images/neighborlist_scaling_naive_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id34">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_naive_comparison_h100-80gb-hbm3.png"><img alt="Naive algorithm backend time comparison" src="../_images/neighborlist_scaling_naive_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Median execution time vs. system size. The <span class="math notranslate nohighlight">\(O(N^2)\)</span> scaling becomes apparent for larger systems.</span><a class="headerlink" href="#id10" title="Link to this image">#</a></p>
+<p><span class="caption-text">Median execution time comparison between backends.
+The <span class="math notranslate nohighlight">\(O(N^2)\)</span> scaling becomes apparent for larger systems.</span><a class="headerlink" href="#id34" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="throughput">Throughput</p>
-<figure class="align-center" id="id11">
-<a class="reference internal image-reference" href="../_images/neighborlist_throughput_naive_h100-80gb-hbm3.png"><img alt="Naive algorithm throughput" src="../_images/neighborlist_throughput_naive_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id35">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_naive_comparison_h100-80gb-hbm3.png"><img alt="Naive algorithm backend throughput comparison" src="../_images/neighborlist_throughput_naive_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) vs. system size. Throughput decreases as system size grows due to
-<span class="math notranslate nohighlight">\(O(N^2)\)</span> scaling.</span><a class="headerlink" href="#id11" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (atoms/ms) comparison between backends.</span><a class="headerlink" href="#id35" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="memory-usage">Memory Usage</p>
-<figure class="align-center" id="id12">
-<a class="reference internal image-reference" href="../_images/neighborlist_memory_naive_h100-80gb-hbm3.png"><img alt="Naive algorithm memory usage" src="../_images/neighborlist_memory_naive_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id36">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_naive_comparison_h100-80gb-hbm3.png"><img alt="Naive algorithm backend memory comparison" src="../_images/neighborlist_memory_naive_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Peak GPU memory consumption vs. system size.</span><a class="headerlink" href="#id12" title="Link to this image">#</a></p>
+<p><span class="caption-text">Peak GPU memory consumption comparison between backends.</span><a class="headerlink" href="#id36" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </div>
 <input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-1">
-Cell List</label><div class="sd-tab-content docutils">
-<p>Spatial hashing <span class="math notranslate nohighlight">\(O(N)\)</span> algorithm. Recommended for medium to large systems where
-computational efficiency is critical.</p>
+nvalchemiops (Torch)</label><div class="sd-tab-content docutils">
+<p>Scaling of the naive algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Torch backend.
+Shows how performance scales with different batch sizes.</p>
 <p class="rubric" id="id1">Time Scaling</p>
-<figure class="align-center" id="id13">
-<a class="reference internal image-reference" href="../_images/neighborlist_scaling_cell-list_h100-80gb-hbm3.png"><img alt="Cell list algorithm time scaling" src="../_images/neighborlist_scaling_cell-list_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id37">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_naive_torch_h100-80gb-hbm3.png"><img alt="Naive algorithm Torch time scaling" src="../_images/neighborlist_scaling_naive_torch_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Median execution time vs. system size. Shows near-linear <span class="math notranslate nohighlight">\(O(N)\)</span> scaling for large systems.</span><a class="headerlink" href="#id13" title="Link to this image">#</a></p>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id37" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="id2">Throughput</p>
-<figure class="align-center" id="id14">
-<a class="reference internal image-reference" href="../_images/neighborlist_throughput_cell-list_h100-80gb-hbm3.png"><img alt="Cell list algorithm throughput" src="../_images/neighborlist_throughput_cell-list_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id38">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_naive_torch_h100-80gb-hbm3.png"><img alt="Naive algorithm Torch throughput" src="../_images/neighborlist_throughput_naive_torch_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) vs. system size. Maintains high throughput even for very large systems.</span><a class="headerlink" href="#id14" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id38" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="id3">Memory Usage</p>
-<figure class="align-center" id="id15">
-<a class="reference internal image-reference" href="../_images/neighborlist_memory_cell-list_h100-80gb-hbm3.png"><img alt="Cell list algorithm memory usage" src="../_images/neighborlist_memory_cell-list_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id39">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_naive_torch_h100-80gb-hbm3.png"><img alt="Naive algorithm Torch memory usage" src="../_images/neighborlist_memory_naive_torch_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Peak GPU memory consumption vs. system size.</span><a class="headerlink" href="#id15" title="Link to this image">#</a></p>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id39" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </div>
 <input id="sd-tab-item-2" name="sd-tab-set-0" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-2">
-Batch Naive</label><div class="sd-tab-content docutils">
-<p>Batched brute-force algorithm for processing multiple small systems
-simultaneously. Useful for ML workflows with many small molecules.</p>
+nvalchemiops (JAX)</label><div class="sd-tab-content docutils">
+<p>Scaling of the naive algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> JAX backend.
+Shows how performance scales with different batch sizes.</p>
 <p class="rubric" id="id4">Time Scaling</p>
-<figure class="align-center" id="id16">
-<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-naive_h100-80gb-hbm3.png"><img alt="Batch naive algorithm time scaling" src="../_images/neighborlist_scaling_batch-naive_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id40">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_naive_jax_h100-80gb-hbm3.png"><img alt="Naive algorithm JAX time scaling" src="../_images/neighborlist_scaling_naive_jax_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Median execution time vs. total atoms across all batched systems.</span><a class="headerlink" href="#id16" title="Link to this image">#</a></p>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id40" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="id5">Throughput</p>
-<figure class="align-center" id="id17">
-<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-naive_h100-80gb-hbm3.png"><img alt="Batch naive algorithm throughput" src="../_images/neighborlist_throughput_batch-naive_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id41">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_naive_jax_h100-80gb-hbm3.png"><img alt="Naive algorithm JAX throughput" src="../_images/neighborlist_throughput_naive_jax_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) for batched processing. Different lines show different batch sizes.</span><a class="headerlink" href="#id17" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id41" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="id6">Memory Usage</p>
-<figure class="align-center" id="id18">
-<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-naive_h100-80gb-hbm3.png"><img alt="Batch naive algorithm memory usage" src="../_images/neighborlist_memory_batch-naive_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id42">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_naive_jax_h100-80gb-hbm3.png"><img alt="Naive algorithm JAX memory usage" src="../_images/neighborlist_memory_naive_jax_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Peak GPU memory consumption for batched systems.</span><a class="headerlink" href="#id18" title="Link to this image">#</a></p>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id42" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </div>
-<input id="sd-tab-item-3" name="sd-tab-set-0" type="radio">
+</div>
+</section>
+<section id="cell-list">
+<h3>Cell List<a class="headerlink" href="#cell-list" title="Link to this heading">#</a></h3>
+<p>Spatial hashing <span class="math notranslate nohighlight">\(O(N)\)</span> algorithm. Recommended for medium to large systems where
+computational efficiency is critical.</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-3" name="sd-tab-set-1" type="radio">
 <label class="sd-tab-label" for="sd-tab-item-3">
-Batch Cell List</label><div class="sd-tab-content docutils">
-<p>Batched spatial hashing algorithm for processing multiple systems
-simultaneously with O(N) scaling per system.</p>
+Backend Comparison</label><div class="sd-tab-content docutils">
+<p>Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.</p>
 <p class="rubric" id="id7">Time Scaling</p>
-<figure class="align-center" id="id19">
-<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-cell-list_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm time scaling" src="../_images/neighborlist_scaling_batch-cell-list_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id43">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_cell-list_comparison_h100-80gb-hbm3.png"><img alt="Cell list algorithm backend time comparison" src="../_images/neighborlist_scaling_cell-list_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Median execution time vs. total atoms across all batched systems.</span><a class="headerlink" href="#id19" title="Link to this image">#</a></p>
+<p><span class="caption-text">Median execution time comparison between backends.
+Shows near-linear <span class="math notranslate nohighlight">\(O(N)\)</span> scaling for large systems.</span><a class="headerlink" href="#id43" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="id8">Throughput</p>
-<figure class="align-center" id="id20">
-<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-cell-list_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm throughput" src="../_images/neighborlist_throughput_batch-cell-list_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id44">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_cell-list_comparison_h100-80gb-hbm3.png"><img alt="Cell list algorithm backend throughput comparison" src="../_images/neighborlist_throughput_cell-list_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Throughput (atoms/ms) for batched processing. Different lines show different batch sizes.</span><a class="headerlink" href="#id20" title="Link to this image">#</a></p>
+<p><span class="caption-text">Throughput (atoms/ms) comparison between backends.</span><a class="headerlink" href="#id44" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 <p class="rubric" id="id9">Memory Usage</p>
-<figure class="align-center" id="id21">
-<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-cell-list_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm memory usage" src="../_images/neighborlist_memory_batch-cell-list_h100-80gb-hbm3.png" style="width: 80%;" />
+<figure class="align-center" id="id45">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_cell-list_comparison_h100-80gb-hbm3.png"><img alt="Cell list algorithm backend memory comparison" src="../_images/neighborlist_memory_cell-list_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
 </a>
 <figcaption>
-<p><span class="caption-text">Peak GPU memory consumption for batched systems.</span><a class="headerlink" href="#id21" title="Link to this image">#</a></p>
+<p><span class="caption-text">Peak GPU memory consumption comparison between backends.</span><a class="headerlink" href="#id45" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-4" name="sd-tab-set-1" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-4">
+nvalchemiops (Torch)</label><div class="sd-tab-content docutils">
+<p>Scaling of the cell list algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Torch backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id10">Time Scaling</p>
+<figure class="align-center" id="id46">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_cell-list_torch_h100-80gb-hbm3.png"><img alt="Cell list algorithm Torch time scaling" src="../_images/neighborlist_scaling_cell-list_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id46" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id11">Throughput</p>
+<figure class="align-center" id="id47">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_cell-list_torch_h100-80gb-hbm3.png"><img alt="Cell list algorithm Torch throughput" src="../_images/neighborlist_throughput_cell-list_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id47" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id12">Memory Usage</p>
+<figure class="align-center" id="id48">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_cell-list_torch_h100-80gb-hbm3.png"><img alt="Cell list algorithm Torch memory usage" src="../_images/neighborlist_memory_cell-list_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id48" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-5" name="sd-tab-set-1" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-5">
+nvalchemiops (JAX)</label><div class="sd-tab-content docutils">
+<p>Scaling of the cell list algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> JAX backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id13">Time Scaling</p>
+<figure class="align-center" id="id49">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_cell-list_jax_h100-80gb-hbm3.png"><img alt="Cell list algorithm JAX time scaling" src="../_images/neighborlist_scaling_cell-list_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id49" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id14">Throughput</p>
+<figure class="align-center" id="id50">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_cell-list_jax_h100-80gb-hbm3.png"><img alt="Cell list algorithm JAX throughput" src="../_images/neighborlist_throughput_cell-list_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id50" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id15">Memory Usage</p>
+<figure class="align-center" id="id51">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_cell-list_jax_h100-80gb-hbm3.png"><img alt="Cell list algorithm JAX memory usage" src="../_images/neighborlist_memory_cell-list_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id51" title="Link to this image">#</a></p>
 </figcaption>
 </figure>
 </div>
 </div>
+</section>
+<section id="batch-naive">
+<h3>Batch Naive<a class="headerlink" href="#batch-naive" title="Link to this heading">#</a></h3>
+<p>Batched brute-force algorithm for processing multiple small systems
+simultaneously. Useful for ML workflows with many small molecules.</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-6" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-6">
+Backend Comparison</label><div class="sd-tab-content docutils">
+<p>Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.</p>
+<p class="rubric" id="id16">Time Scaling</p>
+<figure class="align-center" id="id52">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-naive_comparison_h100-80gb-hbm3.png"><img alt="Batch naive algorithm backend time comparison" src="../_images/neighborlist_scaling_batch-naive_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Median execution time comparison between backends.</span><a class="headerlink" href="#id52" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id17">Throughput</p>
+<figure class="align-center" id="id53">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-naive_comparison_h100-80gb-hbm3.png"><img alt="Batch naive algorithm backend throughput comparison" src="../_images/neighborlist_throughput_batch-naive_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) comparison between backends.</span><a class="headerlink" href="#id53" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id18">Memory Usage</p>
+<figure class="align-center" id="id54">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-naive_comparison_h100-80gb-hbm3.png"><img alt="Batch naive algorithm backend memory comparison" src="../_images/neighborlist_memory_batch-naive_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption comparison between backends.</span><a class="headerlink" href="#id54" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-7" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-7">
+nvalchemiops (Torch)</label><div class="sd-tab-content docutils">
+<p>Scaling of the batched naive algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Torch backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id19">Time Scaling</p>
+<figure class="align-center" id="id55">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-naive_torch_h100-80gb-hbm3.png"><img alt="Batch naive algorithm Torch time scaling" src="../_images/neighborlist_scaling_batch-naive_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id55" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id20">Throughput</p>
+<figure class="align-center" id="id56">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-naive_torch_h100-80gb-hbm3.png"><img alt="Batch naive algorithm Torch throughput" src="../_images/neighborlist_throughput_batch-naive_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id56" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id21">Memory Usage</p>
+<figure class="align-center" id="id57">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-naive_torch_h100-80gb-hbm3.png"><img alt="Batch naive algorithm Torch memory usage" src="../_images/neighborlist_memory_batch-naive_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id57" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-8" name="sd-tab-set-2" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-8">
+nvalchemiops (JAX)</label><div class="sd-tab-content docutils">
+<p>Scaling of the batched naive algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> JAX backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id22">Time Scaling</p>
+<figure class="align-center" id="id58">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-naive_jax_h100-80gb-hbm3.png"><img alt="Batch naive algorithm JAX time scaling" src="../_images/neighborlist_scaling_batch-naive_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id58" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id23">Throughput</p>
+<figure class="align-center" id="id59">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-naive_jax_h100-80gb-hbm3.png"><img alt="Batch naive algorithm JAX throughput" src="../_images/neighborlist_throughput_batch-naive_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id59" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id24">Memory Usage</p>
+<figure class="align-center" id="id60">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-naive_jax_h100-80gb-hbm3.png"><img alt="Batch naive algorithm JAX memory usage" src="../_images/neighborlist_memory_batch-naive_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id60" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
+</section>
+<section id="batch-cell-list">
+<h3>Batch Cell List<a class="headerlink" href="#batch-cell-list" title="Link to this heading">#</a></h3>
+<p>Batched spatial hashing algorithm for processing multiple systems
+simultaneously with O(N) scaling per system.</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-9" name="sd-tab-set-3" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-9">
+Backend Comparison</label><div class="sd-tab-content docutils">
+<p>Simple comparison of single (non-batched) system computations between backends,
+where we scale up the size of the system.</p>
+<p class="rubric" id="id25">Time Scaling</p>
+<figure class="align-center" id="id61">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-cell-list_comparison_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm backend time comparison" src="../_images/neighborlist_scaling_batch-cell-list_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Median execution time comparison between backends.</span><a class="headerlink" href="#id61" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id26">Throughput</p>
+<figure class="align-center" id="id62">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-cell-list_comparison_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm backend throughput comparison" src="../_images/neighborlist_throughput_batch-cell-list_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) comparison between backends.</span><a class="headerlink" href="#id62" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id27">Memory Usage</p>
+<figure class="align-center" id="id63">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-cell-list_comparison_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm backend memory comparison" src="../_images/neighborlist_memory_batch-cell-list_comparison_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption comparison between backends.</span><a class="headerlink" href="#id63" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-10" name="sd-tab-set-3" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-10">
+nvalchemiops (Torch)</label><div class="sd-tab-content docutils">
+<p>Scaling of the batched cell list algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> Torch backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id28">Time Scaling</p>
+<figure class="align-center" id="id64">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-cell-list_torch_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm Torch time scaling" src="../_images/neighborlist_scaling_batch-cell-list_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id64" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id29">Throughput</p>
+<figure class="align-center" id="id65">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-cell-list_torch_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm Torch throughput" src="../_images/neighborlist_throughput_batch-cell-list_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id65" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id30">Memory Usage</p>
+<figure class="align-center" id="id66">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-cell-list_torch_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm Torch memory usage" src="../_images/neighborlist_memory_batch-cell-list_torch_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id66" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+<input id="sd-tab-item-11" name="sd-tab-set-3" type="radio">
+<label class="sd-tab-label" for="sd-tab-item-11">
+nvalchemiops (JAX)</label><div class="sd-tab-content docutils">
+<p>Scaling of the batched cell list algorithm with the <code class="docutils literal notranslate"><span class="pre">nvalchemiops</span></code> JAX backend.
+Shows how performance scales with different batch sizes.</p>
+<p class="rubric" id="id31">Time Scaling</p>
+<figure class="align-center" id="id67">
+<a class="reference internal image-reference" href="../_images/neighborlist_scaling_batch-cell-list_jax_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm JAX time scaling" src="../_images/neighborlist_scaling_batch-cell-list_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Execution time scaling for different batch sizes.</span><a class="headerlink" href="#id67" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id32">Throughput</p>
+<figure class="align-center" id="id68">
+<a class="reference internal image-reference" href="../_images/neighborlist_throughput_batch-cell-list_jax_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm JAX throughput" src="../_images/neighborlist_throughput_batch-cell-list_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Throughput (atoms/ms) for different batch sizes.</span><a class="headerlink" href="#id68" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+<p class="rubric" id="id33">Memory Usage</p>
+<figure class="align-center" id="id69">
+<a class="reference internal image-reference" href="../_images/neighborlist_memory_batch-cell-list_jax_h100-80gb-hbm3.png"><img alt="Batch cell list algorithm JAX memory usage" src="../_images/neighborlist_memory_batch-cell-list_jax_h100-80gb-hbm3.png" style="width: 90%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Peak GPU memory consumption for different batch sizes.</span><a class="headerlink" href="#id69" title="Link to this image">#</a></p>
+</figcaption>
+</figure>
+</div>
+</div>
+</section>
 </section>
 <section id="hardware-information">
 <h2>Hardware Information<a class="headerlink" href="#hardware-information" title="Link to this heading">#</a></h2>
@@ -670,7 +952,13 @@ during the next documentation build.</p>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-read-these-charts">How to Read These Charts</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#performance-results">Performance Results</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#performance-results">Performance Results</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#naive">Naive</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cell-list">Cell List</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-naive">Batch Naive</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-cell-list">Batch Cell List</a></li>
+</ul>
+</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hardware-information">Hardware Information</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#benchmark-configuration">Benchmark Configuration</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#interpreting-results">Interpreting Results</a></li>
@@ -721,7 +1009,7 @@ during the next documentation build.</p>
         <div class="footer-item">
 
   <p class="sphinx-version">
-    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
     <br/>
   </p>
 </div>

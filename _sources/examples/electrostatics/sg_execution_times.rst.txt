@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:29.732** total execution time for 3 files **from examples/electrostatics**:
+**00:20.676** total execution time for 4 files **from examples/electrostatics**:
 
 .. container::
 
@@ -32,12 +32,15 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_examples_electrostatics_03_pme_example.py` (``03_pme_example.py``)
-     - 00:15.372
+   * - :ref:`sphx_glr_examples_electrostatics_04_jax_pme_example.py` (``04_jax_pme_example.py``)
+     - 00:19.263
      - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py` (``02_ewald_summation_example.py``)
-     - 00:11.751
+     - 00:01.161
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_03_pme_example.py` (``03_pme_example.py``)
+     - 00:00.214
      - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py` (``01_coulomb_example.py``)
-     - 00:02.610
+     - 00:00.037
      - 0.0
