@@ -123,7 +123,7 @@ $ uv sync
 # include torch backend
 $ uv sync --extra torch
 # include jax backend
-$ uv sync --extra torch
+$ uv sync --extra jax
 # include both backends
 $ uv sync --all-extras
 ```
