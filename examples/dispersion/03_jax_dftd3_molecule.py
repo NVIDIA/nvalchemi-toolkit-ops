@@ -85,7 +85,11 @@ param_file = (
 )
 if not param_file.exists():
     print("Downloading DFT-D3 parameters...")
-    sys.path.insert(0, str(Path(__file__).parent))
+    try:
+        _import_dir = str(Path(__file__).parent)
+    except NameError:
+        _import_dir = str(Path.cwd())
+    sys.path.insert(0, _import_dir)
     from utils import extract_dftd3_parameters, save_dftd3_parameters
 
     params_torch = extract_dftd3_parameters()
@@ -111,9 +115,11 @@ print(f"Loaded D3 parameters for elements 1-{d3_params.max_z}")
 # where the first line contains the number of atoms, the second line is a
 # comment, and subsequent lines contain: element symbol, x, y, z coordinates.
 
-# Get the directory containing this script
-script_dir = Path(__file__).parent
-xyz_file = script_dir / "dimer.xyz"
+try:
+    _script_dir = Path(__file__).parent
+except NameError:
+    _script_dir = Path.cwd()
+xyz_file = _script_dir / "dimer.xyz"
 
 with open(xyz_file) as f:
     lines = f.readlines()

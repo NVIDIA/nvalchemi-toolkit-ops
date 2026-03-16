@@ -53,14 +53,14 @@ All methods support:
 
 ## Quick Start
 
-::::{tab-set}
+:::::::{tab-set}
 
-:::{tab-item} Ewald Summation
+::::::{tab-item} Ewald Summation
 :sync: ewald
 
-:::::{tab-set}
+::::{tab-set}
 
-::::{tab-item} PyTorch
+:::{tab-item} PyTorch
 :sync: pytorch
 
 ```python
@@ -85,9 +85,9 @@ energies, forces = ewald_summation(
 )
 ```
 
-::::
+:::
 
-::::{tab-item} JAX
+:::{tab-item} JAX
 :sync: jax
 
 ```python
@@ -114,18 +114,18 @@ energies, forces = ewald_summation(
 )
 ```
 
-::::
-
-:::::
-
 :::
 
-:::{tab-item} Particle Mesh Ewald
+::::
+
+::::::
+
+::::::{tab-item} Particle Mesh Ewald
 :sync: pme
 
-:::::{tab-set}
+::::{tab-set}
 
-::::{tab-item} PyTorch
+:::{tab-item} PyTorch
 :sync: pytorch
 
 ```python
@@ -150,9 +150,9 @@ energies, forces = particle_mesh_ewald(
 )
 ```
 
-::::
+:::
 
-::::{tab-item} JAX
+:::{tab-item} JAX
 :sync: jax
 
 ```python
@@ -179,13 +179,13 @@ energies, forces = particle_mesh_ewald(
 )
 ```
 
-::::
-
-:::::
-
 :::
 
-:::{tab-item} DSF Coulomb
+::::
+
+::::::
+
+::::::{tab-item} DSF Coulomb
 :sync: dsf
 
 ```{note}
@@ -215,14 +215,14 @@ energies, forces = dsf_coulomb(
 )
 ```
 
-:::
+::::::
 
-:::{tab-item} Direct Coulomb
+::::::{tab-item} Direct Coulomb
 :sync: coulomb
 
-:::::{tab-set}
+::::{tab-set}
 
-::::{tab-item} PyTorch
+:::{tab-item} PyTorch
 :sync: pytorch
 
 ```python
@@ -247,9 +247,9 @@ energies, forces = coulomb_energy_forces(
 )
 ```
 
-::::
+:::
 
-::::{tab-item} JAX
+:::{tab-item} JAX
 :sync: jax
 
 ```python
@@ -276,13 +276,13 @@ energies, forces = coulomb_energy_forces(
 )
 ```
 
-::::
-
-:::::
-
 :::
 
 ::::
+
+::::::
+
+:::::::
 
 ## Data Formats
 

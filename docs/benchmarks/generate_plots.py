@@ -1335,7 +1335,7 @@ def _generate_dynamics_comparison_plots(
         output_path,
         title=f"{benchmark_type.upper()} {system_type.title()} Throughput Comparison",
         x_label="Number of atoms",
-        y_label="Atom-steps/us",
+        y_label="Atom-steps/s",
     )
     print(f"      Generated: {output_path.name}")
 
@@ -1345,7 +1345,7 @@ def _generate_dynamics_comparison_plots(
         for backend, df in data_by_backend.items():
             # Average across num_atoms for each batch_size
             grouped = df.groupby("batch_size")[
-                "batch_throughput_system_steps_per_us"
+                "batch_throughput_system_steps_per_s"
             ].mean()
             series[backend] = (grouped.index.values, grouped.values)
 
@@ -1358,7 +1358,7 @@ def _generate_dynamics_comparison_plots(
             output_path,
             title=f"{benchmark_type.upper()} Batch Scaling Comparison",
             x_label="Batch size",
-            y_label="System-steps/us",
+            y_label="System-steps/s",
         )
         print(f"      Generated: {output_path.name}")
 
@@ -1373,20 +1373,29 @@ def _generate_dynamics_backend_plots(
     output_dir: Path,
 ) -> None:
     """Generate per-backend detail plots."""
-    # Plot per method
-    methods = df["method"].unique()
-
-    # Scaling per method
-    series = {}
-    for method in methods:
-        df_method = df[df["method"] == method]
-        if is_batched:
-            # Average across batch sizes
-            grouped = df_method.groupby("num_atoms")["avg_step_time_ms"].mean()
-            series[method] = (grouped.index.values, grouped.values)
+    if is_batched:
+        # For batched data, use total_atoms as x-axis.
+        # Choose series grouping: model_type if multiple, otherwise method.
+        model_types = df["model_type"].dropna().replace("", pd.NA).dropna().unique()
+        if len(model_types) > 1:
+            group_col = "model_type"
         else:
-            grouped = df_method.groupby("num_atoms")["avg_step_time_ms"].mean()
-            series[method] = (grouped.index.values, grouped.values)
+            group_col = "method"
+        group_vals = df[group_col].unique()
+        x_col = "total_atoms"
+        x_label = "Total atoms (num_atoms × batch_size)"
+    else:
+        group_col = "method"
+        group_vals = df[group_col].unique()
+        x_col = "num_atoms"
+        x_label = "Number of atoms"
+
+    # Scaling plot
+    series = {}
+    for val in group_vals:
+        df_sub = df[df[group_col] == val]
+        grouped = df_sub.groupby(x_col)["avg_step_time_ms"].mean()
+        series[val] = (grouped.index.values, grouped.values)
 
     if series:
         output_path = (
@@ -1397,25 +1406,17 @@ def _generate_dynamics_backend_plots(
             series,
             output_path,
             title=f"{benchmark_type.upper()} {system_type.title()} Scaling ({backend})",
-            x_label="Number of atoms",
+            x_label=x_label,
             y_label="Avg step time (ms)",
         )
         print(f"      Generated: {output_path.name}")
 
-    # Throughput per method
+    # Throughput plot
     series = {}
-    for method in methods:
-        df_method = df[df["method"] == method]
-        if is_batched:
-            grouped = df_method.groupby("num_atoms")[
-                "throughput_atom_steps_per_us"
-            ].mean()
-            series[method] = (grouped.index.values, grouped.values)
-        else:
-            grouped = df_method.groupby("num_atoms")[
-                "throughput_atom_steps_per_us"
-            ].mean()
-            series[method] = (grouped.index.values, grouped.values)
+    for val in group_vals:
+        df_sub = df[df[group_col] == val]
+        grouped = df_sub.groupby(x_col)["throughput_atom_steps_per_s"].mean()
+        series[val] = (grouped.index.values, grouped.values)
 
     if series:
         output_path = (
@@ -1426,8 +1427,8 @@ def _generate_dynamics_backend_plots(
             series,
             output_path,
             title=f"{benchmark_type.upper()} {system_type.title()} Throughput ({backend})",
-            x_label="Number of atoms",
-            y_label="Atom-steps/us",
+            x_label=x_label,
+            y_label="Atom-steps/s",
         )
         print(f"      Generated: {output_path.name}")
 
