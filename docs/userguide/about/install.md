@@ -43,19 +43,44 @@ dependency resolution. `uv` can be obtained through their installation
 page found [here](https://docs.astral.sh/uv/getting-started/installation/).
 ```
 
-### JAX Support
+### Backend Extras
 
-To use the JAX bindings, install with the optional JAX extra:
+ALCHEMI Toolkit-Ops provides optional extras for framework-specific bindings.
+Install the extra matching your deep learning backend:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: torch
+
+```bash
+$ pip install 'nvalchemi-toolkit-ops[torch]'
+```
+
+Verify the PyTorch bindings are available:
+
+```bash
+$ python -c "from nvalchemiops.torch import neighbors; print('PyTorch bindings available')"
+```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
 
 ```bash
 $ pip install 'nvalchemi-toolkit-ops[jax]'
 ```
 
-This installs JAX with CUDA 12 support. You can verify the JAX bindings are available:
+This installs JAX with CUDA 12 support. Verify the JAX bindings are available:
 
 ```bash
 $ python -c "from nvalchemiops.jax import neighbors; print('JAX bindings available')"
 ```
+
+:::
+
+::::
 
 ### From Github Source
 

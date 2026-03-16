@@ -49,7 +49,8 @@ applications.
 
 We encourage interested readers to browse our hosted
 [documentation](https://nvidia.github.io/nvalchemi-toolkit-ops). Below are some
-short snippets that highlight our straightforward API and use cases:
+short snippets that highlight our straightforward API and use cases
+for PyTorch: see the hosted documentation for Jax details.
 
 <details>
 <summary>Neighbor list in a 2D unit cell with 50,000 atoms</summary>
@@ -194,7 +195,6 @@ to be implemented soon:
     - Polynomial basis functions
     - (Segmented) graph operations
     - Mixed precision, e.g. higher precision accumulation
-- JAX wrappers
 
 ## Contributions & Disclaimers
 
