@@ -43,19 +43,44 @@ dependency resolution. `uv` can be obtained through their installation
 page found [here](https://docs.astral.sh/uv/getting-started/installation/).
 ```
 
-### JAX Support
+### Backend Extras
 
-To use the JAX bindings, install with the optional JAX extra:
+ALCHEMI Toolkit-Ops provides optional extras for framework-specific bindings.
+Install the extra matching your deep learning backend:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: torch
+
+```bash
+$ pip install 'nvalchemi-toolkit-ops[torch]'
+```
+
+Verify the PyTorch bindings are available:
+
+```bash
+$ python -c "from nvalchemiops.torch import neighbors; print('PyTorch bindings available')"
+```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
 
 ```bash
 $ pip install 'nvalchemi-toolkit-ops[jax]'
 ```
 
-This installs JAX with CUDA 12 support. You can verify the JAX bindings are available:
+This installs JAX with CUDA 12 support. Verify the JAX bindings are available:
 
 ```bash
 $ python -c "from nvalchemiops.jax import neighbors; print('JAX bindings available')"
 ```
+
+:::
+
+::::
 
 ### From Github Source
 
@@ -95,6 +120,12 @@ This method is recommended for local development and testing.
 $ git clone git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync
+# include torch backend
+$ uv sync --extra torch
+# include jax backend
+$ uv sync --extra jax
+# include both backends
+$ uv sync --all-extras
 ```
 
 </details>
@@ -115,6 +146,32 @@ $ uv pip install git+https://www.github.com/NVIDIA/nvalchemi-toolkit-ops.git
 </details>
 
 Includes Sphinx and related tools for building documentation.
+
+### Adding `nvalchemi-toolkit-ops` as a dependency
+
+<details>
+    <summary><b>Nightly</b></summary>
+
+```{warning}
+Installing nightly versions without cloning the codebase is not recommended
+for production settings! We recommend pinning this to a release tag or
+commit hash.
+```
+
+```bash
+$ uv add "nvalchemi-toolkit-ops @ git+https://www.github.com/NVIDIA/nvalchemi-toolkit-ops.git"
+```
+
+</details>
+
+<details>
+    <summary><b>Stable</b></summary>
+
+```bash
+$ uv add nvalchemi-toolkit-ops
+```
+
+</details>
 
 ## Installation with Conda & Mamba
 

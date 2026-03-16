@@ -33,7 +33,7 @@ These examples show how to:
   .. image:: /examples/neighborlist/images/thumb/sphx_glr_01_simple_neighbor_list_thumb.png
     :alt:
 
-  :ref:`sphx_glr_examples_neighborlist_01_simple_neighbor_list.py`
+  :doc:`/examples/neighborlist/01_simple_neighbor_list`
 
 .. raw:: html
 
@@ -50,7 +50,7 @@ These examples show how to:
   .. image:: /examples/neighborlist/images/thumb/sphx_glr_02_batch_neighbor_list_thumb.png
     :alt:
 
-  :ref:`sphx_glr_examples_neighborlist_02_batch_neighbor_list.py`
+  :doc:`/examples/neighborlist/02_batch_neighbor_list`
 
 .. raw:: html
 
@@ -67,7 +67,7 @@ These examples show how to:
   .. image:: /examples/neighborlist/images/thumb/sphx_glr_03_rebuild_neighborlist_detection_thumb.png
     :alt:
 
-  :ref:`sphx_glr_examples_neighborlist_03_rebuild_neighborlist_detection.py`
+  :doc:`/examples/neighborlist/03_rebuild_neighborlist_detection`
 
 .. raw:: html
 
@@ -84,7 +84,7 @@ These examples show how to:
   .. image:: /examples/neighborlist/images/thumb/sphx_glr_04_neighbors_list_torch_compile_performance_thumb.png
     :alt:
 
-  :ref:`sphx_glr_examples_neighborlist_04_neighbors_list_torch_compile_performance.py`
+  :doc:`/examples/neighborlist/04_neighbors_list_torch_compile_performance`
 
 .. raw:: html
 

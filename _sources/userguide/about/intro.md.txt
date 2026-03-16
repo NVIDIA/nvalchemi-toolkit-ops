@@ -366,7 +366,8 @@ ALCHEMI Toolkit-Ops integrates with the scientific Python ecosystem:
 
 All inputs and outputs are PyTorch tensors with automatic CPU/GPU handling.
 Custom operators are registered for `torch.compile` compatibility, and tensors
-maintain gradients for automatic differentiation where applicable.
+maintain gradients for automatic differentiation where applicable. Install with
+``pip install 'nvalchemi-toolkit-ops[torch]'``.
 
 ### JAX
 

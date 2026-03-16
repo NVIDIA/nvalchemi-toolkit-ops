@@ -442,7 +442,7 @@ Using neighbor matrix (dense) format:
       Dense format: E=-9.743761
 
     Energy difference: 0.00e+00
-    Max force difference: 2.38e-17
+    Max force difference: 2.64e-17
 
 
 
@@ -595,7 +595,7 @@ Compare with full PME:
 
       Full PME: -9.743791
 
-      Component sum vs full PME difference: 1.78e-15
+      Component sum vs full PME difference: 0.00e+00
 
 
 
@@ -656,7 +656,7 @@ for training machine learning potentials that predict atomic partial charges.
       Charge gradients shape: (54,)
       Charge gradients range: [-0.3609, 0.3609]
       Charge gradients mean: 0.0000
-      Sum of charge gradients: 2.2204e-16
+      Sum of charge gradients: 3.3307e-16
 
 
 
@@ -839,9 +839,9 @@ Run the non-jitted function:
 
  .. code-block:: none
 
-      Non-jitted total energy: -8.527509
-      Non-jitted max force: 0.060288
-      Non-jitted average time per call: 0.137410 seconds
+      Non-jitted total energy: -8.492044
+      Non-jitted max force: 0.059720
+      Non-jitted average time per call: 0.142695 seconds
 
 
 
@@ -902,10 +902,10 @@ Run the jitted function:
 
 
     Compiling and running jitted PME pipeline...
-      JIT total energy: -8.548028
-      JIT max force: 0.059140
-      JIT average time per call: 0.000816 seconds
-      Difference vs non-jitted (different accuracy): 2.05e-02
+      JIT total energy: -8.585994
+      JIT max force: 0.059910
+      JIT average time per call: 0.000817 seconds
+      Difference vs non-jitted (different accuracy): 9.40e-02
 
 
 
@@ -975,7 +975,7 @@ Key JAX-specific patterns:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 19.263 seconds)
+   **Total running time of the script:** (0 minutes 20.259 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_04_jax_pme_example.py:

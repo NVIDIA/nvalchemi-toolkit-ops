@@ -238,7 +238,7 @@ thermostat, driven by the Lennard-Jones (LJ) potential.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 4.234 seconds)
+   **Total running time of the script:** (0 minutes 16.107 seconds)
 
 
 .. _sphx_glr_download_examples_dynamics_04_npt_integration.py:

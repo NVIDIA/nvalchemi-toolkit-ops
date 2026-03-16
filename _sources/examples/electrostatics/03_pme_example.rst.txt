@@ -197,7 +197,7 @@ and real-space cutoff.
 
  .. code-block:: none
 
-    /home/kinlongkelvi/Repos/nvalchemi-toolkit-ops.worktrees/gh-pages/.venv/lib/python3.13/site-packages/torch/utils/_device.py:109: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+    /home/kinlongkelvi/Repos/nvalchemi-toolkit-ops/.venv/lib/python3.13/site-packages/torch/utils/_device.py:109: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
       return func(*args, **kwargs)
     System: 54 atoms NaCl crystal
     Cell size: 16.92 Å
@@ -296,7 +296,7 @@ Build neighbor list and run PME:
       Total energy: -9.743761
       Energy per atom: -0.180440
       Max force magnitude: 0.000000
-      Time: 48.33 ms
+      Time: 54.54 ms
 
 
 
@@ -379,7 +379,7 @@ Using neighbor list format:
 
  .. code-block:: none
 
-      List format: E=-9.743761, time=4.41 ms
+      List format: E=-9.743761, time=4.36 ms
 
 
 
@@ -420,10 +420,10 @@ Using neighbor matrix format:
 
  .. code-block:: none
 
-      Matrix format: E=-9.743761, time=4.68 ms
+      Matrix format: E=-9.743761, time=4.55 ms
 
-    Energy difference: 0.00e+00
-    Max force difference: 2.36e-17
+    Energy difference: 1.78e-15
+    Max force difference: 1.31e-17
 
 
 
@@ -513,12 +513,12 @@ Run PME with different accuracy targets:
 
  .. code-block:: none
 
-       1e-02  |  0.204  | (8, 8, 8)    |   10.54  |  -9.755594  | 4.32 ms
-       1e-03  |  0.204  | (16, 16, 16) |   12.91  |  -9.745599  | 4.19 ms
-       1e-04  |  0.204  | (16, 16, 16) |   14.90  |  -9.743791  | 3.40 ms
-       1e-05  |  0.204  | (32, 32, 32) |   16.66  |  -9.743703  | 4.47 ms
-       1e-06  |  0.204  | (64, 64, 64) |   18.25  |  -9.743761  | 3.31 ms
-       1e-07  |  0.204  | (64, 64, 64) |   19.71  |  -9.743762  | 3.45 ms
+       1e-02  |  0.204  | (8, 8, 8)    |   10.54  |  -9.755594  | 4.34 ms
+       1e-03  |  0.204  | (16, 16, 16) |   12.91  |  -9.745599  | 4.16 ms
+       1e-04  |  0.204  | (16, 16, 16) |   14.90  |  -9.743791  | 2.80 ms
+       1e-05  |  0.204  | (32, 32, 32) |   16.66  |  -9.743703  | 4.34 ms
+       1e-06  |  0.204  | (64, 64, 64) |   18.25  |  -9.743761  | 3.28 ms
+       1e-07  |  0.204  | (64, 64, 64) |   19.71  |  -9.743762  | 3.36 ms
 
 
 
@@ -900,7 +900,7 @@ Verify charge gradients against autograd:
 
  .. code-block:: none
 
-      Explicit vs Autograd charge gradient max diff: 1.67e-16
+      Explicit vs Autograd charge gradient max diff: 2.22e-16
 
 
 
@@ -1046,7 +1046,7 @@ Build batched neighbor list and run:
  .. code-block:: none
 
 
-    Batch evaluation time: 9.67 ms
+    Batch evaluation time: 9.93 ms
 
     Per-system results:
       System 0: 16 atoms, E=-2.8870, |F|_max=0.0000
@@ -1214,9 +1214,9 @@ Compare timing and accuracy:
 
  .. code-block:: none
 
-        2     |    16   |      2.00  |     2.86  | 2.53e-06
-        3     |    54   |      2.08  |     2.77  | 4.31e-08
-        4     |   128   |      2.96  |     3.54  | 2.47e-06
+        2     |    16   |      1.97  |     2.77  | 2.53e-06
+        3     |    54   |      2.10  |     3.03  | 4.31e-08
+        4     |   128   |      3.02  |     3.29  | 2.47e-06
 
     Note: PME becomes increasingly efficient for larger systems.
 
@@ -1270,7 +1270,7 @@ Key PME steps:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.214 seconds)
+   **Total running time of the script:** (0 minutes 0.225 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_03_pme_example.py:

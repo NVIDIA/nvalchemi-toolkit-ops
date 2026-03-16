@@ -626,7 +626,7 @@ and real-space cutoff.</p>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Total charge: </span><span class="si">{</span><a href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="torch.Tensor" class="sphx-glr-backref-module-torch sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">charges</span></a><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> (should be 0 for neutral)&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>/home/kinlongkelvi/Repos/nvalchemi-toolkit-ops.worktrees/gh-pages/.venv/lib/python3.13/site-packages/torch/utils/_device.py:109: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>/home/kinlongkelvi/Repos/nvalchemi-toolkit-ops/.venv/lib/python3.13/site-packages/torch/utils/_device.py:109: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:253.)
   return func(*args, **kwargs)
 System: 54 atoms NaCl crystal
 Cell size: 16.92 Å
@@ -689,7 +689,7 @@ Total charge: 0.0 (should be 0 for neutral)
   Total energy: -9.743761
   Energy per atom: -0.180440
   Max force magnitude: 0.000000
-  Time: 48.33 ms
+  Time: 54.54 ms
 </pre></div>
 </div>
 </section>
@@ -738,7 +738,7 @@ We use the estimated parameters from above for consistency.</p>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  List format: E=</span><span class="si">{</span><a href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="torch.Tensor" class="sphx-glr-backref-module-torch sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">energies_list</span></a><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">, time=</span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">t_list</span></a><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>List format: E=-9.743761, time=4.41 ms
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>List format: E=-9.743761, time=4.36 ms
 </pre></div>
 </div>
 <p>Using neighbor matrix format:</p>
@@ -762,10 +762,10 @@ We use the estimated parameters from above for consistency.</p>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max force difference: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">force_diff</span></a><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>  Matrix format: E=-9.743761, time=4.68 ms
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>  Matrix format: E=-9.743761, time=4.55 ms
 
-Energy difference: 0.00e+00
-Max force difference: 2.36e-17
+Energy difference: 1.78e-15
+Max force difference: 1.31e-17
 </pre></div>
 </div>
 </section>
@@ -821,12 +821,12 @@ formulas to balance computational cost between real and reciprocal space.</p>
     <span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>1e-02  |  0.204  | (8, 8, 8)    |   10.54  |  -9.755594  | 4.32 ms
-1e-03  |  0.204  | (16, 16, 16) |   12.91  |  -9.745599  | 4.19 ms
-1e-04  |  0.204  | (16, 16, 16) |   14.90  |  -9.743791  | 3.40 ms
-1e-05  |  0.204  | (32, 32, 32) |   16.66  |  -9.743703  | 4.47 ms
-1e-06  |  0.204  | (64, 64, 64) |   18.25  |  -9.743761  | 3.31 ms
-1e-07  |  0.204  | (64, 64, 64) |   19.71  |  -9.743762  | 3.45 ms
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>1e-02  |  0.204  | (8, 8, 8)    |   10.54  |  -9.755594  | 4.34 ms
+1e-03  |  0.204  | (16, 16, 16) |   12.91  |  -9.745599  | 4.16 ms
+1e-04  |  0.204  | (16, 16, 16) |   14.90  |  -9.743791  | 2.80 ms
+1e-05  |  0.204  | (32, 32, 32) |   16.66  |  -9.743703  | 4.34 ms
+1e-06  |  0.204  | (64, 64, 64) |   18.25  |  -9.743761  | 3.28 ms
+1e-07  |  0.204  | (64, 64, 64) |   19.71  |  -9.743762  | 3.36 ms
 </pre></div>
 </div>
 <p>Show convergence relative to highest accuracy:</p>
@@ -1053,7 +1053,7 @@ The charge gradient represents the electrostatic potential at each atom.</p>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Explicit vs Autograd charge gradient max diff: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">charge_grad_diff</span></a><span class="si">:</span><span class="s2">.2e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Explicit vs Autograd charge gradient max diff: 1.67e-16
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Explicit vs Autograd charge gradient max diff: 2.22e-16
 </pre></div>
 </div>
 </section>
@@ -1146,7 +1146,7 @@ Real-space cutoff: 19.24 Å
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  System </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">i</span></a><span class="si">}</span><span class="s2">: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#int" title="builtins.int" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">n_atoms</span></a><span class="si">}</span><span class="s2"> atoms, E=</span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">sys_energy</span></a><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">, |F|_max=</span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">max_force</span></a><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Batch evaluation time: 9.67 ms
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Batch evaluation time: 9.93 ms
 
 Per-system results:
   System 0: 16 atoms, E=-2.8870, |F|_max=0.0000
@@ -1261,9 +1261,9 @@ Both methods use the same accuracy target for fair comparison.</p>
 <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Note: PME becomes increasingly efficient for larger systems.&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>    2     |    16   |      2.00  |     2.86  | 2.53e-06
-    3     |    54   |      2.08  |     2.77  | 4.31e-08
-    4     |   128   |      2.96  |     3.54  | 2.47e-06
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>    2     |    16   |      1.97  |     2.77  | 2.53e-06
+    3     |    54   |      2.10  |     3.03  | 4.31e-08
+    4     |   128   |      3.02  |     3.29  | 2.47e-06
 
 Note: PME becomes increasingly efficient for larger systems.
 </pre></div>
@@ -1297,7 +1297,7 @@ controls both mesh resolution and real-space cutoff</p></li>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>PME example complete!
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.214 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.225 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-electrostatics-03-pme-example-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../../_downloads/95fd059c450cf78e8307283c55418e3f/03_pme_example.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">03_pme_example.ipynb</span></code></a></p>

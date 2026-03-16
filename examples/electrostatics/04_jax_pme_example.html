@@ -781,7 +781,7 @@ Using alpha=0.2037, mesh_dims=(64, 64, 64)
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>  Dense format: E=-9.743761
 
 Energy difference: 0.00e+00
-Max force difference: 2.38e-17
+Max force difference: 2.64e-17
 </pre></div>
 </div>
 </section>
@@ -865,7 +865,7 @@ Total (sum): -9.743791
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Full PME: -9.743791
 
-Component sum vs full PME difference: 1.78e-15
+Component sum vs full PME difference: 0.00e+00
 </pre></div>
 </div>
 </section>
@@ -909,7 +909,7 @@ CHARGE GRADIENTS
   Charge gradients shape: (54,)
   Charge gradients range: [-0.3609, 0.3609]
   Charge gradients mean: 0.0000
-  Sum of charge gradients: 2.2204e-16
+  Sum of charge gradients: 3.3307e-16
 </pre></div>
 </div>
 <p>Verify by checking gradient symmetry for Na+ and Cl- ions:</p>
@@ -1041,9 +1041,9 @@ JIT COMPILATION
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  Non-jitted average time per call: </span><span class="si">{</span><a href="https://docs.python.org/3/library/functions.html#float" title="builtins.float" class="sphx-glr-backref-module-builtins sphx-glr-backref-type-py-class sphx-glr-backref-instance"><span class="n">total_time</span></a><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">50</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2"> seconds&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Non-jitted total energy: -8.527509
-Non-jitted max force: 0.060288
-Non-jitted average time per call: 0.137410 seconds
+<div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Non-jitted total energy: -8.492044
+Non-jitted max force: 0.059720
+Non-jitted average time per call: 0.142695 seconds
 </pre></div>
 </div>
 <p>Run the jitted function:</p>
@@ -1085,10 +1085,10 @@ Non-jitted average time per call: 0.137410 seconds
 </pre></div>
 </div>
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Compiling and running jitted PME pipeline...
-  JIT total energy: -8.548028
-  JIT max force: 0.059140
-  JIT average time per call: 0.000816 seconds
-  Difference vs non-jitted (different accuracy): 2.05e-02
+  JIT total energy: -8.585994
+  JIT max force: 0.059910
+  JIT average time per call: 0.000817 seconds
+  Difference vs non-jitted (different accuracy): 9.40e-02
 </pre></div>
 </div>
 </section>
@@ -1138,7 +1138,7 @@ Key takeaways:
 JAX PME example completed successfully!
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 19.263 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 20.259 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-electrostatics-04-jax-pme-example-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../../_downloads/78c782ec34568673e9dc342b28d4a858/04_jax_pme_example.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">04_jax_pme_example.ipynb</span></code></a></p>

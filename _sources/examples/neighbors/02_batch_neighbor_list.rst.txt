@@ -375,12 +375,6 @@ For comparison, use naive algorithm on batch of small systems
     METHOD 2: BATCH NAIVE ALGORITHM (O(N²))
     ======================================================================
     Small systems batch: 11 total atoms
-    Warp DeprecationWarning: The symbol `warp.types.torch` will soon be removed from the public API. It can still be accessed from `warp._src.types.torch` but might be changed or removed without notice.
-    Warp DeprecationWarning: The symbol `warp.utils.torch` will soon be removed from the public API. It can still be accessed from `warp._src.utils.torch` but might be changed or removed without notice.
-    Warp DeprecationWarning: The namespace `warp.torch` will soon be removed from the public API. It can still be accessed from `warp._src.torch` but might be changed or removed without notice.
-    Warp DeprecationWarning: The symbol `warp.torch.contiguous_format` will soon be removed from the public API. It can still be accessed from `warp._src.torch.contiguous_format` but might be changed or removed without notice.
-    Warp DeprecationWarning: The symbol `warp.types.torch` will soon be removed from the public API. Use `warp.torch` instead.
-    Warp DeprecationWarning: The symbol `warp.utils.torch` will soon be removed from the public API. Use `warp.torch` instead.
     Returned neighbor matrix: torch.Size([11, 112])
     Total neighbor pairs: 32
 
@@ -639,7 +633,7 @@ Show that each system can have different properties
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 2.133 seconds)
+   **Total running time of the script:** (0 minutes 1.561 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_02_batch_neighbor_list.py:

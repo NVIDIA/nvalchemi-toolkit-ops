@@ -16,11 +16,29 @@ The quickest way to install ALCHEMI Toolkit-Ops:
 $ pip install nvalchemi-toolkit-ops
 ```
 
-To install ALCHEMI Toolkit-Ops with PyTorch support:
+To install ALCHEMI Toolkit-Ops with a deep-learning backend:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: torch
 
 ```bash
-$ pip install nvalchemi-toolkit-ops[torch]
+$ pip install 'nvalchemi-toolkit-ops[torch]'
 ```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```bash
+$ pip install 'nvalchemi-toolkit-ops[jax]'
+```
+
+:::
+
+::::
 
 Make sure it is importable:
 
@@ -30,6 +48,11 @@ $ python -c "import nvalchemiops; print(nvalchemiops.__version__)"
 
 Try out some of the API; a good place to start is to compute
 the neighbor matrix (or equivalently, list):
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: torch
 
 ```python
 import torch
@@ -59,15 +82,46 @@ num_neighbors = neighbor_ptr[1:] - neighbor_ptr[:-1]
 print(f"Average neighbors per atom: {num_neighbors.float().mean():.1f}")
 ```
 
-### JAX Bindings
+:::
 
-JAX bindings are also available for all core components. Install with:
+:::{tab-item} JAX
+:sync: jax
 
-```bash
-$ pip install 'nvalchemi-toolkit-ops[jax]'
+```python
+import jax
+import jax.numpy as jnp
+from nvalchemiops.jax.neighbors import cell_list
+
+# Create atomic system data
+positions = jnp.array(jax.random.normal(jax.random.key(0), (1000, 3))) * 25.0
+cell = jnp.eye(3).reshape(1, 3, 3) * 25.0  # 25x25x25 unit cell
+pbc = jnp.array([True, True, True])  # PBC
+cutoff = 2.5  # Cutoff radius in Angstroms
+
+# Compute neighbor matrix (default format)
+neighbor_matrix, num_neighbors, shifts = cell_list(
+    positions, cutoff, cell, pbc
+)
+
+# Or get neighbor list (COO format) for graph neural networks
+neighbor_list, neighbor_ptr, shifts = cell_list(
+    positions, cutoff, cell, pbc, return_neighbor_list=True
+)
+source_indices = neighbor_list[0]
+target_indices = neighbor_list[1]
+
+print(f"Found {neighbor_list.shape[1]} neighbor pairs")
+# neighbor_ptr is a CSR-style pointer; compute num_neighbors from it
+num_neighbors = neighbor_ptr[1:] - neighbor_ptr[:-1]
+print(f"Average neighbors per atom: {jnp.mean(num_neighbors.astype(jnp.float32)):.1f}")
 ```
 
-See the [JAX API Reference](../modules/jax/neighbors.rst) for the full API documentation.
+:::
+
+::::
+
+See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
+[JAX API Reference](../modules/jax/neighbors.rst) for the full API documentation.
 
 ## About
 

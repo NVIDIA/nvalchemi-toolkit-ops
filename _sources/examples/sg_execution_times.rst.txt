@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:01.975** total execution time for 1 file **from examples**:
+**00:02.057** total execution time for 1 file **from examples**:
 
 .. container::
 
@@ -33,5 +33,5 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_examples_01_bspline_visualization.py` (``01_bspline_visualization.py``)
-     - 00:01.975
+     - 00:02.057
      - 0.0

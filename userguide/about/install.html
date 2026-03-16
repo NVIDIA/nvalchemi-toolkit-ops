@@ -473,15 +473,33 @@ dependency resolution. <code class="docutils literal notranslate"><span class="p
 page found <a class="reference external" href="https://docs.astral.sh/uv/getting-started/installation/">here</a>.</p>
 </div>
 </section>
-<section id="jax-support">
-<h3>JAX Support<a class="headerlink" href="#jax-support" title="Link to this heading">#</a></h3>
-<p>To use the JAX bindings, install with the optional JAX extra:</p>
+<section id="backend-extras">
+<h3>Backend Extras<a class="headerlink" href="#backend-extras" title="Link to this heading">#</a></h3>
+<p>ALCHEMI Toolkit-Ops provides optional extras for framework-specific bindings.
+Install the extra matching your deep learning backend:</p>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-0" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="torch" for="sd-tab-item-0">
+PyTorch</label><div class="sd-tab-content docutils">
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;nvalchemi-toolkit-ops[torch]&#39;</span>
+</pre></div>
+</div>
+<p>Verify the PyTorch bindings are available:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;from nvalchemiops.torch import neighbors; print(&#39;PyTorch bindings available&#39;)&quot;</span>
+</pre></div>
+</div>
+</div>
+<input id="sd-tab-item-1" name="sd-tab-set-0" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-1">
+JAX</label><div class="sd-tab-content docutils">
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;nvalchemi-toolkit-ops[jax]&#39;</span>
 </pre></div>
 </div>
-<p>This installs JAX with CUDA 12 support. You can verify the JAX bindings are available:</p>
+<p>This installs JAX with CUDA 12 support. Verify the JAX bindings are available:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;from nvalchemiops.jax import neighbors; print(&#39;JAX bindings available&#39;)&quot;</span>
 </pre></div>
+</div>
+</div>
 </div>
 </section>
 <section id="from-github-source">
@@ -513,6 +531,12 @@ $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>in
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>git<span class="w"> </span>clone<span class="w"> </span>git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
 $<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>nvalchemi-toolkit-ops
 $<span class="w"> </span>uv<span class="w"> </span>sync
+<span class="c1"># include torch backend</span>
+$<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>torch
+<span class="c1"># include jax backend</span>
+$<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>jax
+<span class="c1"># include both backends</span>
+$<span class="w"> </span>uv<span class="w"> </span>sync<span class="w"> </span>--all-extras
 </pre></div>
 </div>
 </details>
@@ -529,6 +553,27 @@ $<span class="w"> </span>uv<span class="w"> </span>pip<span class="w"> </span>in
 </div>
 </details>
 <p>Includes Sphinx and related tools for building documentation.</p>
+</section>
+<section id="adding-nvalchemi-toolkit-ops-as-a-dependency">
+<h3>Adding <code class="docutils literal notranslate"><span class="pre">nvalchemi-toolkit-ops</span></code> as a dependency<a class="headerlink" href="#adding-nvalchemi-toolkit-ops-as-a-dependency" title="Link to this heading">#</a></h3>
+<details>
+    <summary><b>Nightly</b></summary>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Installing nightly versions without cloning the codebase is not recommended
+for production settings! We recommend pinning this to a release tag or
+commit hash.</p>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>uv<span class="w"> </span>add<span class="w"> </span><span class="s2">&quot;nvalchemi-toolkit-ops @ git+https://www.github.com/NVIDIA/nvalchemi-toolkit-ops.git&quot;</span>
+</pre></div>
+</div>
+</details>
+<details>
+    <summary><b>Stable</b></summary>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>uv<span class="w"> </span>add<span class="w"> </span>nvalchemi-toolkit-ops
+</pre></div>
+</div>
+</details>
 </section>
 </section>
 <section id="installation-with-conda-mamba">
@@ -638,9 +683,10 @@ integrate ALCHEMI Toolkit-Ops into your application.</p></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#prerequisites">Prerequisites</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installation-methods">Installation Methods</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-pypi">From PyPI</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#jax-support">JAX Support</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#backend-extras">Backend Extras</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-github-source">From Github Source</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#installation-via-uv">Installation via <code class="docutils literal notranslate"><span class="pre">uv</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adding-nvalchemi-toolkit-ops-as-a-dependency">Adding <code class="docutils literal notranslate"><span class="pre">nvalchemi-toolkit-ops</span></code> as a dependency</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#installation-with-conda-mamba">Installation with Conda &amp; Mamba</a></li>

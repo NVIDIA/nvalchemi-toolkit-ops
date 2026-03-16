@@ -696,11 +696,11 @@ Returned neighbor list (COO format): shape torch.Size([2, 471810])
 Total pairs (COO): 471810
 
 First 5 neighbor pairs:
-  Atom 0 -&gt; Atom 8931, shift: [0, 0, 0]
   Atom 0 -&gt; Atom 12684, shift: [0, 0, 0]
-  Atom 0 -&gt; Atom 19621, shift: [0, 0, 0]
-  Atom 0 -&gt; Atom 2094, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 8931, shift: [0, 0, 0]
   Atom 0 -&gt; Atom 12342, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 2094, shift: [0, 0, 0]
+  Atom 0 -&gt; Atom 1158, shift: [0, 0, 0]
 </pre></div>
 </div>
 </section>
@@ -806,16 +806,16 @@ ALGORITHM COMPARISON
 ======================================================================
 
 --- Small System (100 atoms) ---
-Cell list:  1.072 ms, 5152 pairs
-Naive:      1.273 ms, 5152 pairs
+Cell list:  0.976 ms, 5152 pairs
+Naive:      0.736 ms, 5152 pairs
 Results match: True
 
 --- Large System (30,000 atoms) ---
-Cell list:  1.299 ms, 471810 pairs
-Naive:      34.517 ms, 471810 pairs
+Cell list:  1.167 ms, 471810 pairs
+Naive:      34.407 ms, 471810 pairs
 Results match: True
 
-Speedup (cell list vs naive): 26.6x
+Speedup (cell list vs naive): 29.5x
 </pre></div>
 </div>
 </section>
@@ -1103,16 +1103,16 @@ DISTANCE VALIDATION
 ======================================================================
 
 First 10 neighbor distances:
-  Pair 0: atom 0 -&gt; 41, distance = 3.3273 Å
-  Pair 1: atom 0 -&gt; 61, distance = 2.6520 Å
-  Pair 2: atom 0 -&gt; 74, distance = 3.5964 Å
-  Pair 3: atom 0 -&gt; 78, distance = 4.2534 Å
-  Pair 4: atom 0 -&gt; 87, distance = 4.2602 Å
-  Pair 5: atom 0 -&gt; 4, distance = 2.1855 Å
-  Pair 6: atom 0 -&gt; 6, distance = 4.4884 Å
-  Pair 7: atom 0 -&gt; 28, distance = 4.8273 Å
-  Pair 8: atom 0 -&gt; 62, distance = 3.7944 Å
-  Pair 9: atom 0 -&gt; 97, distance = 3.2057 Å
+  Pair 0: atom 0 -&gt; 4, distance = 2.1855 Å
+  Pair 1: atom 0 -&gt; 6, distance = 4.4884 Å
+  Pair 2: atom 0 -&gt; 28, distance = 4.8273 Å
+  Pair 3: atom 0 -&gt; 74, distance = 3.5964 Å
+  Pair 4: atom 0 -&gt; 78, distance = 4.2534 Å
+  Pair 5: atom 0 -&gt; 87, distance = 4.2602 Å
+  Pair 6: atom 0 -&gt; 41, distance = 3.3273 Å
+  Pair 7: atom 0 -&gt; 61, distance = 2.6520 Å
+  Pair 8: atom 0 -&gt; 2, distance = 4.3182 Å
+  Pair 9: atom 0 -&gt; 15, distance = 4.3769 Å
 
 Max distance in pairs: 4.8273 Å
 Cutoff distance: 5.0000 Å
@@ -1125,7 +1125,7 @@ Cutoff distance: 5.0000 Å
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Example completed successfully!
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 1.237 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.891 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighbors-01-simple-neighbor-list-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../../_downloads/dd4cfc7daf6ba62c021bd7c5336cd37c/01_simple_neighbor_list.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">01_simple_neighbor_list.ipynb</span></code></a></p>

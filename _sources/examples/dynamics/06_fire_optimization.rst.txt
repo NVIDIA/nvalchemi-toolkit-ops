@@ -322,7 +322,7 @@ Plot convergence
  .. code-block:: none
 
 
-    <matplotlib.legend.Legend object at 0x75289f00b610>
+    <matplotlib.legend.Legend object at 0x76780a650cd0>
 
 
 
@@ -365,7 +365,7 @@ Visualize initial vs final geometry (XY projection)
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.582 seconds)
+   **Total running time of the script:** (0 minutes 1.607 seconds)
 
 
 .. _sphx_glr_download_examples_dynamics_06_fire_optimization.py:

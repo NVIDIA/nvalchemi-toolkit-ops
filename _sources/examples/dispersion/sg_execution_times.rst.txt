@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:01.790** total execution time for 3 files **from examples/dispersion**:
+**00:01.647** total execution time for 3 files **from examples/dispersion**:
 
 .. container::
 
@@ -33,11 +33,11 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_examples_dispersion_03_jax_dftd3_molecule.py` (``03_jax_dftd3_molecule.py``)
-     - 00:01.277
+     - 00:01.164
      - 0.0
    * - :ref:`sphx_glr_examples_dispersion_01_dftd3_molecule.py` (``01_dftd3_molecule.py``)
-     - 00:00.321
+     - 00:00.326
      - 0.0
    * - :ref:`sphx_glr_examples_dispersion_02_dftd3_batch_crystals.py` (``02_dftd3_batch_crystals.py``)
-     - 00:00.192
+     - 00:00.157
      - 0.0

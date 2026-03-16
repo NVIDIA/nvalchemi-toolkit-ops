@@ -635,6 +635,8 @@ Run short simulations and compare performance
     ======================================================================
 
     Warming up compiled version (5 steps)...
+    /home/kinlongkelvi/Repos/nvalchemi-toolkit-ops/.venv/lib/python3.13/site-packages/torch/_inductor/compile_fx.py:321: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+      warnings.warn(
 
     Benchmarking uncompiled version (50 steps)...
     Benchmarking compiled version (50 steps)...
@@ -644,9 +646,9 @@ Run short simulations and compare performance
     ======================================================================
 
     Performance:
-      Uncompiled: 0.1630 s (3.26 ms/step)
-      Compiled:   0.0922 s (1.84 ms/step)
-      Speedup:    1.77x
+      Uncompiled: 0.1688 s (3.38 ms/step)
+      Compiled:   0.0780 s (1.56 ms/step)
+      Speedup:    2.16x
 
     Energies after 50 steps:
       Potential: -208.7127
@@ -678,7 +680,7 @@ Run short simulations and compare performance
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.804 seconds)
+   **Total running time of the script:** (0 minutes 3.755 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_04_neighbors_list_torch_compile_performance.py:

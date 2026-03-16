@@ -481,7 +481,7 @@ with smooth force continuity at the cutoff.</p>
 <td><p>Large systems, non-periodic</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Direct Coulomb</strong></p></td>
-<td><p><span class="math notranslate nohighlight">\(O(N \times \text{pairs})\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(O(N^2)\)</span></p></td>
 <td><p>Non-periodic or as real-space component</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Ewald Multipole</strong></p></td>
@@ -756,7 +756,7 @@ and consistency.</p>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">positions</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">(N,</span> <span class="pre">3)</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">float64</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">float64/float32</span></code></p></td>
 <td><p>Atomic coordinates</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">charges</span></code></p></td>

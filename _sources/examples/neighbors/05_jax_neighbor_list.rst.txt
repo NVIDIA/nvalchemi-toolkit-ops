@@ -580,7 +580,7 @@ This example demonstrated the JAX neighbor list API in nvalchemiops:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 8.659 seconds)
+   **Total running time of the script:** (0 minutes 8.285 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_05_jax_neighbor_list.py:

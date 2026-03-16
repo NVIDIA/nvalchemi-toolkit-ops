@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:12.961** total execution time for 5 files **from examples/neighbors**:
+**00:14.600** total execution time for 5 files **from examples/neighbors**:
 
 .. container::
 
@@ -33,17 +33,17 @@ Computation times
      - Time
      - Mem (MB)
    * - :ref:`sphx_glr_examples_neighbors_05_jax_neighbor_list.py` (``05_jax_neighbor_list.py``)
-     - 00:08.659
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_02_batch_neighbor_list.py` (``02_batch_neighbor_list.py``)
-     - 00:02.133
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_01_simple_neighbor_list.py` (``01_simple_neighbor_list.py``)
-     - 00:01.237
+     - 00:08.285
      - 0.0
    * - :ref:`sphx_glr_examples_neighbors_04_neighbors_list_torch_compile_performance.py` (``04_neighbors_list_torch_compile_performance.py``)
-     - 00:00.804
+     - 00:03.755
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_02_batch_neighbor_list.py` (``02_batch_neighbor_list.py``)
+     - 00:01.561
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_01_simple_neighbor_list.py` (``01_simple_neighbor_list.py``)
+     - 00:00.891
      - 0.0
    * - :ref:`sphx_glr_examples_neighbors_03_rebuild_neighborlist_detection.py` (``03_rebuild_neighborlist_detection.py``)
-     - 00:00.129
+     - 00:00.109
      - 0.0

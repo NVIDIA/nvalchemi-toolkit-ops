@@ -995,6 +995,8 @@ PERFORMANCE COMPARISON
 ======================================================================
 
 Warming up compiled version (5 steps)...
+/home/kinlongkelvi/Repos/nvalchemi-toolkit-ops/.venv/lib/python3.13/site-packages/torch/_inductor/compile_fx.py:321: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision(&#39;high&#39;)` for better performance.
+  warnings.warn(
 
 Benchmarking uncompiled version (50 steps)...
 Benchmarking compiled version (50 steps)...
@@ -1004,9 +1006,9 @@ RESULTS
 ======================================================================
 
 Performance:
-  Uncompiled: 0.1630 s (3.26 ms/step)
-  Compiled:   0.0922 s (1.84 ms/step)
-  Speedup:    1.77x
+  Uncompiled: 0.1688 s (3.38 ms/step)
+  Compiled:   0.0780 s (1.56 ms/step)
+  Speedup:    2.16x
 
 Energies after 50 steps:
   Potential: -208.7127
@@ -1020,7 +1022,7 @@ Energies after 50 steps:
 <div class="sphx-glr-script-out highlight-none notranslate"><div class="highlight"><pre><span></span>Example completed successfully!
 </pre></div>
 </div>
-<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 0.804 seconds)</p>
+<p class="sphx-glr-timing"><strong>Total running time of the script:</strong> (0 minutes 3.755 seconds)</p>
 <div class="sphx-glr-footer sphx-glr-footer-example docutils container" id="sphx-glr-download-examples-neighbors-04-neighbors-list-torch-compile-performance-py">
 <div class="sphx-glr-download sphx-glr-download-jupyter docutils container">
 <p><a class="reference download internal" download="" href="../../_downloads/2475ba2afbb663b76f52e9ac75f4d5d6/04_neighbors_list_torch_compile_performance.ipynb"><code class="xref download docutils literal notranslate"><span class="pre">Download</span> <span class="pre">Jupyter</span> <span class="pre">notebook:</span> <span class="pre">04_neighbors_list_torch_compile_performance.ipynb</span></code></a></p>
