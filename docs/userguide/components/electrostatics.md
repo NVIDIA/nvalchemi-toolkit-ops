@@ -295,7 +295,7 @@ and consistency.
 
 | Tensor | Shape | Dtype | Description |
 |--------|-------|-------|-------------|
-| `positions` | `(N, 3)` | `float64` | Atomic coordinates |
+| `positions` | `(N, 3)` | `float64/float32` | Atomic coordinates |
 | `charges` | `(N,)` | `float64` | Atomic partial charges |
 | `cell` | `(1, 3, 3)` or `(B, 3, 3)` | `float64` | Unit cell lattice vectors (rows) |
 | `pbc` | `(1, 3)` or `(B, 3)` | `bool` | Periodic boundary conditions per axis |
