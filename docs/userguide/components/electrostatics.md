@@ -34,7 +34,7 @@ ALCHEMI Toolkit-Ops provides electrostatics modules for point charges:
 | **Ewald Summation** | $O(N^2)$ | Small/medium systems (<5000 atoms) |
 | **Particle Mesh Ewald** | $O(N \log N)$ | Large periodic systems |
 | **Damped Shifted Force (DSF)** | $O(N)$ | Large systems, non-periodic |
-| **Direct Coulomb** | $O(N \times \text{pairs})$ | Non-periodic or as real-space component |
+| **Direct Coulomb** | $O(N^2)$ | Non-periodic or as real-space component |
 | **Ewald Multipole** | $O(N^2)$ | Multipolar systems, small/medium |
 | **PME Multipole** | $O(N \log N)$ | Multipolar systems, large |
 
