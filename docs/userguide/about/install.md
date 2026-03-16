@@ -120,6 +120,12 @@ This method is recommended for local development and testing.
 $ git clone git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync
+# include torch backend
+$ uv sync --extra torch
+# include jax backend
+$ uv sync --extra torch
+# include both backends
+$ uv sync --all-extras
 ```
 
 </details>
@@ -140,6 +146,32 @@ $ uv pip install git+https://www.github.com/NVIDIA/nvalchemi-toolkit-ops.git
 </details>
 
 Includes Sphinx and related tools for building documentation.
+
+### Adding `nvalchemi-toolkit-ops` as a dependency
+
+<details>
+    <summary><b>Nightly</b></summary>
+
+```{warning}
+Installing nightly versions without cloning the codebase is not recommended
+for production settings! We recommend pinning this to a release tag or
+commit hash.
+```
+
+```bash
+$ uv add "nvalchemi-toolkit-ops @ git+https://www.github.com/NVIDIA/nvalchemi-toolkit-ops.git"
+```
+
+</details>
+
+<details>
+    <summary><b>Stable</b></summary>
+
+```bash
+$ uv add nvalchemi-toolkit-ops
+```
+
+</details>
 
 ## Installation with Conda & Mamba
 
