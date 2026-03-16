@@ -10,7 +10,7 @@ with Becke-Johnson damping via [NVIDIA Warp](https://nvidia.github.io/warp/),
 supporting batched computation, periodic systems, and bindings for both PyTorch
 and JAX.
 
-```{tip}
+```{important}
 The current implementation computes two-body terms only (C6 and C8). Three-body
 Axilrod-Teller-Muto (ATM/C9) contributions are not included.
 ```
