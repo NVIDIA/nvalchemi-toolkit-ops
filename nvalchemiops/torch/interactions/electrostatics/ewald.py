@@ -186,6 +186,15 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     return cell, cell.shape[0]
 
 
+@torch.compiler.disable
+def _sum_charge_gradients(
+    real_space_charge_grads: torch.Tensor,
+    reciprocal_charge_grads: torch.Tensor,
+) -> torch.Tensor:
+    """Sum Ewald charge gradients eagerly on compiled paths."""
+    return real_space_charge_grads + reciprocal_charge_grads
+
+
 ###########################################################################################
 ########################### Real-Space Internal Custom Ops ################################
 ###########################################################################################
@@ -1823,9 +1832,9 @@ def _ewald_reciprocal_space_energy_forces_charge_grad(
             virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
 
     # Apply self-energy and background corrections to charge gradients
-    alpha_val = alpha[0].item()
-    self_energy_grad = 2.0 * alpha_val / math.sqrt(math.pi) * charges
-    background_grad = math.pi / (alpha_val * alpha_val) * total_charge[0]
+    alpha_t = alpha[0]
+    self_energy_grad = 2.0 * alpha_t / math.sqrt(math.pi) * charges
+    background_grad = math.pi / (alpha_t * alpha_t) * total_charge[0]
     charge_grads = charge_grads - self_energy_grad - background_grad
 
     if needs_grad_flag:
@@ -3059,8 +3068,21 @@ def ewald_summation(
     # Normalize return tuples for element-wise combination
     rs_tuple = rs if isinstance(rs, tuple) else (rs,)
     rec_tuple = rec if isinstance(rec, tuple) else (rec,)
+    charge_grad_index = None
+    if compute_charge_gradients:
+        charge_grad_index = 1 if not compute_forces else 2
 
-    results = tuple(r + s for r, s in zip(rs_tuple, rec_tuple))
+    results = []
+    for idx, (r, s) in enumerate(zip(rs_tuple, rec_tuple)):
+        if (
+            charge_grad_index is not None
+            and idx == charge_grad_index
+            and torch.compiler.is_compiling()
+        ):
+            results.append(_sum_charge_gradients(r, s))
+        else:
+            results.append(r + s)
+    results = tuple(results)
 
     if len(results) == 1:
         return results[0]

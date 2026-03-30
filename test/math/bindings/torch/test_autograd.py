@@ -1506,3 +1506,57 @@ class TestTorchCompileFakeImpl:
         result = compiled_fn(2.0)
 
         assert result.shape == (5,)
+
+
+class TestTorchCompileBackwardParity:
+    """Verify that Warp custom ops produce correct gradients under torch.compile."""
+
+    @pytest.fixture
+    def device(self):
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_backward_matches_eager(self, device):
+        """Gradients from a compiled Warp custom op must match eager mode."""
+
+        @warp_custom_op(
+            name="test::compile_backward_parity",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def scale_sum_op(x: torch.Tensor, scale: float) -> torch.Tensor:
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(scale), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        scale = 3.0
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        y_eager = scale_sum_op(x_eager, scale)
+        loss_eager = y_eager.sum()
+        loss_eager.backward()
+        grad_eager = x_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(scale_sum_op, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled, scale)
+        loss_compiled = y_compiled.sum()
+        loss_compiled.backward()
+        grad_compiled = x_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)

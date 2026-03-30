@@ -3612,5 +3612,118 @@ class TestPMEVirialTorchPMEParity:
         )
 
 
+###########################################################################################
+########################### torch.compile Regression Tests ################################
+###########################################################################################
+
+
+class TestPMETorchCompile:
+    """Verify that PME functions work correctly under torch.compile."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_pme_compiled_parity_explicit_params(self):
+        """Compiled PME with explicit alpha/mesh_dimensions matches eager."""
+        device = torch.device("cuda")
+        dtype = torch.float32
+        n_atoms = 10
+        torch.manual_seed(42)
+
+        from nvalchemiops.torch.interactions.electrostatics import (
+            estimate_pme_parameters,
+        )
+
+        positions_base = torch.randn(n_atoms, 3, device=device, dtype=dtype)
+        cell = (torch.eye(3, device=device, dtype=dtype) * 10.0).unsqueeze(0)
+        neighbor_matrix = torch.zeros(n_atoms, 1, dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros(n_atoms, 1, 3, dtype=torch.int32, device=device)
+
+        with torch.no_grad():
+            params = estimate_pme_parameters(
+                positions_base, cell, batch_idx=None, accuracy=1e-6
+            )
+            alpha = params.alpha
+            mesh_dimensions = tuple(params.mesh_dimensions)
+
+        linear = torch.nn.Linear(n_atoms * 3, n_atoms, device=device)
+
+        def pme_wrapper(positions, charges, cell):
+            e, f, cg = particle_mesh_ewald(
+                positions=positions.detach(),
+                charges=charges.detach(),
+                cell=cell.detach(),
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                spline_order=4,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_shifts,
+                mask_value=n_atoms,
+                compute_forces=True,
+                compute_charge_gradients=True,
+            )
+            energy = e.sum()
+            q_delta = charges - charges.detach()
+            return energy + (cg * q_delta).sum(), f
+
+        positions = positions_base.clone().requires_grad_(True)
+        charges = linear(positions.reshape(-1))
+        charges.retain_grad()
+        energy_eager, forces_eager = pme_wrapper(positions, charges, cell)
+        grad_eager = torch.autograd.grad(
+            energy_eager, positions, torch.ones_like(energy_eager)
+        )[0]
+        dq_eager = charges.grad.clone()
+
+        positions2 = positions_base.clone().requires_grad_(True)
+        charges2 = linear(positions2.reshape(-1))
+        charges2.retain_grad()
+        compiled_fn = torch.compile(pme_wrapper, dynamic=True)
+        energy_compiled, forces_compiled = compiled_fn(positions2, charges2, cell)
+        grad_compiled = torch.autograd.grad(
+            energy_compiled, positions2, torch.ones_like(energy_compiled)
+        )[0]
+        dq_compiled = charges2.grad
+
+        assert torch.isfinite(energy_compiled).all()
+        assert torch.isfinite(forces_compiled).all()
+        torch.testing.assert_close(energy_compiled, energy_eager, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(forces_compiled, forces_eager, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(dq_compiled, dq_eager, rtol=1e-3, atol=1e-3)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_pme_green_structure_factor_stream_ordering(self):
+        """Compiled pme_green_structure_factor output consumed by Torch math matches eager."""
+        from nvalchemiops.torch.interactions.electrostatics.pme import (
+            pme_green_structure_factor,
+        )
+
+        device = torch.device("cuda")
+        dtype = torch.float64
+        torch.manual_seed(42)
+
+        cell = (torch.eye(3, device=device, dtype=dtype) * 10.0).unsqueeze(0)
+        mesh_dims = (8, 8, 8)
+        _, k_squared = generate_k_vectors_pme(cell, mesh_dims)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
+
+        def green_and_consume(k_squared, alpha, cell):
+            green, bspline = pme_green_structure_factor(
+                k_squared, mesh_dims, alpha, cell, spline_order=4
+            )
+            return green.sum() + bspline.sum()
+
+        result_eager = green_and_consume(k_squared, alpha, cell)
+
+        compiled_fn = torch.compile(green_and_consume, dynamic=True)
+        result_compiled = compiled_fn(k_squared, alpha, cell)
+
+        assert torch.isfinite(result_compiled)
+        torch.testing.assert_close(result_compiled, result_eager, rtol=1e-5, atol=1e-5)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
