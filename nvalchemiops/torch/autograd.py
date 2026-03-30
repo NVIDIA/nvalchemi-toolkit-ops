@@ -35,6 +35,7 @@ from typing import Any, Optional, Sequence, Union
 import inspect
 import itertools
 import threading
+import weakref
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
@@ -179,6 +180,14 @@ class _RegisteredBackwardState:
     arrays: dict[str, wp.array]
 
 
+@dataclass(frozen=True)
+class _TensorGradInputSpec:
+    """Metadata for tensor-valued inputs in the generated backward wrapper."""
+
+    name: str
+    optional: bool
+
+
 _BACKWARD_STATE_LOCK = threading.Lock()
 _BACKWARD_STATE_COUNTER = itertools.count(1)
 _BACKWARD_STATE_REGISTRY: dict[int, _RegisteredBackwardState] = {}
@@ -194,6 +203,17 @@ def _is_tensor_annotation(annotation: Any) -> bool:
     if origin is None:
         return False
     return any(_is_tensor_annotation(arg) for arg in get_args(annotation))
+
+
+def _is_optional_tensor_annotation(annotation: Any) -> bool:
+    """Return True when a type annotation is ``torch.Tensor | None``-like."""
+    if annotation is inspect.Signature.empty:
+        return False
+    origin = get_origin(annotation)
+    if origin is None:
+        return False
+    args = get_args(annotation)
+    return torch.Tensor in args and type(None) in args
 
 
 def _schema_arg_from_parameter(
@@ -263,6 +283,12 @@ def _pop_registered_backward_state(token_id: int) -> _RegisteredBackwardState:
     return state
 
 
+def _discard_registered_backward_state(token_id: int) -> None:
+    """Best-effort cleanup for runtime Warp state when graphs are abandoned."""
+    with _BACKWARD_STATE_LOCK:
+        _BACKWARD_STATE_REGISTRY.pop(token_id, None)
+
+
 @contextmanager
 def warp_stream_from_torch(*values: Any):
     """Bind Warp launches to PyTorch's current CUDA stream when tensors are CUDA."""
@@ -284,6 +310,14 @@ def warp_stream_from_torch(*values: Any):
         yield torch_stream
 
 
+def _first_tensor_device(*values: Any) -> torch.device:
+    """Return the first tensor device found, or CPU as a defensive fallback."""
+    for value in values:
+        if isinstance(value, torch.Tensor):
+            return value.device
+    return torch.device("cpu")
+
+
 def _set_output_gradients(
     arrays: dict[str, wp.array],
     output_names: list[str],
@@ -303,14 +337,17 @@ def _set_output_gradients(
 
 def _extract_tensor_input_gradients(
     arrays: dict[str, wp.array],
-    tensor_input_names: list[str],
-    tensor_inputs: tuple[torch.Tensor, ...],
+    tensor_input_specs: list[_TensorGradInputSpec],
+    tensor_inputs: tuple[Any, ...],
 ) -> tuple[torch.Tensor, ...]:
     """Materialize Warp input gradients as PyTorch tensors."""
+    placeholder_device = _first_tensor_device(*tensor_inputs)
     gradients = []
-    for name, tensor_input in zip(tensor_input_names, tensor_inputs):
-        if name in arrays and arrays[name].grad is not None:
-            gradients.append(wp.to_torch(arrays[name].grad))
+    for spec, tensor_input in zip(tensor_input_specs, tensor_inputs):
+        if not isinstance(tensor_input, torch.Tensor):
+            gradients.append(torch.zeros((), device=placeholder_device))
+        elif spec.name in arrays and arrays[spec.name].grad is not None:
+            gradients.append(wp.to_torch(arrays[spec.name].grad))
         else:
             gradients.append(torch.zeros_like(tensor_input))
     return tuple(gradients)
@@ -415,9 +452,17 @@ def warp_custom_op(
         differentiable_input_names = [
             n for n in input_names if n not in NON_GRAD_INPUTS
         ]
-        tensor_grad_input_names = [
-            name for name in differentiable_input_names if name in tensor_input_names
+        tensor_grad_input_specs = [
+            _TensorGradInputSpec(
+                name=name,
+                optional=_is_optional_tensor_annotation(
+                    resolved_hints.get(name, sig.parameters[name].annotation)
+                ),
+            )
+            for name in differentiable_input_names
+            if name in tensor_input_names
         ]
+        tensor_grad_input_name_set = {spec.name for spec in tensor_grad_input_specs}
         forward_inputs = ", ".join(
             _schema_arg_from_parameter(
                 sig.parameters[name],
@@ -440,7 +485,7 @@ def warp_custom_op(
             return any(
                 isinstance(arg, torch.Tensor) and arg.requires_grad
                 for name, arg in zip(input_names, args)
-                if name in tensor_grad_input_names
+                if name in tensor_grad_input_name_set
             )
 
         def _register_runtime_state(
@@ -469,7 +514,13 @@ def warp_custom_op(
             )
             with _BACKWARD_STATE_LOCK:
                 _BACKWARD_STATE_REGISTRY[token_id] = state
-            return torch.tensor(token_id, dtype=torch.int64)
+            token_tensor = torch.tensor(token_id, dtype=torch.int64)
+            weakref.finalize(
+                token_tensor,
+                _discard_registered_backward_state,
+                token_id,
+            )
+            return token_tensor
 
         @torch.library.custom_op(name, mutates_args=mutates_args, schema=forward_schema)
         @wraps(func)
@@ -511,17 +562,20 @@ def warp_custom_op(
             return tuple(fake_outputs)
 
         backward_custom_op = None
-        if tensor_grad_input_names:
+        if tensor_grad_input_specs:
             backward_name = f"{name}_backward"
             backward_inputs = ", ".join(
                 [
                     "Tensor token",
                     *[f"Tensor? grad_{output_name}" for output_name in output_names],
-                    *[f"Tensor {input_name}" for input_name in tensor_grad_input_names],
+                    *[
+                        f"{'Tensor?' if spec.optional else 'Tensor'} {spec.name}"
+                        for spec in tensor_grad_input_specs
+                    ],
                 ]
             )
-            backward_returns = ", ".join("Tensor" for _ in tensor_grad_input_names)
-            if len(tensor_grad_input_names) == 1:
+            backward_returns = ", ".join("Tensor" for _ in tensor_grad_input_specs)
+            if len(tensor_grad_input_specs) == 1:
                 backward_schema = f"({backward_inputs}) -> Tensor"
             else:
                 backward_schema = f"({backward_inputs}) -> ({backward_returns})"
@@ -542,7 +596,7 @@ def warp_custom_op(
                     state.tape.backward()
                 gradients = _extract_tensor_input_gradients(
                     state.arrays,
-                    tensor_grad_input_names,
+                    tensor_grad_input_specs,
                     tensor_inputs,
                 )
                 if len(gradients) == 1:
@@ -552,7 +606,16 @@ def warp_custom_op(
             @backward_custom_op_impl.register_fake
             def backward_fake_impl(*all_args):
                 tensor_inputs = tuple(all_args[1 + len(output_names) :])
-                fake_grads = tuple(torch.zeros_like(tensor) for tensor in tensor_inputs)
+                placeholder_device = _first_tensor_device(
+                    *all_args[1 : 1 + len(output_names)],
+                    *tensor_inputs,
+                )
+                fake_grads = tuple(
+                    torch.zeros_like(tensor)
+                    if isinstance(tensor, torch.Tensor)
+                    else torch.zeros((), device=placeholder_device)
+                    for tensor in tensor_inputs
+                )
                 if len(fake_grads) == 1:
                     return fake_grads[0]
                 return fake_grads
@@ -562,35 +625,48 @@ def warp_custom_op(
             def setup_context_impl(ctx, inputs, output):
                 hidden_outputs = _normalize_outputs(output)
                 token = hidden_outputs[-1]
-                tensor_inputs = tuple(
-                    inp
-                    for name, inp in zip(input_names, inputs)
-                    if name in tensor_grad_input_names
-                )
-                ctx.save_for_backward(token, *tensor_inputs)
+                saved_tensors = [token]
+                runtime_input_meta = []
+                for spec in tensor_grad_input_specs:
+                    inp = inputs[input_names.index(spec.name)]
+                    was_present = isinstance(inp, torch.Tensor)
+                    required_grad = was_present and inp.requires_grad
+                    runtime_input_meta.append((spec.name, was_present, required_grad))
+                    if was_present:
+                        saved_tensors.append(inp)
+                ctx._tensor_grad_runtime_meta = runtime_input_meta
+                ctx.save_for_backward(*saved_tensors)
 
             def backward_impl(ctx, *grad_outputs):
                 grad_user_outputs = tuple(grad_outputs[:-1])
                 saved_tensors = ctx.saved_tensors
                 token = saved_tensors[0]
-                tensor_inputs = saved_tensors[1:]
+                saved_runtime_tensors = list(saved_tensors[1:])
+                tensor_inputs = []
+                for _, was_present, _ in ctx._tensor_grad_runtime_meta:
+                    if was_present:
+                        tensor_inputs.append(saved_runtime_tensors.pop(0))
+                    else:
+                        tensor_inputs.append(None)
                 raw_gradients = backward_custom_op(
                     token, *grad_user_outputs, *tensor_inputs
                 )
-                if len(tensor_grad_input_names) == 1:
+                if len(tensor_grad_input_specs) == 1:
                     raw_gradients = (raw_gradients,)
-                tensor_inputs_by_name = {
-                    name: tensor
-                    for name, tensor in zip(tensor_grad_input_names, tensor_inputs)
-                }
                 gradients_by_name = {
-                    name: grad
-                    for name, grad in zip(tensor_grad_input_names, raw_gradients)
+                    spec.name: grad
+                    for spec, grad in zip(tensor_grad_input_specs, raw_gradients)
+                }
+                runtime_input_meta = {
+                    name: (was_present, required_grad)
+                    for name, was_present, required_grad in ctx._tensor_grad_runtime_meta
                 }
                 gradients = []
                 for name in input_names:
-                    input_tensor = tensor_inputs_by_name.get(name)
-                    if input_tensor is not None and input_tensor.requires_grad:
+                    was_present, required_grad = runtime_input_meta.get(
+                        name, (False, False)
+                    )
+                    if was_present and required_grad:
                         gradients.append(gradients_by_name[name])
                     else:
                         gradients.append(None)

@@ -3068,21 +3068,32 @@ def ewald_summation(
     # Normalize return tuples for element-wise combination
     rs_tuple = rs if isinstance(rs, tuple) else (rs,)
     rec_tuple = rec if isinstance(rec, tuple) else (rec,)
-    charge_grad_index = None
-    if compute_charge_gradients:
-        charge_grad_index = 1 if not compute_forces else 2
+    tuple_index = 0
 
-    results = []
-    for idx, (r, s) in enumerate(zip(rs_tuple, rec_tuple)):
-        if (
-            charge_grad_index is not None
-            and idx == charge_grad_index
-            and torch.compiler.is_compiling()
-        ):
-            results.append(_sum_charge_gradients(r, s))
+    energies = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+    tuple_index += 1
+    results: tuple[torch.Tensor, ...] = (energies,)
+
+    if compute_forces:
+        forces = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        results += (forces,)
+        tuple_index += 1
+
+    if compute_charge_gradients:
+        real_charge_grads = rs_tuple[tuple_index]
+        reciprocal_charge_grads = rec_tuple[tuple_index]
+        if torch.compiler.is_compiling():
+            charge_grads = _sum_charge_gradients(
+                real_charge_grads, reciprocal_charge_grads
+            )
         else:
-            results.append(r + s)
-    results = tuple(results)
+            charge_grads = real_charge_grads + reciprocal_charge_grads
+        results += (charge_grads,)
+        tuple_index += 1
+
+    if compute_virial:
+        virial = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        results += (virial,)
 
     if len(results) == 1:
         return results[0]

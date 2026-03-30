@@ -1560,3 +1560,104 @@ class TestTorchCompileBackwardParity:
 
         torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
         torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_backward_optional_tensor_none(self, device):
+        """Compiled backward should work when an optional tensor input is None."""
+
+        @warp_custom_op(
+            name="test::compile_backward_optional_none",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def optional_input_op(
+            x: torch.Tensor,
+            maybe_bias: torch.Tensor | None = None,
+        ) -> torch.Tensor:
+            del maybe_bias
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(1.0), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        y_eager = optional_input_op(x_eager, None)
+        y_eager.sum().backward()
+        grad_eager = x_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(optional_input_op, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled, None)
+        y_compiled.sum().backward()
+        grad_compiled = x_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_backward_optional_tensor_present(self, device):
+        """Compiled backward should work when an optional tensor input is provided."""
+
+        @warp_custom_op(
+            name="test::compile_backward_optional_present",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def optional_input_op(
+            x: torch.Tensor,
+            maybe_bias: torch.Tensor | None = None,
+        ) -> torch.Tensor:
+            del maybe_bias
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(1.0), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        bias_eager = torch.randn(4, device=device, requires_grad=True)
+        y_eager = optional_input_op(x_eager, bias_eager)
+        y_eager.sum().backward()
+        grad_x_eager = x_eager.grad.clone()
+        grad_bias_eager = bias_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        bias_compiled = bias_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(optional_input_op, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled, bias_compiled)
+        y_compiled.sum().backward()
+        grad_x_compiled = x_compiled.grad
+        grad_bias_compiled = bias_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_x_compiled, grad_x_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(
+            grad_bias_compiled, grad_bias_eager, rtol=1e-5, atol=1e-5
+        )
