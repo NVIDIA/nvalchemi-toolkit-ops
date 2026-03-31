@@ -33,6 +33,7 @@ from typing import Any, Optional, Sequence, Union
 """
 
 import inspect
+import itertools
 import weakref
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
@@ -348,11 +349,6 @@ def _extract_tensor_input_gradients(
     return tuple(gradients)
 
 
-def _token_storage_key(token: torch.Tensor) -> int:
-    """Return a stable runtime key for the hidden token tensor."""
-    return token.untyped_storage().data_ptr()
-
-
 def warp_custom_op(
     name: str,
     outputs: list[OutputSpec],
@@ -430,21 +426,22 @@ def warp_custom_op(
     }
 
     def decorator(func: Callable) -> Callable:
+        _state_counter = itertools.count(1)
         _state_registry: dict[int, _RegisteredBackwardState] = {}
 
-        def _pop_state(token_key: int) -> _RegisteredBackwardState:
-            state = _state_registry.pop(token_key, None)
+        def _pop_state(token_id: int) -> _RegisteredBackwardState:
+            state = _state_registry.pop(token_id, None)
             if state is None:
                 raise RuntimeError(
-                    f"Missing registered Warp backward state for token key {token_key}. "
+                    f"Missing registered Warp backward state for token {token_id}. "
                     "The forward custom op likely did not attach a tape, or the state "
                     "was released before backward executed."
                 )
             return state
 
-        def _discard_state(token_key: int) -> None:
+        def _discard_state(token_id: int) -> None:
             """Best-effort cleanup for runtime Warp state when graphs are abandoned."""
-            _state_registry.pop(token_key, None)
+            _state_registry.pop(token_id, None)
 
         # Extract input names from function signature
         sig = inspect.signature(func)
@@ -554,9 +551,9 @@ def warp_custom_op(
                 tape=first_output._warp_tape,
                 arrays=arrays,
             )
-            token_key = _token_storage_key(token_tensor)
-            _state_registry[token_key] = state
-            weakref.finalize(token_tensor, _discard_state, token_key)
+            token_id = int(token_tensor.item())
+            _state_registry[token_id] = state
+            weakref.finalize(token_tensor, _discard_state, token_id)
             for array_name in list(arrays):
                 delattr(first_output, f"_wp_{array_name}")
             delattr(first_output, "_warp_tape")
@@ -637,7 +634,7 @@ def warp_custom_op(
                 if is_fake(token):
                     device = _first_tensor_device(*grad_outputs, *tensor_inputs)
                     return _zero_grads_for_inputs(tensor_inputs, device)
-                state = _pop_state(_token_storage_key(token))
+                state = _pop_state(int(token.item()))
                 with warp_stream_from_torch(*grad_outputs, *tensor_inputs):
                     _set_output_gradients(state.arrays, output_names, grad_outputs)
                     state.tape.backward()
@@ -718,7 +715,7 @@ def warp_custom_op(
         @wraps(func)
         def wrapper(*args, **kwargs):
             bound_args = _bind_call(*args, **kwargs)
-            token_tensor = torch.empty((), dtype=torch.int64)
+            token_tensor = torch.tensor(next(_state_counter), dtype=torch.int64)
             raw_args = (
                 bound_args[:hidden_input_position]
                 + (token_tensor,)
