@@ -33,8 +33,6 @@ from typing import Any, Optional, Sequence, Union
 """
 
 import inspect
-import itertools
-import threading
 import weakref
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
@@ -44,6 +42,7 @@ from typing import Any, get_args, get_origin, get_type_hints
 
 import torch
 import warp as wp
+from torch._subclasses.fake_tensor import is_fake
 
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_vec_dtype
 
@@ -157,7 +156,8 @@ class OutputSpec:
         and returns the shape. For callable, signature should match the
         custom op's input signature.
     torch_dtype : torch.dtype, optional
-        PyTorch dtype. Defaults to torch.float64.
+        PyTorch dtype override. If omitted (``None``), the dtype is inferred
+        from the resolved Warp dtype via ``_wp_dtype_to_torch``.
 
     Examples
     --------
@@ -169,7 +169,7 @@ class OutputSpec:
     name: str
     dtype: Any  # Warp dtype
     shape: Callable | tuple
-    torch_dtype: torch.dtype = torch.float64
+    torch_dtype: torch.dtype | None = None
 
 
 @dataclass
@@ -186,11 +186,6 @@ class _TensorGradInputSpec:
 
     name: str
     optional: bool
-
-
-_BACKWARD_STATE_LOCK = threading.Lock()
-_BACKWARD_STATE_COUNTER = itertools.count(1)
-_BACKWARD_STATE_REGISTRY: dict[int, _RegisteredBackwardState] = {}
 
 
 def _is_tensor_annotation(annotation: Any) -> bool:
@@ -260,35 +255,6 @@ def _normalize_outputs(result: Any) -> tuple[torch.Tensor, ...]:
     return (result,)
 
 
-def _unwrap_user_outputs(
-    result: tuple[torch.Tensor, ...],
-) -> torch.Tensor | tuple[torch.Tensor, ...]:
-    """Strip the hidden backward token from registered-op results."""
-    user_outputs = result[:-1]
-    if len(user_outputs) == 1:
-        return user_outputs[0]
-    return user_outputs
-
-
-def _pop_registered_backward_state(token_id: int) -> _RegisteredBackwardState:
-    """Consume runtime Warp state for a backward pass."""
-    with _BACKWARD_STATE_LOCK:
-        state = _BACKWARD_STATE_REGISTRY.pop(token_id, None)
-    if state is None:
-        raise RuntimeError(
-            f"Missing registered Warp backward state for token {token_id}. "
-            "The forward custom op likely did not attach a tape, or the state "
-            "was released before backward executed."
-        )
-    return state
-
-
-def _discard_registered_backward_state(token_id: int) -> None:
-    """Best-effort cleanup for runtime Warp state when graphs are abandoned."""
-    with _BACKWARD_STATE_LOCK:
-        _BACKWARD_STATE_REGISTRY.pop(token_id, None)
-
-
 @contextmanager
 def warp_stream_from_torch(*values: Any):
     """Bind Warp launches to PyTorch's current CUDA stream when tensors are CUDA."""
@@ -318,6 +284,35 @@ def _first_tensor_device(*values: Any) -> torch.device:
     return torch.device("cpu")
 
 
+def _zero_grads_for_inputs(
+    tensor_inputs: tuple[torch.Tensor | None, ...],
+    fallback_device: torch.device,
+) -> torch.Tensor | tuple[torch.Tensor, ...]:
+    """Return zero-valued gradient placeholders matching tensor_inputs.
+
+    Parameters
+    ----------
+    tensor_inputs : tuple[torch.Tensor | None, ...]
+        The saved tensor inputs from the forward pass.
+    fallback_device : torch.device
+        Device to use for scalar zero when an input is None.
+
+    Returns
+    -------
+    torch.Tensor | tuple[torch.Tensor, ...]
+        Single tensor if one input, otherwise a tuple.
+    """
+    grads = tuple(
+        torch.zeros_like(t)
+        if isinstance(t, torch.Tensor)
+        else torch.zeros((), device=fallback_device)
+        for t in tensor_inputs
+    )
+    if len(grads) == 1:
+        return grads[0]
+    return grads
+
+
 def _set_output_gradients(
     arrays: dict[str, wp.array],
     output_names: list[str],
@@ -328,10 +323,10 @@ def _set_output_gradients(
         if grad_output is None or output_name not in arrays:
             continue
         output_array = arrays[output_name]
-        wp_grad = wp.from_torch(
-            grad_output.contiguous(),
-            dtype=output_array.dtype,
-        )
+        expected_torch_dtype = _wp_dtype_to_torch(output_array.dtype)
+        grad_tensor = grad_output.contiguous()
+        grad_tensor = grad_tensor.to(expected_torch_dtype)
+        wp_grad = wp.from_torch(grad_tensor, dtype=output_array.dtype)
         wp.copy(output_array.grad, wp_grad)
 
 
@@ -353,6 +348,11 @@ def _extract_tensor_input_gradients(
     return tuple(gradients)
 
 
+def _token_storage_key(token: torch.Tensor) -> int:
+    """Return a stable runtime key for the hidden token tensor."""
+    return token.untyped_storage().data_ptr()
+
+
 def warp_custom_op(
     name: str,
     outputs: list[OutputSpec],
@@ -363,7 +363,8 @@ def warp_custom_op(
 
     This decorator eliminates boilerplate by automatically generating:
     - A ``torch.library.custom_op`` forward registered with fake/meta support
-    - A hidden token output that carries runtime Warp state to backward
+    - A hidden token input for runtime state handoff while the public wrapper
+      still exposes only the user-visible signature
     - A traceable ``register_autograd`` wrapper that replays Warp tapes through
       an opaque backward custom op
     - Stream binding so Warp launches execute on PyTorch's current CUDA stream
@@ -429,6 +430,22 @@ def warp_custom_op(
     }
 
     def decorator(func: Callable) -> Callable:
+        _state_registry: dict[int, _RegisteredBackwardState] = {}
+
+        def _pop_state(token_key: int) -> _RegisteredBackwardState:
+            state = _state_registry.pop(token_key, None)
+            if state is None:
+                raise RuntimeError(
+                    f"Missing registered Warp backward state for token key {token_key}. "
+                    "The forward custom op likely did not attach a tape, or the state "
+                    "was released before backward executed."
+                )
+            return state
+
+        def _discard_state(token_key: int) -> None:
+            """Best-effort cleanup for runtime Warp state when graphs are abandoned."""
+            _state_registry.pop(token_key, None)
+
         # Extract input names from function signature
         sig = inspect.signature(func)
         resolved_hints = get_type_hints(func)
@@ -452,6 +469,23 @@ def warp_custom_op(
         differentiable_input_names = [
             n for n in input_names if n not in NON_GRAD_INPUTS
         ]
+        hidden_state_name = "_warp_state"
+        hidden_input_position = next(
+            (
+                index
+                for index, name in enumerate(input_names)
+                if sig.parameters[name].default is not inspect.Signature.empty
+            ),
+            len(input_names),
+        )
+        raw_input_names = (
+            input_names[:hidden_input_position]
+            + [hidden_state_name]
+            + input_names[hidden_input_position:]
+        )
+        raw_input_positions = {
+            raw_name: index for index, raw_name in enumerate(raw_input_names)
+        }
         tensor_grad_input_specs = [
             _TensorGradInputSpec(
                 name=name,
@@ -463,22 +497,30 @@ def warp_custom_op(
             if name in tensor_input_names
         ]
         tensor_grad_input_name_set = {spec.name for spec in tensor_grad_input_specs}
-        forward_inputs = ", ".join(
-            _schema_arg_from_parameter(
-                sig.parameters[name],
-                resolved_hints.get(name, sig.parameters[name].annotation),
-            )
-            for name in input_names
-        )
-        hidden_return_count = len(outputs) + 1
-        if hidden_return_count == 1:
-            forward_schema = f"({forward_inputs}) -> Tensor"
+        raw_forward_input_args = []
+        for raw_name in raw_input_names:
+            if raw_name == hidden_state_name:
+                raw_forward_input_args.append(f"Tensor {hidden_state_name}")
+            else:
+                raw_forward_input_args.append(
+                    _schema_arg_from_parameter(
+                        sig.parameters[raw_name],
+                        resolved_hints.get(
+                            raw_name, sig.parameters[raw_name].annotation
+                        ),
+                    )
+                )
+        raw_forward_inputs = ", ".join(raw_forward_input_args)
+        return_count = len(outputs)
+        if return_count == 1:
+            forward_schema = f"({raw_forward_inputs}) -> Tensor"
         else:
-            forward_returns = ", ".join("Tensor" for _ in range(hidden_return_count))
-            forward_schema = f"({forward_inputs}) -> ({forward_returns})"
+            forward_returns = ", ".join("Tensor" for _ in range(return_count))
+            forward_schema = f"({raw_forward_inputs}) -> ({forward_returns})"
 
         def _bind_call(*args, **kwargs):
             bound = sig.bind(*args, **kwargs)
+            bound.apply_defaults()
             return tuple(bound.arguments[name] for name in input_names)
 
         def _needs_registered_backward(args: tuple[Any, ...]) -> bool:
@@ -491,9 +533,10 @@ def warp_custom_op(
         def _register_runtime_state(
             args: tuple[Any, ...],
             result: tuple[torch.Tensor, ...],
-        ) -> torch.Tensor:
+            token_tensor: torch.Tensor,
+        ) -> None:
             if not _needs_registered_backward(args):
-                return torch.zeros((), dtype=torch.int64)
+                return
 
             first_output = result[0]
             if not hasattr(first_output, "_warp_tape"):
@@ -502,7 +545,6 @@ def warp_custom_op(
                     "Gradient-enabled warp_custom_op calls must use attach_for_backward()."
                 )
 
-            token_id = next(_BACKWARD_STATE_COUNTER)
             arrays = {
                 array_name: getattr(first_output, f"_wp_{array_name}")
                 for array_name in grad_arrays
@@ -512,28 +554,32 @@ def warp_custom_op(
                 tape=first_output._warp_tape,
                 arrays=arrays,
             )
-            with _BACKWARD_STATE_LOCK:
-                _BACKWARD_STATE_REGISTRY[token_id] = state
-            token_tensor = torch.tensor(token_id, dtype=torch.int64)
-            weakref.finalize(
-                token_tensor,
-                _discard_registered_backward_state,
-                token_id,
-            )
-            return token_tensor
+            token_key = _token_storage_key(token_tensor)
+            _state_registry[token_key] = state
+            weakref.finalize(token_tensor, _discard_state, token_key)
+            for array_name in list(arrays):
+                delattr(first_output, f"_wp_{array_name}")
+            delattr(first_output, "_warp_tape")
 
         @torch.library.custom_op(name, mutates_args=mutates_args, schema=forward_schema)
         @wraps(func)
-        def custom_op_impl(*args):
+        def custom_op_impl(*all_args):
+            token_tensor = all_args[hidden_input_position]
+            args = (
+                all_args[:hidden_input_position] + all_args[hidden_input_position + 1 :]
+            )
             with warp_stream_from_torch(*args):
                 result = _normalize_outputs(func(*args))
-            token = _register_runtime_state(args, result)
-            return (*result, token)
+            _register_runtime_state(args, result, token_tensor)
+            if len(result) == 1:
+                return result[0]
+            return result
 
-        # Register fake implementation
         @custom_op_impl.register_fake
-        def fake_impl(*args):
-            # Determine device from first tensor argument
+        def fake_impl(*all_args):
+            args = (
+                all_args[:hidden_input_position] + all_args[hidden_input_position + 1 :]
+            )
             device = None
             for arg in args:
                 if isinstance(arg, torch.Tensor):
@@ -542,23 +588,21 @@ def warp_custom_op(
             if device is None:
                 device = torch.device("cpu")
 
-            # Create fake outputs
             fake_outputs = []
             for spec in outputs:
                 if callable(spec.shape):
                     shape = spec.shape(*args)
                 else:
                     shape = spec.shape
-                # When dtype is a callable resolver, derive torch_dtype from
-                # the resolved Warp dtype instead of using the static default.
-                if callable(spec.dtype) and not isinstance(spec.dtype, type):
+                if spec.torch_dtype is not None:
+                    tdtype = spec.torch_dtype
+                else:
                     resolved_wp = _resolve_output_dtype(spec.dtype, *args)
                     tdtype = _wp_dtype_to_torch(resolved_wp)
-                else:
-                    tdtype = spec.torch_dtype
                 fake_outputs.append(torch.zeros(shape, device=device, dtype=tdtype))
 
-            fake_outputs.append(torch.zeros((), dtype=torch.int64))
+            if len(fake_outputs) == 1:
+                return fake_outputs[0]
             return tuple(fake_outputs)
 
         backward_custom_op = None
@@ -590,7 +634,10 @@ def warp_custom_op(
                 num_outputs = len(output_names)
                 grad_outputs = tuple(all_args[1 : 1 + num_outputs])
                 tensor_inputs = tuple(all_args[1 + num_outputs :])
-                state = _pop_registered_backward_state(int(token.item()))
+                if is_fake(token):
+                    device = _first_tensor_device(*grad_outputs, *tensor_inputs)
+                    return _zero_grads_for_inputs(tensor_inputs, device)
+                state = _pop_state(_token_storage_key(token))
                 with warp_stream_from_torch(*grad_outputs, *tensor_inputs):
                     _set_output_gradients(state.arrays, output_names, grad_outputs)
                     state.tape.backward()
@@ -606,29 +653,21 @@ def warp_custom_op(
             @backward_custom_op_impl.register_fake
             def backward_fake_impl(*all_args):
                 tensor_inputs = tuple(all_args[1 + len(output_names) :])
-                placeholder_device = _first_tensor_device(
+                device = _first_tensor_device(
                     *all_args[1 : 1 + len(output_names)],
                     *tensor_inputs,
                 )
-                fake_grads = tuple(
-                    torch.zeros_like(tensor)
-                    if isinstance(tensor, torch.Tensor)
-                    else torch.zeros((), device=placeholder_device)
-                    for tensor in tensor_inputs
-                )
-                if len(fake_grads) == 1:
-                    return fake_grads[0]
-                return fake_grads
+                return _zero_grads_for_inputs(tensor_inputs, device)
 
             backward_custom_op = backward_custom_op_impl
 
             def setup_context_impl(ctx, inputs, output):
-                hidden_outputs = _normalize_outputs(output)
-                token = hidden_outputs[-1]
-                saved_tensors = [token]
+                del output
+                token_tensor = inputs[hidden_input_position]
+                saved_tensors = [token_tensor]
                 runtime_input_meta = []
                 for spec in tensor_grad_input_specs:
-                    inp = inputs[input_names.index(spec.name)]
+                    inp = inputs[raw_input_positions[spec.name]]
                     was_present = isinstance(inp, torch.Tensor)
                     required_grad = was_present and inp.requires_grad
                     runtime_input_meta.append((spec.name, was_present, required_grad))
@@ -638,7 +677,6 @@ def warp_custom_op(
                 ctx.save_for_backward(*saved_tensors)
 
             def backward_impl(ctx, *grad_outputs):
-                grad_user_outputs = tuple(grad_outputs[:-1])
                 saved_tensors = ctx.saved_tensors
                 token = saved_tensors[0]
                 saved_runtime_tensors = list(saved_tensors[1:])
@@ -648,9 +686,7 @@ def warp_custom_op(
                         tensor_inputs.append(saved_runtime_tensors.pop(0))
                     else:
                         tensor_inputs.append(None)
-                raw_gradients = backward_custom_op(
-                    token, *grad_user_outputs, *tensor_inputs
-                )
+                raw_gradients = backward_custom_op(token, *grad_outputs, *tensor_inputs)
                 if len(tensor_grad_input_specs) == 1:
                     raw_gradients = (raw_gradients,)
                 gradients_by_name = {
@@ -670,6 +706,7 @@ def warp_custom_op(
                         gradients.append(gradients_by_name[name])
                     else:
                         gradients.append(None)
+                gradients.insert(hidden_input_position, None)
                 return tuple(gradients)
 
             torch.library.register_autograd(
@@ -681,10 +718,14 @@ def warp_custom_op(
         @wraps(func)
         def wrapper(*args, **kwargs):
             bound_args = _bind_call(*args, **kwargs)
-            return _unwrap_user_outputs(_normalize_outputs(custom_op_impl(*bound_args)))
+            token_tensor = torch.empty((), dtype=torch.int64)
+            raw_args = (
+                bound_args[:hidden_input_position]
+                + (token_tensor,)
+                + bound_args[hidden_input_position:]
+            )
+            return custom_op_impl(*raw_args)
 
-        wrapper._raw_custom_op = custom_op_impl
-        wrapper._backward_custom_op = backward_custom_op
         return wrapper
 
     return decorator
@@ -1037,31 +1078,24 @@ def standard_backward(
                 f"Mismatch: got {len(output_dtypes)} output_dtypes but {len(output_names)} output_names"
             )
 
-    if hasattr(ctx, "_warp_tape"):
-        tape = ctx._warp_tape
-        arrays = ctx._warp_arrays
-    else:
-        first_output = getattr(ctx, output_names[0])
-        tape, arrays = retrieve_for_backward(first_output, *array_names)
+    # Get the first output tensor from context (tape is attached there)
+    first_output = getattr(ctx, output_names[0])
+
+    # Retrieve tape and warp arrays
+    tape, arrays = retrieve_for_backward(first_output, *array_names)
 
     stream_values = list(grad_outputs)
     stream_values.extend(getattr(ctx, name, None) for name in input_names)
     with warp_stream_from_torch(*stream_values):
-        # Set gradients on all outputs that participate in backward
-        # Skip outputs that weren't attached for gradients (not in arrays dict)
         for output_name, grad_output, dtype in zip(
             output_names, grad_outputs, output_dtypes
         ):
             if grad_output is not None and output_name in arrays:
                 output_array = arrays[output_name]
-
-                # Use the warp array's actual dtype (always matches the gradient tensor).
                 actual_dtype = output_array.dtype
-
                 wp_grad = wp.from_torch(grad_output.contiguous(), dtype=actual_dtype)
                 wp.copy(output_array.grad, wp_grad)
 
-        # Run backward pass on PyTorch's current stream for the active device.
         tape.backward()
 
     # Extract and return gradients
