@@ -16,10 +16,12 @@ where $\varepsilon$ is the symmetric infinitesimal strain tensor.
 
 For pairwise real-space interactions this is equivalent to:
 
-$$W = \sum_{i < j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$$
+$$W = -\sum_{i < j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$$
 
 where $\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i$ and $\mathbf{F}_{ij}$
 is the force on atom $i$ due to atom $j$.
+Individual kernel implementations may use the reversed separation vector or the
+reaction force internally, but returned virials always follow this convention.
 
 ## Stress
 
