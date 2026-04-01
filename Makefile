@@ -76,7 +76,19 @@ pytest:  ## Run pytest with coverage
 	uv run pytest --cov-fail-under=0 --cov=nvalchemiops test/test_types.py; \
 	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/math; \
 	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/neighbors; \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions; \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions;
+
+COVERAGE_SUFFIX ?=
+TEST_MODULES := types:test/test_types.py math:test/math neighbors:test/neighbors interactions:test/interactions
+
+.PHONY: testmon-coverage
+testmon-coverage:  ## Run tests with testmon and combine coverage
+	$(foreach mod,$(TEST_MODULES),\
+		COVERAGE_FILE=.coverage.$(firstword $(subst :, ,$(mod)))$(COVERAGE_SUFFIX) \
+		uv run coverage run -m pytest --testmon $(lastword $(subst :, ,$(mod))) &&) true
+	uv run coverage combine --append --keep || true
+	uv run coverage report --show-missing --fail-under=70
+	uv run coverage xml -o nvalchemiops.coverage.xml
 
 # ==============================================================================
 # COVERAGE
@@ -150,6 +162,7 @@ clean:  ## Clean build artifacts
 	rm -rf .ruff_cache/
 	rm -rf nvalchemiops.coverage.xml
 	rm -rf pytest-junit-results.xml
+	rm -rf .testmondata*
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # ==============================================================================
