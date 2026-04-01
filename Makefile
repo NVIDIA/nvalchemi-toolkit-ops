@@ -87,7 +87,7 @@ testmon-coverage:  ## Run tests with testmon and combine coverage
 		COVERAGE_FILE=.coverage.$(firstword $(subst :, ,$(mod)))$(COVERAGE_SUFFIX) \
 		uv run coverage run -m pytest --testmon $(lastword $(subst :, ,$(mod))); \
 		RET=$$?; if [ $$RET -ne 0 ] && [ $$RET -ne 5 ]; then exit $$RET; fi;) true
-	uv run coverage combine --append --keep || true
+	uv run coverage combine --append || true
 	uv run coverage report --show-missing --fail-under=70
 	uv run coverage xml -o nvalchemiops.coverage.xml
 

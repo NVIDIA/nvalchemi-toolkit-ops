@@ -223,8 +223,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: |
-            .testmondata*
-            .coverage*
+            .testmondata
+            .coverage
           key: testmon-baseline-main-${{ github.run_id }}
           restore-keys: |
             testmon-baseline-main-
@@ -253,8 +253,8 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: |
-            .testmondata*
-            .coverage*
+            .testmondata
+            .coverage
           key: testmon-baseline-main-${{ github.run_id }}
 
       - name: Upload coverage to Codecov
