@@ -541,13 +541,13 @@ class TestLJVirial:
         virial_np = virial.numpy()
 
         # For pair along x-axis, virial should be mostly xx component
-        # W_αβ = -r_α * F_β
+        # W_αβ = r_α * F_β = -dE/dε_αβ
         f_over_r = lj_force_over_r_numpy(r, epsilon, sigma)
         f_x = f_over_r * r  # Force magnitude in x direction
 
         # r_ij = (r, 0, 0), F_ij = (f_x, 0, 0)
-        # W_xx = -r * f_x
-        expected_vir_xx = -r * f_x
+        # W_xx = r * f_x
+        expected_vir_xx = r * f_x
 
         # Virial layout: [xx, xy, xz, yx, yy, yz, zx, zy, zz]
         np.testing.assert_allclose(virial_np[0], expected_vir_xx, rtol=1e-10)
