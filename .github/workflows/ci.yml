@@ -209,10 +209,38 @@ jobs:
           uv sync --all-extras
           uv pip install -r test/test-requires.txt
 
-      - name: Run tests with coverage
+      # CONDITIONAL LOGIC BASED ON EVENT TYPE
+      #
+      # PR branches use push events to refs/heads/pull-request/*, not the
+      # pull_request event. Detect them via the branch name pattern.
+      - name: Restore testmon baseline (for PRs)
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .testmondata*
+            .coverage*
+          key: testmon-baseline-main
+
+      - name: Run tests with testmon and coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          make coverage
+          IS_PR=${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+          if [[ "$IS_PR" == "true" ]]; then
+            make testmon-coverage COVERAGE_SUFFIX=.pr
+          else
+            make testmon-coverage
+          fi
+
+      # Cache baseline (only from main/schedule runs)
+      - name: Save testmon baseline
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .testmondata*
+            .coverage*
+          key: testmon-baseline-main
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
