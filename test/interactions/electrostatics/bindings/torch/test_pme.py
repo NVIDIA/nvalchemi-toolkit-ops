@@ -3822,6 +3822,33 @@ class TestPMEHybridForces:
         assert torch.isfinite(charges.grad).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_cell_no_grad(self, device):
+        """Cell must not receive gradients in hybrid mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_dipole_system(device)
+        positions = positions.clone().requires_grad_(True)
+        cell = cell.clone().requires_grad_(True)
+        charges = charges.clone().requires_grad_(True)
+
+        energies = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            hybrid_forces=True,
+        )
+        energies.sum().backward()
+
+        assert positions.grad is None or torch.all(positions.grad == 0)
+        assert cell.grad is None or torch.all(cell.grad == 0)
+        assert charges.grad is not None
+        assert torch.isfinite(charges.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_hybrid_charge_grad_matches_autograd(self, device):
         """Charge gradients from straight-through must match standard autograd."""
         if device == "cuda" and not torch.cuda.is_available():
