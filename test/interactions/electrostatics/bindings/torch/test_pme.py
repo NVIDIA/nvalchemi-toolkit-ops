@@ -2897,9 +2897,7 @@ class TestPMEReciprocalVirialBatch:
         device = torch.device(device)
         positions, charges, cell = make_virial_cscl_system(1, device=device)
         alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
-        batch_idx = torch.zeros(
-            positions.shape[0], dtype=torch.int32, device=device
-        )
+        batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
 
         result = pme_reciprocal_space(
             positions,
