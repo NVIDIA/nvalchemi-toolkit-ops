@@ -65,7 +65,8 @@ def dsf_reference(
     """Pure PyTorch DSF reference implementation.
 
     Runs in input precision. Uses autograd for forces, virial, and charge
-    gradients. Returns a dict with keys: energy, forces, virial, charge_grad.
+    gradients. Virial follows the torch binding convention ``W = -dE/dε``.
+    Returns a dict with keys: energy, forces, virial, charge_grad.
 
     Parameters
     ----------
@@ -237,7 +238,7 @@ def dsf_reference(
 
     if strain is not None:
         virial = (
-            grads[2]
+            -grads[2]
             if grads[2] is not None
             else torch.zeros(num_systems, 3, 3, dtype=dtype, device=device)
         )
