@@ -73,10 +73,10 @@ license:  ## Check license headers
 .PHONY: pytest
 pytest:  ## Run pytest with coverage
 	rm -f .coverage
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops test/test_types.py; \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/math; \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/neighbors; \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions; \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops test/test_types.py && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/math && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/neighbors && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions
 
 # ==============================================================================
 # COVERAGE

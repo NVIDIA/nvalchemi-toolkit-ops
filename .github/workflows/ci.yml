@@ -163,6 +163,10 @@ jobs:
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     container:
       image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
       options: --gpus all
@@ -206,6 +210,7 @@ jobs:
       - name: Install dependencies
         run: |
           export PATH="$HOME/.local/bin:$PATH"
+          uv venv --seed --python ${{ matrix.python-version }}
           uv sync --all-extras
           uv pip install -r test/test-requires.txt
 
@@ -225,7 +230,7 @@ jobs:
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: coverage-report-py${{ matrix.python-version }}
           path: nvalchemiops.coverage.xml
           retention-days: 7
 
