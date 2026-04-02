@@ -1620,7 +1620,9 @@ def _pme_reciprocal_space_impl(
     # Use precomputed k_vectors/k_squared if provided, otherwise generate them
     if k_vectors is None or k_squared is None:
         k_vectors, k_squared = generate_k_vectors_pme(
-            cell_spline, mesh_dimensions=mesh_dimensions, reciprocal_cell=reciprocal_cell
+            cell_spline,
+            mesh_dimensions=mesh_dimensions,
+            reciprocal_cell=reciprocal_cell,
         )
 
     alpha_gsf = alpha.detach() if hybrid_forces else alpha
