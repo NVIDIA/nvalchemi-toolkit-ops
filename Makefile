@@ -79,21 +79,22 @@ pytest:  ## Run pytest with coverage
 	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions
 
 PYTEST_TESTMON_FLAGS ?= --testmon --testmon-nocollect
+TEST_MODULES := types:test/test_types.py math:test/math neighbors:test/neighbors interactions:test/interactions
 
 .PHONY: testmon-collect
 testmon-collect:  ## Build testmon dependency database (no coverage)
-	uv run pytest --testmon || true
+	$(foreach mod,$(TEST_MODULES),\
+		uv run pytest --testmon $(lastword $(subst :, ,$(mod))) || true;)
 
 .PHONY: testmon-coverage
 testmon-coverage:  ## Run tests with coverage (testmon selects by default)
-	uv run coverage run -m pytest $(PYTEST_TESTMON_FLAGS); \
-		PYTEST_EXIT=$$?; \
-		uv run coverage combine --append || true && \
-		uv run coverage report --show-missing --fail-under=70; \
-		COV_EXIT=$$?; \
-		uv run coverage xml -o nvalchemiops.coverage.xml && \
-		if [ $$PYTEST_EXIT -ne 0 ] && [ $$PYTEST_EXIT -ne 5 ]; then exit $$PYTEST_EXIT; fi && \
-		exit $$COV_EXIT
+	$(foreach mod,$(TEST_MODULES),\
+		COVERAGE_FILE=.coverage.$(firstword $(subst :, ,$(mod))) \
+		uv run coverage run -m pytest $(PYTEST_TESTMON_FLAGS) $(lastword $(subst :, ,$(mod))); \
+		RET=$$?; if [ $$RET -ne 0 ] && [ $$RET -ne 5 ]; then exit $$RET; fi;) true
+	uv run coverage combine --append || true
+	uv run coverage report --show-missing --fail-under=70
+	uv run coverage xml -o nvalchemiops.coverage.xml
 
 # ==============================================================================
 # COVERAGE
