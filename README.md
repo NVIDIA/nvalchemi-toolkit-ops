@@ -9,17 +9,24 @@
 
 ## High-performance NVIDIA Warp primitives for computational chemistry
 
-NVIDIA ALCHEMI Toolkit-Ops is a collection of GPU-optimized, batched primitives for
-accelerating atomistic simulations. High performance compute kernels are written
-in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
+NVIDIA ALCHEMI Toolkit-Ops is a collection of **GPU-optimized**, **batched**
+primitives for accelerating atomistic simulations. High performance compute
+kernels are written in [NVIDIA `warp-lang`](https://github.com/NVIDIA/warp).
 
 ### Key Features
 
-- Neighborhood computation, including naive $O(N^2)$ and cell list $O(N)$
-implementations
+- Molecular Dynamics kernels: Velocity Verlet (NVE), Langevin (NVT),
+  Nosé-Hoover Chain (NVT), NPT/NPH ensembles, velocity rescaling
+- Geometry optimization: FIRE and FIRE2 with optional unit cell
+  optimization
+- Neighbor lists: naive $O(N^2)$ and cell list $O(N)$ algorithms
 - Dispersion corrections via Becke-Johnson damped DFT-D3
-- Electrostatic interactions, including Ewald, particle mesh Ewald
-  (PME), and damped shifted force (DSF) algorithms
+- Electrostatic interactions: Ewald, particle mesh Ewald (PME), and
+  damped shifted force (DSF) algorithms
+- Differentiable physics: analytical stress tensor (virial) support
+  for Ewald and PME, enabling stress-based MLIP training
+- NVIDIA Warp core with optional, JIT-compatible PyTorch and JAX
+  bindings, including autograd support
 
 Kernels are naturally intended to be highly scalable (>100,000 atoms) and generally
 optimized for high throughput operations (on the order of several microseconds per
@@ -183,18 +190,20 @@ system_energy = atom_energies.sum()
 
 ## Roadmap
 
-Currently, we have the following features that are being implemented, or are planned
-to be implemented soon:
+Features planned for upcoming releases:
 
-- A variety of widely used pair-potentials, including
-    - Ziebler-Biersack-Littmark (ZBL)
-    - Lennard-Jones
-    - Quantum Drude Oscillator
-- DFT-D4 dispersion corrections
-- Primitives typically used with machine learned interatomic potentials, such as:
-    - Polynomial basis functions
-    - (Segmented) graph operations
-    - Mixed precision, e.g. higher precision accumulation
+- Performance improvements for neighbor lists, DFT-D3, and
+  electrostatics
+- Explicit 2nd-derivative electrostatics kernels for more
+  efficient MLIP training
+- Multipole Ewald summation
+- Batched Nudged Elastic Band (NEB)
+- Support for custom pair potentials in neighbor list functions
+- Slab corrections for pseudo-2D periodic systems
+- Ewald dispersion
+- Improved pair potential coverage (e.g. ZBL, OQDO, Born-Mayer)
+- Basis functions and descriptors for MLIPs (e.g. spherical
+  harmonics, radial basis, Wigner D3 matrix)
 
 ## Contributions & Disclaimers
 
