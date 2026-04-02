@@ -6457,5 +6457,444 @@ class TestEwaldTorchCompile:
         torch.testing.assert_close(dq_compiled, dq_eager, rtol=1e-3, atol=1e-3)
 
 
+###########################################################################################
+########################### Hybrid Forces Tests ###########################################
+###########################################################################################
+
+
+class TestHybridForces:
+    """Test hybrid_forces mode for Ewald summation.
+
+    hybrid_forces=True detaches positions/cell from the autograd graph and
+    attaches charge gradients via the straight-through trick.  Forces and
+    virial are forward-only.
+    """
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_energy_matches_standard(self, device):
+        """Forward energy values must be identical to standard mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, nl, nl_ptr, nl_shifts = create_dipole_system(device)
+
+        e_std = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+        )
+        e_hyb = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(e_std, e_hyb, rtol=1e-12, atol=1e-14)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_forces_match_standard(self, device):
+        """Explicit forces must match non-hybrid mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, nl, nl_ptr, nl_shifts = create_dipole_system(device)
+
+        _, f_std = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+        )
+        _, f_hyb = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(f_std, f_hyb, rtol=1e-12, atol=1e-14)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_positions_no_grad(self, device):
+        """Positions must not receive gradients in hybrid mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, nl, nl_ptr, nl_shifts = create_dipole_system(device)
+        positions = positions.clone().requires_grad_(True)
+        charges = charges.clone().requires_grad_(True)
+
+        energies = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            hybrid_forces=True,
+        )
+        energies.sum().backward()
+
+        assert positions.grad is None or torch.all(positions.grad == 0)
+        assert charges.grad is not None
+        assert torch.isfinite(charges.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_charge_grad_matches_autograd(self, device):
+        """Charge gradients from straight-through must match standard autograd."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges_ref, cell, nl, nl_ptr, nl_shifts = create_dipole_system(
+            device
+        )
+
+        # Standard autograd path
+        charges_ad = charges_ref.clone().requires_grad_(True)
+        e_ad = ewald_summation(
+            positions,
+            charges_ad,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+        )
+        grad_std = torch.autograd.grad(e_ad.sum(), charges_ad)[0]
+
+        # Hybrid path
+        charges_hyb = charges_ref.clone().requires_grad_(True)
+        e_hyb = ewald_summation(
+            positions,
+            charges_hyb,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            hybrid_forces=True,
+        )
+        grad_hyb = torch.autograd.grad(e_hyb.sum(), charges_hyb)[0]
+
+        torch.testing.assert_close(grad_std, grad_hyb, rtol=1e-4, atol=1e-6)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_geometry_dependent_charges(self, device):
+        """End-to-end: q = f(R), total force = explicit + charge-chain-rule."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges_base, cell, nl, nl_ptr, nl_shifts = create_dipole_system(
+            device
+        )
+
+        weight = torch.tensor(
+            [[0.1, -0.05, 0.02], [-0.1, 0.05, -0.02]],
+            dtype=torch.float64,
+            device=device,
+        )
+        positions = positions.clone().requires_grad_(True)
+
+        q = charges_base + (positions * weight).sum(dim=1)
+        q = q - q.mean()
+
+        energies, forces = ewald_summation(
+            positions,
+            q,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        charge_force = -torch.autograd.grad(
+            energies.sum(), positions, retain_graph=True
+        )[0]
+        total_force = forces + charge_force
+
+        assert torch.isfinite(total_force).all()
+        assert total_force.shape == (2, 3)
+
+        # Verify against finite differences on the full E(R) path
+        h = 1e-5
+        for atom in range(2):
+            for dim in range(3):
+                pos_p = positions.detach().clone()
+                pos_p[atom, dim] += h
+                q_p = charges_base + (pos_p * weight).sum(dim=1)
+                q_p = q_p - q_p.mean()
+                e_p = (
+                    ewald_summation(
+                        pos_p,
+                        q_p,
+                        cell,
+                        alpha=0.3,
+                        k_cutoff=8.0,
+                        neighbor_list=nl,
+                        neighbor_ptr=nl_ptr,
+                        neighbor_shifts=nl_shifts,
+                    )
+                    .sum()
+                    .item()
+                )
+
+                pos_m = positions.detach().clone()
+                pos_m[atom, dim] -= h
+                q_m = charges_base + (pos_m * weight).sum(dim=1)
+                q_m = q_m - q_m.mean()
+                e_m = (
+                    ewald_summation(
+                        pos_m,
+                        q_m,
+                        cell,
+                        alpha=0.3,
+                        k_cutoff=8.0,
+                        neighbor_list=nl,
+                        neighbor_ptr=nl_ptr,
+                        neighbor_shifts=nl_shifts,
+                    )
+                    .sum()
+                    .item()
+                )
+
+                fd_force = -(e_p - e_m) / (2 * h)
+                rel_err = abs(total_force[atom, dim].item() - fd_force) / (
+                    abs(fd_force) + 1e-30
+                )
+                assert rel_err < 0.01, (
+                    f"atom {atom}, dim {dim}: "
+                    f"hybrid={total_force[atom, dim].item():.8e}, "
+                    f"FD={fd_force:.8e}, rel={rel_err:.2e}"
+                )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_virial_forward_only(self, device):
+        """Virial values must match standard mode and have no grad_fn."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, nl, nl_ptr, nl_shifts = create_dipole_system(device)
+
+        _, _, v_std = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        _, _, v_hyb = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            compute_virial=True,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(v_std, v_hyb, rtol=1e-12, atol=1e-14)
+        assert v_hyb.grad_fn is None
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_real_space(self, device):
+        """Test hybrid_forces on ewald_real_space directly."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, nl, nl_ptr, nl_shifts = create_dipole_system(device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+
+        e_std = ewald_real_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+        )
+        e_hyb = ewald_real_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            hybrid_forces=True,
+        )
+        torch.testing.assert_close(e_std, e_hyb, rtol=1e-12, atol=1e-14)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_reciprocal_space(self, device):
+        """Test hybrid_forces on ewald_reciprocal_space directly."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, _, _, _ = create_dipole_system(device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        e_std = ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            k_vectors,
+            alpha,
+        )
+        e_hyb = ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            k_vectors,
+            alpha,
+            hybrid_forces=True,
+        )
+        torch.testing.assert_close(e_std, e_hyb, rtol=1e-12, atol=1e-14)
+
+
+###########################################################################################
+########################### torch.compile Tests ###########################################
+###########################################################################################
+
+
+class TestTorchCompile:
+    """Smoke tests for torch.compile compatibility with hybrid_forces mode."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_compile_hybrid_energy_forces(self, device):
+        """torch.compile with hybrid_forces produces same energy and forces."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell, nl, nl_ptr, nl_shifts = create_dipole_system(device)
+
+        e_eager, f_eager = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        ewald_compiled = torch.compile(ewald_summation)
+        e_compiled, f_compiled = ewald_compiled(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(e_compiled, e_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(f_compiled, f_eager, atol=1e-10, rtol=0.0)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_compile_hybrid_charge_grad(self, device):
+        """torch.compile with hybrid_forces produces correct charge gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges_base, cell, nl, nl_ptr, nl_shifts = create_dipole_system(
+            device
+        )
+
+        charges_eager = charges_base.clone().requires_grad_(True)
+        e_eager, f_eager = ewald_summation(
+            positions,
+            charges_eager,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+        e_eager.sum().backward()
+        cg_eager = charges_eager.grad.clone()
+
+        charges_compiled = charges_base.clone().requires_grad_(True)
+        ewald_compiled = torch.compile(ewald_summation)
+        e_compiled, f_compiled = ewald_compiled(
+            positions,
+            charges_compiled,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+        e_compiled.sum().backward()
+        cg_compiled = charges_compiled.grad.clone()
+
+        torch.testing.assert_close(e_compiled, e_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(f_compiled, f_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(cg_compiled, cg_eager, atol=1e-10, rtol=0.0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
