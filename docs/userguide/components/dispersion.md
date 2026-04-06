@@ -326,6 +326,17 @@ Use `scipy.constants` for precise conversions:
 `scipy.constants.value('Hartree energy in eV')` for Hartree.
 ```
 
+### Virial Convention
+
+The DFT-D3 virial follows the project-wide convention:
+
+$$W_{ab} = -\partial E / \partial \varepsilon_{ab}$$
+
+Tensile-positive Cauchy stress is obtained via $\sigma = -W / V$ where
+$V = |\det(\mathbf{C})|$.
+
+See {ref}`conventions` for the full project-wide definitions.
+
 ### Data Types
 
 | Tensor | Dtype | Notes |

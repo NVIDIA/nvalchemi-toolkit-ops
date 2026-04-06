@@ -2890,6 +2890,29 @@ class TestPMEReciprocalVirialBatch:
         assert virial.shape == (2, 3, 3)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_pme_reciprocal_virial_shape_single_system(self, device):
+        """Batch PME reciprocal virial has shape (1, 3, 3) when B=1."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=(8, 8, 8),
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (1, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_batch_pme_reciprocal_virial_fd(self, device):
         """Batch PME reciprocal virial per-system matches single-system FD."""
         if device == "cuda" and not torch.cuda.is_available():

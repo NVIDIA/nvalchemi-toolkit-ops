@@ -77,7 +77,10 @@ For PyTorch integration, see ``nvalchemiops.torch.interactions.electrostatics.ds
 .. note::
    This implementation assumes a **full neighbor list** where each pair (i, j)
    appears in both directions (i->j and j->i). The 0.5 factor for pair energy
-   and the -0.5 factor for virial account for this double counting.
+   and virial accounts for this double counting.
+
+   The virial follows the convention ``W = -dE/dε`` (negative strain derivative
+   of the energy).
 
 .. note::
    When using batched mode, ``batch_idx`` must be sorted in non-decreasing
@@ -284,7 +287,7 @@ def _dsf_csr_single_kernel(
             type(qi)(virial_acc[2, 1]),
             type(qi)(virial_acc[2, 2]),
         )
-        wp.atomic_add(virial, 0, -half * virial_out)
+        wp.atomic_add(virial, 0, half * virial_out)
 
 
 @wp.kernel(enable_backward=False)
@@ -435,7 +438,7 @@ def _dsf_csr_batch_kernel(
             type(qi)(virial_acc[2, 1]),
             type(qi)(virial_acc[2, 2]),
         )
-        wp.atomic_add(virial, system_id, -half * virial_out)
+        wp.atomic_add(virial, system_id, half * virial_out)
 
 
 # ==============================================================================
@@ -589,7 +592,7 @@ def _dsf_matrix_single_kernel(
             type(qi)(virial_acc[2, 1]),
             type(qi)(virial_acc[2, 2]),
         )
-        wp.atomic_add(virial, 0, -half * virial_out)
+        wp.atomic_add(virial, 0, half * virial_out)
 
 
 @wp.kernel(enable_backward=False)
@@ -741,7 +744,7 @@ def _dsf_matrix_batch_kernel(
             type(qi)(virial_acc[2, 1]),
             type(qi)(virial_acc[2, 2]),
         )
-        wp.atomic_add(virial, system_id, -half * virial_out)
+        wp.atomic_add(virial, system_id, half * virial_out)
 
 
 # ==============================================================================
