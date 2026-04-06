@@ -127,6 +127,7 @@ See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
 
 - [Install](about/install)
 - [Introduction](about/intro)
+- [Conventions](about/conventions)
 
 ## Core Components
 
@@ -144,6 +145,7 @@ See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
 
 about/install
 about/intro
+about/conventions
 about/migration
 about/faq
 

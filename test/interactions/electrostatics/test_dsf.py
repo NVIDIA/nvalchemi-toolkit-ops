@@ -1290,7 +1290,7 @@ class TestDSFVirial:
                 ff = _dsf_force_factor_ref(r, cutoff, alpha)
                 f_ij = charges[i] * charges[j] * ff / r * r_ij_vec
                 ref_virial += np.outer(f_ij, r_ij_vec)
-        ref_virial *= -0.5
+        ref_virial *= 0.5
 
         np.testing.assert_allclose(virial, ref_virial, atol=1e-6)
 
