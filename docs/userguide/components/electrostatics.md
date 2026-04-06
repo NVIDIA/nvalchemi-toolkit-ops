@@ -1399,12 +1399,15 @@ require gradients, stress-based losses automatically back-propagate to model par
 
 **Convention:**
 
-- Real-space: $W_\text{real} = -\frac{1}{2} \sum_{i<j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$,
+- Real-space: $W_\text{real} = -\sum_{i<j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$,
   where $\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i$ and $\mathbf{F}_{ij}$ is the force on atom $i$ due to atom $j$.
 - Reciprocal-space: $W_\text{recip}(k) = E(k) \left[\delta_{ab} - \frac{2 k_a k_b}{k^2}\left(1 + \frac{k^2}{4\alpha^2}\right)\right]$
-- Stress: $\sigma = W / V$ where $V = |\det(\mathbf{C})|$
+- Stress (tensile-positive Cauchy stress): $\sigma = -W / V$ where $V = |\det(\mathbf{C})|$
 - The virial convention is validated against finite-difference strain derivatives
   of the energy ($W_{ab} = -\partial E / \partial \varepsilon_{ab}$) in the test suite.
+
+See {ref}`conventions` for the project-wide virial and stress definitions used by all
+interaction modules.
 
 **Ewald summation with virial:**
 
@@ -1423,11 +1426,11 @@ energies, forces, virial = ewald_summation(
 
 # Single system: virial shape (1, 3, 3)
 volume = torch.abs(torch.linalg.det(cell))          # scalar
-stress = virial.squeeze(0) / volume                  # (3, 3)
+stress = -virial.squeeze(0) / volume                 # (3, 3)
 
 # Batch: virial shape (B, 3, 3)
 volume = torch.abs(torch.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]              # (B, 3, 3)
+stress = -virial / volume[:, None, None]             # (B, 3, 3)
 ```
 
 :::
@@ -1449,11 +1452,11 @@ energies, forces, virial = ewald_summation(
 
 # Single system: virial shape (1, 3, 3)
 volume = jnp.abs(jnp.linalg.det(cell))          # scalar
-stress = virial.squeeze(0) / volume              # (3, 3)
+stress = -virial.squeeze(0) / volume             # (3, 3)
 
 # Batch: virial shape (B, 3, 3)
 volume = jnp.abs(jnp.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]          # (B, 3, 3)
+stress = -virial / volume[:, None, None]         # (B, 3, 3)
 ```
 
 :::
@@ -1477,11 +1480,11 @@ energies, forces, virial = particle_mesh_ewald(
 
 # Single system
 volume = torch.abs(torch.linalg.det(cell))
-stress = virial.squeeze(0) / volume                  # (3, 3)
+stress = -virial.squeeze(0) / volume                 # (3, 3)
 
 # Batch
 volume = torch.abs(torch.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]              # (B, 3, 3)
+stress = -virial / volume[:, None, None]             # (B, 3, 3)
 ```
 
 :::
@@ -1503,11 +1506,11 @@ energies, forces, virial = particle_mesh_ewald(
 
 # Single system
 volume = jnp.abs(jnp.linalg.det(cell))
-stress = virial.squeeze(0) / volume                  # (3, 3)
+stress = -virial.squeeze(0) / volume                 # (3, 3)
 
 # Batch
 volume = jnp.abs(jnp.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]              # (B, 3, 3)
+stress = -virial / volume[:, None, None]             # (B, 3, 3)
 ```
 
 :::
@@ -1532,7 +1535,7 @@ energies, forces, virial = ewald_summation(
 
 # Compute stress (single system shown; for batch use volume[:, None, None])
 volume = torch.abs(torch.linalg.det(cell))
-pred_stress = virial.squeeze(0) / volume
+pred_stress = -virial.squeeze(0) / volume
 
 loss = (
     w_energy * (energies.sum() - E_target) ** 2
@@ -1562,7 +1565,7 @@ def loss_fn(positions, charges, cell):
 
     # Compute stress (single system shown; for batch use volume[:, None, None])
     volume = jnp.abs(jnp.linalg.det(cell))
-    pred_stress = virial.squeeze(0) / volume
+    pred_stress = -virial.squeeze(0) / volume
 
     loss = (
         w_energy * (jnp.sum(energies) - E_target) ** 2

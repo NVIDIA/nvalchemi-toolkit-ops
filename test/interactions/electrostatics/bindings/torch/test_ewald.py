@@ -6391,5 +6391,71 @@ class TestEwaldVirialTorchPMEParity:
             )
 
 
+class TestEwaldTorchCompile:
+    """Verify that ewald_summation under torch.compile matches eager mode."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_ewald_compiled_parity(self):
+        """Compiled ewald_summation must produce matching energies, forces, and charge grads."""
+        device = torch.device("cuda")
+        dtype = torch.float32
+        n_atoms = 10
+
+        torch.manual_seed(42)
+
+        neighbor_matrix = torch.zeros(n_atoms, 1, dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros(n_atoms, 1, 3, dtype=torch.int32, device=device)
+        cell = (torch.eye(3, device=device, dtype=dtype) * 10.0).unsqueeze(0)
+
+        def ewald_wrapper(positions, charges, cell):
+            e, f, cg = ewald_summation(
+                positions=positions.detach(),
+                charges=charges.detach(),
+                cell=cell.detach(),
+                batch_idx=None,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_shifts,
+                mask_value=n_atoms,
+                accuracy=1e-6,
+                compute_forces=True,
+                compute_charge_gradients=True,
+            )
+            energy = e.sum()
+            q_delta = charges - charges.detach()
+            return energy + (cg * q_delta).sum(), f
+
+        linear = torch.nn.Linear(n_atoms * 3, n_atoms, device=device)
+
+        positions = torch.randn(
+            n_atoms, 3, device=device, dtype=dtype, requires_grad=True
+        )
+        charges = linear(positions.reshape(-1))
+        charges.retain_grad()
+
+        energy_eager, forces_eager = ewald_wrapper(positions, charges, cell)
+        grad_eager = torch.autograd.grad(
+            energy_eager, positions, torch.ones_like(energy_eager)
+        )[0]
+        dq_eager = charges.grad.clone()
+
+        positions2 = positions.detach().clone().requires_grad_(True)
+        charges2 = linear(positions2.reshape(-1))
+        charges2.retain_grad()
+
+        compiled_fn = torch.compile(ewald_wrapper, dynamic=True)
+        energy_compiled, forces_compiled = compiled_fn(positions2, charges2, cell)
+        grad_compiled = torch.autograd.grad(
+            energy_compiled, positions2, torch.ones_like(energy_compiled)
+        )[0]
+        dq_compiled = charges2.grad
+
+        torch.testing.assert_close(energy_compiled, energy_eager, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(forces_compiled, forces_eager, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(dq_compiled, dq_eager, rtol=1e-3, atol=1e-3)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
