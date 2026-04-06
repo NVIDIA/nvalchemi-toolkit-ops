@@ -42,9 +42,9 @@ pattern used by the Coulomb bindings. This is intentional:
 - DSF does not require double backward (Hessian / gradients of forces w.r.t.
   positions). Forces and charge gradients are computed analytically in the
   forward Warp kernel, so there is no need for a Warp backward tape.
-- Charge gradients are propagated through PyTorch autograd via a
-  "straight-through trick": a zero-valued correction term whose gradient
-  equals the kernel-computed dE/dq is added to the energy tensor.
+- Charge gradients are propagated through PyTorch autograd via
+  a custom ``torch.autograd.Function`` that injects
+  the kernel-computed dE/dq into the energy's backward graph.
 - ``register_fake`` enables ``torch.compile`` compatibility.
 
 Examples
@@ -76,6 +76,7 @@ from nvalchemiops.interactions.electrostatics.dsf import (
 from nvalchemiops.interactions.electrostatics.dsf import (
     dsf_matrix as wp_dsf_matrix,
 )
+from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
@@ -567,27 +568,8 @@ def dsf_coulomb(
             device=device,
         )
 
-    # Charge gradient support via straight-through trick
-    # This makes energy differentiable w.r.t. charges without Warp tape.
-    # The correction term has value 0 but gradient dE/dq w.r.t. charges.
     if compute_charge_grad:
-        # Cast to float64 for numerical stability in the correction computation.
-        # charge_grad_out is in input precision (possibly float32).
-        cg_f64 = charge_grad_out.to(dtype=torch.float64)
-        charges_f64 = charges.to(dtype=torch.float64)
-        charges_detached_f64 = charges_f64.detach()
-        # correction[i] = dE_dq[i] * (q[i] - q_detached[i]) = dE_dq[i] * 0 = 0
-        # but d(correction)/d(q[i]) = dE_dq[i]
-        correction = cg_f64.detach() * (charges_f64 - charges_detached_f64)
-
-        if batch_idx is not None:
-            system_correction = torch.zeros_like(energy)
-            system_correction.scatter_add_(0, batch_idx.long(), correction)
-        else:
-            # Single system: sum all corrections
-            system_correction = correction.sum().unsqueeze(0)
-
-        energy = energy + system_correction
+        energy = _InjectChargeGrad.apply(energy, charges, charge_grad_out, batch_idx)
 
     # Build return tuple
     if not compute_forces:
