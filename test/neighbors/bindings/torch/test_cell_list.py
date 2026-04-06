@@ -343,7 +343,7 @@ class TestCellListErrors:
     """Tests for input validation and error conditions."""
 
     def test_zero_volume_cell_raises_error(self, device, dtype):
-        """Cell with zero or negative volume should raise RuntimeError."""
+        """Cell with zero volume (degenerate) should raise RuntimeError."""
         positions = torch.rand((4, 3), device=device, dtype=dtype)
         # Cell has zero volume (linearly dependent rows)
         cells = torch.tensor(
@@ -354,13 +354,104 @@ class TestCellListErrors:
             device=device,
         )
         pbc = torch.ones((1, 3), dtype=bool, device=device)
-        with pytest.raises(RuntimeError, match="Cell with volume <= 0"):
+        with pytest.raises(RuntimeError, match="Cell with volume == 0"):
             _ = cell_list(
                 positions,
                 3.0,
                 cells,
                 pbc,
             )
+
+
+class TestLeftHandedCells:
+    """Tests for left-handed (negative determinant) cell support."""
+
+    def _check_left_handed(self, positions, cell, pbc, cutoff, dtype):
+        """Helper: verify neighbor list and distance equivalence for a left-handed cell."""
+        assert cell.det().item() < 0, "Cell should have negative determinant"
+
+        estimated_density = positions.shape[0] / cell.det().abs().item()
+        max_neighbors = estimate_max_neighbors(
+            cutoff, atomic_density=estimated_density, safety_factor=5.0
+        )
+        neighbor_list, _, u = cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            max_neighbors=max_neighbors,
+            return_neighbor_list=True,
+        )
+        i, j = neighbor_list
+        ref_i, ref_j, ref_u, _ = brute_force_neighbors(positions, cell, pbc, cutoff)
+
+        # Neighbor list equivalence
+        assert_neighbor_lists_equal((i, j, u), (ref_i, ref_j, ref_u))
+
+        # Distance equivalence
+        if len(i) > 0:
+            cell_sq = cell.squeeze(0)
+            shifts = u.to(dtype) @ cell_sq
+            dists = torch.norm(positions[j] - positions[i] + shifts, dim=1)
+            ref_shifts = ref_u.to(dtype) @ cell_sq
+            ref_dists = torch.norm(
+                positions[ref_j] - positions[ref_i] + ref_shifts, dim=1
+            )
+            assert torch.allclose(
+                dists.sort().values, ref_dists.sort().values, atol=1e-5
+            )
+
+    @requires_vesin
+    def test_cubic_system(self, device, dtype):
+        """Left-handed cubic cell should match brute force."""
+        positions, cell, pbc = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+        )
+        cell[..., 0, :] *= -1
+        self._check_left_handed(positions, cell, pbc, cutoff=1.1, dtype=dtype)
+
+    @requires_vesin
+    @pytest.mark.parametrize("pbc_flag", [True, False])
+    def test_random_system(self, device, dtype, pbc_flag):
+        """Left-handed random system should match brute force."""
+        positions, cell, pbc = create_random_system(
+            num_atoms=20,
+            cell_size=10.0,
+            dtype=dtype,
+            device=device,
+            seed=42,
+            pbc_flag=pbc_flag,
+        )
+        cell[..., 0, :] *= -1
+        self._check_left_handed(positions, cell, pbc, cutoff=5.0, dtype=dtype)
+
+    @requires_vesin
+    def test_nonorthorhombic_system(self, device, dtype):
+        """Left-handed triclinic cell should match brute force."""
+        positions, cell, pbc = create_nonorthorhombic_system(
+            num_atoms=50,
+            a=8.57,
+            b=12.9645,
+            c=7.2203,
+            alpha=90.74,
+            beta=115.944,
+            gamma=87.663,
+            dtype=dtype,
+            device=device,
+            seed=42,
+        )
+        cell[..., 0, :] *= -1
+        self._check_left_handed(positions, cell, pbc, cutoff=5.0, dtype=dtype)
+
+    def test_left_handed_estimate_cell_list_sizes(self, device, dtype):
+        """estimate_cell_list_sizes should accept left-handed cells."""
+        cell = (torch.eye(3, dtype=dtype, device=device) * 5.0).reshape(1, 3, 3)
+        cell[..., 0, :] *= -1
+        pbc = torch.tensor([True, True, True], device=device)
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, 2.0)
+        assert max_cells > 0
+        assert neighbor_search_radius.shape == (3,)
 
 
 class TestCellListOutputFormats:
