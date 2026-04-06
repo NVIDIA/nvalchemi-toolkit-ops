@@ -613,6 +613,11 @@ def _compute_pme_reciprocal_virial(
     k_sq_acc = k_squared.astype(acc_dtype)
     alpha_acc = alpha.astype(acc_dtype)
 
+    # generate_k_vectors_pme squeezes the batch dim when B=1; restore it so
+    # the batched einsum and sum_dims=(1,2,3) operate on the correct axes.
+    if is_batch and k_sq_acc.ndim == 3:
+        k_sq_acc = jnp.expand_dims(k_sq_acc, axis=0)
+
     # Handle alpha broadcasting: alpha may be (B,) for batch
     if is_batch and alpha_acc.ndim == 1:
         alpha_view = alpha_acc.reshape(-1, 1, 1, 1)
@@ -632,6 +637,9 @@ def _compute_pme_reciprocal_virial(
     # virial_ab = sum_k weighted_energy * (delta_ab - k_factor * k_a * k_b) * k_mask
     # = delta_ab * sum_k (weighted_energy * k_mask) - sum_k (weighted_energy * k_mask * k_factor) * k_a * k_b
     k_vecs_acc = k_vectors.astype(acc_dtype)  # (..., nx, ny, nz//2+1, 3)
+    if is_batch and k_vecs_acc.ndim == 4:
+        k_vecs_acc = jnp.expand_dims(k_vecs_acc, axis=0)
+
     masked_energy = weighted_energy * k_mask  # (..., nx, ny, nz//2+1)
     masked_energy_kf = masked_energy * k_factor  # (..., nx, ny, nz//2+1)
 
