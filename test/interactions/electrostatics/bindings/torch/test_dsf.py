@@ -2117,6 +2117,46 @@ class TestTorchCompile:
         torch.testing.assert_close(energy_compiled, energy_eager, atol=1e-10, rtol=0.0)
         torch.testing.assert_close(forces_compiled, forces_eager, atol=1e-10, rtol=0.0)
 
+    def test_compile_csr_charge_grad(self, device):
+        """torch.compile should produce correct charge gradients (CSR)."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=torch.float64, device=device
+        )
+        charges_base = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        nl = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=device)
+        ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        cutoff = 10.0
+        alpha = 0.2
+
+        charges_eager = charges_base.clone().requires_grad_(True)
+        energy_eager, forces_eager = dsf_coulomb(
+            positions,
+            charges_eager,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+        )
+        energy_eager.sum().backward()
+        cg_eager = charges_eager.grad.clone()
+
+        charges_compiled = charges_base.clone().requires_grad_(True)
+        dsf_compiled = torch.compile(dsf_coulomb)
+        energy_compiled, forces_compiled = dsf_compiled(
+            positions,
+            charges_compiled,
+            cutoff=cutoff,
+            alpha=alpha,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+        )
+        energy_compiled.sum().backward()
+        cg_compiled = charges_compiled.grad.clone()
+
+        torch.testing.assert_close(energy_compiled, energy_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(forces_compiled, forces_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(cg_compiled, cg_eager, atol=1e-10, rtol=0.0)
+
 
 # ==============================================================================
 # Test Matrix PBC Virial
