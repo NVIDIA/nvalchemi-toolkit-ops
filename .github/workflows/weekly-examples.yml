@@ -1,0 +1,195 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# NVALCHEMI Toolkit Examples Workflow
+#
+# This workflow runs all example scripts to verify they work correctly.
+#
+# TRIGGERS:
+# - Weekly schedule (Sundays at midnight UTC)
+# - Manual dispatch for on-demand runs
+#
+# WORKFLOW OVERVIEW:
+# 1. examples: Runs all example Python scripts sequentially on GPU runner
+
+name: "Examples"
+
+on:
+  schedule:
+    - cron: "0 0 * * 0" # Runs at midnight UTC every Sunday
+  workflow_dispatch: # Allow manual triggering
+
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_CACHE_DIR: /tmp/uv-cache
+
+jobs:
+  # ============================================================================
+  # EXAMPLES STAGE (GPU Runner)
+  # ============================================================================
+  examples:
+    runs-on: linux-amd64-gpu-h100-latest-1
+    timeout-minutes: 60
+    container:
+      image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
+      options: --gpus all
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install apt requirements
+        env:
+          DEBIAN_FRONTEND: "noninteractive"
+          TZ: "Etc/UTC"
+        run: |
+          apt-get update && \
+          apt-get install -y curl \
+            git \
+            build-essential
+
+      - name: Setup UV
+        env:
+          UV_VERSION: "0.9.25"
+          UV_CHECKSUM: "1e1aea6cead1a07a7cee24f6eaec415b"
+        run: |
+          UV_INSTALLER=$(mktemp)
+          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | md5sum -c -
+          sh "$UV_INSTALLER"
+          rm "$UV_INSTALLER"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv sync --all-extras
+          make docs-install-examples
+
+      - name: Run all examples
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          FAILED=0
+          REPORT="examples-report.md"
+          LOGDIR="examples-logs"
+          mkdir -p "$LOGDIR"
+          echo "# Examples Report" > "$REPORT"
+          echo "" >> "$REPORT"
+
+          run_script() {
+            local script="$1"
+            local logfile="$LOGDIR/$(echo "$script" | tr '/' '_').log"
+            echo "----------------------------------------"
+            echo "Running: $script"
+            echo "----------------------------------------"
+            if uv run python "$script" > "$logfile" 2>&1; then
+              echo "PASSED: $script"
+              echo "- PASSED: \`$script\`" >> "$REPORT"
+            else
+              echo "FAILED: $script"
+              echo "- FAILED: \`$script\`" >> "$REPORT"
+              echo '  <details><summary>Error trace (last 40 lines)</summary>' >> "$REPORT"
+              echo '' >> "$REPORT"
+              echo '  ```' >> "$REPORT"
+              tail -40 "$logfile" >> "$REPORT"
+              echo '  ```' >> "$REPORT"
+              echo '  </details>' >> "$REPORT"
+              echo "" >> "$REPORT"
+              # Also print to CI log for inline visibility
+              echo "::group::Error trace for $script"
+              tail -40 "$logfile"
+              echo "::endgroup::"
+              FAILED=$((FAILED + 1))
+            fi
+          }
+
+          # Run top-level example scripts
+          for script in $(find examples -maxdepth 1 -name "*.py" | sort); do
+            run_script "$script"
+          done
+          # Run examples in subdirectories, excluding utility modules
+          for category in $(find examples -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort); do
+            echo "=========================================="
+            echo "Running $category examples"
+            echo "=========================================="
+            for script in $(find "examples/$category" -name "*.py" ! -name "_*" ! -name "*utils*" | sort); do
+              run_script "$script"
+            done
+          done
+
+          echo "" >> "$REPORT"
+          if [ $FAILED -gt 0 ]; then
+            echo "**$FAILED example(s) failed.**" >> "$REPORT"
+            echo "=========================================="
+            echo "$FAILED example(s) failed!"
+            echo "=========================================="
+            exit 1
+          fi
+          echo "**All examples passed.**" >> "$REPORT"
+          echo "=========================================="
+          echo "All examples passed!"
+          echo "=========================================="
+
+      - name: Upload failure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: examples-report
+          path: |
+            examples-report.md
+            examples-logs/
+          retention-days: 14
+
+  # ============================================================================
+  # VERIFY STATUS
+  # ============================================================================
+  verify-status:
+    needs:
+      - examples
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download report
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          name: examples-report
+          path: report
+        continue-on-error: true
+
+      - name: Print failure report
+        if: always()
+        run: |
+          if [ -f report/examples-report.md ]; then
+            cat report/examples-report.md
+          else
+            echo "No report artifact found."
+          fi
+
+      - name: Check job statuses
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "Some examples have failed or been cancelled!"
+            exit 1
+          else
+            echo "All examples have completed successfully!"
+            exit 0
+          fi

@@ -91,10 +91,10 @@ def estimate_batch_cell_list_sizes(
     allocate_cell_list : Allocates tensors based on these estimates
     batch_build_cell_list : High-level wrapper that uses these estimates
     """
-    if cell.numel() > 0 and torch.any(cell.det() <= 0.0):
+    if cell.numel() > 0 and torch.any(cell.det().abs() == 0.0):
         raise RuntimeError(
-            "Cells with volume <= 0 detected and are not supported."
-            " Please pass unit cells with `det(cell) > 0.0`."
+            "Cells with volume == 0.0 detected and are not supported."
+            " Please pass unit cells with `det(cell) != 0.0`."
         )
     num_systems = cell.shape[0]
 

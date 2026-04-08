@@ -179,7 +179,10 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
-from nvalchemiops.torch.interactions.electrostatics.ewald import ewald_real_space
+from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
+from nvalchemiops.torch.interactions.electrostatics.ewald import (
+    ewald_real_space,
+)
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_pme,
 )
@@ -265,6 +268,56 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
     return cell, cell.shape[0]
+
+
+def _materialize_complex(tensor: torch.Tensor) -> torch.Tensor:
+    """Force a fresh complex tensor for compiled FFT consumers."""
+    if not tensor.is_complex():
+        return tensor
+    return torch.complex(tensor.real, tensor.imag)
+
+
+@torch.compiler.disable
+def _pme_fft_pipeline(
+    mesh_grid: torch.Tensor,
+    green_function: torch.Tensor,
+    structure_factor_sq: torch.Tensor,
+    k_vectors: torch.Tensor,
+    mesh_dimensions: tuple[int, int, int],
+    fft_dims: tuple[int, ...],
+    compute_forces: bool,
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+    """Execute the complex FFT-heavy PME reciprocal block eagerly.
+
+    TorchInductor does not currently generate reliable code for the repeated
+    complex FFT algebra in PME reciprocal space. Keep this narrow block eager
+    while leaving the surrounding Warp/spline operators compilable.
+    """
+    mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
+    mesh_fft_raw = mesh_fft
+    mesh_fft = mesh_fft / structure_factor_sq
+    convolved_mesh = _materialize_complex(mesh_fft * green_function)
+    potential_mesh = torch.fft.irfftn(
+        convolved_mesh, norm="forward", s=mesh_dimensions, dim=fft_dims
+    )
+
+    field_mesh = None
+    if compute_forces:
+        Ex_fft = _materialize_complex(-1j * k_vectors[..., 0] * convolved_mesh)
+        Ey_fft = _materialize_complex(-1j * k_vectors[..., 1] * convolved_mesh)
+        Ez_fft = _materialize_complex(-1j * k_vectors[..., 2] * convolved_mesh)
+        Ex = torch.fft.irfftn(Ex_fft, norm="forward", s=mesh_dimensions, dim=fft_dims)
+        Ey = torch.fft.irfftn(Ey_fft, norm="forward", s=mesh_dimensions, dim=fft_dims)
+        Ez = torch.fft.irfftn(Ez_fft, norm="forward", s=mesh_dimensions, dim=fft_dims)
+        field_mesh = torch.stack([Ex, Ey, Ez], dim=-1)
+
+    return potential_mesh, field_mesh, mesh_fft_raw, convolved_mesh
+
+
+@torch.compiler.disable
+def _scale_force_field(interpolated_field: torch.Tensor) -> torch.Tensor:
+    """Apply the final PME force scaling eagerly on compiled paths."""
+    return 2.0 * interpolated_field
 
 
 ###########################################################################################
@@ -1432,6 +1485,11 @@ def _compute_pme_reciprocal_virial(
     k_sq_acc = k_squared.to(acc_dtype)
     alpha_acc = alpha.to(acc_dtype)
 
+    # generate_k_vectors_pme squeezes the batch dim when B=1; restore it so
+    # the batched einsum and sum_dims=(1,2,3) operate on the correct axes.
+    if is_batch and k_sq_acc.dim() == 3:
+        k_sq_acc = k_sq_acc.unsqueeze(0)
+
     # Handle alpha broadcasting: alpha may be (B,) for batch
     if is_batch and alpha_acc.dim() == 1:
         alpha_view = alpha_acc.view(-1, 1, 1, 1)
@@ -1451,6 +1509,9 @@ def _compute_pme_reciprocal_virial(
     # virial_ab = sum_k weighted_energy * (delta_ab - k_factor * k_a * k_b) * k_mask
     # = delta_ab * sum_k (weighted_energy * k_mask) - sum_k (weighted_energy * k_mask * k_factor) * k_a * k_b
     k_vecs_acc = k_vectors.to(acc_dtype)  # (..., nx, ny, nz//2+1, 3)
+    if is_batch and k_vecs_acc.dim() == 4:
+        k_vecs_acc = k_vecs_acc.unsqueeze(0)
+
     masked_energy = weighted_energy * k_mask  # (..., nx, ny, nz//2+1)
     masked_energy_kf = masked_energy * k_factor  # (..., nx, ny, nz//2+1)
 
@@ -1497,6 +1558,7 @@ def _pme_reciprocal_space_impl(
     compute_virial: bool = False,
     k_vectors: torch.Tensor | None = None,
     k_squared: torch.Tensor | None = None,
+    hybrid_forces: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
     """Internal implementation of PME reciprocal space calculation.
 
@@ -1511,6 +1573,9 @@ def _pme_reciprocal_space_impl(
     num_atoms = positions.shape[0]
     is_batch = batch_idx is not None
     fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
+
+    if hybrid_forces:
+        compute_charge_gradients = True
 
     if num_atoms == 0:
         energies = torch.zeros(num_atoms, device=device, dtype=input_dtype)
@@ -1534,24 +1599,28 @@ def _pme_reciprocal_space_impl(
 
     mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
 
+    # In hybrid mode, detach positions/charges/cell to sever autograd paths
+    # through the spline/FFT chain. Charge gradients are attached via
+    # straight-through trick after the forward pass.
+    pos_spline = positions.detach() if hybrid_forces else positions
+    chg_spline = charges.detach() if hybrid_forces else charges
+    cell_spline = cell.detach() if hybrid_forces else cell
+
     # Precompute cell inverse ONCE and derive what we need for all operations
-    cell_inv = torch.linalg.inv_ex(cell)[0]
+    cell_inv = torch.linalg.inv_ex(cell_spline)[0]
     cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     reciprocal_cell = TWOPI * cell_inv
 
     # Step 1: Charge assignment using unified spline_spread API
     mesh_grid = spline_spread(
-        positions,
-        charges,
-        cell,
+        pos_spline,
+        chg_spline,
+        cell_spline,
         mesh_dims=(mesh_nx, mesh_ny, mesh_nz),
         spline_order=spline_order,
         batch_idx=batch_idx,
         cell_inv_t=cell_inv_t,
     )
-
-    # Step 2: FFT of charge mesh
-    mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
 
     # Step 3: Generate k-space grid and compute Green's function + structure factor
     # Green's function: G(k) = 2*pi * exp(-k^2/(4*alpha^2)) / (V * k^2)
@@ -1559,38 +1628,77 @@ def _pme_reciprocal_space_impl(
     # Use precomputed k_vectors/k_squared if provided, otherwise generate them
     if k_vectors is None or k_squared is None:
         k_vectors, k_squared = generate_k_vectors_pme(
-            cell, mesh_dimensions=mesh_dimensions, reciprocal_cell=reciprocal_cell
+            cell_spline,
+            mesh_dimensions=mesh_dimensions,
+            reciprocal_cell=reciprocal_cell,
         )
 
+    alpha_gsf = alpha.detach() if hybrid_forces else alpha
     green_function, structure_factor_sq = pme_green_structure_factor(
         k_squared,
         mesh_dimensions,
-        alpha,
-        cell,
+        alpha_gsf,
+        cell_spline,
         spline_order,
         batch_idx=batch_idx,
     )
 
-    # Save reference to raw FFT before deconvolution (needed for virial).
-    # No clone needed: the reassignment below creates a new tensor.
-    mesh_fft_raw = mesh_fft if compute_virial else None
+    if torch.compiler.is_compiling():
+        potential_mesh, electric_field_mesh, mesh_fft_raw, convolved_mesh = (
+            _pme_fft_pipeline(
+                mesh_grid=mesh_grid,
+                green_function=green_function,
+                structure_factor_sq=structure_factor_sq,
+                k_vectors=k_vectors,
+                mesh_dimensions=mesh_dimensions,
+                fft_dims=fft_dims,
+                compute_forces=compute_forces,
+            )
+        )
+        potential_mesh = potential_mesh.to(input_dtype)
+        if electric_field_mesh is not None:
+            electric_field_mesh = electric_field_mesh.to(input_dtype)
+    else:
+        # Step 2: FFT of charge mesh
+        mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
 
-    # Step 4: Apply B-spline deconvolution and convolve with Green's function
-    mesh_fft = mesh_fft / structure_factor_sq
-    convolved_mesh = mesh_fft * green_function
+        # Save reference to raw FFT before deconvolution (needed for virial).
+        # No clone needed: the reassignment below creates a new tensor.
+        mesh_fft_raw = mesh_fft if compute_virial else None
 
-    # Step 5: Inverse FFT to get potential mesh
-    potential_mesh = torch.fft.irfftn(
-        convolved_mesh, norm="forward", s=mesh_dimensions, dim=fft_dims
-    )
-    potential_mesh = potential_mesh.to(input_dtype)
+        # Step 4: Apply B-spline deconvolution and convolve with Green's function
+        mesh_fft = mesh_fft / structure_factor_sq
+        convolved_mesh = _materialize_complex(mesh_fft * green_function)
+
+        # Step 5: Inverse FFT to get potential mesh
+        potential_mesh = torch.fft.irfftn(
+            convolved_mesh, norm="forward", s=mesh_dimensions, dim=fft_dims
+        )
+        potential_mesh = potential_mesh.to(input_dtype)
+        electric_field_mesh = None
+
+        if compute_forces:
+            Ex_fft = _materialize_complex(-1j * k_vectors[..., 0] * convolved_mesh)
+            Ey_fft = _materialize_complex(-1j * k_vectors[..., 1] * convolved_mesh)
+            Ez_fft = _materialize_complex(-1j * k_vectors[..., 2] * convolved_mesh)
+
+            Ex = torch.fft.irfftn(
+                Ex_fft, norm="forward", s=mesh_dimensions, dim=fft_dims
+            )
+            Ey = torch.fft.irfftn(
+                Ey_fft, norm="forward", s=mesh_dimensions, dim=fft_dims
+            )
+            Ez = torch.fft.irfftn(
+                Ez_fft, norm="forward", s=mesh_dimensions, dim=fft_dims
+            )
+            electric_field_mesh = torch.stack([Ex, Ey, Ez], dim=-1).to(input_dtype)
 
     # Step 6: Interpolate potential to atomic positions using unified spline_gather API
     # Note: raw_energies are already volume-normalized from Green's function
     raw_energies = spline_gather(
-        positions,
+        pos_spline,
         potential_mesh,
-        cell,
+        cell_spline,
         spline_order=spline_order,
         batch_idx=batch_idx,
         cell_inv_t=cell_inv_t,
@@ -1601,11 +1709,11 @@ def _pme_reciprocal_space_impl(
     charge_grads = None
     if compute_charge_gradients:
         reciprocal_energies, charge_grads = pme_energy_corrections_with_charge_grad(
-            raw_energies, charges, cell, alpha, batch_idx
+            raw_energies, chg_spline, cell_spline, alpha, batch_idx
         )
     else:
         reciprocal_energies = pme_energy_corrections(
-            raw_energies, charges, cell, alpha, batch_idx
+            raw_energies, chg_spline, cell_spline, alpha, batch_idx
         )
 
     # Step 8: Compute virial before forces to allow early release of mesh_fft_raw
@@ -1628,31 +1736,26 @@ def _pme_reciprocal_space_impl(
     # Step 9: Compute forces if needed
     forces = None
     if compute_forces:
-        # Compute electric field by taking gradient in Fourier space
-        # Note: convolved_mesh is already volume-normalized from Green's function
-        Ex_fft = -1j * k_vectors[..., 0] * convolved_mesh
-        Ey_fft = -1j * k_vectors[..., 1] * convolved_mesh
-        Ez_fft = -1j * k_vectors[..., 2] * convolved_mesh
-
-        Ex = torch.fft.irfftn(Ex_fft, norm="forward", s=mesh_dimensions, dim=fft_dims)
-        Ey = torch.fft.irfftn(Ey_fft, norm="forward", s=mesh_dimensions, dim=fft_dims)
-        Ez = torch.fft.irfftn(Ez_fft, norm="forward", s=mesh_dimensions, dim=fft_dims)
-
-        electric_field_mesh = torch.stack([Ex, Ey, Ez], dim=-1).to(input_dtype)
-
         # Use unified spline_gather_vec3 API to interpolate electric field
         interpolated_field = spline_gather_vec3(
-            positions,
-            charges,
+            pos_spline,
+            chg_spline,
             electric_field_mesh,
-            cell,
+            cell_spline,
             spline_order=spline_order,
             batch_idx=batch_idx,
             cell_inv_t=cell_inv_t,
         )
 
-        # Compute forces: F = 2 * q * E / V
-        forces = 2.0 * interpolated_field
+        if torch.compiler.is_compiling():
+            forces = _scale_force_field(interpolated_field)
+        else:
+            forces = 2.0 * interpolated_field
+
+    if hybrid_forces and charges.requires_grad:
+        reciprocal_energies = _InjectChargeGrad.apply(
+            reciprocal_energies, charges, charge_grads, batch_idx
+        )
 
     return reciprocal_energies, forces, charge_grads, virial
 
@@ -1671,6 +1774,7 @@ def pme_reciprocal_space(
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
+    hybrid_forces: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Compute PME reciprocal-space energy and optionally forces and/or charge gradients.
 
@@ -1741,6 +1845,11 @@ def pme_reciprocal_space(
     compute_virial : bool, default=False
         Whether to compute the virial tensor W = -dE/d(epsilon).
         Stress = virial / volume.
+    hybrid_forces : bool, default=False
+        When True, positions and cell are detached from the autograd graph and
+        charge gradients are attached to the energy via a straight-through
+        trick.  Forces and virial are forward-only (not differentiable).
+        See :func:`ewald_real_space` for details.
 
     Returns
     -------
@@ -1757,6 +1866,10 @@ def pme_reciprocal_space(
     ----
     Energies are always float64 for numerical stability during accumulation.
     Forces and virial match the input dtype (float32 or float64).
+
+    The FFT-heavy reciprocal-space block currently runs through a narrow eager
+    helper on compiled paths because TorchInductor does not yet lower the
+    required complex FFT algebra reliably for PME.
 
     Return Patterns
     ---------------
@@ -1837,6 +1950,7 @@ def pme_reciprocal_space(
         compute_virial=compute_virial,
         k_vectors=k_vectors,
         k_squared=k_squared,
+        hybrid_forces=hybrid_forces,
     )
 
     # Build return tuple based on flags
@@ -1885,6 +1999,7 @@ def particle_mesh_ewald(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     accuracy: float = 1e-6,
+    hybrid_forces: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
@@ -1973,6 +2088,11 @@ def particle_mesh_ewald(
         Target relative accuracy for automatic parameter estimation (α, mesh dims).
         Only used when alpha or mesh_dimensions is None.
         Smaller values increase accuracy but also computational cost.
+    hybrid_forces : bool, default=False
+        When True, positions and cell are detached from the autograd graph and
+        charge gradients are attached to the energy via a straight-through
+        trick.  Forces and virial are forward-only (not differentiable).
+        See :func:`ewald_real_space` for details.
 
     Returns
     -------
@@ -2155,6 +2275,7 @@ def particle_mesh_ewald(
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
+        hybrid_forces=hybrid_forces,
     )
 
     # Compute reciprocal-space contribution
@@ -2171,6 +2292,7 @@ def particle_mesh_ewald(
         compute_virial=compute_virial,
         k_vectors=k_vectors,
         k_squared=k_squared,
+        hybrid_forces=hybrid_forces,
     )
 
     # Normalize return tuples for easy combination

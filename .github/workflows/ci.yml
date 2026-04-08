@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2027 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -163,6 +163,10 @@ jobs:
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     container:
       image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
       options: --gpus all
@@ -206,13 +210,55 @@ jobs:
       - name: Install dependencies
         run: |
           export PATH="$HOME/.local/bin:$PATH"
+          uv venv --seed --python ${{ matrix.python-version }}
           uv sync --all-extras
           uv pip install -r test/test-requires.txt
 
-      - name: Run tests with coverage
+      # CONDITIONAL LOGIC BASED ON EVENT TYPE
+      #
+      # PR branches use push events to refs/heads/pull-request/*, not the
+      # pull_request event. Detect them via the branch name pattern.
+      - name: Restore testmon baseline (for PRs)
+        if: startsWith(github.ref, 'refs/heads/pull-request/')
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .testmondata
+            .coverage
+          key: testmon-baseline-main-${{ github.run_id }}
+          restore-keys: |
+            testmon-baseline-main-
+
+      - name: Run tests with testmon and coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          make coverage
+          IS_PR=${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+          if [[ "$IS_PR" == "true" ]]; then
+            # PR: testmon selects affected tests, coverage traces them
+            make testmon-coverage
+          else
+            # Main/Schedule: build testmon DB, then full coverage without testmon
+            make testmon-collect
+            make testmon-coverage PYTEST_TESTMON_FLAGS=""
+          fi
+
+      # Cache baseline (only from main/schedule runs)
+      - name: Delete old testmon cache
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --key testmon-baseline-main- --json id,key --jq '.[].key' | \
+            xargs -I{} gh cache delete "{}" || true
+
+      - name: Save testmon baseline
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .testmondata
+            .coverage
+          key: testmon-baseline-main-${{ github.run_id }}
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
@@ -225,7 +271,7 @@ jobs:
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: coverage-report-py${{ matrix.python-version }}
           path: nvalchemiops.coverage.xml
           retention-days: 7
 

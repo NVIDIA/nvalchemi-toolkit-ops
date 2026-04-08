@@ -1506,3 +1506,1063 @@ class TestTorchCompileFakeImpl:
         result = compiled_fn(2.0)
 
         assert result.shape == (5,)
+
+
+class TestTorchCompileBackwardParity:
+    """Verify that Warp custom ops produce correct gradients under torch.compile."""
+
+    @pytest.fixture
+    def device(self):
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_backward_matches_eager(self, device):
+        """Gradients from a compiled Warp custom op must match eager mode."""
+
+        @warp_custom_op(
+            name="test::compile_backward_parity",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def scale_sum_op(x: torch.Tensor, scale: float) -> torch.Tensor:
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(scale), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        scale = 3.0
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        y_eager = scale_sum_op(x_eager, scale)
+        loss_eager = y_eager.sum()
+        loss_eager.backward()
+        grad_eager = x_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(scale_sum_op, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled, scale)
+        loss_compiled = y_compiled.sum()
+        loss_compiled.backward()
+        grad_compiled = x_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_backward_optional_tensor_none(self, device):
+        """Compiled backward should work when an optional tensor input is None."""
+
+        @warp_custom_op(
+            name="test::compile_backward_optional_none",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def optional_input_op(
+            x: torch.Tensor,
+            maybe_bias: torch.Tensor | None = None,
+        ) -> torch.Tensor:
+            del maybe_bias
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(1.0), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        y_eager = optional_input_op(x_eager, None)
+        y_eager.sum().backward()
+        grad_eager = x_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(optional_input_op, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled, None)
+        y_compiled.sum().backward()
+        grad_compiled = x_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_backward_optional_tensor_omitted(self, device):
+        """Compiled backward should work when an optional tensor input is omitted."""
+
+        @warp_custom_op(
+            name="test::compile_backward_optional_omitted",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def optional_input_op(
+            x: torch.Tensor,
+            maybe_bias: torch.Tensor | None = None,
+        ) -> torch.Tensor:
+            del maybe_bias
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(1.0), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        y_eager = optional_input_op(x_eager)
+        y_eager.sum().backward()
+        grad_eager = x_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(optional_input_op, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled)
+        y_compiled.sum().backward()
+        grad_compiled = x_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_backward_optional_tensor_present(self, device):
+        """Compiled backward should work when an optional tensor input is provided."""
+
+        @warp_custom_op(
+            name="test::compile_backward_optional_present",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def optional_input_op(
+            x: torch.Tensor,
+            maybe_bias: torch.Tensor | None = None,
+        ) -> torch.Tensor:
+            del maybe_bias
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(1.0), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        bias_eager = torch.randn(4, device=device, requires_grad=True)
+        y_eager = optional_input_op(x_eager, bias_eager)
+        y_eager.sum().backward()
+        grad_x_eager = x_eager.grad.clone()
+        grad_bias_eager = bias_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        bias_compiled = bias_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(optional_input_op, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled, bias_compiled)
+        y_compiled.sum().backward()
+        grad_x_compiled = x_compiled.grad
+        grad_bias_compiled = bias_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_x_compiled, grad_x_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(
+            grad_bias_compiled, grad_bias_eager, rtol=1e-5, atol=1e-5
+        )
+
+
+class TestTorchCompileMultiOutputBackward:
+    """Verify that multi-output warp_custom_op produces correct gradients under torch.compile.
+
+    This directly covers the bug from nvalchemi_compile_bug.py where multi-output
+    ops (energy+forces) produce wrong results under compile because Python
+    attributes on output tensors are lost by AOT autograd.
+    """
+
+    @pytest.fixture
+    def device(self):
+        """Return CUDA device."""
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_multi_output_compiled_backward_matches_eager(self, device):
+        """Multi-output warp_custom_op gradients must match between eager and compiled."""
+
+        @warp_custom_op(
+            name="test::compile_multi_output_backward",
+            outputs=[
+                OutputSpec("energies", wp.float32, lambda pos, *_: (pos.shape[0],)),
+                OutputSpec("forces", wp.vec3f, lambda pos, *_: (pos.shape[0], 3)),
+            ],
+            grad_arrays=["energies", "forces", "positions"],
+        )
+        def energy_forces_op(
+            positions: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            """Compute dummy energy and forces via Warp kernel."""
+            ng = needs_grad(positions)
+            n_atoms = positions.shape[0]
+
+            wp_positions = wp.from_torch(
+                positions.detach(), dtype=wp.vec3f, requires_grad=ng
+            )
+            energies = torch.zeros(
+                n_atoms, device=positions.device, dtype=torch.float32
+            )
+            forces = torch.zeros(
+                (n_atoms, 3), device=positions.device, dtype=torch.float32
+            )
+            wp_energies = wp.from_torch(energies, dtype=wp.float32, requires_grad=ng)
+            wp_forces = wp.from_torch(forces, dtype=wp.vec3f, requires_grad=ng)
+
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    dummy_energy_forces,
+                    dim=n_atoms,
+                    inputs=[wp_positions, wp_energies, wp_forces],
+                    device=device,
+                )
+
+            if ng:
+                attach_for_backward(
+                    energies,
+                    tape=tape,
+                    energies=wp_energies,
+                    forces=wp_forces,
+                    positions=wp_positions,
+                )
+
+            return energies, forces
+
+        # --- Eager ---
+        pos_eager = torch.randn(8, 3, device=device, requires_grad=True)
+        energies_eager, forces_eager = energy_forces_op(pos_eager)
+        loss_eager = energies_eager.sum() + forces_eager.sum()
+        loss_eager.backward()
+        grad_eager = pos_eager.grad.clone()
+
+        # --- Compiled ---
+        pos_compiled = pos_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(energy_forces_op, fullgraph=False)
+        energies_compiled, forces_compiled = compiled_fn(pos_compiled)
+        loss_compiled = energies_compiled.sum() + forces_compiled.sum()
+        loss_compiled.backward()
+        grad_compiled = pos_compiled.grad
+
+        torch.testing.assert_close(
+            energies_compiled, energies_eager, rtol=1e-5, atol=1e-5
+        )
+        torch.testing.assert_close(forces_compiled, forces_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_multi_output_combined_loss_compiled(self, device):
+        """Multi-output op with a non-trivial combined loss must produce correct
+        gradients under compile — exercises both output grad channels simultaneously.
+        """
+
+        @warp_custom_op(
+            name="test::compile_combined_loss",
+            outputs=[
+                OutputSpec("energies", wp.float32, lambda pos, *_: (pos.shape[0],)),
+                OutputSpec("forces", wp.vec3f, lambda pos, *_: (pos.shape[0], 3)),
+            ],
+            grad_arrays=["energies", "forces", "positions"],
+        )
+        def energy_forces_op2(
+            positions: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            """Compute dummy energy and forces via Warp kernel."""
+            ng = needs_grad(positions)
+            n_atoms = positions.shape[0]
+
+            wp_positions = wp.from_torch(
+                positions.detach(), dtype=wp.vec3f, requires_grad=ng
+            )
+            energies = torch.zeros(
+                n_atoms, device=positions.device, dtype=torch.float32
+            )
+            forces = torch.zeros(
+                (n_atoms, 3), device=positions.device, dtype=torch.float32
+            )
+            wp_energies = wp.from_torch(energies, dtype=wp.float32, requires_grad=ng)
+            wp_forces = wp.from_torch(forces, dtype=wp.vec3f, requires_grad=ng)
+
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    dummy_energy_forces,
+                    dim=n_atoms,
+                    inputs=[wp_positions, wp_energies, wp_forces],
+                    device=device,
+                )
+
+            if ng:
+                attach_for_backward(
+                    energies,
+                    tape=tape,
+                    energies=wp_energies,
+                    forces=wp_forces,
+                    positions=wp_positions,
+                )
+
+            return energies, forces
+
+        def wrapper(positions):
+            energies, forces = energy_forces_op2(positions)
+            return energies, forces
+
+        compiled_wrapper = torch.compile(wrapper, fullgraph=False)
+
+        # --- Eager ---
+        pos_eager = torch.randn(
+            8,
+            3,
+            device=device,
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        e_eager, f_eager = wrapper(pos_eager)
+
+        # --- Compiled ---
+        pos_compiled = pos_eager.detach().clone().requires_grad_(True)
+        e_compiled, f_compiled = compiled_wrapper(pos_compiled)
+
+        torch.testing.assert_close(e_compiled, e_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(f_compiled, f_eager, rtol=1e-5, atol=1e-5)
+
+        # Now test backward with a non-trivial loss computed in eager
+        loss_eager = e_eager.sum() + (f_eager**2).sum()
+        loss_eager.backward()
+        grad_eager = pos_eager.grad.clone()
+
+        loss_compiled = e_compiled.sum() + (f_compiled**2).sum()
+        loss_compiled.backward()
+        grad_compiled = pos_compiled.grad
+
+        torch.testing.assert_close(
+            grad_compiled.float(),
+            grad_eager.float(),
+            rtol=1e-4,
+            atol=1e-4,
+        )
+
+
+class TestTorchCompileRepeatedCycles:
+    """Verify that the per-op registry correctly handles repeated forward/backward cycles."""
+
+    @pytest.fixture
+    def device(self):
+        """Return CUDA device."""
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_repeated_compiled_forward_backward(self, device):
+        """Multiple compiled forward/backward cycles produce consistent results.
+
+        Simulates a training loop to verify that the registry counter increments
+        correctly and entries are consumed without leaking or colliding.
+        """
+
+        @warp_custom_op(
+            name="test::compile_repeated_cycles",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def scale_op(x: torch.Tensor, scale: float) -> torch.Tensor:
+            """Scale input by a constant."""
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(scale), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        compiled_fn = torch.compile(scale_op, fullgraph=False)
+
+        for i in range(5):
+            x = torch.randn(16, device=device, requires_grad=True)
+            y = compiled_fn(x, 3.0)
+            loss = y.sum()
+            loss.backward()
+
+            expected_grad = torch.full_like(x, 3.0)
+            torch.testing.assert_close(
+                x.grad,
+                expected_grad,
+                rtol=1e-5,
+                atol=1e-5,
+                msg=f"Gradient mismatch on cycle {i}",
+            )
+
+
+class TestTorchCompileRegistryIsolation:
+    """Verify that per-op closure registries do not interfere with each other."""
+
+    @pytest.fixture
+    def device(self):
+        """Return CUDA device."""
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_interleaved_ops_independent_registries(self, device):
+        """Two different warp_custom_op ops interleaved must not corrupt each other's state."""
+
+        @warp_custom_op(
+            name="test::isolated_op_a",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def op_a(x: torch.Tensor, scale: float) -> torch.Tensor:
+            """Scale by constant (op A)."""
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(scale), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        @warp_custom_op(
+            name="test::isolated_op_b",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda a, *_: (a.shape[0],)),
+            ],
+            grad_arrays=["result", "a", "b"],
+        )
+        def op_b(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+            """Elementwise add (op B)."""
+            ng = needs_grad(a, b)
+            wp_a = wp.from_torch(a.detach(), dtype=wp.float32, requires_grad=ng)
+            wp_b = wp.from_torch(b.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(a.shape[0], device=a.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    elementwise_add_kernel,
+                    dim=a.shape[0],
+                    inputs=[wp_a, wp_b, wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, a=wp_a, b=wp_b)
+            return out
+
+        def interleaved_forward(x):
+            scaled = op_a(x, 2.0)
+            bias = torch.ones(x.shape[0], device=x.device, requires_grad=True) * 0.5
+            return op_b(scaled, bias)
+
+        # --- Eager ---
+        x_eager = torch.randn(12, device=device, requires_grad=True)
+        y_eager = interleaved_forward(x_eager)
+        y_eager.sum().backward()
+        grad_eager = x_eager.grad.clone()
+
+        # --- Compiled ---
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(interleaved_forward, fullgraph=False)
+        y_compiled = compiled_fn(x_compiled)
+        y_compiled.sum().backward()
+        grad_compiled = x_compiled.grad
+
+        torch.testing.assert_close(y_compiled, y_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_same_op_called_twice_in_compiled_wrapper(self, device):
+        """Same op called twice in one compiled wrapper must not mix up state.
+
+        Guards against the thread-local token handoff accidentally delivering
+        the wrong token when the same op is called multiple times within a
+        single compiled graph. Both forward parity and gradient parity are
+        checked.
+        """
+
+        @warp_custom_op(
+            name="test::double_call_op",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def double_call_scale(x: torch.Tensor, scale: float) -> torch.Tensor:
+            """Scale input by a constant."""
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(scale), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        def wrapper_two_calls(x):
+            a = double_call_scale(x, 2.0)
+            b = double_call_scale(x, 3.0)
+            return a.sum() + b.sum()
+
+        x_eager = torch.randn(16, device=device, requires_grad=True)
+        loss_eager = wrapper_two_calls(x_eager)
+        loss_eager.backward()
+        grad_eager = x_eager.grad.clone()
+
+        x_compiled = x_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(wrapper_two_calls, fullgraph=False)
+        loss_compiled = compiled_fn(x_compiled)
+        loss_compiled.backward()
+        grad_compiled = x_compiled.grad
+
+        torch.testing.assert_close(loss_compiled, loss_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-5, atol=1e-5)
+
+
+class TestRegistryCleanup:
+    """Verify that the per-op registry does not leak state after backward."""
+
+    @pytest.fixture
+    def device(self):
+        """Return CUDA device."""
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_no_stale_entries_after_backward(self, device):
+        """After forward+backward, the registry entry for that call must be consumed.
+
+        Verified indirectly: many sequential cycles must not cause OOM or failures,
+        which would indicate leaking registry entries holding Warp tapes.
+        """
+
+        @warp_custom_op(
+            name="test::cleanup_check",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def cleanup_op(x: torch.Tensor, scale: float) -> torch.Tensor:
+            """Scale input by a constant (cleanup test)."""
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(scale), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        compiled_fn = torch.compile(cleanup_op, fullgraph=False)
+
+        for _ in range(20):
+            x = torch.randn(64, device=device, requires_grad=True)
+            y = compiled_fn(x, 5.0)
+            y.sum().backward()
+
+            torch.testing.assert_close(
+                x.grad, torch.full_like(x, 5.0), rtol=1e-5, atol=1e-5
+            )
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_weakref_cleanup_on_abandoned_forward(self, device):
+        """Forward-only calls (no backward) must not leak registry entries.
+
+        weakref.finalize on the token tensor ensures best-effort cleanup
+        when the compiled graph is abandoned without backward.
+        """
+        import gc
+
+        @warp_custom_op(
+            name="test::weakref_cleanup",
+            outputs=[
+                OutputSpec("result", wp.float32, lambda x, *_: (x.shape[0],)),
+            ],
+            grad_arrays=["result", "x"],
+        )
+        def weakref_op(x: torch.Tensor, scale: float) -> torch.Tensor:
+            """Scale input by a constant (weakref cleanup test)."""
+            ng = needs_grad(x)
+            wp_x = wp.from_torch(x.detach(), dtype=wp.float32, requires_grad=ng)
+            out = torch.zeros(x.shape[0], device=x.device, dtype=torch.float32)
+            wp_out = wp.from_torch(out, dtype=wp.float32, requires_grad=ng)
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    simple_multiply_kernel,
+                    dim=x.shape[0],
+                    inputs=[wp_x, wp.float32(scale), wp_out],
+                    device=device,
+                )
+            if ng:
+                attach_for_backward(out, tape=tape, result=wp_out, x=wp_x)
+            return out
+
+        for _ in range(10):
+            x = torch.randn(64, device=device, requires_grad=True)
+            _ = weakref_op(x, 3.0)
+
+        gc.collect()
+
+        x_final = torch.randn(64, device=device, requires_grad=True)
+        y_final = weakref_op(x_final, 5.0)
+        y_final.sum().backward()
+
+        torch.testing.assert_close(
+            x_final.grad, torch.full_like(x_final, 5.0), rtol=1e-5, atol=1e-5
+        )
+
+
+class TestFakeImplDtypeInference:
+    """Verify that fake/meta outputs infer the correct dtype from Warp dtypes.
+
+    Regression tests for the bug where OutputSpec defaulted torch_dtype to
+    torch.float64, causing torch.compile to trace downstream ops against
+    float64 fakes while the real custom op returned float32 tensors.
+    """
+
+    @pytest.fixture
+    def device(self):
+        """Return CUDA device."""
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_wrapper_with_loss_inside(self, device):
+        """Compiling a wrapper with loss arithmetic inside the compiled graph
+        must produce forward values matching eager mode.
+
+        Regression for the MWE where torch.compile produced completely wrong
+        forward values (e.g. 10.67 vs -37.59) when energies.sum() + forces.sum()
+        was inside the compiled function.  Root cause: fake impl advertised
+        float64 outputs for float32 Warp ops.
+        """
+
+        @warp_custom_op(
+            name="test::fake_dtype_wrapper_loss",
+            outputs=[
+                OutputSpec("energies", wp.float32, lambda pos, *_: (pos.shape[0],)),
+                OutputSpec("forces", wp.vec3f, lambda pos, *_: (pos.shape[0], 3)),
+            ],
+            grad_arrays=["energies", "forces", "positions"],
+        )
+        def energy_forces_op(
+            positions: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            """Compute dummy energy and forces via Warp kernel."""
+            ng = needs_grad(positions)
+            n_atoms = positions.shape[0]
+
+            wp_positions = wp.from_torch(
+                positions.detach(), dtype=wp.vec3f, requires_grad=ng
+            )
+            energies = torch.zeros(
+                n_atoms, device=positions.device, dtype=torch.float32
+            )
+            forces = torch.zeros(
+                (n_atoms, 3), device=positions.device, dtype=torch.float32
+            )
+            wp_energies = wp.from_torch(energies, dtype=wp.float32, requires_grad=ng)
+            wp_forces = wp.from_torch(forces, dtype=wp.vec3f, requires_grad=ng)
+
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    dummy_energy_forces,
+                    dim=n_atoms,
+                    inputs=[wp_positions, wp_energies, wp_forces],
+                    device=device,
+                )
+
+            if ng:
+                attach_for_backward(
+                    energies,
+                    tape=tape,
+                    energies=wp_energies,
+                    forces=wp_forces,
+                    positions=wp_positions,
+                )
+
+            return energies, forces
+
+        def forward_with_loss(positions):
+            energies, forces = energy_forces_op(positions)
+            return energies.sum() + forces.sum()
+
+        pos_eager = torch.randn(
+            8,
+            3,
+            device=device,
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        loss_eager = forward_with_loss(pos_eager)
+
+        pos_compiled = pos_eager.detach().clone().requires_grad_(True)
+        compiled_fn = torch.compile(forward_with_loss, fullgraph=False)
+        loss_compiled = compiled_fn(pos_compiled)
+
+        torch.testing.assert_close(loss_compiled, loss_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compile_raw_then_wrapper_with_loss(self, device):
+        """Compile the raw op first, then compile wrappers over the same op.
+
+        This mirrors the standalone MWE sequence without importing the
+        temporary top-level repro script into the test suite.
+        """
+
+        @warp_custom_op(
+            name="test::fake_dtype_mwe_sequence",
+            outputs=[
+                OutputSpec("energies", wp.float32, lambda pos, *_: (pos.shape[0],)),
+                OutputSpec("forces", wp.vec3f, lambda pos, *_: (pos.shape[0], 3)),
+            ],
+            grad_arrays=["energies", "forces", "positions"],
+        )
+        def energy_forces_op(
+            positions: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            """Compute dummy energy and forces via Warp kernel."""
+            ng = needs_grad(positions)
+            n_atoms = positions.shape[0]
+
+            wp_positions = wp.from_torch(
+                positions.detach(), dtype=wp.vec3f, requires_grad=ng
+            )
+            energies = torch.zeros(
+                n_atoms, device=positions.device, dtype=torch.float32
+            )
+            forces = torch.zeros(
+                (n_atoms, 3), device=positions.device, dtype=torch.float32
+            )
+            wp_energies = wp.from_torch(energies, dtype=wp.float32, requires_grad=ng)
+            wp_forces = wp.from_torch(forces, dtype=wp.vec3f, requires_grad=ng)
+
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    dummy_energy_forces,
+                    dim=n_atoms,
+                    inputs=[wp_positions, wp_energies, wp_forces],
+                    device=device,
+                )
+
+            if ng:
+                attach_for_backward(
+                    energies,
+                    tape=tape,
+                    energies=wp_energies,
+                    forces=wp_forces,
+                    positions=wp_positions,
+                )
+
+            return energies, forces
+
+        def forward_with_loss(positions):
+            energies, forces = energy_forces_op(positions)
+            return energies.sum() + forces.sum()
+
+        def forward_raw(positions):
+            return energy_forces_op(positions)
+
+        torch.manual_seed(42)
+        pos_base = torch.randn(8, 3, device=device, dtype=torch.float32)
+
+        pos1a = pos_base.clone().requires_grad_(True)
+        e_eager, f_eager = energy_forces_op(pos1a)
+
+        pos1b = pos_base.clone().requires_grad_(True)
+        compiled_op = torch.compile(energy_forces_op, fullgraph=False)
+        e_comp, f_comp = compiled_op(pos1b)
+
+        torch.testing.assert_close(e_comp, e_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(f_comp, f_eager, rtol=1e-5, atol=1e-5)
+
+        pos2a = pos_base.clone().requires_grad_(True)
+        loss_eager = forward_with_loss(pos2a)
+
+        pos2b = pos_base.clone().requires_grad_(True)
+        compiled_wrapper = torch.compile(forward_with_loss, fullgraph=False)
+        loss_compiled = compiled_wrapper(pos2b)
+
+        torch.testing.assert_close(loss_compiled, loss_eager, rtol=1e-5, atol=1e-5)
+
+        pos3a = pos_base.clone().requires_grad_(True)
+        e_raw_eager, f_raw_eager = forward_raw(pos3a)
+
+        pos3b = pos_base.clone().requires_grad_(True)
+        compiled_raw = torch.compile(forward_raw, fullgraph=False)
+        e_raw_comp, f_raw_comp = compiled_raw(pos3b)
+
+        torch.testing.assert_close(e_raw_comp, e_raw_eager, rtol=1e-5, atol=1e-5)
+        torch.testing.assert_close(f_raw_comp, f_raw_eager, rtol=1e-5, atol=1e-5)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_output_dtype_float32_and_vec3f(self, device):
+        """Compiled outputs from OutputSpec(wp.float32) and OutputSpec(wp.vec3f)
+        must have torch.float32 dtype, not float64.
+        """
+
+        @warp_custom_op(
+            name="test::fake_dtype_check_f32_v3f",
+            outputs=[
+                OutputSpec("energies", wp.float32, lambda pos, *_: (pos.shape[0],)),
+                OutputSpec("forces", wp.vec3f, lambda pos, *_: (pos.shape[0], 3)),
+            ],
+            grad_arrays=["energies", "forces", "positions"],
+        )
+        def dtype_check_op(
+            positions: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            """Compute dummy energy and forces via Warp kernel."""
+            ng = needs_grad(positions)
+            n_atoms = positions.shape[0]
+
+            wp_positions = wp.from_torch(
+                positions.detach(), dtype=wp.vec3f, requires_grad=ng
+            )
+            energies = torch.zeros(
+                n_atoms, device=positions.device, dtype=torch.float32
+            )
+            forces = torch.zeros(
+                (n_atoms, 3), device=positions.device, dtype=torch.float32
+            )
+            wp_energies = wp.from_torch(energies, dtype=wp.float32, requires_grad=ng)
+            wp_forces = wp.from_torch(forces, dtype=wp.vec3f, requires_grad=ng)
+
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    dummy_energy_forces,
+                    dim=n_atoms,
+                    inputs=[wp_positions, wp_energies, wp_forces],
+                    device=device,
+                )
+
+            if ng:
+                attach_for_backward(
+                    energies,
+                    tape=tape,
+                    energies=wp_energies,
+                    forces=wp_forces,
+                    positions=wp_positions,
+                )
+
+            return energies, forces
+
+        compiled_fn = torch.compile(dtype_check_op, fullgraph=False)
+        positions = torch.randn(
+            5,
+            3,
+            device=device,
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        energies, forces = compiled_fn(positions)
+
+        assert energies.dtype == torch.float32, (
+            f"Expected float32 for wp.float32 output, got {energies.dtype}"
+        )
+        assert forces.dtype == torch.float32, (
+            f"Expected float32 for wp.vec3f output, got {forces.dtype}"
+        )
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compiled_output_dtype_mat33f_static(self, device):
+        """Compiled output from OutputSpec(wp.mat33f, (3, 3)) must be torch.float32."""
+
+        @warp_custom_op(
+            name="test::fake_dtype_check_mat33f",
+            outputs=[
+                OutputSpec("matrix", wp.mat33f, (3, 3)),
+            ],
+            grad_arrays=["matrix"],
+        )
+        def mat33f_op(inp: torch.Tensor) -> torch.Tensor:
+            """Return an identity matrix."""
+            return torch.eye(3, device=inp.device, dtype=torch.float32)
+
+        compiled_fn = torch.compile(mat33f_op, fullgraph=False)
+        x = torch.randn(5, device=device, dtype=torch.float32)
+        result = compiled_fn(x)
+
+        assert result.shape == (3, 3)
+        assert result.dtype == torch.float32, (
+            f"Expected float32 for wp.mat33f output, got {result.dtype}"
+        )
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_explicit_torch_dtype_override_wins(self, device):
+        """When torch_dtype is explicitly provided, it must override inference."""
+
+        @warp_custom_op(
+            name="test::fake_dtype_explicit_override",
+            outputs=[
+                OutputSpec(
+                    "result",
+                    wp.float32,
+                    lambda x, *_: (x.shape[0],),
+                    torch_dtype=torch.float64,
+                ),
+            ],
+            grad_arrays=["result"],
+        )
+        def override_op(x: torch.Tensor) -> torch.Tensor:
+            """Return zeros with explicit float64 override."""
+            return torch.zeros(x.shape[0], device=x.device, dtype=torch.float64)
+
+        compiled_fn = torch.compile(override_op, fullgraph=False)
+        x = torch.randn(4, device=device, dtype=torch.float32)
+        result = compiled_fn(x)
+
+        assert result.dtype == torch.float64, (
+            f"Expected float64 from explicit torch_dtype override, got {result.dtype}"
+        )
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_opcheck_schema_faketensor_and_aot(self, device):
+        """torch.library.opcheck must pass schema, faketensor, and AOT dispatch."""
+
+        @warp_custom_op(
+            name="test::opcheck_dtype_target",
+            outputs=[
+                OutputSpec("energies", wp.float32, lambda pos, *_: (pos.shape[0],)),
+                OutputSpec("forces", wp.vec3f, lambda pos, *_: (pos.shape[0], 3)),
+            ],
+            grad_arrays=["energies", "forces", "positions"],
+        )
+        def opcheck_op(
+            positions: torch.Tensor,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            """Compute dummy energy and forces."""
+            ng = needs_grad(positions)
+            n_atoms = positions.shape[0]
+
+            wp_positions = wp.from_torch(
+                positions.detach(), dtype=wp.vec3f, requires_grad=ng
+            )
+            energies = torch.zeros(
+                n_atoms, device=positions.device, dtype=torch.float32
+            )
+            forces = torch.zeros(
+                (n_atoms, 3), device=positions.device, dtype=torch.float32
+            )
+            wp_energies = wp.from_torch(energies, dtype=wp.float32, requires_grad=ng)
+            wp_forces = wp.from_torch(forces, dtype=wp.vec3f, requires_grad=ng)
+
+            with WarpAutogradContextManager(ng) as tape:
+                wp.launch(
+                    dummy_energy_forces,
+                    dim=n_atoms,
+                    inputs=[wp_positions, wp_energies, wp_forces],
+                    device=device,
+                )
+
+            if ng:
+                attach_for_backward(
+                    energies,
+                    tape=tape,
+                    energies=wp_energies,
+                    forces=wp_forces,
+                    positions=wp_positions,
+                )
+
+            return energies, forces
+
+        raw_op = torch.ops.test.opcheck_dtype_target.default
+        positions = torch.randn(4, 3, device=device, dtype=torch.float32)
+        token = torch.zeros((), dtype=torch.int64)
+        torch.library.opcheck(
+            raw_op,
+            (positions, token),
+            test_utils=("test_schema", "test_faketensor", "test_aot_dispatch_dynamic"),
+        )

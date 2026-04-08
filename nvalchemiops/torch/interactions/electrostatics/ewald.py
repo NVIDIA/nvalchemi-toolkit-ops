@@ -105,6 +105,7 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
+from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
@@ -184,6 +185,15 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
     return cell, cell.shape[0]
+
+
+@torch.compiler.disable
+def _sum_charge_gradients(
+    real_space_charge_grads: torch.Tensor,
+    reciprocal_charge_grads: torch.Tensor,
+) -> torch.Tensor:
+    """Sum Ewald charge gradients eagerly on compiled paths."""
+    return real_space_charge_grads + reciprocal_charge_grads
 
 
 ###########################################################################################
@@ -1823,9 +1833,9 @@ def _ewald_reciprocal_space_energy_forces_charge_grad(
             virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
 
     # Apply self-energy and background corrections to charge gradients
-    alpha_val = alpha[0].item()
-    self_energy_grad = 2.0 * alpha_val / math.sqrt(math.pi) * charges
-    background_grad = math.pi / (alpha_val * alpha_val) * total_charge[0]
+    alpha_t = alpha[0]
+    self_energy_grad = 2.0 * alpha_t / math.sqrt(math.pi) * charges
+    background_grad = math.pi / (alpha_t * alpha_t) * total_charge[0]
     charge_grads = charge_grads - self_energy_grad - background_grad
 
     if needs_grad_flag:
@@ -2499,6 +2509,7 @@ def ewald_real_space(
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
+    hybrid_forces: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Compute real-space Ewald energy and optionally forces, charge gradients, and virial.
 
@@ -2537,6 +2548,14 @@ def ewald_real_space(
     compute_virial : bool, default=False
         Whether to compute the virial tensor W = -dE/d(epsilon).
         Stress = virial / volume.
+    hybrid_forces : bool, default=False
+        When True, positions and cell are detached from the autograd graph and
+        charge gradients are attached to the energy via a straight-through
+        trick.  Forces and virial are forward-only (not differentiable).
+        This is intended for efficient inference with geometry-dependent
+        charges ``q(R)``, where explicit forces provide ``dE/dR|_q`` and
+        autograd through the energy provides the charge chain-rule term
+        ``(dE/dq)(dq/dR)``.
 
     Returns
     -------
@@ -2589,6 +2608,81 @@ def ewald_real_space(
                 return energies, virial
             case _:
                 return energies
+
+    if hybrid_forces:
+        pos_d = positions.detach()
+        chg_d = charges.detach()
+        cell_d = cell.detach()
+        alpha_d = alpha.detach()
+        if neighbor_list is not None:
+            if neighbor_ptr is None:
+                raise ValueError(
+                    "neighbor_ptr is required when using neighbor_list format"
+                )
+            if is_batch:
+                energies, forces, charge_grads, virial = (
+                    _batch_ewald_real_space_energy_forces_charge_grad(
+                        pos_d,
+                        chg_d,
+                        cell_d,
+                        alpha_d,
+                        batch_idx,
+                        neighbor_list,
+                        neighbor_ptr,
+                        neighbor_shifts,
+                        compute_virial=compute_virial,
+                    )
+                )
+            else:
+                energies, forces, charge_grads, virial = (
+                    _ewald_real_space_energy_forces_charge_grad(
+                        pos_d,
+                        chg_d,
+                        cell_d,
+                        alpha_d,
+                        neighbor_list,
+                        neighbor_ptr,
+                        neighbor_shifts,
+                        compute_virial=compute_virial,
+                    )
+                )
+        elif neighbor_matrix is not None:
+            if is_batch:
+                energies, forces, charge_grads, virial = (
+                    _batch_ewald_real_space_energy_forces_charge_grad_matrix(
+                        pos_d,
+                        chg_d,
+                        cell_d,
+                        alpha_d,
+                        batch_idx,
+                        neighbor_matrix,
+                        neighbor_matrix_shifts,
+                        mask_value,
+                        compute_virial=compute_virial,
+                    )
+                )
+            else:
+                energies, forces, charge_grads, virial = (
+                    _ewald_real_space_energy_forces_charge_grad_matrix(
+                        pos_d,
+                        chg_d,
+                        cell_d,
+                        alpha_d,
+                        neighbor_matrix,
+                        neighbor_matrix_shifts,
+                        mask_value,
+                        compute_virial=compute_virial,
+                    )
+                )
+        else:
+            raise ValueError("Either neighbor_list or neighbor_matrix must be provided")
+
+        if charges.requires_grad:
+            energies = _InjectChargeGrad.apply(
+                energies, charges, charge_grads, batch_idx
+            )
+
+        return _build_result(energies, forces, charge_grads, virial)
 
     if compute_charge_gradients:
         if neighbor_list is not None:
@@ -2775,6 +2869,7 @@ def ewald_reciprocal_space(
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
+    hybrid_forces: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     r"""Compute reciprocal-space Ewald energy and optionally forces, charge gradients, virial.
 
@@ -2802,6 +2897,11 @@ def ewald_reciprocal_space(
     compute_virial : bool, default=False
         Whether to compute the virial tensor W = -dE/d(epsilon).
         Stress = virial / volume.
+    hybrid_forces : bool, default=False
+        When True, positions and cell are detached from the autograd graph and
+        charge gradients are attached to the energy via a straight-through
+        trick.  Forces and virial are forward-only (not differentiable).
+        See :func:`ewald_real_space` for details.
 
     Returns
     -------
@@ -2851,6 +2951,42 @@ def ewald_reciprocal_space(
                 return energies, virial
             case _:
                 return energies
+
+    if hybrid_forces:
+        pos_d = positions.detach()
+        chg_d = charges.detach()
+        cell_d = cell.detach()
+        alpha_d = alpha.detach()
+        if is_batch:
+            energies, forces, charge_grads, virial = (
+                _batch_ewald_reciprocal_space_energy_forces_charge_grad(
+                    pos_d,
+                    chg_d,
+                    cell_d,
+                    k_vectors,
+                    alpha_d,
+                    batch_idx,
+                    compute_virial=compute_virial,
+                )
+            )
+        else:
+            energies, forces, charge_grads, virial = (
+                _ewald_reciprocal_space_energy_forces_charge_grad(
+                    pos_d,
+                    chg_d,
+                    cell_d,
+                    k_vectors,
+                    alpha_d,
+                    compute_virial=compute_virial,
+                )
+            )
+
+        if charges.requires_grad:
+            energies = _InjectChargeGrad.apply(
+                energies, charges, charge_grads, batch_idx
+            )
+
+        return _build_result(energies, forces, charge_grads, virial)
 
     if compute_charge_gradients:
         if is_batch:
@@ -2944,6 +3080,7 @@ def ewald_summation(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     accuracy: float = 1e-6,
+    hybrid_forces: bool = False,
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
     """Complete Ewald summation for long-range electrostatics.
 
@@ -2987,6 +3124,11 @@ def ewald_summation(
         Stress = virial / volume.
     accuracy : float, default=1e-6
         Target accuracy for parameter estimation.
+    hybrid_forces : bool, default=False
+        When True, positions and cell are detached from the autograd graph and
+        charge gradients are attached to the energy via a straight-through
+        trick.  Forces and virial are forward-only (not differentiable).
+        See :func:`ewald_real_space` for details.
 
     Returns
     -------
@@ -3041,6 +3183,7 @@ def ewald_summation(
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
+        hybrid_forces=hybrid_forces,
     )
 
     # Compute reciprocal-space
@@ -3054,13 +3197,38 @@ def ewald_summation(
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
+        hybrid_forces=hybrid_forces,
     )
 
     # Normalize return tuples for element-wise combination
     rs_tuple = rs if isinstance(rs, tuple) else (rs,)
     rec_tuple = rec if isinstance(rec, tuple) else (rec,)
+    tuple_index = 0
 
-    results = tuple(r + s for r, s in zip(rs_tuple, rec_tuple))
+    energies = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+    tuple_index += 1
+    results: tuple[torch.Tensor, ...] = (energies,)
+
+    if compute_forces:
+        forces = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        results += (forces,)
+        tuple_index += 1
+
+    if compute_charge_gradients:
+        real_charge_grads = rs_tuple[tuple_index]
+        reciprocal_charge_grads = rec_tuple[tuple_index]
+        if torch.compiler.is_compiling():
+            charge_grads = _sum_charge_gradients(
+                real_charge_grads, reciprocal_charge_grads
+            )
+        else:
+            charge_grads = real_charge_grads + reciprocal_charge_grads
+        results += (charge_grads,)
+        tuple_index += 1
+
+    if compute_virial:
+        virial = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        results += (virial,)
 
     if len(results) == 1:
         return results[0]

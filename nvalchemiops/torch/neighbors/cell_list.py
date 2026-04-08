@@ -93,10 +93,10 @@ def estimate_cell_list_sizes(
     allocate_cell_list : Allocates tensors based on these estimates
     build_cell_list : High-level wrapper that uses these estimates
     """
-    if cell.numel() > 0 and cell.det() <= 0.0:
+    if cell.numel() > 0 and cell.det().abs() == 0.0:
         raise RuntimeError(
-            "Cell with volume <= 0.0 detected and is not supported."
-            " Please pass unit cells with `det(cell) > 0.0`."
+            "Cell with volume == 0.0 detected and is not supported."
+            " Please pass unit cells with `det(cell) != 0.0`."
         )
     dtype = cell.dtype
     device = cell.device

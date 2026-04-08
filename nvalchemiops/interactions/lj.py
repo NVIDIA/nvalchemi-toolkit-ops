@@ -626,18 +626,18 @@ def _lj_energy_forces_virial_matrix_kernel(
         vir_zz += vir_scale * (r_ij_2 * f_ij_2)
     wp.atomic_add(atomic_forces, atom_i, force_acc)
 
-    # Accumulate virial (negative sign convention: W = -Σ r ⊗ F)
+    # Accumulate virial (W = Σ r ⊗ F = -dE/dε)
     # Cast from float64 accumulator back to output dtype
 
-    wp.atomic_sub(virial, 0, type(virial[0])(vir_xx))
-    wp.atomic_sub(virial, 1, type(virial[0])(vir_xy))
-    wp.atomic_sub(virial, 2, type(virial[0])(vir_xz))
-    wp.atomic_sub(virial, 3, type(virial[0])(vir_yx))
-    wp.atomic_sub(virial, 4, type(virial[0])(vir_yy))
-    wp.atomic_sub(virial, 5, type(virial[0])(vir_yz))
-    wp.atomic_sub(virial, 6, type(virial[0])(vir_zx))
-    wp.atomic_sub(virial, 7, type(virial[0])(vir_zy))
-    wp.atomic_sub(virial, 8, type(virial[0])(vir_zz))
+    wp.atomic_add(virial, 0, type(virial[0])(vir_xx))
+    wp.atomic_add(virial, 1, type(virial[0])(vir_xy))
+    wp.atomic_add(virial, 2, type(virial[0])(vir_xz))
+    wp.atomic_add(virial, 3, type(virial[0])(vir_yx))
+    wp.atomic_add(virial, 4, type(virial[0])(vir_yy))
+    wp.atomic_add(virial, 5, type(virial[0])(vir_yz))
+    wp.atomic_add(virial, 6, type(virial[0])(vir_zx))
+    wp.atomic_add(virial, 7, type(virial[0])(vir_zy))
+    wp.atomic_add(virial, 8, type(virial[0])(vir_zz))
 
 
 # ==============================================================================
@@ -892,11 +892,10 @@ def _lj_energy_forces_virial_list_kernel(
 
     Energy/force handling matches `_lj_energy_forces_list_kernel`.
 
-    Virial is accumulated into a global 9-vector (flattened 3x3) using the
-    negative sign convention:
+    Virial is accumulated into a global 9-vector (flattened 3x3):
 
     \[
-      W = -\\sum r \\otimes F
+      W = \\sum r \\otimes F = -\\partial E / \\partial \\varepsilon
     \]
 
     For full neighbor lists (`half_neighbor_list=False`), virial contributions are
@@ -1029,16 +1028,17 @@ def _lj_energy_forces_virial_list_kernel(
         vir_zz += vir_scale * (r_ij_2 * f_ij_2)
     wp.atomic_add(atomic_forces, atom_i, force_acc)
 
+    # Accumulate virial (W = Σ r ⊗ F = -dE/dε)
     # Cast from float64 accumulator back to output dtype
-    wp.atomic_sub(virial, 0, type(virial[0])(vir_xx))
-    wp.atomic_sub(virial, 1, type(virial[0])(vir_xy))
-    wp.atomic_sub(virial, 2, type(virial[0])(vir_xz))
-    wp.atomic_sub(virial, 3, type(virial[0])(vir_yx))
-    wp.atomic_sub(virial, 4, type(virial[0])(vir_yy))
-    wp.atomic_sub(virial, 5, type(virial[0])(vir_yz))
-    wp.atomic_sub(virial, 6, type(virial[0])(vir_zx))
-    wp.atomic_sub(virial, 7, type(virial[0])(vir_zy))
-    wp.atomic_sub(virial, 8, type(virial[0])(vir_zz))
+    wp.atomic_add(virial, 0, type(virial[0])(vir_xx))
+    wp.atomic_add(virial, 1, type(virial[0])(vir_xy))
+    wp.atomic_add(virial, 2, type(virial[0])(vir_xz))
+    wp.atomic_add(virial, 3, type(virial[0])(vir_yx))
+    wp.atomic_add(virial, 4, type(virial[0])(vir_yy))
+    wp.atomic_add(virial, 5, type(virial[0])(vir_yz))
+    wp.atomic_add(virial, 6, type(virial[0])(vir_zx))
+    wp.atomic_add(virial, 7, type(virial[0])(vir_zy))
+    wp.atomic_add(virial, 8, type(virial[0])(vir_zz))
 
 
 # ==============================================================================
@@ -1343,16 +1343,17 @@ def _batch_lj_energy_forces_virial_matrix_kernel(
         vir_zz += vir_scale * (r_ij_2 * f_ij_2)
     wp.atomic_add(atomic_forces, atom_i, force_acc)
 
+    # Accumulate virial (W = Σ r ⊗ F = -dE/dε)
     # Cast from float64 accumulator back to output dtype
-    wp.atomic_sub(virial, system_id, 0, type(virial[0][0])(vir_xx))
-    wp.atomic_sub(virial, system_id, 1, type(virial[0][0])(vir_xy))
-    wp.atomic_sub(virial, system_id, 2, type(virial[0][0])(vir_xz))
-    wp.atomic_sub(virial, system_id, 3, type(virial[0][0])(vir_yx))
-    wp.atomic_sub(virial, system_id, 4, type(virial[0][0])(vir_yy))
-    wp.atomic_sub(virial, system_id, 5, type(virial[0][0])(vir_yz))
-    wp.atomic_sub(virial, system_id, 6, type(virial[0][0])(vir_zx))
-    wp.atomic_sub(virial, system_id, 7, type(virial[0][0])(vir_zy))
-    wp.atomic_sub(virial, system_id, 8, type(virial[0][0])(vir_zz))
+    wp.atomic_add(virial, system_id, 0, type(virial[0][0])(vir_xx))
+    wp.atomic_add(virial, system_id, 1, type(virial[0][0])(vir_xy))
+    wp.atomic_add(virial, system_id, 2, type(virial[0][0])(vir_xz))
+    wp.atomic_add(virial, system_id, 3, type(virial[0][0])(vir_yx))
+    wp.atomic_add(virial, system_id, 4, type(virial[0][0])(vir_yy))
+    wp.atomic_add(virial, system_id, 5, type(virial[0][0])(vir_yz))
+    wp.atomic_add(virial, system_id, 6, type(virial[0][0])(vir_zx))
+    wp.atomic_add(virial, system_id, 7, type(virial[0][0])(vir_zy))
+    wp.atomic_add(virial, system_id, 8, type(virial[0][0])(vir_zz))
 
 
 # ==============================================================================

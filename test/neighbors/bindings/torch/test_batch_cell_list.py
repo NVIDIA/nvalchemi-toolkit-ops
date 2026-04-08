@@ -487,6 +487,104 @@ class TestBatchCellListAPI:
                 assert dist < cutoff + 1e-5, f"Distance {dist} exceeds cutoff {cutoff}"
 
 
+class TestBatchLeftHandedCells:
+    """Tests for left-handed (negative determinant) cell support in batch mode."""
+
+    @requires_vesin
+    def test_batch_left_handed_correctness(self, device, dtype):
+        """Batch with left-handed cells should match per-system reference."""
+        positions_1, cell_1, pbc_1 = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+        )
+        positions_2, cell_2, pbc_2 = create_random_system(
+            num_atoms=10, cell_size=5.0, dtype=dtype, device=device, seed=42
+        )
+        # Make both left-handed
+        cell_1[..., 0, :] *= -1
+        cell_2[..., 0, :] *= -1
+
+        cutoff = 3.0
+        positions = torch.cat([positions_1, positions_2], dim=0)
+        cell = torch.cat([cell_1, cell_2], dim=0)
+        pbc = torch.cat([pbc_1, pbc_2], dim=0)
+        batch_idx = torch.cat(
+            [
+                torch.zeros(8, dtype=torch.int32, device=device),
+                torch.ones(10, dtype=torch.int32, device=device),
+            ]
+        )
+
+        neighbor_list, _, u = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            max_neighbors=1500,
+            return_neighbor_list=True,
+        )
+        i, j = neighbor_list
+
+        # Verify per-system correctness against brute force
+        for sys_idx, (pos, c, p) in enumerate(
+            [(positions_1, cell_1, pbc_1), (positions_2, cell_2, pbc_2)]
+        ):
+            ref_i, ref_j, ref_u, _ = brute_force_neighbors(pos, c, p, cutoff)
+            # Filter batch results for this system
+            offset = 0 if sys_idx == 0 else 8
+            mask = batch_idx[i] == sys_idx
+            sys_i = i[mask] - offset
+            sys_j = j[mask] - offset
+            sys_u = u[mask]
+            assert_neighbor_lists_equal((sys_i, sys_j, sys_u), (ref_i, ref_j, ref_u))
+
+    @requires_vesin
+    def test_batch_mixed_handedness_correctness(self, device, dtype):
+        """Batch with mixed left/right-handed cells should be correct."""
+        positions_1, cell_1, pbc_1 = create_simple_cubic_system(
+            num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+        )
+        positions_2, cell_2, pbc_2 = create_random_system(
+            num_atoms=10, cell_size=5.0, dtype=dtype, device=device, seed=42
+        )
+        # Make only second system left-handed
+        cell_2[..., 0, :] *= -1
+
+        cutoff = 3.0
+        positions = torch.cat([positions_1, positions_2], dim=0)
+        cell = torch.cat([cell_1, cell_2], dim=0)
+        pbc = torch.cat([pbc_1, pbc_2], dim=0)
+        batch_idx = torch.cat(
+            [
+                torch.zeros(8, dtype=torch.int32, device=device),
+                torch.ones(10, dtype=torch.int32, device=device),
+            ]
+        )
+
+        neighbor_list, _, u = batch_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            batch_idx,
+            max_neighbors=1500,
+            return_neighbor_list=True,
+        )
+        i, j = neighbor_list
+
+        # Verify per-system correctness
+        for sys_idx, (pos, c, p) in enumerate(
+            [(positions_1, cell_1, pbc_1), (positions_2, cell_2, pbc_2)]
+        ):
+            ref_i, ref_j, ref_u, _ = brute_force_neighbors(pos, c, p, cutoff)
+            offset = 0 if sys_idx == 0 else 8
+            mask = batch_idx[i] == sys_idx
+            sys_i = i[mask] - offset
+            sys_j = j[mask] - offset
+            sys_u = u[mask]
+            assert_neighbor_lists_equal((sys_i, sys_j, sys_u), (ref_i, ref_j, ref_u))
+
+
 class TestBatchEdgeCases:
     """Test edge cases and error conditions."""
 
@@ -515,31 +613,52 @@ class TestBatchEdgeCases:
         assert neighbor_search_radius.dtype == torch.int32
         assert neighbor_search_radius.device == torch.device(device)
 
-    def test_all_negative_volume(self, device, dtype):
-        """Check to make sure bindings raises error for all <= 0 volumes"""
+    def test_zero_volume_raises_error(self, device, dtype):
+        """Check that degenerate cells (det == 0) raise an error."""
         positions = torch.rand((4, 3), device=device, dtype=dtype)
-        # cell has zero and negative volumes
+        # Both cells have zero volume (linearly dependent rows)
         cells = torch.tensor(
             [
                 [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
-                [
-                    [0.2225, 0.6140, 0.7039],
-                    [0.4351, 0.3592, 0.8304],
-                    [0.1768, 0.0427, 0.3177],
-                ],
+                [[1, 0, 0], [0, 1, 0], [1, 1, 0]],
             ],
             dtype=dtype,
             device=device,
         )
         pbc = torch.ones((4, 3), dtype=bool, device=device)
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
-        with pytest.raises(RuntimeError, match="Cells with volume <= 0"):
+        with pytest.raises(RuntimeError, match="Cells with volume == 0"):
             _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
 
-    def test_mixed_negative_volume(self, device, dtype):
-        """Check that samples with negative volume fail"""
+    def test_negative_det_is_valid(self, device, dtype):
+        """Left-handed cells (negative determinant) should not raise an error."""
         positions = torch.rand((4, 3), device=device, dtype=dtype)
-        # first is positive, second is negative
+        # Both cells are left-handed (negative det) but non-degenerate
+        cells = torch.tensor(
+            [
+                [
+                    [0.2225, 0.6140, 0.7039],
+                    [0.4351, 0.3592, 0.8304],
+                    [0.1768, 0.0427, 0.3177],
+                ],
+                [
+                    [0.3681, 0.1729, 0.0691],
+                    [0.7392, 0.7962, 0.9036],
+                    [0.3154, 0.7710, 0.2854],
+                ],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        pbc = torch.ones((2, 3), dtype=bool, device=device)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        # Should not raise
+        _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
+
+    def test_mixed_handedness_is_valid(self, device, dtype):
+        """Batch with a mix of left- and right-handed cells should not raise."""
+        positions = torch.rand((4, 3), device=device, dtype=dtype)
+        # first is right-handed (det > 0), second is left-handed (det < 0)
         cells = torch.tensor(
             [
                 [
@@ -556,10 +675,10 @@ class TestBatchEdgeCases:
             dtype=dtype,
             device=device,
         )
-        pbc = torch.ones((4, 3), dtype=bool, device=device)
+        pbc = torch.ones((2, 3), dtype=bool, device=device)
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
-        with pytest.raises(RuntimeError, match="Cells with volume <= 0"):
-            _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
+        # Should not raise
+        _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
 
     def test_empty_batch_build_cell_list(self, device, dtype):
         """Test with empty batch."""

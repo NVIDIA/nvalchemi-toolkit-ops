@@ -2422,6 +2422,25 @@ class TestPMEReciprocalVirialBatch:
         virial = result[2]
         assert virial.shape == (2, 3, 3)
 
+    def test_batch_pme_reciprocal_virial_shape_single_system(self, device):
+        """Batch PME reciprocal virial has shape (1, 3, 3) when B=1."""
+        positions, charges, cell = make_virial_cscl_system_jax(size=1)
+        batch_idx = jnp.zeros(positions.shape[0], dtype=jnp.int32)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=(8, 8, 8),
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (1, 3, 3)
+
     def test_batch_pme_reciprocal_virial_matches_single(self, device):
         """Batch PME reciprocal virial[i] matches single-system virial."""
         positions_s, charges_s, cell_s = make_virial_cscl_system_jax(size=1)

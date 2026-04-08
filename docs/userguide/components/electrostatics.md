@@ -1391,6 +1391,93 @@ charge_gradients = jax.grad(batch_energy_fn)(charges)
 
 ::::
 
+### Geometry-Dependent Charges (Hybrid Mode)
+
+When charges depend on atomic positions -- as in machine-learned interatomic
+potentials (MLIPs) with learned charge models (`q = q(R)`) -- computing total forces requires two contributions:
+
+- **Fixed-charge positional forces** `F = -dE/dR|_q`, computed analytically by
+  the Ewald/PME kernel (`compute_forces=True`)
+- **Charge chain-rule forces** `-(dE/dq)(dq/dR)`, computed via PyTorch autograd through the charge model
+
+The `hybrid_forces` parameter provides an efficient way to compute both
+contributions without redundancy.  In standard mode, `energy.backward()`
+already includes both position and charge terms, so adding explicit forces
+would **double-count** the positional contribution. `hybrid_forces=True`
+detaches positions and cell from the autograd graph and makes energy
+differentiable only through the charges via a straight-through estimator.
+
+```{important}
+Do not combine explicit forces (`compute_forces=True`) with full autograd
+forces (`-torch.autograd.grad(energy, positions)`) in standard mode -- this
+double-counts the positional term `dE/dR|_q`.  Use `hybrid_forces=True` when
+you need both explicit forces and autograd charge gradients.
+```
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+```python
+import torch
+from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
+
+positions.requires_grad_(True)
+
+# Uniform scaling tensor (identity) for computing the charge virial.
+# dE/d(scaling) through the charge path gives the charge contribution
+# to the virial, i.e. the energy derivative w.r.t. strain.
+scaling = torch.eye(3, dtype=positions.dtype, device=positions.device,
+                    requires_grad=True)
+positions_scaled = positions @ scaling
+cell_scaled = cell @ scaling
+
+# Geometry-dependent charges from scaled positions
+q = charge_model(positions_scaled, Z)
+
+# hybrid_forces=True: explicit forces + virial are analytical (forward-only),
+# energy is differentiable w.r.t. charges only (via straight-through trick)
+energies, direct_forces, direct_virial = particle_mesh_ewald(
+    positions_scaled, q, cell_scaled,
+    neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
+    compute_forces=True, compute_virial=True,
+    hybrid_forces=True,
+)
+
+# Differentiate energy w.r.t. positions and scaling.
+# In hybrid mode only the charge pathway is in the autograd graph.
+dE_dpos, dE_dscaling = torch.autograd.grad(
+    energies.sum(), [positions, scaling],
+)
+
+total_forces = direct_forces - dE_dpos
+total_virial = direct_virial.squeeze(0) - dE_dscaling  # W = -dE/dε
+```
+
+:::
+
+::::
+
+```{note}
+**When not to use hybrid mode:** If the training loss involves forces or
+virial directly (e.g., `loss = ||F - F_ref||^2 + ||sigma - sigma_ref||^2`),
+use standard mode instead.  In hybrid mode, forces and virial are forward-only
+and do not propagate gradients back to model parameters.
+```
+
+```{note}
+**DSF comparison:** DSF (`dsf_coulomb`) always operates in hybrid mode --
+positions are never in the autograd graph, so explicit forces and autograd
+charge-chain-rule forces are always complementary without any extra flag.
+```
+
+```{note}
+**JAX:** Ewald/PME real-space kernels in JAX use forward-only differentiation
+and do not have this issue.  For PME reciprocal space, which uses differentiable
+spline/FFT ops, a similar `hybrid_forces` flag is planned.
+```
+
 ### Virial / Stress
 
 Both Ewald and PME provide explicit virial computation via `compute_virial=True`.
@@ -1399,12 +1486,15 @@ require gradients, stress-based losses automatically back-propagate to model par
 
 **Convention:**
 
-- Real-space: $W_\text{real} = -\frac{1}{2} \sum_{i<j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$,
+- Real-space: $W_\text{real} = -\sum_{i<j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}$,
   where $\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i$ and $\mathbf{F}_{ij}$ is the force on atom $i$ due to atom $j$.
 - Reciprocal-space: $W_\text{recip}(k) = E(k) \left[\delta_{ab} - \frac{2 k_a k_b}{k^2}\left(1 + \frac{k^2}{4\alpha^2}\right)\right]$
-- Stress: $\sigma = W / V$ where $V = |\det(\mathbf{C})|$
+- Stress (tensile-positive Cauchy stress): $\sigma = -W / V$ where $V = |\det(\mathbf{C})|$
 - The virial convention is validated against finite-difference strain derivatives
   of the energy ($W_{ab} = -\partial E / \partial \varepsilon_{ab}$) in the test suite.
+
+See {ref}`conventions` for the project-wide virial and stress definitions used by all
+interaction modules.
 
 **Ewald summation with virial:**
 
@@ -1423,11 +1513,11 @@ energies, forces, virial = ewald_summation(
 
 # Single system: virial shape (1, 3, 3)
 volume = torch.abs(torch.linalg.det(cell))          # scalar
-stress = virial.squeeze(0) / volume                  # (3, 3)
+stress = -virial.squeeze(0) / volume                 # (3, 3)
 
 # Batch: virial shape (B, 3, 3)
 volume = torch.abs(torch.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]              # (B, 3, 3)
+stress = -virial / volume[:, None, None]             # (B, 3, 3)
 ```
 
 :::
@@ -1449,11 +1539,11 @@ energies, forces, virial = ewald_summation(
 
 # Single system: virial shape (1, 3, 3)
 volume = jnp.abs(jnp.linalg.det(cell))          # scalar
-stress = virial.squeeze(0) / volume              # (3, 3)
+stress = -virial.squeeze(0) / volume             # (3, 3)
 
 # Batch: virial shape (B, 3, 3)
 volume = jnp.abs(jnp.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]          # (B, 3, 3)
+stress = -virial / volume[:, None, None]         # (B, 3, 3)
 ```
 
 :::
@@ -1477,11 +1567,11 @@ energies, forces, virial = particle_mesh_ewald(
 
 # Single system
 volume = torch.abs(torch.linalg.det(cell))
-stress = virial.squeeze(0) / volume                  # (3, 3)
+stress = -virial.squeeze(0) / volume                 # (3, 3)
 
 # Batch
 volume = torch.abs(torch.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]              # (B, 3, 3)
+stress = -virial / volume[:, None, None]             # (B, 3, 3)
 ```
 
 :::
@@ -1503,11 +1593,11 @@ energies, forces, virial = particle_mesh_ewald(
 
 # Single system
 volume = jnp.abs(jnp.linalg.det(cell))
-stress = virial.squeeze(0) / volume                  # (3, 3)
+stress = -virial.squeeze(0) / volume                 # (3, 3)
 
 # Batch
 volume = jnp.abs(jnp.linalg.det(cell))           # (B,)
-stress = virial / volume[:, None, None]              # (B, 3, 3)
+stress = -virial / volume[:, None, None]             # (B, 3, 3)
 ```
 
 :::
@@ -1532,7 +1622,7 @@ energies, forces, virial = ewald_summation(
 
 # Compute stress (single system shown; for batch use volume[:, None, None])
 volume = torch.abs(torch.linalg.det(cell))
-pred_stress = virial.squeeze(0) / volume
+pred_stress = -virial.squeeze(0) / volume
 
 loss = (
     w_energy * (energies.sum() - E_target) ** 2
@@ -1562,7 +1652,7 @@ def loss_fn(positions, charges, cell):
 
     # Compute stress (single system shown; for batch use volume[:, None, None])
     volume = jnp.abs(jnp.linalg.det(cell))
-    pred_stress = virial.squeeze(0) / volume
+    pred_stress = -virial.squeeze(0) / volume
 
     loss = (
         w_energy * (jnp.sum(energies) - E_target) ** 2

@@ -73,10 +73,28 @@ license:  ## Check license headers
 .PHONY: pytest
 pytest:  ## Run pytest with coverage
 	rm -f .coverage
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops test/test_types.py; \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/math; \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/neighbors; \
-	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions; \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops test/test_types.py && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/math && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/neighbors && \
+	uv run pytest --cov-fail-under=0 --cov=nvalchemiops --cov-append test/interactions
+
+PYTEST_TESTMON_FLAGS ?= --testmon --testmon-nocollect
+TEST_MODULES := types:test/test_types.py math:test/math neighbors:test/neighbors interactions:test/interactions
+
+.PHONY: testmon-collect
+testmon-collect:  ## Build testmon dependency database (no coverage)
+	$(foreach mod,$(TEST_MODULES),\
+		uv run pytest --testmon $(lastword $(subst :, ,$(mod))) || true;)
+
+.PHONY: testmon-coverage
+testmon-coverage:  ## Run tests with coverage (testmon selects by default)
+	$(foreach mod,$(TEST_MODULES),\
+		COVERAGE_FILE=.coverage.$(firstword $(subst :, ,$(mod))) \
+		uv run coverage run -m pytest $(PYTEST_TESTMON_FLAGS) $(lastword $(subst :, ,$(mod))); \
+		RET=$$?; if [ $$RET -ne 0 ] && [ $$RET -ne 5 ]; then exit $$RET; fi;) true
+	uv run coverage combine --append || true
+	uv run coverage report --show-missing --fail-under=70
+	uv run coverage xml -o nvalchemiops.coverage.xml
 
 # ==============================================================================
 # COVERAGE
@@ -150,6 +168,7 @@ clean:  ## Clean build artifacts
 	rm -rf .ruff_cache/
 	rm -rf nvalchemiops.coverage.xml
 	rm -rf pytest-junit-results.xml
+	rm -rf .testmondata*
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # ==============================================================================

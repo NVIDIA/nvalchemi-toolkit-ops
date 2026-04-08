@@ -2890,6 +2890,29 @@ class TestPMEReciprocalVirialBatch:
         assert virial.shape == (2, 3, 3)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_pme_reciprocal_virial_shape_single_system(self, device):
+        """Batch PME reciprocal virial has shape (1, 3, 3) when B=1."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell = make_virial_cscl_system(1, device=device)
+        alpha = torch.tensor([0.3], dtype=VIRIAL_DTYPE, device=device)
+        batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+
+        result = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=(8, 8, 8),
+            batch_idx=batch_idx,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        virial = result[2]
+        assert virial.shape == (1, 3, 3)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_batch_pme_reciprocal_virial_fd(self, device):
         """Batch PME reciprocal virial per-system matches single-system FD."""
         if device == "cuda" and not torch.cuda.is_available():
@@ -3610,6 +3633,524 @@ class TestPMEVirialTorchPMEParity:
             rtol=5e-2,
             msg="PME reciprocal virial does not match torchpme FD virial",
         )
+
+
+###########################################################################################
+########################### torch.compile Regression Tests ################################
+###########################################################################################
+
+
+class TestPMETorchCompile:
+    """Verify that PME functions work correctly under torch.compile."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_pme_compiled_parity_explicit_params(self):
+        """Compiled PME with explicit alpha/mesh_dimensions matches eager."""
+        device = torch.device("cuda")
+        dtype = torch.float32
+        n_atoms = 10
+        torch.manual_seed(42)
+
+        from nvalchemiops.torch.interactions.electrostatics import (
+            estimate_pme_parameters,
+        )
+
+        positions_base = torch.randn(n_atoms, 3, device=device, dtype=dtype)
+        cell = (torch.eye(3, device=device, dtype=dtype) * 10.0).unsqueeze(0)
+        neighbor_matrix = torch.zeros(n_atoms, 1, dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros(n_atoms, 1, 3, dtype=torch.int32, device=device)
+
+        with torch.no_grad():
+            params = estimate_pme_parameters(
+                positions_base, cell, batch_idx=None, accuracy=1e-6
+            )
+            alpha = params.alpha
+            mesh_dimensions = tuple(params.mesh_dimensions)
+
+        linear = torch.nn.Linear(n_atoms * 3, n_atoms, device=device)
+
+        def pme_wrapper(positions, charges, cell):
+            e, f, cg = particle_mesh_ewald(
+                positions=positions.detach(),
+                charges=charges.detach(),
+                cell=cell.detach(),
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                spline_order=4,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_shifts,
+                mask_value=n_atoms,
+                compute_forces=True,
+                compute_charge_gradients=True,
+            )
+            energy = e.sum()
+            q_delta = charges - charges.detach()
+            return energy + (cg * q_delta).sum(), f
+
+        positions = positions_base.clone().requires_grad_(True)
+        charges = linear(positions.reshape(-1))
+        charges.retain_grad()
+        energy_eager, forces_eager = pme_wrapper(positions, charges, cell)
+        grad_eager = torch.autograd.grad(
+            energy_eager, positions, torch.ones_like(energy_eager)
+        )[0]
+        dq_eager = charges.grad.clone()
+
+        positions2 = positions_base.clone().requires_grad_(True)
+        charges2 = linear(positions2.reshape(-1))
+        charges2.retain_grad()
+        compiled_fn = torch.compile(pme_wrapper, dynamic=True)
+        energy_compiled, forces_compiled = compiled_fn(positions2, charges2, cell)
+        grad_compiled = torch.autograd.grad(
+            energy_compiled, positions2, torch.ones_like(energy_compiled)
+        )[0]
+        dq_compiled = charges2.grad
+
+        assert torch.isfinite(energy_compiled).all()
+        assert torch.isfinite(forces_compiled).all()
+        torch.testing.assert_close(energy_compiled, energy_eager, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(forces_compiled, forces_eager, rtol=1e-4, atol=1e-4)
+        torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-3, atol=1e-3)
+        torch.testing.assert_close(dq_compiled, dq_eager, rtol=1e-3, atol=1e-3)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_pme_green_structure_factor_stream_ordering(self):
+        """Compiled pme_green_structure_factor output consumed by Torch math matches eager."""
+        from nvalchemiops.torch.interactions.electrostatics.pme import (
+            pme_green_structure_factor,
+        )
+
+        device = torch.device("cuda")
+        dtype = torch.float64
+        torch.manual_seed(42)
+
+        cell = (torch.eye(3, device=device, dtype=dtype) * 10.0).unsqueeze(0)
+        mesh_dims = (8, 8, 8)
+        _, k_squared = generate_k_vectors_pme(cell, mesh_dims)
+        alpha = torch.tensor([0.3], dtype=dtype, device=device)
+
+        def green_and_consume(k_squared, alpha, cell):
+            green, bspline = pme_green_structure_factor(
+                k_squared, mesh_dims, alpha, cell, spline_order=4
+            )
+            return green.sum() + bspline.sum()
+
+        result_eager = green_and_consume(k_squared, alpha, cell)
+
+        compiled_fn = torch.compile(green_and_consume, dynamic=True)
+        result_compiled = compiled_fn(k_squared, alpha, cell)
+
+        assert torch.isfinite(result_compiled)
+        torch.testing.assert_close(result_compiled, result_eager, rtol=1e-5, atol=1e-5)
+
+
+###########################################################################################
+########################### Hybrid Forces Tests ###########################################
+###########################################################################################
+
+
+class TestPMEHybridForces:
+    """Test hybrid_forces mode for PME.
+
+    hybrid_forces=True detaches positions/cell from the autograd graph and
+    attaches charge gradients via the straight-through trick.  Forces and
+    virial are forward-only.
+    """
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_energy_matches_standard(self, device):
+        """Forward energy values must be identical to standard mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+
+        e_std = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+        )
+        e_hyb = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(e_std, e_hyb, rtol=1e-12, atol=1e-14)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_forces_match_standard(self, device):
+        """Explicit forces must match non-hybrid mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+
+        _, f_std = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+        )
+        _, f_hyb = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(f_std, f_hyb, rtol=1e-12, atol=1e-14)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_positions_no_grad(self, device):
+        """Positions must not receive gradients in hybrid mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_dipole_system(device)
+        positions = positions.clone().requires_grad_(True)
+        charges = charges.clone().requires_grad_(True)
+
+        energies = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            hybrid_forces=True,
+        )
+        energies.sum().backward()
+
+        assert positions.grad is None or torch.all(positions.grad == 0)
+        assert charges.grad is not None
+        assert torch.isfinite(charges.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_cell_no_grad(self, device):
+        """Cell must not receive gradients in hybrid mode."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_dipole_system(device)
+        positions = positions.clone().requires_grad_(True)
+        cell = cell.clone().requires_grad_(True)
+        charges = charges.clone().requires_grad_(True)
+
+        energies = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            hybrid_forces=True,
+        )
+        energies.sum().backward()
+
+        assert positions.grad is None or torch.all(positions.grad == 0)
+        assert cell.grad is None or torch.all(cell.grad == 0)
+        assert charges.grad is not None
+        assert torch.isfinite(charges.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_charge_grad_matches_autograd(self, device):
+        """Charge gradients from straight-through must match standard autograd."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges_ref, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+
+        # Standard autograd path
+        charges_ad = charges_ref.clone().requires_grad_(True)
+        e_ad = pme_reciprocal_space(
+            positions,
+            charges_ad,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+        )
+        grad_std = torch.autograd.grad(e_ad.sum(), charges_ad)[0]
+
+        # Hybrid path
+        charges_hyb = charges_ref.clone().requires_grad_(True)
+        e_hyb = pme_reciprocal_space(
+            positions,
+            charges_hyb,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            hybrid_forces=True,
+        )
+        grad_hyb = torch.autograd.grad(e_hyb.sum(), charges_hyb)[0]
+
+        torch.testing.assert_close(grad_std, grad_hyb, rtol=1e-4, atol=1e-6)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_virial_forward_only(self, device):
+        """Virial values must match standard mode and have no grad_fn."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+
+        _, _, v_std = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            compute_virial=True,
+        )
+        _, _, v_hyb = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            compute_virial=True,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(v_std, v_hyb, rtol=1e-12, atol=1e-14)
+        assert v_hyb.grad_fn is None
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_full_pme(self, device):
+        """Test hybrid_forces on particle_mesh_ewald end-to-end."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_simple_system(device, num_atoms=5)
+        num_atoms = positions.shape[0]
+        neighbor_matrix = torch.zeros(
+            (num_atoms, num_atoms - 1), dtype=torch.int32, device=device
+        )
+        for i in range(num_atoms):
+            neighbors = [j for j in range(num_atoms) if j != i]
+            neighbor_matrix[i] = torch.tensor(
+                neighbors, dtype=torch.int32, device=device
+            )
+        neighbor_matrix_shifts = torch.zeros(
+            (num_atoms, num_atoms - 1, 3), dtype=torch.int32, device=device
+        )
+
+        e_std, f_std = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True,
+        )
+        e_hyb, f_hyb = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(e_std, e_hyb, rtol=1e-12, atol=1e-14)
+        torch.testing.assert_close(f_std, f_hyb, rtol=1e-12, atol=1e-14)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_geometry_dependent_charges_pme(self, device):
+        """End-to-end: q = f(R) with PME, total force = explicit + charge-chain-rule."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions_ref, charges_base, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+
+        weight = torch.tensor(
+            [[0.1, -0.05, 0.02], [-0.1, 0.05, -0.02]],
+            dtype=torch.float64,
+            device=device,
+        )
+        positions = positions_ref.clone().requires_grad_(True)
+
+        q = charges_base + (positions * weight).sum(dim=1)
+        q = q - q.mean()
+
+        energies, forces = pme_reciprocal_space(
+            positions,
+            q,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        charge_force = -torch.autograd.grad(
+            energies.sum(), positions, retain_graph=True
+        )[0]
+        total_force = forces + charge_force
+
+        assert torch.isfinite(total_force).all()
+
+        # Verify against finite differences
+        h = 1e-5
+        for atom in range(2):
+            for dim in range(3):
+                pos_p = positions.detach().clone()
+                pos_p[atom, dim] += h
+                q_p = charges_base + (pos_p * weight).sum(dim=1)
+                q_p = q_p - q_p.mean()
+                e_p = (
+                    pme_reciprocal_space(
+                        pos_p,
+                        q_p,
+                        cell,
+                        alpha=0.3,
+                        mesh_dimensions=mesh_dims,
+                    )
+                    .sum()
+                    .item()
+                )
+
+                pos_m = positions.detach().clone()
+                pos_m[atom, dim] -= h
+                q_m = charges_base + (pos_m * weight).sum(dim=1)
+                q_m = q_m - q_m.mean()
+                e_m = (
+                    pme_reciprocal_space(
+                        pos_m,
+                        q_m,
+                        cell,
+                        alpha=0.3,
+                        mesh_dimensions=mesh_dims,
+                    )
+                    .sum()
+                    .item()
+                )
+
+                fd_force = -(e_p - e_m) / (2 * h)
+                rel_err = abs(total_force[atom, dim].item() - fd_force) / (
+                    abs(fd_force) + 1e-30
+                )
+                assert rel_err < 0.02, (
+                    f"atom {atom}, dim {dim}: "
+                    f"hybrid={total_force[atom, dim].item():.8e}, "
+                    f"FD={fd_force:.8e}, rel={rel_err:.2e}"
+                )
+
+
+###########################################################################################
+########################### torch.compile Tests ###########################################
+###########################################################################################
+
+
+class TestTorchCompile:
+    """Smoke tests for torch.compile compatibility with hybrid_forces mode."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_compile_hybrid_energy_forces(self, device):
+        """torch.compile with hybrid_forces produces same energy and forces."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+
+        e_eager, f_eager = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        pme_compiled = torch.compile(pme_reciprocal_space)
+        e_compiled, f_compiled = pme_compiled(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+
+        torch.testing.assert_close(e_compiled, e_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(f_compiled, f_eager, atol=1e-10, rtol=0.0)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_compile_hybrid_charge_grad(self, device):
+        """torch.compile with hybrid_forces produces correct charge gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges_base, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+
+        charges_eager = charges_base.clone().requires_grad_(True)
+        e_eager, f_eager = pme_reciprocal_space(
+            positions,
+            charges_eager,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+        e_eager.sum().backward()
+        cg_eager = charges_eager.grad.clone()
+
+        charges_compiled = charges_base.clone().requires_grad_(True)
+        pme_compiled = torch.compile(pme_reciprocal_space)
+        e_compiled, f_compiled = pme_compiled(
+            positions,
+            charges_compiled,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+        e_compiled.sum().backward()
+        cg_compiled = charges_compiled.grad.clone()
+
+        torch.testing.assert_close(e_compiled, e_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(f_compiled, f_eager, atol=1e-10, rtol=0.0)
+        torch.testing.assert_close(cg_compiled, cg_eager, atol=1e-10, rtol=0.0)
 
 
 if __name__ == "__main__":
