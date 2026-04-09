@@ -1733,6 +1733,30 @@ def _pme_reciprocal_space_impl(
         )
         del mesh_fft_raw  # Free before force field meshes are allocated
 
+        # Background virial correction for non-neutral systems.
+        # E_bg = pi * Q^2 / (2 * alpha^2 * V) is subtracted from energy.
+        # Since dE_bg/dε = -E_bg * I (volume derivative), the virial
+        # contribution is W_bg = -d(-E_bg)/dε = dE_bg/dε = -E_bg * I.
+        eye = torch.eye(3, device=device, dtype=input_dtype)
+        if is_batch:
+            num_systems = cell.shape[0]
+            total_charges = torch.zeros(
+                num_systems,
+                dtype=input_dtype,
+                device=device,
+            )
+            total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+            volumes = torch.abs(torch.linalg.det(cell)).to(input_dtype)
+            alpha_batch = alpha.to(input_dtype)
+            e_bg = PI * total_charges**2 / (2.0 * alpha_batch**2 * volumes)
+            virial = virial - e_bg[:, None, None] * eye
+        else:
+            total_charge = charges.sum().to(input_dtype)
+            volume = torch.abs(torch.det(cell)).to(input_dtype)
+            alpha_val = alpha.to(input_dtype)
+            e_bg = PI * total_charge**2 / (2.0 * alpha_val**2 * volume)
+            virial = virial - e_bg * eye
+
     # Step 9: Compute forces if needed
     forces = None
     if compute_forces:

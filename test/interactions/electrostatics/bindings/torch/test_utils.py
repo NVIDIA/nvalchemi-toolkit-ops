@@ -538,7 +538,7 @@ def make_non_neutral_system(device: torch.device):
         dtype=VIRIAL_DTYPE,
         device=device,
     )
-    charges = torch.tensor([1.0, -0.5], dtype=VIRIAL_DTYPE, device=device)
+    charges = torch.tensor([1.0, -3.5], dtype=VIRIAL_DTYPE, device=device)
     return positions, charges, cell
 
 

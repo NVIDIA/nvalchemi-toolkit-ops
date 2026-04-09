@@ -1488,6 +1488,14 @@ def _ewald_reciprocal_space_energy(
         else:
             virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
 
+    if compute_virial:
+        q_total = charges.sum().to(input_dtype)
+        vol = torch.abs(torch.det(cell[0].to(input_dtype)))
+        alpha_val = alpha.to(input_dtype).squeeze()
+        e_bg = math.pi * q_total**2 / (2.0 * alpha_val**2 * vol)
+        eye = torch.eye(3, device=positions.device, dtype=input_dtype)
+        virial = virial - e_bg * eye
+
     if needs_grad_flag:
         backward_kw = dict(
             energies=wp_energies,
@@ -1653,6 +1661,14 @@ def _ewald_reciprocal_space_energy_forces(
             )
         else:
             virial = torch.zeros(1, 3, 3, device=positions.device, dtype=input_dtype)
+
+    if compute_virial:
+        q_total = charges.sum().to(input_dtype)
+        vol = torch.abs(torch.det(cell[0].to(input_dtype)))
+        alpha_val = alpha.to(input_dtype).squeeze()
+        e_bg = math.pi * q_total**2 / (2.0 * alpha_val**2 * vol)
+        eye = torch.eye(3, device=positions.device, dtype=input_dtype)
+        virial = virial - e_bg * eye
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -1837,6 +1853,14 @@ def _ewald_reciprocal_space_energy_forces_charge_grad(
     self_energy_grad = 2.0 * alpha_t / math.sqrt(math.pi) * charges
     background_grad = math.pi / (alpha_t * alpha_t) * total_charge[0]
     charge_grads = charge_grads - self_energy_grad - background_grad
+
+    if compute_virial:
+        q_total = charges.sum().to(input_dtype)
+        vol = torch.abs(torch.det(cell[0].to(input_dtype)))
+        alpha_val = alpha.to(input_dtype).squeeze()
+        e_bg = math.pi * q_total**2 / (2.0 * alpha_val**2 * vol)
+        eye = torch.eye(3, device=positions.device, dtype=input_dtype)
+        virial = virial - e_bg * eye
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -2041,6 +2065,19 @@ def _batch_ewald_reciprocal_space_energy(
                 num_systems, 3, 3, device=positions.device, dtype=input_dtype
             )
 
+    if compute_virial:
+        total_charges = torch.zeros(
+            num_systems,
+            dtype=input_dtype,
+            device=positions.device,
+        )
+        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        volumes = torch.abs(torch.linalg.det(cell)).to(input_dtype)
+        alpha_batch = alpha.to(input_dtype)
+        e_bg = math.pi * total_charges**2 / (2.0 * alpha_batch**2 * volumes)
+        eye = torch.eye(3, device=positions.device, dtype=input_dtype)
+        virial = virial - e_bg[:, None, None] * eye
+
     if needs_grad_flag:
         backward_kw = dict(
             energies=wp_energies,
@@ -2244,6 +2281,19 @@ def _batch_ewald_reciprocal_space_energy_forces(
             virial = torch.zeros(
                 num_systems, 3, 3, device=positions.device, dtype=input_dtype
             )
+
+    if compute_virial:
+        total_charges = torch.zeros(
+            num_systems,
+            dtype=input_dtype,
+            device=positions.device,
+        )
+        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        volumes = torch.abs(torch.linalg.det(cell)).to(input_dtype)
+        alpha_batch = alpha.to(input_dtype)
+        e_bg = math.pi * total_charges**2 / (2.0 * alpha_batch**2 * volumes)
+        eye = torch.eye(3, device=positions.device, dtype=input_dtype)
+        virial = virial - e_bg[:, None, None] * eye
 
     if needs_grad_flag:
         backward_kw = dict(
@@ -2471,6 +2521,19 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad(
         math.pi / (alpha_per_atom * alpha_per_atom) * total_charge_per_atom
     )
     charge_grads = charge_grads - self_energy_grad - background_grad
+
+    if compute_virial:
+        total_charges = torch.zeros(
+            num_systems,
+            dtype=input_dtype,
+            device=positions.device,
+        )
+        total_charges.scatter_add_(0, batch_idx, charges.to(input_dtype))
+        volumes = torch.abs(torch.linalg.det(cell)).to(input_dtype)
+        alpha_batch = alpha.to(input_dtype)
+        e_bg = math.pi * total_charges**2 / (2.0 * alpha_batch**2 * volumes)
+        eye = torch.eye(3, device=positions.device, dtype=input_dtype)
+        virial = virial - e_bg[:, None, None] * eye
 
     if needs_grad_flag:
         backward_kw = dict(

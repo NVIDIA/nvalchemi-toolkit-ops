@@ -1064,6 +1064,20 @@ def ewald_reciprocal_space(
                 virial,
                 launch_dims=(num_k, num_systems),
             )
+
+            total_charges_v = (
+                jnp.zeros(
+                    num_systems,
+                    dtype=dtype,
+                )
+                .at[batch_idx.astype(jnp.int32)]
+                .add(charges_cast)
+            )
+            volumes_v = jnp.abs(jnp.linalg.det(cell_cast)).astype(dtype)
+            alpha_v = alpha_arr.astype(dtype)
+            e_bg = PI * total_charges_v**2 / (2.0 * alpha_v**2 * volumes_v)
+            eye = jnp.eye(3, dtype=dtype)
+            virial = virial - e_bg[:, jnp.newaxis, jnp.newaxis] * eye
         else:
             virial = jnp.zeros((1, 3, 3), dtype=dtype)
             (virial,) = _jax_ewald_reciprocal_virial[dtype](
@@ -1075,6 +1089,13 @@ def ewald_reciprocal_space(
                 virial,
                 launch_dims=(num_k,),
             )
+
+            q_total = charges_cast.sum().astype(dtype)
+            vol_v = jnp.abs(jnp.linalg.det(cell_cast.squeeze(0))).astype(dtype)
+            alpha_val_v = alpha_arr.astype(dtype).squeeze()
+            e_bg = PI * q_total**2 / (2.0 * alpha_val_v**2 * vol_v)
+            eye = jnp.eye(3, dtype=dtype)
+            virial = virial - e_bg * eye
 
     # Apply corrections to charge gradients if requested
     if compute_charge_gradients:

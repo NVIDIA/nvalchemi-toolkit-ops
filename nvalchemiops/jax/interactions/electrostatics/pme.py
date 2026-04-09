@@ -861,6 +861,27 @@ def pme_reciprocal_space(
         )
         del mesh_fft_raw  # Free before force field meshes are allocated
 
+        eye = jnp.eye(3, dtype=input_dtype)
+        if is_batch:
+            total_charges = (
+                jnp.zeros(
+                    cell.shape[0],
+                    dtype=input_dtype,
+                )
+                .at[batch_idx]
+                .add(charges.astype(input_dtype))
+            )
+            volumes = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+            alpha_batch = alpha.astype(input_dtype)
+            e_bg = jnp.pi * total_charges**2 / (2.0 * alpha_batch**2 * volumes)
+            virial = virial - e_bg[:, jnp.newaxis, jnp.newaxis] * eye
+        else:
+            total_charge = charges.sum().astype(input_dtype)
+            volume = jnp.abs(jnp.linalg.det(cell.squeeze(0))).astype(input_dtype)
+            alpha_val = alpha.astype(input_dtype).squeeze()
+            e_bg = jnp.pi * total_charge**2 / (2.0 * alpha_val**2 * volume)
+            virial = virial - e_bg * eye
+
     # Step 6: Inverse FFT to get potential mesh
     potential_mesh = jnp.fft.irfftn(
         convolved_mesh, s=mesh_dimensions, axes=fft_dims, norm="forward"
