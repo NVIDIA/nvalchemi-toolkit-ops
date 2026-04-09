@@ -1322,7 +1322,7 @@ class TestEdgeCases:
 class TestEwaldJIT:
     """Smoke tests for Ewald summation compatibility with jax.jit."""
 
-    def test_jit_real_space(self):
+    def test_jit_real_space(self, device):  # noqa: ARG002
         """Test ewald_real_space works under jax.jit."""
         positions = jnp.array([[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], dtype=jnp.float64)
         charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
@@ -1358,7 +1358,7 @@ class TestEwaldJIT:
         assert energies.shape == (2,)
         assert jnp.all(jnp.isfinite(energies))
 
-    def test_jit_reciprocal_space(self):
+    def test_jit_reciprocal_space(self, device):  # noqa: ARG002
         """Test ewald_reciprocal_space works under jax.jit."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [3.0, 3.0, 0.0]],
@@ -1386,7 +1386,7 @@ class TestEwaldJIT:
         assert energies.shape == (4,)
         assert jnp.all(jnp.isfinite(energies))
 
-    def test_jit_batched_reciprocal_space(self):
+    def test_jit_batched_reciprocal_space(self, device):  # noqa: ARG002
         """Test ewald_reciprocal_space works under jax.jit with batched inputs."""
         positions = jnp.array(
             [
