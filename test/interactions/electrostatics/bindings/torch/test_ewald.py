@@ -6151,7 +6151,6 @@ class TestEwaldNonNeutralVirial:
         )
 
 
-
 class TestEwaldDifferentiableVirial:
     """Stress-loss gradients through Ewald virial path."""
 

@@ -3487,7 +3487,6 @@ class TestPMENonNeutralVirial:
         )
 
 
-
 class TestPMEDifferentiableVirial:
     """Stress-loss gradients through PME virial path."""
 
