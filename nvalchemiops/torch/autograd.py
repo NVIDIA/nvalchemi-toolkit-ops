@@ -410,6 +410,13 @@ def warp_custom_op(
     The decorated function should still call ``attach_for_backward()`` at the
     end of grad-enabled forward execution so the registered forward op can
     collect the runtime Warp tape and arrays from the real output tensor.
+
+    ``retain_graph=True`` is supported: the Warp tape is preserved across
+    backward passes and zeroed before each replay.  ``create_graph=True``
+    is **not** supported -- Warp backward ops do not register a second-order
+    autograd formula, so higher-order differentiation through them will raise.
+    Use ``hybrid_forces=True`` in electrostatics APIs when you need to combine
+    explicit Warp forces with autograd-based charge-gradient forces.
     """
     # Non-differentiable input names (won't receive gradients)
     NON_GRAD_INPUTS = {
@@ -429,13 +436,13 @@ def warp_custom_op(
         _state_counter = itertools.count(1)
         _state_registry: dict[int, _RegisteredBackwardState] = {}
 
-        def _pop_state(token_id: int) -> _RegisteredBackwardState:
-            state = _state_registry.pop(token_id, None)
+        def _get_state(token_id: int) -> _RegisteredBackwardState:
+            state = _state_registry.get(token_id, None)
             if state is None:
                 raise RuntimeError(
                     f"Missing registered Warp backward state for token {token_id}. "
-                    "The forward custom op likely did not attach a tape, or the state "
-                    "was released before backward executed."
+                    "The forward custom op likely did not attach a tape, or the "
+                    "graph was freed before backward executed."
                 )
             return state
 
@@ -634,8 +641,9 @@ def warp_custom_op(
                 if is_fake(token):
                     device = _first_tensor_device(*grad_outputs, *tensor_inputs)
                     return _zero_grads_for_inputs(tensor_inputs, device)
-                state = _pop_state(int(token.item()))
+                state = _get_state(int(token.item()))
                 with warp_stream_from_torch(*grad_outputs, *tensor_inputs):
+                    state.tape.zero()
                     _set_output_gradients(state.arrays, output_names, grad_outputs)
                     state.tape.backward()
                 gradients = _extract_tensor_input_gradients(

@@ -6801,6 +6801,86 @@ class TestHybridForces:
 
 
 ###########################################################################################
+######################### retain_graph Tests ##############################################
+###########################################################################################
+
+
+class TestRetainGraph:
+    """Verify that retain_graph=True allows multiple backward passes."""
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_retain_graph_grad_then_backward(self, device):
+        """autograd.grad with retain_graph followed by energy.backward must succeed."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges_base, cell, nl, nl_ptr, nl_shifts = create_dipole_system(
+            device
+        )
+
+        weight = torch.tensor(
+            [[0.1, -0.05, 0.02], [-0.1, 0.05, -0.02]],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        charges = charges_base + (positions * weight).sum(dim=1)
+        charges = charges - charges.mean()
+
+        energies = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+        )
+        energy = energies.sum()
+
+        (dE_dq,) = torch.autograd.grad(energy, charges, retain_graph=True)
+        assert torch.isfinite(dE_dq).all()
+
+        energy.backward()
+        assert weight.grad is not None
+        assert torch.isfinite(weight.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_retain_graph_double_backward(self, device):
+        """Two successive backward calls on the same graph must produce identical grads."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, charges_base, cell, nl, nl_ptr, nl_shifts = create_dipole_system(
+            device
+        )
+
+        charges_1 = charges_base.clone().requires_grad_(True)
+        energies = ewald_summation(
+            positions,
+            charges_1,
+            cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_list=nl,
+            neighbor_ptr=nl_ptr,
+            neighbor_shifts=nl_shifts,
+        )
+        energy = energies.sum()
+        energy.backward(retain_graph=True)
+        grad_first = charges_1.grad.clone()
+
+        charges_1.grad = None
+        energy.backward()
+        grad_second = charges_1.grad.clone()
+
+        torch.testing.assert_close(grad_first, grad_second, rtol=0.0, atol=0.0)
+
+
+###########################################################################################
 ########################### torch.compile Tests ###########################################
 ###########################################################################################
 
