@@ -2648,6 +2648,8 @@ def npt_velocity_half_step_out(
         raise ValueError(
             f"Unknown mode: '{mode}'. Expected 'isotropic', 'anisotropic', or 'triclinic'."
         )
+    if mode == "triclinic" and cells_inv is None:
+        raise ValueError("mode='triclinic' requires cells_inv parameter.")
 
     family = _NPT_VELOCITY_FAMILIES[mode]
 
@@ -3459,6 +3461,8 @@ def nph_velocity_half_step_out(
         raise ValueError(
             f"Unknown mode: '{mode}'. Expected 'isotropic', 'anisotropic', or 'triclinic'."
         )
+    if mode == "triclinic" and cells_inv is None:
+        raise ValueError("mode='triclinic' requires cells_inv parameter.")
 
     family = _NPH_VELOCITY_FAMILIES[mode]
 
