@@ -137,14 +137,14 @@ def _build_identity_h_inv_kernel(
     volumes: wp.array(dtype=Any),
     h_inv_out: wp.array(dtype=Any),
 ):
-    """Build h_inv = (1/V) * I, valid for cubic cells.
+    """Build h_inv = V^{-1/3} * I, valid for cubic cells.
 
     Launch Grid: dim = [num_systems]
     """
     sys = wp.tid()
-    inv_V = type(volumes[sys])(1.0) / volumes[sys]
+    inv_L = wp.cbrt(type(volumes[sys])(1.0) / volumes[sys])
     z = type(volumes[sys])(0.0)
-    h_inv_out[sys] = type(h_inv_out[sys])(inv_V, z, z, z, inv_V, z, z, z, inv_V)
+    h_inv_out[sys] = type(h_inv_out[sys])(inv_L, z, z, z, inv_L, z, z, z, inv_L)
 
 
 _build_identity_h_inv_kernel_overload = {}
@@ -164,7 +164,7 @@ def _ensure_cells_inv(
     cell_velocities: wp.array,
     device: str | None,
 ) -> wp.array:
-    """Return cells_inv if provided, otherwise build (1/V)*I from volumes.
+    """Return cells_inv if provided, otherwise build V^{-1/3}·I from volumes.
 
     Parameters
     ----------
@@ -2078,7 +2078,7 @@ def compute_cell_kinetic_energy(
         cells to compute the exact strain rate ε̇ = ḣ h⁻¹.
     volumes : wp.array(dtype=scalar), optional
         Cell volumes. Shape (B,). Used as fallback when ``cells_inv`` is not
-        provided: computes h⁻¹ = (1/V) I, which is only valid for cubic
+        provided: computes h⁻¹ = V^{-1/3} I, which is only valid for cubic
         cells. For non-cubic cells the caller must provide ``cells_inv``.
     device : str, optional
         Warp device.
@@ -2507,7 +2507,7 @@ def npt_velocity_half_step(
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Cell velocity matrices ḣ = dh/dt. Shape (B,).
     volumes : wp.array(dtype=scalar)
-        Cell volumes. Shape (B,). Used to build h⁻¹ = (1/V)I when
+        Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when
         ``cells_inv`` is not provided (only valid for cubic cells).
     eta_dots : wp.array2d(dtype=scalar)
         Thermostat chain velocities. Shape (B, chain_length).
@@ -3343,7 +3343,7 @@ def nph_velocity_half_step(
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Cell velocity matrices ḣ = dh/dt.
     volumes : wp.array(dtype=scalar)
-        Cell volumes. Shape (B,). Used to build h⁻¹ = (1/V)I when
+        Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when
         ``cells_inv`` is not provided (only valid for cubic cells).
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).

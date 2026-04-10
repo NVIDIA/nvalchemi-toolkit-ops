@@ -487,6 +487,32 @@ class TestBarostatUtilitiesAPI:
             "Test is degenerate: ||ε̇||² == ||ḣ||² — use a non-identity h⁻¹"
         )
 
+    def test_compute_cell_kinetic_energy_volumes_fallback(self, dtype, device):
+        """Test cell KE using volumes-only fallback (no cells_inv) for non-unit cubic cell."""
+        mat_dtype = wp.mat33f if dtype == "float32" else wp.mat33d
+        scalar_dtype = wp.float32 if dtype == "float32" else wp.float64
+
+        L = 10.0
+        V = L**3
+        h_dot_np = np.diag([0.1, 0.1, 0.1])
+        h_dot_mat = mat_dtype(*h_dot_np.flatten())
+        cell_velocities = wp.array([h_dot_mat], dtype=mat_dtype, device=device)
+
+        volumes = wp.array([V], dtype=scalar_dtype, device=device)
+        W = 100.0
+        cell_masses = wp.array([W], dtype=scalar_dtype, device=device)
+        ke_out = wp.empty(1, dtype=scalar_dtype, device=device)
+
+        ke = compute_cell_kinetic_energy(
+            cell_velocities, cell_masses, ke_out, volumes=volumes, device=device
+        )
+        wp.synchronize_device(device)
+
+        # ε̇ = ḣ · V^{-1/3}·I = diag(0.01, 0.01, 0.01)
+        eps_dot = 0.1 / L
+        expected = 0.5 * W * 3.0 * eps_dot**2
+        np.testing.assert_allclose(ke.numpy()[0], expected, rtol=1e-4)
+
     def test_compute_barostat_potential_energy_runs(self, dtype, device):
         """Test barostat potential energy computation."""
         scalar_dtype = wp.float32 if dtype == "float32" else wp.float64
