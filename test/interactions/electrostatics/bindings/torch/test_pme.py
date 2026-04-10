@@ -3481,8 +3481,8 @@ class TestPMENonNeutralVirial:
         torch.testing.assert_close(
             explicit_virial,
             fd_virial,
-            atol=2e-2,
-            rtol=2e-2,
+            atol=1e-4,
+            rtol=1e-4,
             msg="PME reciprocal virial does not match FD for non-neutral system",
         )
 
