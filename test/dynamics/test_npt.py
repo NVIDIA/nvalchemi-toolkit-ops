@@ -3053,7 +3053,8 @@ class TestAdditionalCoverage:
 
         wp.synchronize_device(device)
         assert result is kinetic_energy
-        # KE = 0.5 * W * ||ḣ||²_F = 0.5 * 100 * (3 * 0.01) = 1.5
+        # KE = 0.5 * W * ||ε̇||²_F where ε̇ = ḣ h⁻¹
+        # With h⁻¹ = I: ε̇ = ḣ, so ||ε̇||²_F = 3 * 0.1² = 0.03
         np.testing.assert_allclose(result.numpy()[0], 1.5, rtol=1e-4)
 
     @pytest.mark.parametrize("device", DEVICES)
@@ -3446,4 +3447,286 @@ class TestSingleBatchEquivalence:
             vel_out_batch.numpy(),
             rtol=1e-5,
             atol=1e-7,
+        )
+
+
+# ==============================================================================
+# Virial sign convention tests (library API only)
+# ==============================================================================
+
+
+class TestVirialSignConvention:
+    """Verify compute_pressure_tensor passes virial through without negation.
+
+    The library convention is W = -dE/dε (see conventions.md).  The pressure
+    tensor kernel computes P = (KE_tensor + W) / V.  These tests confirm W
+    is added directly — any internal negation would be caught.
+    """
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_pressure_tensor_virial_sign(self, device):
+        """P = W/V when kinetic contribution is zero."""
+        scalar_dtype = wp.float64
+        vec_dtype = wp.vec3d
+        vec9_dtype = vec9d
+        mat_dtype = wp.mat33d
+
+        # Cubic cell V = 1000
+        cell_np = np.diag([10.0, 10.0, 10.0])
+        cells = wp.array(
+            [mat_dtype(*cell_np.flatten())], dtype=mat_dtype, device=device
+        )
+        volumes = wp.empty(1, dtype=scalar_dtype, device=device)
+        compute_cell_volume(cells, volumes=volumes, device=device)
+
+        # Known virial W = (10, 1, 2, 3, 20, 4, 5, 6, 30) row-major
+        W = np.array([10.0, 1.0, 2.0, 3.0, 20.0, 4.0, 5.0, 6.0, 30.0])
+        virial_tensors = wp.array(W.reshape(1, 9), dtype=vec9_dtype, device=device)
+
+        # Zero velocities → kinetic tensor = 0
+        num_atoms = 1
+        velocities = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+        masses = wp.array([1.0], dtype=scalar_dtype, device=device)
+
+        kinetic_tensors = wp.zeros((1, 9), dtype=scalar_dtype, device=device)
+        pressure_tensors = wp.empty(1, dtype=vec9_dtype, device=device)
+
+        compute_pressure_tensor(
+            velocities,
+            masses,
+            virial_tensors,
+            cells,
+            kinetic_tensors,
+            pressure_tensors,
+            volumes,
+            device=device,
+        )
+        wp.synchronize_device(device)
+
+        P = pressure_tensors.numpy()[0]
+        V = 1000.0
+        expected = W / V
+        np.testing.assert_allclose(P, expected, rtol=1e-12)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_pressure_tensor_with_kinetic(self, device):
+        """P = (KE_tensor + W) / V with both contributions non-zero."""
+        scalar_dtype = wp.float64
+        vec_dtype = wp.vec3d
+        vec9_dtype = vec9d
+        mat_dtype = wp.mat33d
+
+        cell_np = np.diag([10.0, 10.0, 10.0])
+        cells = wp.array(
+            [mat_dtype(*cell_np.flatten())], dtype=mat_dtype, device=device
+        )
+        volumes = wp.empty(1, dtype=scalar_dtype, device=device)
+        compute_cell_volume(cells, volumes=volumes, device=device)
+
+        W = np.array([10.0, 0.0, 0.0, 0.0, 20.0, 0.0, 0.0, 0.0, 30.0])
+        virial_tensors = wp.array(W.reshape(1, 9), dtype=vec9_dtype, device=device)
+
+        # Single atom with velocity (1, 2, 3), mass 2
+        # KE_tensor_ij = m * v_i * v_j
+        # KE = 2 * [[1,2,3],[2,4,6],[3,6,9]] row-major
+        velocities = wp.array([[1.0, 2.0, 3.0]], dtype=vec_dtype, device=device)
+        masses = wp.array([2.0], dtype=scalar_dtype, device=device)
+
+        kinetic_tensors = wp.zeros((1, 9), dtype=scalar_dtype, device=device)
+        pressure_tensors = wp.empty(1, dtype=vec9_dtype, device=device)
+
+        compute_pressure_tensor(
+            velocities,
+            masses,
+            virial_tensors,
+            cells,
+            kinetic_tensors,
+            pressure_tensors,
+            volumes,
+            device=device,
+        )
+        wp.synchronize_device(device)
+
+        P = pressure_tensors.numpy()[0]
+        V = 1000.0
+        m = 2.0
+        v = np.array([1.0, 2.0, 3.0])
+        KE = m * np.outer(v, v).flatten()
+        expected = (KE + W) / V
+        np.testing.assert_allclose(P, expected, rtol=1e-10)
+
+
+# ==============================================================================
+# Non-cubic cells_inv integration tests for drag
+# ==============================================================================
+
+
+class TestNonCubicDrag:
+    """Verify drag uses ε̇ = ḣ h⁻¹ (not ḣ/V) with orthorhombic cells."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_isotropic_drag_non_cubic(self, device):
+        """Isotropic velocity half-step with orthorhombic cell h = diag(10,12,8).
+
+        With ḣ = diag(0.1, 0.12, 0.08), we get ε̇ = ḣ h⁻¹ = diag(0.01, 0.01, 0.01)
+        so Tr(ε̇)/3 = 0.01.  The naive formula Tr(ḣ)/(3V) = 0.3/(3*960) ≈ 1.04e-4
+        gives a very different drag.  Large dt amplifies the difference.
+        """
+        np_dtype = np.float64
+        scalar_dtype = wp.float64
+        mat_dtype = wp.mat33d
+        vec_dtype = wp.vec3d
+
+        num_atoms = 1
+        dt_val = 1.0
+
+        # Orthorhombic cell
+        h_np = np.diag([10.0, 12.0, 8.0]).astype(np_dtype)
+        h_inv_np = np.linalg.inv(h_np).astype(np_dtype)
+
+        cells_inv = wp.array(
+            [mat_dtype(*h_inv_np.flatten())], dtype=mat_dtype, device=device
+        )
+
+        # ḣ chosen so ε̇ = ḣ h⁻¹ = 0.01 * I (uniform strain rate)
+        h_dot_np = np.diag([0.1, 0.12, 0.08]).astype(np_dtype)
+        cell_velocities = wp.array(
+            [mat_dtype(*h_dot_np.flatten())], dtype=mat_dtype, device=device
+        )
+
+        # Single atom: v = (1,1,1), m = 1, F = 0, η̇₁ = 0
+        v_np = np.array([[1.0, 1.0, 1.0]], dtype=np_dtype)
+        velocities = wp.array(v_np, dtype=vec_dtype, device=device)
+        masses = wp.array([1.0], dtype=scalar_dtype, device=device)
+        forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+
+        eta_dot = wp.zeros((1, 1), dtype=scalar_dtype, device=device)
+        num_atoms_arr = wp.array([num_atoms], dtype=wp.int32, device=device)
+        dt = wp.array([dt_val], dtype=scalar_dtype, device=device)
+
+        vel_out = wp.empty(num_atoms, dtype=vec_dtype, device=device)
+        npt_velocity_half_step_out(
+            velocities,
+            masses,
+            forces,
+            cell_velocities,
+            cells_inv,
+            eta_dot,
+            num_atoms_arr,
+            dt,
+            vel_out,
+            mode="isotropic",
+            device=device,
+        )
+        wp.synchronize_device(device)
+
+        # Expected: v_new = v + dt/2 * (F/m - drag)
+        # drag = coupling * Tr(ε̇)/3 * v  (η̇₁ = 0)
+        # coupling = 1 + 1/N_f = 1 + 1/3 = 4/3
+        # Tr(ε̇)/3 = 0.01
+        # drag = (4/3) * 0.01 * v = 0.01333... * v
+        eps_dot = h_dot_np @ h_inv_np
+        trace_eps_3 = np.trace(eps_dot) / 3.0
+        N_f = 3.0 * num_atoms
+        coupling = 1.0 + 1.0 / N_f
+        drag = coupling * trace_eps_3 * v_np
+        expected = v_np + (dt_val / 2.0) * (0.0 - drag)
+
+        actual = vel_out.numpy()
+        np.testing.assert_allclose(actual, expected, rtol=1e-10)
+
+        # Also verify this differs from the naive Tr(ḣ)/(3V) formula
+        V = np.linalg.det(h_np)
+        naive_eps = (h_dot_np[0, 0] + h_dot_np[1, 1] + h_dot_np[2, 2]) / (3.0 * V)
+        naive_drag = coupling * naive_eps * v_np
+        naive_expected = v_np + (dt_val / 2.0) * (0.0 - naive_drag)
+        assert not np.allclose(actual, naive_expected, rtol=1e-5), (
+            "Test is degenerate: correct and naive formulas give the same result"
+        )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_anisotropic_drag_non_cubic(self, device):
+        """Anisotropic velocity half-step with non-uniform strain rates.
+
+        h = diag(10, 12, 8), ḣ = diag(0.2, 0.12, 0.16)
+        → ε̇ = diag(0.02, 0.01, 0.02) — different per-axis strain rates.
+        Large dt amplifies the difference vs the naive ḣ/V formula.
+        """
+        np_dtype = np.float64
+        scalar_dtype = wp.float64
+        mat_dtype = wp.mat33d
+        vec_dtype = wp.vec3d
+
+        num_atoms = 1
+        dt_val = 1.0
+
+        h_np = np.diag([10.0, 12.0, 8.0]).astype(np_dtype)
+        h_inv_np = np.linalg.inv(h_np).astype(np_dtype)
+        cells_inv = wp.array(
+            [mat_dtype(*h_inv_np.flatten())], dtype=mat_dtype, device=device
+        )
+
+        # Non-uniform ḣ → different ε̇ per axis
+        h_dot_np = np.diag([0.2, 0.12, 0.16]).astype(np_dtype)
+        cell_velocities = wp.array(
+            [mat_dtype(*h_dot_np.flatten())], dtype=mat_dtype, device=device
+        )
+
+        v_np = np.array([[1.0, 2.0, 3.0]], dtype=np_dtype)
+        velocities = wp.array(v_np, dtype=vec_dtype, device=device)
+        masses = wp.array([1.0], dtype=scalar_dtype, device=device)
+        forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+
+        eta_dot = wp.zeros((1, 1), dtype=scalar_dtype, device=device)
+        num_atoms_arr = wp.array([num_atoms], dtype=wp.int32, device=device)
+        dt = wp.array([dt_val], dtype=scalar_dtype, device=device)
+
+        vel_out = wp.empty(num_atoms, dtype=vec_dtype, device=device)
+        npt_velocity_half_step_out(
+            velocities,
+            masses,
+            forces,
+            cell_velocities,
+            cells_inv,
+            eta_dot,
+            num_atoms_arr,
+            dt,
+            vel_out,
+            mode="anisotropic",
+            device=device,
+        )
+        wp.synchronize_device(device)
+
+        # drag_i = (coupling * ε̇_ii + η̇₁) * v_i
+        eps_dot = h_dot_np @ h_inv_np
+        N_f = 3.0 * num_atoms
+        coupling = 1.0 + 1.0 / N_f
+        drag = np.array(
+            [
+                [
+                    (coupling * eps_dot[0, 0]) * v_np[0, 0],
+                    (coupling * eps_dot[1, 1]) * v_np[0, 1],
+                    (coupling * eps_dot[2, 2]) * v_np[0, 2],
+                ]
+            ]
+        )
+        expected = v_np + (dt_val / 2.0) * (0.0 - drag)
+
+        actual = vel_out.numpy()
+        np.testing.assert_allclose(actual, expected, rtol=1e-10)
+
+        # Naive formula: ε̇_ii = ḣ_ii / V gives uniform rate, losing axis info
+        V = np.linalg.det(h_np)
+        naive_drag = np.array(
+            [
+                [
+                    (coupling * h_dot_np[0, 0] / V) * v_np[0, 0],
+                    (coupling * h_dot_np[1, 1] / V) * v_np[0, 1],
+                    (coupling * h_dot_np[2, 2] / V) * v_np[0, 2],
+                ]
+            ]
+        )
+        naive_expected = v_np + (dt_val / 2.0) * (0.0 - naive_drag)
+        assert not np.allclose(actual, naive_expected, rtol=1e-5), (
+            "Test is degenerate: correct and naive formulas give the same result"
         )
