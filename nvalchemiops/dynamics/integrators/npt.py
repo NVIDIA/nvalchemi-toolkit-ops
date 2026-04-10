@@ -137,9 +137,7 @@ def _build_identity_h_inv_kernel(
     volumes: wp.array(dtype=Any),
     h_inv_out: wp.array(dtype=Any),
 ):
-    """Build h_inv = (1/V) * I as a fallback when cells_inv is not provided.
-
-    This reproduces the legacy ε̇ ≈ ḣ/V approximation for cubic cells.
+    """Build h_inv = (1/V) * I, valid for cubic cells.
 
     Launch Grid: dim = [num_systems]
     """
@@ -182,7 +180,7 @@ def _ensure_cells_inv(
     Returns
     -------
     wp.array
-        Inverse cell matrices (either caller-provided or manufactured).
+        Inverse cell matrices (either caller-provided or computed).
     """
     if cells_inv is not None:
         return cells_inv
@@ -2080,7 +2078,7 @@ def compute_cell_kinetic_energy(
         cells to compute the exact strain rate ε̇ = ḣ h⁻¹.
     volumes : wp.array(dtype=scalar), optional
         Cell volumes. Shape (B,). Used as fallback when ``cells_inv`` is not
-        provided: manufactures h⁻¹ = (1/V) I, which is only valid for cubic
+        provided: computes h⁻¹ = (1/V) I, which is only valid for cubic
         cells. For non-cubic cells the caller must provide ``cells_inv``.
     device : str, optional
         Warp device.
@@ -2523,7 +2521,7 @@ def npt_velocity_half_step(
     num_atoms_per_system : wp.array(dtype=wp.int32), optional
         Number of atoms per system. Required for batched simulations.
     cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode. One of:
@@ -2608,7 +2606,7 @@ def npt_velocity_half_step_out(
         System state arrays.
     volumes : wp.array
         Cell volumes. Shape (B,). Used as fallback when ``cells_inv``
-        is not provided (only valid for cubic cells; for non-cubic cells the caller must provide ``cells_inv``).
+        is not provided (only valid for cubic cells).
     eta_dots : wp.array
         Thermostat chain velocities.
     num_atoms : wp.array(dtype=wp.int32)
@@ -2623,7 +2621,7 @@ def npt_velocity_half_step_out(
     num_atoms_per_system : wp.array, optional
         Atom counts per system.
     cells_inv : wp.array, optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
@@ -3344,7 +3342,7 @@ def nph_velocity_half_step(
         Cell velocity matrices ḣ = dh/dt.
     volumes : wp.array(dtype=scalar)
         Cell volumes. Shape (B,). Used to build h⁻¹ = (1/V)I when
-        ``cells_inv`` is not provided (only valid for cubic cells; for non-cubic cells the caller must provide ``cells_inv``).
+        ``cells_inv`` is not provided (only valid for cubic cells).
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3355,7 +3353,7 @@ def nph_velocity_half_step(
     num_atoms_per_system : wp.array, optional
         Number of atoms per system.
     cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode:
@@ -3423,7 +3421,7 @@ def nph_velocity_half_step_out(
         System state arrays.
     volumes : wp.array
         Cell volumes. Shape (B,). Used as fallback when ``cells_inv``
-        is not provided (only valid for cubic cells; for non-cubic cells the caller must provide ``cells_inv``).
+        is not provided (only valid for cubic cells).
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3434,7 +3432,7 @@ def nph_velocity_half_step_out(
     batch_idx, num_atoms_per_system : wp.array, optional
         For batched simulations.
     cells_inv : wp.array, optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
