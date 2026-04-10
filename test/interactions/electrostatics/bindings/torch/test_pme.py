@@ -3940,6 +3940,35 @@ class TestPMEHybridForces:
         assert v_hyb.grad_fn is None
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_virial_detached_with_grad_charges(self, device):
+        """Virial must have no grad_fn even when charges require grad."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions, _, cell = create_dipole_system(device)
+
+        charge_model = torch.nn.Linear(3, 1, bias=False).to(
+            device=device, dtype=positions.dtype
+        )
+        charge_model.train()
+        charges = charge_model(positions).squeeze(-1)
+
+        _, _, v_hyb = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            compute_forces=True,
+            compute_virial=True,
+            hybrid_forces=True,
+        )
+
+        assert charges.requires_grad is True
+        assert v_hyb.grad_fn is None
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_hybrid_full_pme(self, device):
         """Test hybrid_forces on particle_mesh_ewald end-to-end."""
         if device == "cuda" and not torch.cuda.is_available():
