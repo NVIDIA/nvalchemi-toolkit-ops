@@ -445,9 +445,47 @@ class TestBarostatUtilitiesAPI:
         wp.synchronize_device(device)
 
         assert ke.shape[0] == 1
-        # KE = 0.5 * W * ||h_dot||^2_F = 0.5 * 100 * (3 * 0.01) = 1.5
+        # KE = 0.5 * W * ||ε̇||²_F where ε̇ = ḣ h⁻¹
+        # With h⁻¹ = I: ε̇ = ḣ, so ||ε̇||²_F = 3 * 0.1² = 0.03
         expected = 0.5 * 100.0 * 0.03
         np.testing.assert_allclose(ke.numpy()[0], expected, rtol=1e-5)
+
+    def test_compute_cell_kinetic_energy_non_identity_cell(self, dtype, device):
+        """Test cell KE with non-identity h⁻¹ to exercise strain-rate path."""
+        mat_dtype = wp.mat33f if dtype == "float32" else wp.mat33d
+        scalar_dtype = wp.float32 if dtype == "float32" else wp.float64
+        np_dtype = np.float32 if dtype == "float32" else np.float64
+
+        # Non-cubic cell: h = diag(2, 3, 4), h⁻¹ = diag(0.5, 1/3, 0.25)
+        h_inv_np = np.diag([0.5, 1.0 / 3.0, 0.25]).astype(np_dtype)
+        # ḣ = diag(0.2, 0.3, 0.4)
+        h_dot_np = np.diag([0.2, 0.3, 0.4]).astype(np_dtype)
+        # ε̇ = ḣ h⁻¹ = diag(0.1, 0.1, 0.1) — same strain rate, different ḣ
+        eps_dot_np = h_dot_np @ h_inv_np
+
+        h_dot_mat = mat_dtype(*h_dot_np.flatten())
+        h_inv_mat = mat_dtype(*h_inv_np.flatten())
+        cell_velocities = wp.array([h_dot_mat], dtype=mat_dtype, device=device)
+        cells_inv = wp.array([h_inv_mat], dtype=mat_dtype, device=device)
+        W = 100.0
+        cell_masses = wp.array([W], dtype=scalar_dtype, device=device)
+        ke_out = wp.empty(1, dtype=scalar_dtype, device=device)
+
+        ke = compute_cell_kinetic_energy(
+            cell_velocities, cells_inv, cell_masses, ke_out, device=device
+        )
+        wp.synchronize_device(device)
+
+        # KE = 0.5 * W * ||ε̇||²_F = 0.5 * 100 * (0.1² + 0.1² + 0.1²) = 1.5
+        frob_sq = float(np.sum(eps_dot_np**2))
+        expected = 0.5 * W * frob_sq
+        np.testing.assert_allclose(ke.numpy()[0], expected, rtol=1e-5)
+
+        # Verify this differs from naive ||ḣ||²_F
+        naive_frob_sq = float(np.sum(h_dot_np**2))
+        assert not np.isclose(frob_sq, naive_frob_sq), (
+            "Test is degenerate: ||ε̇||² == ||ḣ||² — use a non-identity h⁻¹"
+        )
 
     def test_compute_barostat_potential_energy_runs(self, dtype, device):
         """Test barostat potential energy computation."""
