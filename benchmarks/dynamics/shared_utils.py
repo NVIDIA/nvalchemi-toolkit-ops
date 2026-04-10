@@ -657,22 +657,18 @@ def _pack_virial_flat_to_vec9_kernel(
     sys_id = wp.tid()
     v = virial_vec9[sys_id]
     v0 = virial_vec9[sys_id][0]
-    # NOTE ON SIGN CONVENTION:
-    # - The LJ kernels accumulate virial with a negative sign convention: W = -Σ r ⊗ F.
-    # - The MTK NPT/NPH implementation in `nvalchemiops.dynamics.integrators.npt`
-    #   computes pressure as P = (kinetic + virial) / V, which expects virial in the
-    #   *positive* convention: +Σ r ⊗ F.
-    # Therefore we negate here so the integrators see the expected virial sign.
+    # All interaction kernels produce W = -dE/dε directly (see conventions.md).
+    # compute_pressure_tensor expects this sign, so no conversion is needed.
     virial_vec9[sys_id] = type(v)(
-        type(v0)(-virial_flat[0]),
-        type(v0)(-virial_flat[1]),
-        type(v0)(-virial_flat[2]),
-        type(v0)(-virial_flat[3]),
-        type(v0)(-virial_flat[4]),
-        type(v0)(-virial_flat[5]),
-        type(v0)(-virial_flat[6]),
-        type(v0)(-virial_flat[7]),
-        type(v0)(-virial_flat[8]),
+        type(v0)(virial_flat[0]),
+        type(v0)(virial_flat[1]),
+        type(v0)(virial_flat[2]),
+        type(v0)(virial_flat[3]),
+        type(v0)(virial_flat[4]),
+        type(v0)(virial_flat[5]),
+        type(v0)(virial_flat[6]),
+        type(v0)(virial_flat[7]),
+        type(v0)(virial_flat[8]),
     )
 
 
@@ -693,44 +689,43 @@ def _virial_to_stress_kernel(
 ):
     """Convert virial to stress tensor for cell optimization.
 
-    Computes: stress = P_ext - P_internal
+    Computes: stress = P_ext * I - W / V
 
-    where P_internal = -virial/V (negated because LJ virial has W = -Σ r ⊗ F).
+    where W = -dE/dε is the virial produced directly by the interaction
+    kernels (see conventions.md).  P_int = W/V is the internal pressure
+    contribution from pairwise interactions.
 
-    At equilibrium: P_internal = P_ext, so stress = 0.
-    When P_internal < P_ext: stress > 0, cell contracts (via stress_to_cell_force).
-    When P_internal > P_ext: stress < 0, cell expands.
+    At equilibrium: P_int = P_ext, so stress = 0.
+    When P_int < P_ext: stress > 0, cell contracts (via stress_to_cell_force).
+    When P_int > P_ext: stress < 0, cell expands.
     """
     sys = wp.tid()
     V = volume[sys]
     inv_V = wp.float64(1.0) / V
 
     # Virial components (row-major: xx, xy, xz, yx, yy, yz, zx, zy, zz)
-    # Negate because LJ virial uses convention W = -Σ r ⊗ F
-    # After negation: positive = compression (repulsive forces)
-    vxx = -virial_flat[0]
-    vxy = -virial_flat[1]
-    vxz = -virial_flat[2]
-    vyx = -virial_flat[3]
-    vyy = -virial_flat[4]
-    vyz = -virial_flat[5]
-    vzx = -virial_flat[6]
-    vzy = -virial_flat[7]
-    vzz = -virial_flat[8]
+    # W = -dE/dε produced directly by interaction kernels; no sign flip needed
+    wxx = virial_flat[0]
+    wxy = virial_flat[1]
+    wxz = virial_flat[2]
+    wyx = virial_flat[3]
+    wyy = virial_flat[4]
+    wyz = virial_flat[5]
+    wzx = virial_flat[6]
+    wzy = virial_flat[7]
+    wzz = virial_flat[8]
 
-    # Internal pressure (diagonal): P_int = virial/V (positive = compression)
-    # Stress for optimization: σ = P_ext - P_int
-    # This ensures σ = 0 at equilibrium, and correct sign for cell force
+    # σ = P_ext * I - W/V
     stress[sys] = wp.mat33d(
-        external_pressure - vxx * inv_V,
-        -vxy * inv_V,
-        -vxz * inv_V,
-        -vyx * inv_V,
-        external_pressure - vyy * inv_V,
-        -vyz * inv_V,
-        -vzx * inv_V,
-        -vzy * inv_V,
-        external_pressure - vzz * inv_V,
+        external_pressure - wxx * inv_V,
+        -wxy * inv_V,
+        -wxz * inv_V,
+        -wyx * inv_V,
+        external_pressure - wyy * inv_V,
+        -wyz * inv_V,
+        -wzx * inv_V,
+        -wzy * inv_V,
+        external_pressure - wzz * inv_V,
     )
 
 
