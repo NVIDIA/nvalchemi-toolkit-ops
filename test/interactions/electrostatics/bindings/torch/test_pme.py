@@ -3954,7 +3954,16 @@ class TestPMEHybridForces:
         charge_model.train()
         charges = charge_model(positions).squeeze(-1)
 
-        _, _, v_hyb = pme_reciprocal_space(
+        e_std, _, v_std = pme_reciprocal_space(
+            positions,
+            charges.detach(),
+            cell,
+            alpha=0.3,
+            mesh_dimensions=(16, 16, 16),
+            compute_forces=True,
+            compute_virial=True,
+        )
+        e_hyb, _, v_hyb = pme_reciprocal_space(
             positions,
             charges,
             cell,
@@ -3966,7 +3975,10 @@ class TestPMEHybridForces:
         )
 
         assert charges.requires_grad is True
+        torch.testing.assert_close(v_std, v_hyb, rtol=1e-12, atol=1e-14)
         assert v_hyb.grad_fn is None
+        assert e_hyb.sum().requires_grad is True
+        torch.autograd.grad(e_hyb.sum(), charges, retain_graph=True)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_hybrid_full_pme(self, device):
