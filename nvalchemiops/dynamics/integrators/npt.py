@@ -128,6 +128,82 @@ vec3d = wp.vec3d
 
 
 # =============================================================================
+# Helper: compute h_inv from volumes when cells_inv is not provided
+# =============================================================================
+
+
+@wp.kernel
+def _build_identity_h_inv_kernel(
+    volumes: wp.array(dtype=Any),
+    h_inv_out: wp.array(dtype=Any),
+):
+    """Build h_inv = (1/V) * I as a fallback when cells_inv is not provided.
+
+    This reproduces the legacy ε̇ ≈ ḣ/V approximation for cubic cells.
+
+    Launch Grid: dim = [num_systems]
+    """
+    sys = wp.tid()
+    inv_V = type(volumes[sys])(1.0) / volumes[sys]
+    z = type(volumes[sys])(0.0)
+    h_inv_out[sys] = type(h_inv_out[sys])(inv_V, z, z, z, inv_V, z, z, z, inv_V)
+
+
+_build_identity_h_inv_kernel_overload = {}
+for _t, _m in zip(
+    [wp.float32, wp.float64],
+    [wp.mat33f, wp.mat33d],
+):
+    _build_identity_h_inv_kernel_overload[_t] = wp.overload(
+        _build_identity_h_inv_kernel,
+        [wp.array(dtype=_t), wp.array(dtype=_m)],
+    )
+
+
+def _ensure_cells_inv(
+    cells_inv: wp.array | None,
+    volumes: wp.array | None,
+    cell_velocities: wp.array,
+    device: str | None,
+) -> wp.array:
+    """Return cells_inv if provided, otherwise build (1/V)*I from volumes.
+
+    Parameters
+    ----------
+    cells_inv : wp.array or None
+        Caller-provided inverse cell matrices.
+    volumes : wp.array or None
+        Cell volumes, used as fallback.
+    cell_velocities : wp.array
+        Used only to infer mat dtype (mat33f or mat33d).
+    device : str or None
+        Warp device.
+
+    Returns
+    -------
+    wp.array
+        Inverse cell matrices (either caller-provided or manufactured).
+    """
+    if cells_inv is not None:
+        return cells_inv
+    if volumes is None:
+        raise ValueError("Either cells_inv or volumes must be provided.")
+    num_systems = volumes.shape[0]
+    mat_dtype = cell_velocities.dtype
+    if device is None:
+        device = cell_velocities.device
+    scalar_dtype = volumes.dtype
+    h_inv = wp.empty(num_systems, dtype=mat_dtype, device=device)
+    wp.launch(
+        _build_identity_h_inv_kernel_overload[scalar_dtype],
+        dim=num_systems,
+        inputs=[volumes, h_inv],
+        device=device,
+    )
+    return h_inv
+
+
+# =============================================================================
 # Shared @wp.func for NPT/NPH physics
 # =============================================================================
 
@@ -1980,9 +2056,10 @@ def compute_barostat_mass(
 
 def compute_cell_kinetic_energy(
     cell_velocities: wp.array,
-    cells_inv: wp.array,
     cell_masses: wp.array,
     kinetic_energy: wp.array,
+    cells_inv: wp.array = None,
+    volumes: wp.array = None,
     device: str = None,
 ) -> wp.array:
     """
@@ -1994,12 +2071,17 @@ def compute_cell_kinetic_energy(
     ----------
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Cell velocity matrices ḣ = dh/dt. Shape (B,).
-    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Inverse cell matrices h⁻¹. Shape (B,).
     cell_masses : wp.array
         Barostat masses. Shape (B,).
     kinetic_energy : wp.array(dtype=scalar)
         Output cell kinetic energy. Shape (B,).
+    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
+        Inverse cell matrices h⁻¹. Shape (B,). Required for non-cubic
+        cells to compute the exact strain rate ε̇ = ḣ h⁻¹.
+    volumes : wp.array(dtype=scalar), optional
+        Cell volumes. Shape (B,). Used as fallback when ``cells_inv`` is not
+        provided: manufactures h⁻¹ = (1/V) I, which is only valid for cubic
+        cells. For non-cubic cells the caller must provide ``cells_inv``.
     device : str, optional
         Warp device.
 
@@ -2007,16 +2089,23 @@ def compute_cell_kinetic_energy(
     -------
     wp.array
         Cell kinetic energy. Shape (B,).
+
+    Notes
+    -----
+    At least one of ``cells_inv`` or ``volumes`` must be provided.
+    If both are given, ``cells_inv`` takes precedence.
     """
     if device is None:
         device = cell_velocities.device
+
+    h_inv = _ensure_cells_inv(cells_inv, volumes, cell_velocities, device)
 
     num_systems = cell_velocities.shape[0]
 
     wp.launch(
         _compute_cell_kinetic_energy_kernel,
         dim=num_systems,
-        inputs=[cell_velocities, cells_inv, cell_masses, kinetic_energy],
+        inputs=[cell_velocities, h_inv, cell_masses, kinetic_energy],
         device=device,
     )
 
@@ -2367,12 +2456,13 @@ def npt_velocity_half_step(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    cells_inv: wp.array,
+    volumes: wp.array,
     eta_dots: wp.array,
     num_atoms: wp.array,
     dt: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
+    cells_inv: wp.array = None,
     mode: str = "isotropic",
     device: str = None,
 ) -> None:
@@ -2418,8 +2508,9 @@ def npt_velocity_half_step(
         Forces on particles. Shape (N,).
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Cell velocity matrices ḣ = dh/dt. Shape (B,).
-    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Inverse cell matrices h⁻¹. Shape (B,).
+    volumes : wp.array(dtype=scalar)
+        Cell volumes. Shape (B,). Used to build h⁻¹ = (1/V)I when
+        ``cells_inv`` is not provided (only valid for cubic cells).
     eta_dots : wp.array2d(dtype=scalar)
         Thermostat chain velocities. Shape (B, chain_length).
     num_atoms : wp.array(dtype=wp.int32)
@@ -2431,6 +2522,9 @@ def npt_velocity_half_step(
         System index for each atom. Required for batched simulations.
     num_atoms_per_system : wp.array(dtype=wp.int32), optional
         Number of atoms per system. Required for batched simulations.
+    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode. One of:
 
@@ -2443,18 +2537,19 @@ def npt_velocity_half_step(
 
     Examples
     --------
-    Single system (isotropic):
+    Single system (isotropic, cubic cell):
 
     >>> npt_velocity_half_step(
-    ...     velocities, masses, forces, cell_velocities, cells_inv,
+    ...     velocities, masses, forces, cell_velocities, volumes,
     ...     eta_dots, num_atoms=100, dt=0.001
     ... )
 
-    Triclinic cell:
+    Non-cubic cell (pass cells_inv for exact strain rate):
 
     >>> npt_velocity_half_step(
-    ...     velocities, masses, forces, cell_velocities, cells_inv,
-    ...     eta_dots, num_atoms=100, dt=0.001, mode="triclinic"
+    ...     velocities, masses, forces, cell_velocities, volumes,
+    ...     eta_dots, num_atoms=100, dt=0.001,
+    ...     cells_inv=cells_inv, mode="triclinic"
     ... )
 
     See Also
@@ -2462,18 +2557,20 @@ def npt_velocity_half_step(
     npt_barostat_half_step : Cell velocity update step.
     npt_position_update : Position update step.
     """
+    # In-place: delegate to _out with velocities as both input and output
     npt_velocity_half_step_out(
         velocities,
         masses,
         forces,
         cell_velocities,
-        cells_inv,
+        volumes,
         eta_dots,
         num_atoms,
         dt,
         velocities_out=velocities,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
+        cells_inv=cells_inv,
         mode=mode,
         device=device,
         _skip_validation=True,
@@ -2485,13 +2582,14 @@ def npt_velocity_half_step_out(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    cells_inv: wp.array,
+    volumes: wp.array,
     eta_dots: wp.array,
     num_atoms: wp.array,
     dt: wp.array,
     velocities_out: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
+    cells_inv: wp.array = None,
     mode: str = "isotropic",
     device: str = None,
     _skip_validation: bool = False,
@@ -2508,8 +2606,9 @@ def npt_velocity_half_step_out(
         Input velocities (not modified when velocities_out differs).
     masses, forces, cell_velocities : wp.array
         System state arrays.
-    cells_inv : wp.array
-        Inverse cell matrices h⁻¹. Shape (B,).
+    volumes : wp.array
+        Cell volumes. Shape (B,). Used as fallback when ``cells_inv``
+        is not provided (only valid for cubic cells; for non-cubic cells the caller must provide ``cells_inv``).
     eta_dots : wp.array
         Thermostat chain velocities.
     num_atoms : wp.array(dtype=wp.int32)
@@ -2523,6 +2622,9 @@ def npt_velocity_half_step_out(
         System indices for batched simulations.
     num_atoms_per_system : wp.array, optional
         Atom counts per system.
+    cells_inv : wp.array, optional
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
     device : str, optional
@@ -2538,6 +2640,8 @@ def npt_velocity_half_step_out(
 
     if not _skip_validation:
         validate_out_array(velocities_out, velocities, "velocities_out")
+
+    h_inv = _ensure_cells_inv(cells_inv, volumes, cell_velocities, device)
 
     exec_mode = resolve_execution_mode(batch_idx, None)
     n_atoms = velocities.shape[0]
@@ -2558,7 +2662,7 @@ def npt_velocity_half_step_out(
             masses,
             forces,
             cell_velocities,
-            cells_inv,
+            h_inv,
             eta_dots,
             num_atoms,
             dt,
@@ -2570,7 +2674,7 @@ def npt_velocity_half_step_out(
             forces,
             batch_idx,
             cell_velocities,
-            cells_inv,
+            h_inv,
             eta_dots,
             num_atoms_per_system,
             dt,
@@ -2893,12 +2997,13 @@ def run_npt_step(
         masses,
         forces,
         cell_velocities,
-        cells_inv,
+        volumes,
         eta_dot,
         num_atoms,
         dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
+        cells_inv=cells_inv,
         device=device,
     )
 
@@ -2949,12 +3054,13 @@ def run_npt_step(
         masses,
         forces,
         cell_velocities,
-        cells_inv,
+        volumes,
         eta_dot,
         num_atoms,
         dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
+        cells_inv=cells_inv,
         device=device,
     )
 
@@ -3191,11 +3297,12 @@ def nph_velocity_half_step(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    cells_inv: wp.array,
+    volumes: wp.array,
     num_atoms: wp.array,
     dt: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
+    cells_inv: wp.array = None,
     mode: str = "isotropic",
     device: str = None,
 ) -> None:
@@ -3235,8 +3342,9 @@ def nph_velocity_half_step(
         Forces on particles.
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Cell velocity matrices ḣ = dh/dt.
-    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Inverse cell matrices h^-1. Shape (B,).
+    volumes : wp.array(dtype=scalar)
+        Cell volumes. Shape (B,). Used to build h⁻¹ = (1/V)I when
+        ``cells_inv`` is not provided (only valid for cubic cells; for non-cubic cells the caller must provide ``cells_inv``).
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3246,6 +3354,9 @@ def nph_velocity_half_step(
         System index for each atom.
     num_atoms_per_system : wp.array, optional
         Number of atoms per system.
+    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode:
 
@@ -3261,17 +3372,19 @@ def nph_velocity_half_step(
     nph_barostat_half_step : Cell velocity update.
     npt_velocity_half_step : Velocity update with thermostat.
     """
+    # In-place: delegate to _out with velocities as both input and output
     nph_velocity_half_step_out(
         velocities,
         masses,
         forces,
         cell_velocities,
-        cells_inv,
+        volumes,
         num_atoms,
         dt,
         velocities_out=velocities,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
+        cells_inv=cells_inv,
         mode=mode,
         device=device,
         _skip_validation=True,
@@ -3286,12 +3399,13 @@ def nph_velocity_half_step_out(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    cells_inv: wp.array,
+    volumes: wp.array,
     num_atoms: wp.array,
     dt: wp.array,
     velocities_out: wp.array,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
+    cells_inv: wp.array = None,
     mode: str = "isotropic",
     device: str = None,
     _skip_validation: bool = False,
@@ -3307,8 +3421,9 @@ def nph_velocity_half_step_out(
         Input velocities (not modified when velocities_out differs).
     masses, forces, cell_velocities : wp.array
         System state arrays.
-    cells_inv : wp.array
-        Inverse cell matrices h^-1. Shape (B,).
+    volumes : wp.array
+        Cell volumes. Shape (B,). Used as fallback when ``cells_inv``
+        is not provided (only valid for cubic cells; for non-cubic cells the caller must provide ``cells_inv``).
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3318,6 +3433,9 @@ def nph_velocity_half_step_out(
         Pre-allocated output array.
     batch_idx, num_atoms_per_system : wp.array, optional
         For batched simulations.
+    cells_inv : wp.array, optional
+        Inverse cell matrices h⁻¹. Shape (B,). When provided, the exact
+        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
     device : str, optional
@@ -3333,6 +3451,8 @@ def nph_velocity_half_step_out(
 
     if not _skip_validation:
         validate_out_array(velocities_out, velocities, "velocities_out")
+
+    h_inv = _ensure_cells_inv(cells_inv, volumes, cell_velocities, device)
 
     exec_mode = resolve_execution_mode(batch_idx, None)
     n_atoms = velocities.shape[0]
@@ -3353,7 +3473,7 @@ def nph_velocity_half_step_out(
             masses,
             forces,
             cell_velocities,
-            cells_inv,
+            h_inv,
             num_atoms,
             dt,
             velocities_out,
@@ -3364,7 +3484,7 @@ def nph_velocity_half_step_out(
             forces,
             batch_idx,
             cell_velocities,
-            cells_inv,
+            h_inv,
             num_atoms_per_system,
             dt,
             velocities_out,
@@ -3557,11 +3677,12 @@ def run_nph_step(
         masses,
         forces,
         cell_velocities,
-        cells_inv,
+        volumes,
         num_atoms,
         dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
+        cells_inv=cells_inv,
         device=device,
     )
 
@@ -3612,11 +3733,12 @@ def run_nph_step(
         masses,
         forces,
         cell_velocities,
-        cells_inv,
+        volumes,
         num_atoms,
         dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
+        cells_inv=cells_inv,
         device=device,
     )
 
