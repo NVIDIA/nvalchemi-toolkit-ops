@@ -27,6 +27,14 @@ See the [installation guide](install) for full prerequisites.
 If the existing API is missing functionality you need and you think it would
 benefit the community, please start a discussion on Github [Issues][issues_].
 
+### How do I install on NVIDIA DGX Spark?
+
+DGX Spark uses a Blackwell GPU that requires CUDA 13. PyTorch `cu130` wheels
+are not on the default PyPI index, so you need to specify the PyTorch wheel
+repository explicitly. See the
+[DGX Spark installation section](install.md#dgx-spark-installation) in the
+installation guide for step-by-step instructions.
+
 ## Neighbor Lists
 
 ### What is the difference between cell_list and naive algorithms?

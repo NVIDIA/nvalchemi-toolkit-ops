@@ -27,6 +27,13 @@ When running on CUDA-capable NVIDIA GPUs, we recommend:
 - GPU Compute Capability: 8.0 or higher (A100 and newer)
 - Driver: NVIDIA driver 570.xx.xx or newer
 
+### NVIDIA DGX Spark
+
+NVIDIA DGX Spark ships with a Blackwell GPU that requires **CUDA 13**. PyTorch
+does not yet publish CUDA 13 wheels on the default PyPI index, so an extra index
+URL is required when installing the `torch` backend. See
+[DGX Spark Installation](#dgx-spark-installation) below for detailed steps.
+
 ## Installation Methods
 
 ### From PyPI
@@ -172,6 +179,46 @@ $ uv add nvalchemi-toolkit-ops
 ```
 
 </details>
+
+(dgx-spark-installation)=
+
+## NVIDIA DGX Spark Installation
+
+[NVIDIA DGX Spark](https://www.nvidia.com/en-us/products/workstations/dgx-spark/)
+ships with a Blackwell GPU that requires CUDA 13. Because PyTorch does not yet
+publish CUDA 13 (`cu130`) wheels on the default PyPI index, you must pull them
+from the PyTorch wheel repository.
+
+At the time of writing, PyTorch versions **2.9.0**, **2.9.1**, **2.10.0**, and
+**2.11.0** provide `cu130` wheels.
+
+### Without cloning (recommended for most users)
+
+```bash
+$ uv venv --seed --python 3.12
+$ uv pip install nvalchemi-toolkit-ops \
+    torch==2.11.0+cu130 \
+    --extra-index-url https://download.pytorch.org/whl/cu130
+```
+
+### With cloning (for developers)
+
+```bash
+$ git clone git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
+$ cd nvalchemi-toolkit-ops
+$ uv sync --all-extras
+# Replace the default torch wheel with the CUDA 13 build
+$ uv pip install torch==2.11.0+cu130 \
+    --force-reinstall \
+    --extra-index-url https://download.pytorch.org/whl/cu130
+```
+
+```{note}
+The `--force-reinstall` flag is needed in the developer flow because `uv sync`
+will have already installed a default PyTorch wheel. The version can be
+substituted for any of the available `cu130` builds (2.9.0, 2.9.1, 2.10.0,
+2.11.0).
+```
 
 ## Installation with Conda & Mamba
 
