@@ -22,10 +22,17 @@ test modules (Coulomb, Ewald, PME, etc.).
 
 from __future__ import annotations
 
-import jax
-import jax.numpy as jnp
-import numpy as np
 import pytest
+
+pytest.importorskip("jax", reason="No JAX installed.")
+
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError:
+    jax = None
+    jnp = None
+import numpy as np
 
 
 @pytest.fixture(scope="session")

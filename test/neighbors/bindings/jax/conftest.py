@@ -19,10 +19,13 @@ from __future__ import annotations
 
 from importlib import import_module
 
+import pytest
+
+pytest.importorskip("jax", reason="No JAX installed.")
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 # Enable float64 support
 jax.config.update("jax_enable_x64", True)
