@@ -198,7 +198,7 @@ PyTorch.
 ```bash
 # Standalone install (x86)
 uv venv --seed --python 3.12
-uv pip install nvalchemi-toolkit-ops torch==2.11.0+cu130
+uv pip install nvalchemi-toolkit-ops torch==2.11.0
 
 # Standalone install (Arm, e.g. DGX Spark)
 uv venv --seed --python 3.12
