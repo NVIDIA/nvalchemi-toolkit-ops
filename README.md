@@ -188,27 +188,26 @@ system_energy = atom_energies.sum()
 
 </details>
 
-## NVIDIA DGX Spark
+## CUDA 13 Support
 
-DGX Spark ships with a Blackwell GPU that requires CUDA 13. PyTorch does not
-yet publish `cu130` wheels on the default PyPI index, so an extra index URL is
-needed. PyTorch versions **2.9.0**, **2.9.1**, **2.10.0**, and **2.11.0**
-provide `cu130` wheels.
+CUDA 13 is required for Blackwell GPUs. `torch>=2.11.0` and `jax[cuda13]`
+publish CUDA 13 wheels on the default PyPI index for x86 platforms. On Arm
+platforms (e.g. NVIDIA DGX Spark), an `--extra-index-url` is required for
+PyTorch.
 
 ```bash
-# Standalone install
+# Standalone install (x86)
+uv venv --seed --python 3.12
+uv pip install nvalchemi-toolkit-ops torch==2.11.0+cu130
+
+# Standalone install (Arm, e.g. DGX Spark)
 uv venv --seed --python 3.12
 uv pip install nvalchemi-toolkit-ops \
     torch==2.11.0+cu130 \
     --extra-index-url https://download.pytorch.org/whl/cu130
-
-# Developer install (after cloning)
-uv sync --all-extras
-uv pip install torch==2.11.0+cu130 --force-reinstall \
-    --extra-index-url https://download.pytorch.org/whl/cu130
 ```
 
-See the [installation guide](https://nvidia.github.io/nvalchemi-toolkit-ops/userguide/about/install.html#dgx-spark-installation)
+See the [installation guide](https://nvidia.github.io/nvalchemi-toolkit-ops/userguide/about/install.html#cuda-13-installation)
 for details.
 
 ## Roadmap
