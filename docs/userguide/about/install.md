@@ -204,7 +204,7 @@ $ uv pip install nvalchemi-toolkit-ops \
 ### With cloning (for developers)
 
 ```bash
-$ git clone git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
+$ git clone git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync --all-extras
 # Replace the default torch wheel with the CUDA 13 build
