@@ -40,6 +40,12 @@ $ pip install 'nvalchemi-toolkit-ops[jax]'
 
 ::::
 
+```{tip}
+Running on **NVIDIA DGX Spark**? The Blackwell GPU requires CUDA 13 wheels for
+PyTorch. See the [DGX Spark installation notes](about/install.md#dgx-spark-installation)
+before proceeding.
+```
+
 Make sure it is importable:
 
 ```bash
