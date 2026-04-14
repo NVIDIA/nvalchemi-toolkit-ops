@@ -133,6 +133,13 @@ def fire2_step_coord(
 
     Notes
     -----
+    Default hyperparameters (from the underlying Warp implementation):
+    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,
+    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,
+    ``tmin=0.005``, ``maxstep=0.1``.
+    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
+    full descriptions.
+
     For variable-cell optimization (coordinates + cell DOFs), use
     :func:`fire2_step_coord_cell` instead.
 
@@ -235,7 +242,8 @@ def fire2_step_coord_cell(
     results back.
 
     The cell must be pre-aligned to upper-triangular form via
-    ``align_cell()`` before the first call.
+    :func:`nvalchemiops.dynamics.utils.cell_filter.align_cell` before
+    the first call.
 
     Modifies *positions*, *velocities*, *cell*, *cell_velocities*,
     *alpha*, *dt*, and *nsteps_inc* in-place.
@@ -292,6 +300,13 @@ def fire2_step_coord_cell(
 
     Notes
     -----
+    Default hyperparameters (from the underlying Warp implementation):
+    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,
+    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,
+    ``tmin=0.005``, ``maxstep=0.1``.
+    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
+    full descriptions.
+
     **Pre-computing static metadata for tight loops**
 
     When *batch_idx* does not change between steps (fixed system sizes),
