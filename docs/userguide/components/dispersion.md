@@ -872,11 +872,11 @@ The `dftd3` function dispatches to different kernel implementations based on the
 neighbor representation format:
 
 - **Neighbor matrix** (`neighbor_matrix` argument): Dispatches to
-  `_dftd3_nm_op`, which launches kernels that iterate over a
+  `_dftd3_matrix_op`, which launches kernels that iterate over a
   dense `[num_atoms, max_neighbors]` array.
 
 - **Neighbor list** (`neighbor_list` + `neighbor_ptr` arguments): Dispatches to
-  `_dftd3_nl_op`, which launches kernels that
+  `_dftd3_op`, which launches kernels that
   use CSR (Compressed Sparse Row) format for memory-efficient sparse traversal.
 
 Both paths execute the same four-pass algorithm and produce identical results.
