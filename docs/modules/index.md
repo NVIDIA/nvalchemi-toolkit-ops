@@ -13,6 +13,7 @@ torch/neighbors.rst
 torch/dispersion.rst
 torch/electrostatics.rst
 torch/dynamics.rst
+torch/autograd.rst
 ```
 
 ## JAX Reference
