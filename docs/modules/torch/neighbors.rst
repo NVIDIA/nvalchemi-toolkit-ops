@@ -63,8 +63,8 @@ Rebuild Detection
 
 .. autofunction:: nvalchemiops.torch.neighbors.rebuild_detection.cell_list_needs_rebuild
 .. autofunction:: nvalchemiops.torch.neighbors.rebuild_detection.neighbor_list_needs_rebuild
-.. autofunction:: nvalchemiops.torch.neighbors.rebuild_detection.check_cell_list_rebuild_needed
-.. autofunction:: nvalchemiops.torch.neighbors.rebuild_detection.check_neighbor_list_rebuild_needed
+.. autofunction:: nvalchemiops.torch.neighbors.rebuild_detection.batch_cell_list_needs_rebuild
+.. autofunction:: nvalchemiops.torch.neighbors.rebuild_detection.batch_neighbor_list_needs_rebuild
 
 Utility Functions
 -----------------

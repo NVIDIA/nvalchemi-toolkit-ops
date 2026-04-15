@@ -807,20 +807,20 @@ def build_cell_list(
     atoms_per_cell_count : wp.array, shape (max_total_cells,), dtype=wp.int32
         OUTPUT: Number of atoms in each cell. Must be zeroed by caller before first use.
     cell_atom_start_indices : wp.array, shape (max_total_cells,), dtype=wp.int32
-        OUTPUT: Starting index in cell_atom_list for each cell's atoms.
-        Must be filled with cumulative sums by caller between kernel launches.
+        OUTPUT: Array for cell start offsets. Caller provides pre-allocated
+        and zeroed array.
     cell_atom_list : wp.array, shape (total_atoms,), dtype=wp.int32
         OUTPUT: Flattened list of atom indices organized by cell.
     wp_dtype : type
-        Warp dtype (wp.float32, wp.float64, or wp.float16).
+        Warp dtype (``wp.float32`` or ``wp.float64``).
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
 
     Notes
     -----
-    - This is a low-level warp interface. Caller must ensure atoms_per_cell_count is zeroed.
-    - atoms_per_cell_count must be zeroed before calling this function.
-    - This function handles the cumsum internally using wp.utils.array_scan.
+    - This is a low-level Warp interface. The caller must ensure
+      ``atoms_per_cell_count`` is zeroed before calling.
+    - This function handles the cumsum internally using ``wp.utils.array_scan``.
     - For framework bindings, use the torch/jax wrappers instead.
 
     See Also
@@ -945,7 +945,7 @@ def query_cell_list(
     num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
         OUTPUT: Number of neighbors found for each atom.
     wp_dtype : type
-        Warp dtype (wp.float32, wp.float64, or wp.float16).
+        Warp dtype (``wp.float32`` or ``wp.float64``).
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
     half_fill : bool, default=False

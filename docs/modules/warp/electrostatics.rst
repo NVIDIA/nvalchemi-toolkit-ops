@@ -49,10 +49,14 @@ Ewald summation kernels for real-space and reciprocal-space.
 .. autofunction:: ewald_real_space_energy_forces
 .. autofunction:: ewald_real_space_energy_matrix
 .. autofunction:: ewald_real_space_energy_forces_matrix
+.. autofunction:: ewald_real_space_energy_forces_charge_grad
+.. autofunction:: ewald_real_space_energy_forces_charge_grad_matrix
 .. autofunction:: batch_ewald_real_space_energy
 .. autofunction:: batch_ewald_real_space_energy_forces
 .. autofunction:: batch_ewald_real_space_energy_matrix
 .. autofunction:: batch_ewald_real_space_energy_forces_matrix
+.. autofunction:: batch_ewald_real_space_energy_forces_charge_grad
+.. autofunction:: batch_ewald_real_space_energy_forces_charge_grad_matrix
 
 **Reciprocal-Space:**
 
@@ -60,10 +64,12 @@ Ewald summation kernels for real-space and reciprocal-space.
 .. autofunction:: ewald_reciprocal_space_compute_energy
 .. autofunction:: ewald_subtract_self_energy
 .. autofunction:: ewald_reciprocal_space_energy_forces
+.. autofunction:: ewald_reciprocal_space_energy_forces_charge_grad
 .. autofunction:: batch_ewald_reciprocal_space_fill_structure_factors
 .. autofunction:: batch_ewald_reciprocal_space_compute_energy
 .. autofunction:: batch_ewald_subtract_self_energy
 .. autofunction:: batch_ewald_reciprocal_space_energy_forces
+.. autofunction:: batch_ewald_reciprocal_space_energy_forces_charge_grad
 
 PME Kernels
 ^^^^^^^^^^^

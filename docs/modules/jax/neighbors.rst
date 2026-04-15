@@ -65,6 +65,8 @@ Rebuild Detection
 .. autofunction:: nvalchemiops.jax.neighbors.rebuild_detection.neighbor_list_needs_rebuild
 .. autofunction:: nvalchemiops.jax.neighbors.rebuild_detection.check_cell_list_rebuild_needed
 .. autofunction:: nvalchemiops.jax.neighbors.rebuild_detection.check_neighbor_list_rebuild_needed
+.. autofunction:: nvalchemiops.jax.neighbors.rebuild_detection.batch_cell_list_needs_rebuild
+.. autofunction:: nvalchemiops.jax.neighbors.rebuild_detection.batch_neighbor_list_needs_rebuild
 
 Exceptions
 ----------
