@@ -586,7 +586,10 @@ document.write(`
     <span class="n">warp_custom_op</span><span class="p">,</span>
     <span class="n">warp_from_torch</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.ewald</span><span class="w"> </span><span class="kn">import</span> <span class="n">ewald_real_space</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics._util</span><span class="w"> </span><span class="kn">import</span> <span class="n">_InjectChargeGrad</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.ewald</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">ewald_real_space</span><span class="p">,</span>
+<span class="p">)</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics.k_vectors</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">generate_k_vectors_pme</span><span class="p">,</span>
 <span class="p">)</span>
@@ -672,6 +675,56 @@ document.write(`
     <span class="k">if</span> <span class="n">cell</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
         <span class="n">cell</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">cell</span><span class="p">,</span> <span class="n">cell</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_materialize_complex</span><span class="p">(</span><span class="n">tensor</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Force a fresh complex tensor for compiled FFT consumers.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">tensor</span><span class="o">.</span><span class="n">is_complex</span><span class="p">():</span>
+        <span class="k">return</span> <span class="n">tensor</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">complex</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">real</span><span class="p">,</span> <span class="n">tensor</span><span class="o">.</span><span class="n">imag</span><span class="p">)</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">compiler</span><span class="o">.</span><span class="n">disable</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_pme_fft_pipeline</span><span class="p">(</span>
+    <span class="n">mesh_grid</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">green_function</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">structure_factor_sq</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">k_vectors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">mesh_dimensions</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+    <span class="n">fft_dims</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+    <span class="n">compute_forces</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Execute the complex FFT-heavy PME reciprocal block eagerly.</span>
+
+<span class="sd">    TorchInductor does not currently generate reliable code for the repeated</span>
+<span class="sd">    complex FFT algebra in PME reciprocal space. Keep this narrow block eager</span>
+<span class="sd">    while leaving the surrounding Warp/spline operators compilable.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">mesh_fft</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">rfftn</span><span class="p">(</span><span class="n">mesh_grid</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;backward&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
+    <span class="n">mesh_fft_raw</span> <span class="o">=</span> <span class="n">mesh_fft</span>
+    <span class="n">mesh_fft</span> <span class="o">=</span> <span class="n">mesh_fft</span> <span class="o">/</span> <span class="n">structure_factor_sq</span>
+    <span class="n">convolved_mesh</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="n">mesh_fft</span> <span class="o">*</span> <span class="n">green_function</span><span class="p">)</span>
+    <span class="n">potential_mesh</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span>
+        <span class="n">convolved_mesh</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span>
+    <span class="p">)</span>
+
+    <span class="n">field_mesh</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">compute_forces</span><span class="p">:</span>
+        <span class="n">Ex_fft</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span><span class="p">)</span>
+        <span class="n">Ey_fft</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span><span class="p">)</span>
+        <span class="n">Ez_fft</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span><span class="p">)</span>
+        <span class="n">Ex</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span><span class="n">Ex_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
+        <span class="n">Ey</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span><span class="n">Ey_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
+        <span class="n">Ez</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span><span class="n">Ez_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
+        <span class="n">field_mesh</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">Ex</span><span class="p">,</span> <span class="n">Ey</span><span class="p">,</span> <span class="n">Ez</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">potential_mesh</span><span class="p">,</span> <span class="n">field_mesh</span><span class="p">,</span> <span class="n">mesh_fft_raw</span><span class="p">,</span> <span class="n">convolved_mesh</span>
+
+
+<span class="nd">@torch</span><span class="o">.</span><span class="n">compiler</span><span class="o">.</span><span class="n">disable</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_scale_force_field</span><span class="p">(</span><span class="n">interpolated_field</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Apply the final PME force scaling eagerly on compiled paths.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">interpolated_field</span>
 
 
 <span class="c1">###########################################################################################</span>
@@ -1848,6 +1901,11 @@ document.write(`
     <span class="n">k_sq_acc</span> <span class="o">=</span> <span class="n">k_squared</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">acc_dtype</span><span class="p">)</span>
     <span class="n">alpha_acc</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">acc_dtype</span><span class="p">)</span>
 
+    <span class="c1"># generate_k_vectors_pme squeezes the batch dim when B=1; restore it so</span>
+    <span class="c1"># the batched einsum and sum_dims=(1,2,3) operate on the correct axes.</span>
+    <span class="k">if</span> <span class="n">is_batch</span> <span class="ow">and</span> <span class="n">k_sq_acc</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+        <span class="n">k_sq_acc</span> <span class="o">=</span> <span class="n">k_sq_acc</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
     <span class="c1"># Handle alpha broadcasting: alpha may be (B,) for batch</span>
     <span class="k">if</span> <span class="n">is_batch</span> <span class="ow">and</span> <span class="n">alpha_acc</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
         <span class="n">alpha_view</span> <span class="o">=</span> <span class="n">alpha_acc</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
@@ -1867,6 +1925,9 @@ document.write(`
     <span class="c1"># virial_ab = sum_k weighted_energy * (delta_ab - k_factor * k_a * k_b) * k_mask</span>
     <span class="c1"># = delta_ab * sum_k (weighted_energy * k_mask) - sum_k (weighted_energy * k_mask * k_factor) * k_a * k_b</span>
     <span class="n">k_vecs_acc</span> <span class="o">=</span> <span class="n">k_vectors</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">acc_dtype</span><span class="p">)</span>  <span class="c1"># (..., nx, ny, nz//2+1, 3)</span>
+    <span class="k">if</span> <span class="n">is_batch</span> <span class="ow">and</span> <span class="n">k_vecs_acc</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
+        <span class="n">k_vecs_acc</span> <span class="o">=</span> <span class="n">k_vecs_acc</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
     <span class="n">masked_energy</span> <span class="o">=</span> <span class="n">weighted_energy</span> <span class="o">*</span> <span class="n">k_mask</span>  <span class="c1"># (..., nx, ny, nz//2+1)</span>
     <span class="n">masked_energy_kf</span> <span class="o">=</span> <span class="n">masked_energy</span> <span class="o">*</span> <span class="n">k_factor</span>  <span class="c1"># (..., nx, ny, nz//2+1)</span>
 
@@ -1913,6 +1974,7 @@ document.write(`
     <span class="n">compute_virial</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">k_vectors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">k_squared</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">hybrid_forces</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Internal implementation of PME reciprocal space calculation.</span>
 
@@ -1927,6 +1989,9 @@ document.write(`
     <span class="n">num_atoms</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">is_batch</span> <span class="o">=</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
     <span class="n">fft_dims</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="k">if</span> <span class="n">is_batch</span> <span class="k">else</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">hybrid_forces</span><span class="p">:</span>
+        <span class="n">compute_charge_gradients</span> <span class="o">=</span> <span class="kc">True</span>
 
     <span class="k">if</span> <span class="n">num_atoms</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
         <span class="n">energies</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_atoms</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">input_dtype</span><span class="p">)</span>
@@ -1950,24 +2015,28 @@ document.write(`
 
     <span class="n">mesh_nx</span><span class="p">,</span> <span class="n">mesh_ny</span><span class="p">,</span> <span class="n">mesh_nz</span> <span class="o">=</span> <span class="n">mesh_dimensions</span>
 
+    <span class="c1"># In hybrid mode, detach positions/charges/cell to sever autograd paths</span>
+    <span class="c1"># through the spline/FFT chain. Charge gradients are attached via</span>
+    <span class="c1"># straight-through trick after the forward pass.</span>
+    <span class="n">pos_spline</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="k">if</span> <span class="n">hybrid_forces</span> <span class="k">else</span> <span class="n">positions</span>
+    <span class="n">chg_spline</span> <span class="o">=</span> <span class="n">charges</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="k">if</span> <span class="n">hybrid_forces</span> <span class="k">else</span> <span class="n">charges</span>
+    <span class="n">cell_spline</span> <span class="o">=</span> <span class="n">cell</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="k">if</span> <span class="n">hybrid_forces</span> <span class="k">else</span> <span class="n">cell</span>
+
     <span class="c1"># Precompute cell inverse ONCE and derive what we need for all operations</span>
-    <span class="n">cell_inv</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv_ex</span><span class="p">(</span><span class="n">cell</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">cell_inv</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">inv_ex</span><span class="p">(</span><span class="n">cell_spline</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">cell_inv_t</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
     <span class="n">reciprocal_cell</span> <span class="o">=</span> <span class="n">TWOPI</span> <span class="o">*</span> <span class="n">cell_inv</span>
 
     <span class="c1"># Step 1: Charge assignment using unified spline_spread API</span>
     <span class="n">mesh_grid</span> <span class="o">=</span> <span class="n">spline_spread</span><span class="p">(</span>
-        <span class="n">positions</span><span class="p">,</span>
-        <span class="n">charges</span><span class="p">,</span>
-        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">pos_spline</span><span class="p">,</span>
+        <span class="n">chg_spline</span><span class="p">,</span>
+        <span class="n">cell_spline</span><span class="p">,</span>
         <span class="n">mesh_dims</span><span class="o">=</span><span class="p">(</span><span class="n">mesh_nx</span><span class="p">,</span> <span class="n">mesh_ny</span><span class="p">,</span> <span class="n">mesh_nz</span><span class="p">),</span>
         <span class="n">spline_order</span><span class="o">=</span><span class="n">spline_order</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
         <span class="n">cell_inv_t</span><span class="o">=</span><span class="n">cell_inv_t</span><span class="p">,</span>
     <span class="p">)</span>
-
-    <span class="c1"># Step 2: FFT of charge mesh</span>
-    <span class="n">mesh_fft</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">rfftn</span><span class="p">(</span><span class="n">mesh_grid</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;backward&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
 
     <span class="c1"># Step 3: Generate k-space grid and compute Green&#39;s function + structure factor</span>
     <span class="c1"># Green&#39;s function: G(k) = 2*pi * exp(-k^2/(4*alpha^2)) / (V * k^2)</span>
@@ -1975,38 +2044,77 @@ document.write(`
     <span class="c1"># Use precomputed k_vectors/k_squared if provided, otherwise generate them</span>
     <span class="k">if</span> <span class="n">k_vectors</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">k_squared</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">k_vectors</span><span class="p">,</span> <span class="n">k_squared</span> <span class="o">=</span> <span class="n">generate_k_vectors_pme</span><span class="p">(</span>
-            <span class="n">cell</span><span class="p">,</span> <span class="n">mesh_dimensions</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">reciprocal_cell</span><span class="o">=</span><span class="n">reciprocal_cell</span>
+            <span class="n">cell_spline</span><span class="p">,</span>
+            <span class="n">mesh_dimensions</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span>
+            <span class="n">reciprocal_cell</span><span class="o">=</span><span class="n">reciprocal_cell</span><span class="p">,</span>
         <span class="p">)</span>
 
+    <span class="n">alpha_gsf</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="k">if</span> <span class="n">hybrid_forces</span> <span class="k">else</span> <span class="n">alpha</span>
     <span class="n">green_function</span><span class="p">,</span> <span class="n">structure_factor_sq</span> <span class="o">=</span> <span class="n">pme_green_structure_factor</span><span class="p">(</span>
         <span class="n">k_squared</span><span class="p">,</span>
         <span class="n">mesh_dimensions</span><span class="p">,</span>
-        <span class="n">alpha</span><span class="p">,</span>
-        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">alpha_gsf</span><span class="p">,</span>
+        <span class="n">cell_spline</span><span class="p">,</span>
         <span class="n">spline_order</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="c1"># Save reference to raw FFT before deconvolution (needed for virial).</span>
-    <span class="c1"># No clone needed: the reassignment below creates a new tensor.</span>
-    <span class="n">mesh_fft_raw</span> <span class="o">=</span> <span class="n">mesh_fft</span> <span class="k">if</span> <span class="n">compute_virial</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">compiler</span><span class="o">.</span><span class="n">is_compiling</span><span class="p">():</span>
+        <span class="n">potential_mesh</span><span class="p">,</span> <span class="n">electric_field_mesh</span><span class="p">,</span> <span class="n">mesh_fft_raw</span><span class="p">,</span> <span class="n">convolved_mesh</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">_pme_fft_pipeline</span><span class="p">(</span>
+                <span class="n">mesh_grid</span><span class="o">=</span><span class="n">mesh_grid</span><span class="p">,</span>
+                <span class="n">green_function</span><span class="o">=</span><span class="n">green_function</span><span class="p">,</span>
+                <span class="n">structure_factor_sq</span><span class="o">=</span><span class="n">structure_factor_sq</span><span class="p">,</span>
+                <span class="n">k_vectors</span><span class="o">=</span><span class="n">k_vectors</span><span class="p">,</span>
+                <span class="n">mesh_dimensions</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span>
+                <span class="n">fft_dims</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">,</span>
+                <span class="n">compute_forces</span><span class="o">=</span><span class="n">compute_forces</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">potential_mesh</span> <span class="o">=</span> <span class="n">potential_mesh</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">electric_field_mesh</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">electric_field_mesh</span> <span class="o">=</span> <span class="n">electric_field_mesh</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Step 2: FFT of charge mesh</span>
+        <span class="n">mesh_fft</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">rfftn</span><span class="p">(</span><span class="n">mesh_grid</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;backward&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
 
-    <span class="c1"># Step 4: Apply B-spline deconvolution and convolve with Green&#39;s function</span>
-    <span class="n">mesh_fft</span> <span class="o">=</span> <span class="n">mesh_fft</span> <span class="o">/</span> <span class="n">structure_factor_sq</span>
-    <span class="n">convolved_mesh</span> <span class="o">=</span> <span class="n">mesh_fft</span> <span class="o">*</span> <span class="n">green_function</span>
+        <span class="c1"># Save reference to raw FFT before deconvolution (needed for virial).</span>
+        <span class="c1"># No clone needed: the reassignment below creates a new tensor.</span>
+        <span class="n">mesh_fft_raw</span> <span class="o">=</span> <span class="n">mesh_fft</span> <span class="k">if</span> <span class="n">compute_virial</span> <span class="k">else</span> <span class="kc">None</span>
 
-    <span class="c1"># Step 5: Inverse FFT to get potential mesh</span>
-    <span class="n">potential_mesh</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span>
-        <span class="n">convolved_mesh</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span>
-    <span class="p">)</span>
-    <span class="n">potential_mesh</span> <span class="o">=</span> <span class="n">potential_mesh</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+        <span class="c1"># Step 4: Apply B-spline deconvolution and convolve with Green&#39;s function</span>
+        <span class="n">mesh_fft</span> <span class="o">=</span> <span class="n">mesh_fft</span> <span class="o">/</span> <span class="n">structure_factor_sq</span>
+        <span class="n">convolved_mesh</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="n">mesh_fft</span> <span class="o">*</span> <span class="n">green_function</span><span class="p">)</span>
+
+        <span class="c1"># Step 5: Inverse FFT to get potential mesh</span>
+        <span class="n">potential_mesh</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span>
+            <span class="n">convolved_mesh</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span>
+        <span class="p">)</span>
+        <span class="n">potential_mesh</span> <span class="o">=</span> <span class="n">potential_mesh</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+        <span class="n">electric_field_mesh</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">compute_forces</span><span class="p">:</span>
+            <span class="n">Ex_fft</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span><span class="p">)</span>
+            <span class="n">Ey_fft</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span><span class="p">)</span>
+            <span class="n">Ez_fft</span> <span class="o">=</span> <span class="n">_materialize_complex</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span><span class="p">)</span>
+
+            <span class="n">Ex</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span>
+                <span class="n">Ex_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span>
+            <span class="p">)</span>
+            <span class="n">Ey</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span>
+                <span class="n">Ey_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span>
+            <span class="p">)</span>
+            <span class="n">Ez</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span>
+                <span class="n">Ez_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span>
+            <span class="p">)</span>
+            <span class="n">electric_field_mesh</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">Ex</span><span class="p">,</span> <span class="n">Ey</span><span class="p">,</span> <span class="n">Ez</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
 
     <span class="c1"># Step 6: Interpolate potential to atomic positions using unified spline_gather API</span>
     <span class="c1"># Note: raw_energies are already volume-normalized from Green&#39;s function</span>
     <span class="n">raw_energies</span> <span class="o">=</span> <span class="n">spline_gather</span><span class="p">(</span>
-        <span class="n">positions</span><span class="p">,</span>
+        <span class="n">pos_spline</span><span class="p">,</span>
         <span class="n">potential_mesh</span><span class="p">,</span>
-        <span class="n">cell</span><span class="p">,</span>
+        <span class="n">cell_spline</span><span class="p">,</span>
         <span class="n">spline_order</span><span class="o">=</span><span class="n">spline_order</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
         <span class="n">cell_inv_t</span><span class="o">=</span><span class="n">cell_inv_t</span><span class="p">,</span>
@@ -2017,11 +2125,11 @@ document.write(`
     <span class="n">charge_grads</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="k">if</span> <span class="n">compute_charge_gradients</span><span class="p">:</span>
         <span class="n">reciprocal_energies</span><span class="p">,</span> <span class="n">charge_grads</span> <span class="o">=</span> <span class="n">pme_energy_corrections_with_charge_grad</span><span class="p">(</span>
-            <span class="n">raw_energies</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">batch_idx</span>
+            <span class="n">raw_energies</span><span class="p">,</span> <span class="n">chg_spline</span><span class="p">,</span> <span class="n">cell_spline</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">batch_idx</span>
         <span class="p">)</span>
     <span class="k">else</span><span class="p">:</span>
         <span class="n">reciprocal_energies</span> <span class="o">=</span> <span class="n">pme_energy_corrections</span><span class="p">(</span>
-            <span class="n">raw_energies</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">batch_idx</span>
+            <span class="n">raw_energies</span><span class="p">,</span> <span class="n">chg_spline</span><span class="p">,</span> <span class="n">cell_spline</span><span class="p">,</span> <span class="n">alpha</span><span class="p">,</span> <span class="n">batch_idx</span>
         <span class="p">)</span>
 
     <span class="c1"># Step 8: Compute virial before forces to allow early release of mesh_fft_raw</span>
@@ -2041,34 +2149,53 @@ document.write(`
         <span class="p">)</span>
         <span class="k">del</span> <span class="n">mesh_fft_raw</span>  <span class="c1"># Free before force field meshes are allocated</span>
 
+        <span class="c1"># Background virial correction for non-neutral systems.</span>
+        <span class="c1"># E_bg = pi * Q^2 / (2 * alpha^2 * V) is subtracted from energy.</span>
+        <span class="c1"># Since dE_bg/dε = -E_bg * I (volume derivative), the virial</span>
+        <span class="c1"># contribution is W_bg = -d(-E_bg)/dε = dE_bg/dε = -E_bg * I.</span>
+        <span class="n">eye</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">input_dtype</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">is_batch</span><span class="p">:</span>
+            <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cell_spline</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">total_charges</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+                <span class="n">num_systems</span><span class="p">,</span>
+                <span class="n">dtype</span><span class="o">=</span><span class="n">input_dtype</span><span class="p">,</span>
+                <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">total_charges</span><span class="o">.</span><span class="n">scatter_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">,</span> <span class="n">chg_spline</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">))</span>
+            <span class="n">volumes</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell_spline</span><span class="p">))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+            <span class="n">alpha_batch</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+            <span class="n">e_bg</span> <span class="o">=</span> <span class="n">PI</span> <span class="o">*</span> <span class="n">total_charges</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">alpha_batch</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="n">volumes</span><span class="p">)</span>
+            <span class="n">virial</span> <span class="o">=</span> <span class="n">virial</span> <span class="o">-</span> <span class="n">e_bg</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">*</span> <span class="n">eye</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">total_charge</span> <span class="o">=</span> <span class="n">chg_spline</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+            <span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell_spline</span><span class="p">))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+            <span class="n">alpha_val</span> <span class="o">=</span> <span class="n">alpha</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
+            <span class="n">e_bg</span> <span class="o">=</span> <span class="n">PI</span> <span class="o">*</span> <span class="n">total_charge</span><span class="o">**</span><span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">alpha_val</span><span class="o">**</span><span class="mi">2</span> <span class="o">*</span> <span class="n">volume</span><span class="p">)</span>
+            <span class="n">virial</span> <span class="o">=</span> <span class="n">virial</span> <span class="o">-</span> <span class="n">e_bg</span> <span class="o">*</span> <span class="n">eye</span>
+
     <span class="c1"># Step 9: Compute forces if needed</span>
     <span class="n">forces</span> <span class="o">=</span> <span class="kc">None</span>
     <span class="k">if</span> <span class="n">compute_forces</span><span class="p">:</span>
-        <span class="c1"># Compute electric field by taking gradient in Fourier space</span>
-        <span class="c1"># Note: convolved_mesh is already volume-normalized from Green&#39;s function</span>
-        <span class="n">Ex_fft</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span>
-        <span class="n">Ey_fft</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span>
-        <span class="n">Ez_fft</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="n">j</span> <span class="o">*</span> <span class="n">k_vectors</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">convolved_mesh</span>
-
-        <span class="n">Ex</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span><span class="n">Ex_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
-        <span class="n">Ey</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span><span class="n">Ey_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
-        <span class="n">Ez</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">fft</span><span class="o">.</span><span class="n">irfftn</span><span class="p">(</span><span class="n">Ez_fft</span><span class="p">,</span> <span class="n">norm</span><span class="o">=</span><span class="s2">&quot;forward&quot;</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="n">mesh_dimensions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="n">fft_dims</span><span class="p">)</span>
-
-        <span class="n">electric_field_mesh</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">Ex</span><span class="p">,</span> <span class="n">Ey</span><span class="p">,</span> <span class="n">Ez</span><span class="p">],</span> <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">input_dtype</span><span class="p">)</span>
-
         <span class="c1"># Use unified spline_gather_vec3 API to interpolate electric field</span>
         <span class="n">interpolated_field</span> <span class="o">=</span> <span class="n">spline_gather_vec3</span><span class="p">(</span>
-            <span class="n">positions</span><span class="p">,</span>
-            <span class="n">charges</span><span class="p">,</span>
+            <span class="n">pos_spline</span><span class="p">,</span>
+            <span class="n">chg_spline</span><span class="p">,</span>
             <span class="n">electric_field_mesh</span><span class="p">,</span>
-            <span class="n">cell</span><span class="p">,</span>
+            <span class="n">cell_spline</span><span class="p">,</span>
             <span class="n">spline_order</span><span class="o">=</span><span class="n">spline_order</span><span class="p">,</span>
             <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
             <span class="n">cell_inv_t</span><span class="o">=</span><span class="n">cell_inv_t</span><span class="p">,</span>
         <span class="p">)</span>
 
-        <span class="c1"># Compute forces: F = 2 * q * E / V</span>
-        <span class="n">forces</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">interpolated_field</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">compiler</span><span class="o">.</span><span class="n">is_compiling</span><span class="p">():</span>
+            <span class="n">forces</span> <span class="o">=</span> <span class="n">_scale_force_field</span><span class="p">(</span><span class="n">interpolated_field</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">forces</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">*</span> <span class="n">interpolated_field</span>
+
+    <span class="k">if</span> <span class="n">hybrid_forces</span> <span class="ow">and</span> <span class="n">charges</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">:</span>
+        <span class="n">reciprocal_energies</span> <span class="o">=</span> <span class="n">_InjectChargeGrad</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span>
+            <span class="n">reciprocal_energies</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">charge_grads</span><span class="p">,</span> <span class="n">batch_idx</span>
+        <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">reciprocal_energies</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">charge_grads</span><span class="p">,</span> <span class="n">virial</span>
 
@@ -2089,6 +2216,7 @@ document.write(`
     <span class="n">compute_forces</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">compute_charge_gradients</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">compute_virial</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">hybrid_forces</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute PME reciprocal-space energy and optionally forces and/or charge gradients.</span>
 
@@ -2159,6 +2287,11 @@ document.write(`
 <span class="sd">    compute_virial : bool, default=False</span>
 <span class="sd">        Whether to compute the virial tensor W = -dE/d(epsilon).</span>
 <span class="sd">        Stress = virial / volume.</span>
+<span class="sd">    hybrid_forces : bool, default=False</span>
+<span class="sd">        When True, positions and cell are detached from the autograd graph and</span>
+<span class="sd">        charge gradients are attached to the energy via a straight-through</span>
+<span class="sd">        trick.  Forces and virial are forward-only (not differentiable).</span>
+<span class="sd">        See :func:`ewald_real_space` for details.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
@@ -2175,6 +2308,10 @@ document.write(`
 <span class="sd">    ----</span>
 <span class="sd">    Energies are always float64 for numerical stability during accumulation.</span>
 <span class="sd">    Forces and virial match the input dtype (float32 or float64).</span>
+
+<span class="sd">    The FFT-heavy reciprocal-space block currently runs through a narrow eager</span>
+<span class="sd">    helper on compiled paths because TorchInductor does not yet lower the</span>
+<span class="sd">    required complex FFT algebra reliably for PME.</span>
 
 <span class="sd">    Return Patterns</span>
 <span class="sd">    ---------------</span>
@@ -2255,6 +2392,7 @@ document.write(`
         <span class="n">compute_virial</span><span class="o">=</span><span class="n">compute_virial</span><span class="p">,</span>
         <span class="n">k_vectors</span><span class="o">=</span><span class="n">k_vectors</span><span class="p">,</span>
         <span class="n">k_squared</span><span class="o">=</span><span class="n">k_squared</span><span class="p">,</span>
+        <span class="n">hybrid_forces</span><span class="o">=</span><span class="n">hybrid_forces</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="c1"># Build return tuple based on flags</span>
@@ -2306,6 +2444,7 @@ document.write(`
     <span class="n">compute_charge_gradients</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">compute_virial</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
     <span class="n">accuracy</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1e-6</span><span class="p">,</span>
+    <span class="n">hybrid_forces</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.</span>
 
@@ -2394,6 +2533,11 @@ document.write(`
 <span class="sd">        Target relative accuracy for automatic parameter estimation (α, mesh dims).</span>
 <span class="sd">        Only used when alpha or mesh_dimensions is None.</span>
 <span class="sd">        Smaller values increase accuracy but also computational cost.</span>
+<span class="sd">    hybrid_forces : bool, default=False</span>
+<span class="sd">        When True, positions and cell are detached from the autograd graph and</span>
+<span class="sd">        charge gradients are attached to the energy via a straight-through</span>
+<span class="sd">        trick.  Forces and virial are forward-only (not differentiable).</span>
+<span class="sd">        See :func:`ewald_real_space` for details.</span>
 
 <span class="sd">    Returns</span>
 <span class="sd">    -------</span>
@@ -2576,6 +2720,7 @@ document.write(`
         <span class="n">compute_forces</span><span class="o">=</span><span class="n">compute_forces</span><span class="p">,</span>
         <span class="n">compute_charge_gradients</span><span class="o">=</span><span class="n">compute_charge_gradients</span><span class="p">,</span>
         <span class="n">compute_virial</span><span class="o">=</span><span class="n">compute_virial</span><span class="p">,</span>
+        <span class="n">hybrid_forces</span><span class="o">=</span><span class="n">hybrid_forces</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="c1"># Compute reciprocal-space contribution</span>
@@ -2592,6 +2737,7 @@ document.write(`
         <span class="n">compute_virial</span><span class="o">=</span><span class="n">compute_virial</span><span class="p">,</span>
         <span class="n">k_vectors</span><span class="o">=</span><span class="n">k_vectors</span><span class="p">,</span>
         <span class="n">k_squared</span><span class="o">=</span><span class="n">k_squared</span><span class="p">,</span>
+        <span class="n">hybrid_forces</span><span class="o">=</span><span class="n">hybrid_forces</span><span class="p">,</span>
     <span class="p">)</span>
 
     <span class="c1"># Normalize return tuples for easy combination</span>

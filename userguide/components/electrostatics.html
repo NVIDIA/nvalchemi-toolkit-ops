@@ -368,6 +368,7 @@ document.write(`
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../about/install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/conventions.html">Conventions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/migration.html">Migration Guide (v0.3.0)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/faq.html">Frequently Asked Questions</a></li>
 </ul>
@@ -1847,6 +1848,89 @@ JAX</label><div class="sd-tab-content docutils">
 </div>
 </div>
 </section>
+<section id="geometry-dependent-charges-hybrid-mode">
+<h3>Geometry-Dependent Charges (Hybrid Mode)<a class="headerlink" href="#geometry-dependent-charges-hybrid-mode" title="Link to this heading">#</a></h3>
+<p>When charges depend on atomic positions – as in machine-learned interatomic
+potentials (MLIPs) with learned charge models (<code class="docutils literal notranslate"><span class="pre">q</span> <span class="pre">=</span> <span class="pre">q(R)</span></code>) – computing total forces requires two contributions:</p>
+<ul class="simple">
+<li><p><strong>Fixed-charge positional forces</strong> <code class="docutils literal notranslate"><span class="pre">F</span> <span class="pre">=</span> <span class="pre">-dE/dR|_q</span></code>, computed analytically by
+the Ewald/PME kernel (<code class="docutils literal notranslate"><span class="pre">compute_forces=True</span></code>)</p></li>
+<li><p><strong>Charge chain-rule forces</strong> <code class="docutils literal notranslate"><span class="pre">-(dE/dq)(dq/dR)</span></code>, computed via PyTorch autograd through the charge model</p></li>
+</ul>
+<p>The <code class="docutils literal notranslate"><span class="pre">hybrid_forces</span></code> parameter provides an efficient way to compute both
+contributions without redundancy.  In standard mode, <code class="docutils literal notranslate"><span class="pre">energy.backward()</span></code>
+already includes both position and charge terms, so adding explicit forces
+would <strong>double-count</strong> the positional contribution. <code class="docutils literal notranslate"><span class="pre">hybrid_forces=True</span></code>
+detaches positions and cell from the autograd graph and makes energy
+differentiable only through the charges via a straight-through estimator.</p>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>Do not combine explicit forces (<code class="docutils literal notranslate"><span class="pre">compute_forces=True</span></code>) with full autograd
+forces (<code class="docutils literal notranslate"><span class="pre">-torch.autograd.grad(energy,</span> <span class="pre">positions)</span></code>) in standard mode – this
+double-counts the positional term <code class="docutils literal notranslate"><span class="pre">dE/dR|_q</span></code>.  Use <code class="docutils literal notranslate"><span class="pre">hybrid_forces=True</span></code> when
+you need both explicit forces and autograd charge gradients.</p>
+</div>
+<div class="sd-tab-set docutils">
+<input checked="checked" id="sd-tab-item-30" name="sd-tab-set-14" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-30">
+PyTorch</label><div class="sd-tab-content docutils">
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">particle_mesh_ewald</span>
+
+<span class="n">positions</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># Uniform scaling tensor (identity) for computing the charge virial.</span>
+<span class="c1"># dE/d(scaling) through the charge path gives the charge contribution</span>
+<span class="c1"># to the virial, i.e. the energy derivative w.r.t. strain.</span>
+<span class="n">scaling</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+                    <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">positions_scaled</span> <span class="o">=</span> <span class="n">positions</span> <span class="o">@</span> <span class="n">scaling</span>
+<span class="n">cell_scaled</span> <span class="o">=</span> <span class="n">cell</span> <span class="o">@</span> <span class="n">scaling</span>
+
+<span class="c1"># Geometry-dependent charges from scaled positions</span>
+<span class="n">q</span> <span class="o">=</span> <span class="n">charge_model</span><span class="p">(</span><span class="n">positions_scaled</span><span class="p">,</span> <span class="n">Z</span><span class="p">)</span>
+
+<span class="c1"># hybrid_forces=True: explicit forces + virial are analytical (forward-only),</span>
+<span class="c1"># energy is differentiable w.r.t. charges only (via straight-through trick)</span>
+<span class="n">energies</span><span class="p">,</span> <span class="n">direct_forces</span><span class="p">,</span> <span class="n">direct_virial</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
+    <span class="n">positions_scaled</span><span class="p">,</span> <span class="n">q</span><span class="p">,</span> <span class="n">cell_scaled</span><span class="p">,</span>
+    <span class="n">neighbor_list</span><span class="o">=</span><span class="n">nl</span><span class="p">,</span> <span class="n">neighbor_ptr</span><span class="o">=</span><span class="n">nl_ptr</span><span class="p">,</span> <span class="n">neighbor_shifts</span><span class="o">=</span><span class="n">shifts</span><span class="p">,</span>
+    <span class="n">compute_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">compute_virial</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">hybrid_forces</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># Differentiate energy w.r.t. positions and scaling.</span>
+<span class="c1"># In hybrid mode only the charge pathway is in the autograd graph.</span>
+<span class="n">dE_dpos</span><span class="p">,</span> <span class="n">dE_dscaling</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">autograd</span><span class="o">.</span><span class="n">grad</span><span class="p">(</span>
+    <span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">(),</span> <span class="p">[</span><span class="n">positions</span><span class="p">,</span> <span class="n">scaling</span><span class="p">],</span>
+<span class="p">)</span>
+
+<span class="n">total_forces</span> <span class="o">=</span> <span class="n">direct_forces</span> <span class="o">-</span> <span class="n">dE_dpos</span>
+<span class="n">total_virial</span> <span class="o">=</span> <span class="n">direct_virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">-</span> <span class="n">dE_dscaling</span>  <span class="c1"># W = -dE/dε</span>
+</pre></div>
+</div>
+</div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>When not to use hybrid mode:</strong> If the training loss involves forces or
+virial directly (e.g., <code class="docutils literal notranslate"><span class="pre">loss</span> <span class="pre">=</span> <span class="pre">||F</span> <span class="pre">-</span> <span class="pre">F_ref||^2</span> <span class="pre">+</span> <span class="pre">||sigma</span> <span class="pre">-</span> <span class="pre">sigma_ref||^2</span></code>),
+use standard mode instead.  In hybrid mode, forces and virial are forward-only
+and do not propagate gradients back to model parameters.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>DSF comparison:</strong> DSF (<code class="docutils literal notranslate"><span class="pre">dsf_coulomb</span></code>) always operates in hybrid mode –
+positions are never in the autograd graph, so explicit forces and autograd
+charge-chain-rule forces are always complementary without any extra flag.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>JAX:</strong> Ewald/PME real-space kernels in JAX use forward-only differentiation
+and do not have this issue.  For PME reciprocal space, which uses differentiable
+spline/FFT ops, a similar <code class="docutils literal notranslate"><span class="pre">hybrid_forces</span></code> flag is planned.</p>
+</div>
+</section>
 <section id="virial-stress">
 <h3>Virial / Stress<a class="headerlink" href="#virial-stress" title="Link to this heading">#</a></h3>
 <p>Both Ewald and PME provide explicit virial computation via <code class="docutils literal notranslate"><span class="pre">compute_virial=True</span></code>.
@@ -1854,17 +1938,19 @@ The virial is differentiable by default: when <code class="docutils literal notr
 require gradients, stress-based losses automatically back-propagate to model parameters.</p>
 <p><strong>Convention:</strong></p>
 <ul class="simple">
-<li><p>Real-space: <span class="math notranslate nohighlight">\(W_\text{real} = -\frac{1}{2} \sum_{i&lt;j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}\)</span>,
+<li><p>Real-space: <span class="math notranslate nohighlight">\(W_\text{real} = -\sum_{i&lt;j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}\)</span>,
 where <span class="math notranslate nohighlight">\(\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i\)</span> and <span class="math notranslate nohighlight">\(\mathbf{F}_{ij}\)</span> is the force on atom <span class="math notranslate nohighlight">\(i\)</span> due to atom <span class="math notranslate nohighlight">\(j\)</span>.</p></li>
 <li><p>Reciprocal-space: <span class="math notranslate nohighlight">\(W_\text{recip}(k) = E(k) \left[\delta_{ab} - \frac{2 k_a k_b}{k^2}\left(1 + \frac{k^2}{4\alpha^2}\right)\right]\)</span></p></li>
-<li><p>Stress: <span class="math notranslate nohighlight">\(\sigma = W / V\)</span> where <span class="math notranslate nohighlight">\(V = |\det(\mathbf{C})|\)</span></p></li>
+<li><p>Stress (tensile-positive Cauchy stress): <span class="math notranslate nohighlight">\(\sigma = -W / V\)</span> where <span class="math notranslate nohighlight">\(V = |\det(\mathbf{C})|\)</span></p></li>
 <li><p>The virial convention is validated against finite-difference strain derivatives
 of the energy (<span class="math notranslate nohighlight">\(W_{ab} = -\partial E / \partial \varepsilon_{ab}\)</span>) in the test suite.</p></li>
 </ul>
+<p>See <a class="reference internal" href="../about/conventions.html#conventions"><span class="std std-ref">Conventions</span></a> for the project-wide virial and stress definitions used by all
+interaction modules.</p>
 <p><strong>Ewald summation with virial:</strong></p>
 <div class="sd-tab-set docutils">
-<input checked="checked" id="sd-tab-item-30" name="sd-tab-set-14" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-30">
+<input checked="checked" id="sd-tab-item-31" name="sd-tab-set-15" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-31">
 PyTorch</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">virial</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
     <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span>
@@ -1875,16 +1961,16 @@ PyTorch</label><div class="sd-tab-content docutils">
 
 <span class="c1"># Single system: virial shape (1, 3, 3)</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>          <span class="c1"># scalar</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>                  <span class="c1"># (3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>                 <span class="c1"># (3, 3)</span>
 
 <span class="c1"># Batch: virial shape (B, 3, 3)</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>           <span class="c1"># (B,)</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>              <span class="c1"># (B, 3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>             <span class="c1"># (B, 3, 3)</span>
 </pre></div>
 </div>
 </div>
-<input id="sd-tab-item-31" name="sd-tab-set-14" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-31">
+<input id="sd-tab-item-32" name="sd-tab-set-15" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-32">
 JAX</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
@@ -1899,19 +1985,19 @@ JAX</label><div class="sd-tab-content docutils">
 
 <span class="c1"># Single system: virial shape (1, 3, 3)</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>          <span class="c1"># scalar</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>              <span class="c1"># (3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>             <span class="c1"># (3, 3)</span>
 
 <span class="c1"># Batch: virial shape (B, 3, 3)</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>           <span class="c1"># (B,)</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>          <span class="c1"># (B, 3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>         <span class="c1"># (B, 3, 3)</span>
 </pre></div>
 </div>
 </div>
 </div>
 <p><strong>PME with virial:</strong></p>
 <div class="sd-tab-set docutils">
-<input checked="checked" id="sd-tab-item-32" name="sd-tab-set-15" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-32">
+<input checked="checked" id="sd-tab-item-33" name="sd-tab-set-16" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-33">
 PyTorch</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">energies</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">virial</span> <span class="o">=</span> <span class="n">particle_mesh_ewald</span><span class="p">(</span>
     <span class="n">positions</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">cell</span><span class="p">,</span>
@@ -1922,16 +2008,16 @@ PyTorch</label><div class="sd-tab-content docutils">
 
 <span class="c1"># Single system</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>                  <span class="c1"># (3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>                 <span class="c1"># (3, 3)</span>
 
 <span class="c1"># Batch</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>           <span class="c1"># (B,)</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>              <span class="c1"># (B, 3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>             <span class="c1"># (B, 3, 3)</span>
 </pre></div>
 </div>
 </div>
-<input id="sd-tab-item-33" name="sd-tab-set-15" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-33">
+<input id="sd-tab-item-34" name="sd-tab-set-16" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-34">
 JAX</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
@@ -1946,19 +2032,19 @@ JAX</label><div class="sd-tab-content docutils">
 
 <span class="c1"># Single system</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>                  <span class="c1"># (3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>                 <span class="c1"># (3, 3)</span>
 
 <span class="c1"># Batch</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>           <span class="c1"># (B,)</span>
-<span class="n">stress</span> <span class="o">=</span> <span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>              <span class="c1"># (B, 3, 3)</span>
+<span class="n">stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span> <span class="o">/</span> <span class="n">volume</span><span class="p">[:,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>             <span class="c1"># (B, 3, 3)</span>
 </pre></div>
 </div>
 </div>
 </div>
 <p><strong>MLIP training loss example:</strong></p>
 <div class="sd-tab-set docutils">
-<input checked="checked" id="sd-tab-item-34" name="sd-tab-set-16" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-34">
+<input checked="checked" id="sd-tab-item-35" name="sd-tab-set-17" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-35">
 PyTorch</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Forward pass with explicit outputs</span>
 <span class="n">energies</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">virial</span> <span class="o">=</span> <span class="n">ewald_summation</span><span class="p">(</span>
@@ -1970,7 +2056,7 @@ PyTorch</label><div class="sd-tab-content docutils">
 
 <span class="c1"># Compute stress (single system shown; for batch use volume[:, None, None])</span>
 <span class="n">volume</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>
-<span class="n">pred_stress</span> <span class="o">=</span> <span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>
+<span class="n">pred_stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>
 
 <span class="n">loss</span> <span class="o">=</span> <span class="p">(</span>
     <span class="n">w_energy</span> <span class="o">*</span> <span class="p">(</span><span class="n">energies</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">-</span> <span class="n">E_target</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
@@ -1981,8 +2067,8 @@ PyTorch</label><div class="sd-tab-content docutils">
 </pre></div>
 </div>
 </div>
-<input id="sd-tab-item-35" name="sd-tab-set-16" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-35">
+<input id="sd-tab-item-36" name="sd-tab-set-17" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-36">
 JAX</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
@@ -1998,7 +2084,7 @@ JAX</label><div class="sd-tab-content docutils">
 
     <span class="c1"># Compute stress (single system shown; for batch use volume[:, None, None])</span>
     <span class="n">volume</span> <span class="o">=</span> <span class="n">jnp</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">det</span><span class="p">(</span><span class="n">cell</span><span class="p">))</span>
-    <span class="n">pred_stress</span> <span class="o">=</span> <span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>
+    <span class="n">pred_stress</span> <span class="o">=</span> <span class="o">-</span><span class="n">virial</span><span class="o">.</span><span class="n">squeeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volume</span>
 
     <span class="n">loss</span> <span class="o">=</span> <span class="p">(</span>
         <span class="n">w_energy</span> <span class="o">*</span> <span class="p">(</span><span class="n">jnp</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">energies</span><span class="p">)</span> <span class="o">-</span> <span class="n">E_target</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span>
@@ -2043,8 +2129,8 @@ but target the Ewald and PME algorithms respectively.</p>
 (JAX) is used to estimate <span class="math notranslate nohighlight">\(\alpha\)</span> and cutoffs for real- and reciprocal-space specifically
 for the <strong>Ewald</strong> algorithm:</p>
 <div class="sd-tab-set docutils">
-<input checked="checked" id="sd-tab-item-36" name="sd-tab-set-17" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-36">
+<input checked="checked" id="sd-tab-item-37" name="sd-tab-set-18" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-37">
 PyTorch</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">estimate_ewald_parameters</span>
 
@@ -2061,8 +2147,8 @@ PyTorch</label><div class="sd-tab-content docutils">
 </pre></div>
 </div>
 </div>
-<input id="sd-tab-item-37" name="sd-tab-set-17" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-37">
+<input id="sd-tab-item-38" name="sd-tab-set-18" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-38">
 JAX</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
@@ -2092,8 +2178,8 @@ is a light data structure that holds parameters used for the Ewald algorithm.</p
 (JAX) is used to estimate <span class="math notranslate nohighlight">\(\alpha\)</span>, the real-space cutoff, and mesh specifications specifically
 for the PME algorithm; the value of <span class="math notranslate nohighlight">\(\alpha\)</span> is determined the same way as for Ewald.</p>
 <div class="sd-tab-set docutils">
-<input checked="checked" id="sd-tab-item-38" name="sd-tab-set-18" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-38">
+<input checked="checked" id="sd-tab-item-39" name="sd-tab-set-19" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="pytorch" for="sd-tab-item-39">
 PyTorch</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics</span><span class="w"> </span><span class="kn">import</span> <span class="n">estimate_pme_parameters</span>
 
@@ -2110,8 +2196,8 @@ PyTorch</label><div class="sd-tab-content docutils">
 </pre></div>
 </div>
 </div>
-<input id="sd-tab-item-39" name="sd-tab-set-18" type="radio">
-<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-39">
+<input id="sd-tab-item-40" name="sd-tab-set-19" type="radio">
+<label class="sd-tab-label" data-sync-group="tab" data-sync-id="jax" for="sd-tab-item-40">
 JAX</label><div class="sd-tab-content docutils">
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">jax</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">jax.numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">jnp</span>
@@ -2467,6 +2553,7 @@ summation.” <em>J. Chem. Phys.</em> 110, 8254.
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#autograd-support">Autograd Support</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#position-gradients-forces">Position Gradients (Forces)</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#charge-gradients">Charge Gradients</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#geometry-dependent-charges-hybrid-mode">Geometry-Dependent Charges (Hybrid Mode)</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#virial-stress">Virial / Stress</a></li>
 </ul>
 </li>

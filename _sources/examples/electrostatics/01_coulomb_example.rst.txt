@@ -838,7 +838,7 @@ see the separate visualization scripts in the examples folder.
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.054 seconds)
+   **Total running time of the script:** (0 minutes 0.039 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_01_coulomb_example.py:

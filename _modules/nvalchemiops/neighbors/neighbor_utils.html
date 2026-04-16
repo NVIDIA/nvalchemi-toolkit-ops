@@ -433,7 +433,7 @@ document.write(`
 
 
 <div class="viewcode-block" id="NeighborOverflowError">
-<a class="viewcode-back" href="../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.NeighborOverflowError">[docs]</a>
+<a class="viewcode-back" href="../../../modules/warp/neighbors.html#nvalchemiops.jax.neighbors.NeighborOverflowError">[docs]</a>
 <span class="k">class</span><span class="w"> </span><span class="nc">NeighborOverflowError</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Exception raised when the number of neighbors exceeds the maximum allowed.</span>
 
@@ -1020,6 +1020,8 @@ document.write(`
     <span class="p">)</span>
 
 
+<div class="viewcode-block" id="compute_naive_num_shifts">
+<a class="viewcode-back" href="../../../modules/warp/neighbors.html#nvalchemiops.jax.neighbors.compute_naive_num_shifts">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">compute_naive_num_shifts</span><span class="p">(</span>
     <span class="n">cell</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
     <span class="n">cutoff</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
@@ -1080,7 +1082,8 @@ document.write(`
             <span class="n">shift_range</span><span class="p">,</span>
         <span class="p">],</span>
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
-    <span class="p">)</span>
+    <span class="p">)</span></div>
+
 
 
 <div class="viewcode-block" id="estimate_max_neighbors">

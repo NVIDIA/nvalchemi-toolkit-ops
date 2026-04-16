@@ -270,11 +270,11 @@ The cell list algorithm uses spatial decomposition for efficient neighbor findin
     Total pairs (COO): 471810
 
     First 5 neighbor pairs:
-      Atom 0 -> Atom 12684, shift: [0, 0, 0]
       Atom 0 -> Atom 8931, shift: [0, 0, 0]
-      Atom 0 -> Atom 12342, shift: [0, 0, 0]
       Atom 0 -> Atom 2094, shift: [0, 0, 0]
-      Atom 0 -> Atom 1158, shift: [0, 0, 0]
+      Atom 0 -> Atom 12342, shift: [0, 0, 0]
+      Atom 0 -> Atom 25222, shift: [0, 0, 0]
+      Atom 0 -> Atom 16803, shift: [0, 0, 0]
 
 
 
@@ -414,16 +414,16 @@ Compare performance and verify results match
     ======================================================================
 
     --- Small System (100 atoms) ---
-    Cell list:  0.976 ms, 5152 pairs
-    Naive:      0.736 ms, 5152 pairs
+    Cell list:  1.286 ms, 5152 pairs
+    Naive:      1.416 ms, 5152 pairs
     Results match: True
 
     --- Large System (30,000 atoms) ---
-    Cell list:  1.167 ms, 471810 pairs
-    Naive:      34.407 ms, 471810 pairs
+    Cell list:  1.478 ms, 471810 pairs
+    Naive:      34.711 ms, 471810 pairs
     Results match: True
 
-    Speedup (cell list vs naive): 29.5x
+    Speedup (cell list vs naive): 23.5x
 
 
 
@@ -782,11 +782,11 @@ Validate neighbor distances
       Pair 0: atom 0 -> 4, distance = 2.1855 Å
       Pair 1: atom 0 -> 6, distance = 4.4884 Å
       Pair 2: atom 0 -> 28, distance = 4.8273 Å
-      Pair 3: atom 0 -> 74, distance = 3.5964 Å
-      Pair 4: atom 0 -> 78, distance = 4.2534 Å
-      Pair 5: atom 0 -> 87, distance = 4.2602 Å
-      Pair 6: atom 0 -> 41, distance = 3.3273 Å
-      Pair 7: atom 0 -> 61, distance = 2.6520 Å
+      Pair 3: atom 0 -> 41, distance = 3.3273 Å
+      Pair 4: atom 0 -> 61, distance = 2.6520 Å
+      Pair 5: atom 0 -> 74, distance = 3.5964 Å
+      Pair 6: atom 0 -> 78, distance = 4.2534 Å
+      Pair 7: atom 0 -> 87, distance = 4.2602 Å
       Pair 8: atom 0 -> 2, distance = 4.3182 Å
       Pair 9: atom 0 -> 15, distance = 4.3769 Å
 
@@ -819,7 +819,7 @@ Validate neighbor distances
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 0.891 seconds)
+   **Total running time of the script:** (0 minutes 0.841 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_01_simple_neighbor_list.py:

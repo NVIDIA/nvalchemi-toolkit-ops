@@ -633,7 +633,7 @@ Show that each system can have different properties
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.561 seconds)
+   **Total running time of the script:** (0 minutes 0.813 seconds)
 
 
 .. _sphx_glr_download_examples_neighbors_02_batch_neighbor_list.py:

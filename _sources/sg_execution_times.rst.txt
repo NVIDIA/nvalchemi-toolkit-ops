@@ -6,7 +6,7 @@
 
 Computation times
 =================
-**00:01.647** total execution time for 24 files **from all galleries**:
+**01:02.439** total execution time for 24 files **from all galleries**:
 
 .. container::
 
@@ -32,75 +32,75 @@ Computation times
    * - Example
      - Time
      - Mem (MB)
-   * - :ref:`sphx_glr_examples_dispersion_03_jax_dftd3_molecule.py` (``../examples/dispersion/03_jax_dftd3_molecule.py``)
-     - 00:01.164
-     - 0.0
-   * - :ref:`sphx_glr_examples_dispersion_01_dftd3_molecule.py` (``../examples/dispersion/01_dftd3_molecule.py``)
-     - 00:00.326
-     - 0.0
-   * - :ref:`sphx_glr_examples_dispersion_02_dftd3_batch_crystals.py` (``../examples/dispersion/02_dftd3_batch_crystals.py``)
-     - 00:00.157
-     - 0.0
-   * - :ref:`sphx_glr_examples_01_bspline_visualization.py` (``../examples/01_bspline_visualization.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_01_langevin_integration.py` (``../examples/dynamics/01_langevin_integration.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_02_velocity_verlet_integration.py` (``../examples/dynamics/02_velocity_verlet_integration.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_03_nph_integration.py` (``../examples/dynamics/03_nph_integration.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_04_npt_integration.py` (``../examples/dynamics/04_npt_integration.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_05_batched_langevin_dynamics.py` (``../examples/dynamics/05_batched_langevin_dynamics.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_06_fire_optimization.py` (``../examples/dynamics/06_fire_optimization.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_07_fire_variable_cell.py` (``../examples/dynamics/07_fire_variable_cell.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_08_fire_batched.py` (``../examples/dynamics/08_fire_batched.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_09_fire2_optimization.py` (``../examples/dynamics/09_fire2_optimization.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_10_fire2_batched.py` (``../examples/dynamics/10_fire2_batched.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_dynamics_11_fire2_variable_cell.py` (``../examples/dynamics/11_fire2_variable_cell.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py` (``../examples/electrostatics/01_coulomb_example.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py` (``../examples/electrostatics/02_ewald_summation_example.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_electrostatics_03_pme_example.py` (``../examples/electrostatics/03_pme_example.py``)
-     - 00:00.000
-     - 0.0
    * - :ref:`sphx_glr_examples_electrostatics_04_jax_pme_example.py` (``../examples/electrostatics/04_jax_pme_example.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_01_simple_neighbor_list.py` (``../examples/neighbors/01_simple_neighbor_list.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_02_batch_neighbor_list.py` (``../examples/neighbors/02_batch_neighbor_list.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_03_rebuild_neighborlist_detection.py` (``../examples/neighbors/03_rebuild_neighborlist_detection.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighbors_04_neighbors_list_torch_compile_performance.py` (``../examples/neighbors/04_neighbors_list_torch_compile_performance.py``)
-     - 00:00.000
+     - 00:19.223
      - 0.0
    * - :ref:`sphx_glr_examples_neighbors_05_jax_neighbor_list.py` (``../examples/neighbors/05_jax_neighbor_list.py``)
-     - 00:00.000
+     - 00:08.262
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_04_npt_integration.py` (``../examples/dynamics/04_npt_integration.py``)
+     - 00:04.189
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_03_nph_integration.py` (``../examples/dynamics/03_nph_integration.py``)
+     - 00:04.157
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_02_velocity_verlet_integration.py` (``../examples/dynamics/02_velocity_verlet_integration.py``)
+     - 00:03.666
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_01_langevin_integration.py` (``../examples/dynamics/01_langevin_integration.py``)
+     - 00:03.133
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_08_fire_batched.py` (``../examples/dynamics/08_fire_batched.py``)
+     - 00:02.913
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_09_fire2_optimization.py` (``../examples/dynamics/09_fire2_optimization.py``)
+     - 00:02.123
+     - 0.0
+   * - :ref:`sphx_glr_examples_01_bspline_visualization.py` (``../examples/01_bspline_visualization.py``)
+     - 00:01.778
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_06_fire_optimization.py` (``../examples/dynamics/06_fire_optimization.py``)
+     - 00:01.706
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_10_fire2_batched.py` (``../examples/dynamics/10_fire2_batched.py``)
+     - 00:01.570
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_05_batched_langevin_dynamics.py` (``../examples/dynamics/05_batched_langevin_dynamics.py``)
+     - 00:01.492
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_07_fire_variable_cell.py` (``../examples/dynamics/07_fire_variable_cell.py``)
+     - 00:01.319
+     - 0.0
+   * - :ref:`sphx_glr_examples_dynamics_11_fire2_variable_cell.py` (``../examples/dynamics/11_fire2_variable_cell.py``)
+     - 00:01.237
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_02_ewald_summation_example.py` (``../examples/electrostatics/02_ewald_summation_example.py``)
+     - 00:01.169
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_04_neighbors_list_torch_compile_performance.py` (``../examples/neighbors/04_neighbors_list_torch_compile_performance.py``)
+     - 00:01.090
+     - 0.0
+   * - :ref:`sphx_glr_examples_dispersion_03_jax_dftd3_molecule.py` (``../examples/dispersion/03_jax_dftd3_molecule.py``)
+     - 00:00.908
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_01_simple_neighbor_list.py` (``../examples/neighbors/01_simple_neighbor_list.py``)
+     - 00:00.841
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_02_batch_neighbor_list.py` (``../examples/neighbors/02_batch_neighbor_list.py``)
+     - 00:00.813
+     - 0.0
+   * - :ref:`sphx_glr_examples_dispersion_01_dftd3_molecule.py` (``../examples/dispersion/01_dftd3_molecule.py``)
+     - 00:00.308
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_03_pme_example.py` (``../examples/electrostatics/03_pme_example.py``)
+     - 00:00.243
+     - 0.0
+   * - :ref:`sphx_glr_examples_dispersion_02_dftd3_batch_crystals.py` (``../examples/dispersion/02_dftd3_batch_crystals.py``)
+     - 00:00.155
+     - 0.0
+   * - :ref:`sphx_glr_examples_neighbors_03_rebuild_neighborlist_detection.py` (``../examples/neighbors/03_rebuild_neighborlist_detection.py``)
+     - 00:00.104
+     - 0.0
+   * - :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py` (``../examples/electrostatics/01_coulomb_example.py``)
+     - 00:00.039
      - 0.0

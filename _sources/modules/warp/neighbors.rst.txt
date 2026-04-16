@@ -53,9 +53,18 @@ Rebuild Detection
 
 .. autofunction:: nvalchemiops.neighbors.rebuild_detection.check_cell_list_rebuild
 .. autofunction:: nvalchemiops.neighbors.rebuild_detection.check_neighbor_list_rebuild
+.. autofunction:: nvalchemiops.neighbors.rebuild_detection.check_batch_cell_list_rebuild
+.. autofunction:: nvalchemiops.neighbors.rebuild_detection.check_batch_neighbor_list_rebuild
+
+Exceptions
+^^^^^^^^^^
+
+.. autoexception:: nvalchemiops.neighbors.NeighborOverflowError
+   :show-inheritance:
 
 Utility Functions
 ^^^^^^^^^^^^^^^^^
 
 .. autofunction:: nvalchemiops.neighbors.neighbor_utils.zero_array
 .. autofunction:: nvalchemiops.neighbors.neighbor_utils.estimate_max_neighbors
+.. autofunction:: nvalchemiops.neighbors.neighbor_utils.compute_naive_num_shifts

@@ -54,7 +54,7 @@
     <script>DOCUMENTATION_OPTIONS.pagename = 'modules/torch/dynamics';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="nvalchemiops.jax.neighbors: Neighbor Lists" href="../jax/neighbors.html" />
+    <link rel="next" title="nvalchemiops.torch.autograd: Autograd Utilities" href="autograd.html" />
     <link rel="prev" title="nvalchemiops.torch.interactions.electrostatics: Electrostatics" href="electrostatics.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -367,6 +367,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="autograd.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.autograd</span></code>: Autograd Utilities</a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
@@ -564,6 +565,12 @@ defaults and descriptions.</p></li>
 </dd>
 </dl>
 <p class="rubric">Notes</p>
+<p>Default hyperparameters (from the underlying Warp implementation):
+<code class="docutils literal notranslate"><span class="pre">delaystep=60</span></code>, <code class="docutils literal notranslate"><span class="pre">dtgrow=1.05</span></code>, <code class="docutils literal notranslate"><span class="pre">dtshrink=0.75</span></code>,
+<code class="docutils literal notranslate"><span class="pre">alphashrink=0.985</span></code>, <code class="docutils literal notranslate"><span class="pre">alpha0=0.09</span></code>, <code class="docutils literal notranslate"><span class="pre">tmax=0.08</span></code>,
+<code class="docutils literal notranslate"><span class="pre">tmin=0.005</span></code>, <code class="docutils literal notranslate"><span class="pre">maxstep=0.1</span></code>.
+See <a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_step" title="nvalchemiops.dynamics.optimizers.fire2.fire2_step"><code class="xref py py-func docutils literal notranslate"><span class="pre">nvalchemiops.dynamics.optimizers.fire2.fire2_step()</span></code></a> for
+full descriptions.</p>
 <p>For variable-cell optimization (coordinates + cell DOFs), use
 <a class="reference internal" href="#nvalchemiops.torch.fire2.fire2_step_coord_cell" title="nvalchemiops.torch.fire2.fire2_step_coord_cell"><code class="xref py py-func docutils literal notranslate"><span class="pre">fire2_step_coord_cell()</span></code></a> instead.</p>
 <p class="rubric">Examples</p>
@@ -605,7 +612,8 @@ using an <strong>interleaved layout</strong> (each system’s atoms followed by 
 2 cell vec3s), runs the 3-kernel FIRE2 algorithm, and unpacks
 results back.</p>
 <p>The cell must be pre-aligned to upper-triangular form via
-<code class="docutils literal notranslate"><span class="pre">align_cell()</span></code> before the first call.</p>
+<a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.utils.cell_filter.align_cell" title="nvalchemiops.dynamics.utils.cell_filter.align_cell"><code class="xref py py-func docutils literal notranslate"><span class="pre">nvalchemiops.dynamics.utils.cell_filter.align_cell()</span></code></a> before
+the first call.</p>
 <p>Modifies <em>positions</em>, <em>velocities</em>, <em>cell</em>, <em>cell_velocities</em>,
 <em>alpha</em>, <em>dt</em>, and <em>nsteps_inc</em> in-place.</p>
 <dl class="field-list simple">
@@ -668,6 +676,12 @@ zeroed in-place if provided.</p></li>
 </dd>
 </dl>
 <p class="rubric">Notes</p>
+<p>Default hyperparameters (from the underlying Warp implementation):
+<code class="docutils literal notranslate"><span class="pre">delaystep=60</span></code>, <code class="docutils literal notranslate"><span class="pre">dtgrow=1.05</span></code>, <code class="docutils literal notranslate"><span class="pre">dtshrink=0.75</span></code>,
+<code class="docutils literal notranslate"><span class="pre">alphashrink=0.985</span></code>, <code class="docutils literal notranslate"><span class="pre">alpha0=0.09</span></code>, <code class="docutils literal notranslate"><span class="pre">tmax=0.08</span></code>,
+<code class="docutils literal notranslate"><span class="pre">tmin=0.005</span></code>, <code class="docutils literal notranslate"><span class="pre">maxstep=0.1</span></code>.
+See <a class="reference internal" href="../warp/dynamics.html#nvalchemiops.dynamics.optimizers.fire2.fire2_step" title="nvalchemiops.dynamics.optimizers.fire2.fire2_step"><code class="xref py py-func docutils literal notranslate"><span class="pre">nvalchemiops.dynamics.optimizers.fire2.fire2_step()</span></code></a> for
+full descriptions.</p>
 <p><strong>Pre-computing static metadata for tight loops</strong></p>
 <p>When <em>batch_idx</em> does not change between steps (fixed system sizes),
 <em>atom_ptr</em>, <em>ext_atom_ptr</em>, and <em>ext_batch_idx</em> are constant and can
@@ -787,17 +801,17 @@ unpacking results after the last call (or as needed).</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>ext_positions</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended position array (atoms + cell DOFs interleaved).</p></li>
-<li><p><strong>ext_velocities</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended velocity array.</p></li>
-<li><p><strong>ext_forces</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended force array.</p></li>
-<li><p><strong>ext_batch_idx</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – System index for each element in the extended arrays.</p></li>
-<li><p><strong>alpha</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – FIRE2 mixing parameter per system.</p></li>
-<li><p><strong>dt</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Timestep per system.</p></li>
-<li><p><strong>nsteps_inc</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – Consecutive positive-power step counter per system.</p></li>
-<li><p><strong>vf</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
-<li><p><strong>v_sumsq</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
-<li><p><strong>f_sumsq</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
-<li><p><strong>max_norm</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>ext_positions</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended position array (atoms + cell DOFs interleaved).</p></li>
+<li><p><strong>ext_velocities</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended velocity array.</p></li>
+<li><p><strong>ext_forces</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>, </em><em>3</em><em>)</em>) – Extended force array.</p></li>
+<li><p><strong>ext_batch_idx</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>N_ext</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – System index for each element in the extended arrays.</p></li>
+<li><p><strong>alpha</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – FIRE2 mixing parameter per system.</p></li>
+<li><p><strong>dt</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em>) – Timestep per system.</p></li>
+<li><p><strong>nsteps_inc</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em>, </em><em>shape</em><em> (</em><em>M</em><em>,</em><em>)</em><em>, </em><em>dtype=int32</em>) – Consecutive positive-power step counter per system.</p></li>
+<li><p><strong>vf</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>v_sumsq</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>f_sumsq</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
+<li><p><strong>max_norm</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a><em> or </em><em>None</em>) – Per-system scratch buffers, shape (M,). Allocated internally if None.</p></li>
 <li><p><strong>delaystep</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – FIRE2 hyperparameters.  See <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> for details.</p></li>
 <li><p><strong>dtgrow</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.  See <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> for details.</p></li>
 <li><p><strong>dtshrink</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – FIRE2 hyperparameters.  See <code class="docutils literal notranslate"><span class="pre">fire2_step_coord_cell</span></code> for details.</p></li>
@@ -841,11 +855,11 @@ and <code class="docutils literal notranslate"><span class="pre">nsteps_inc</spa
       </div>
     </a>
     <a class="right-next"
-       href="../jax/neighbors.html"
+       href="autograd.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</p>
+        <p class="prev-next-title"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.autograd</span></code>: Autograd Utilities</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

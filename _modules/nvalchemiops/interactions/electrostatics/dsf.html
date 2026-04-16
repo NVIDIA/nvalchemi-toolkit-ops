@@ -484,7 +484,10 @@ document.write(`
 <span class="sd">.. note::</span>
 <span class="sd">   This implementation assumes a **full neighbor list** where each pair (i, j)</span>
 <span class="sd">   appears in both directions (i-&gt;j and j-&gt;i). The 0.5 factor for pair energy</span>
-<span class="sd">   and the -0.5 factor for virial account for this double counting.</span>
+<span class="sd">   and virial accounts for this double counting.</span>
+
+<span class="sd">   The virial follows the convention ``W = -dE/dε`` (negative strain derivative</span>
+<span class="sd">   of the energy).</span>
 
 <span class="sd">.. note::</span>
 <span class="sd">   When using batched mode, ``batch_idx`` must be sorted in non-decreasing</span>
@@ -691,7 +694,7 @@ document.write(`
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]),</span>
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span>
         <span class="p">)</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
 
 
 <span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
@@ -842,7 +845,7 @@ document.write(`
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]),</span>
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span>
         <span class="p">)</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="n">system_id</span><span class="p">,</span> <span class="o">-</span><span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="n">system_id</span><span class="p">,</span> <span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
 
 
 <span class="c1"># ==============================================================================</span>
@@ -996,7 +999,7 @@ document.write(`
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]),</span>
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span>
         <span class="p">)</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
 
 
 <span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span><span class="p">(</span><span class="n">enable_backward</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
@@ -1148,7 +1151,7 @@ document.write(`
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]),</span>
             <span class="nb">type</span><span class="p">(</span><span class="n">qi</span><span class="p">)(</span><span class="n">virial_acc</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span>
         <span class="p">)</span>
-        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="n">system_id</span><span class="p">,</span> <span class="o">-</span><span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">atomic_add</span><span class="p">(</span><span class="n">virial</span><span class="p">,</span> <span class="n">system_id</span><span class="p">,</span> <span class="n">half</span> <span class="o">*</span> <span class="n">virial_out</span><span class="p">)</span>
 
 
 <span class="c1"># ==============================================================================</span>

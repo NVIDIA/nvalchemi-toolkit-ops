@@ -791,8 +791,6 @@ document.write(`
 <span class="c1">###########################################################################################</span>
 
 
-<div class="viewcode-block" id="check_cell_list_rebuild_needed">
-<a class="viewcode-back" href="../../../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.rebuild_detection.check_cell_list_rebuild_needed">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">check_cell_list_rebuild_needed</span><span class="p">(</span>
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
@@ -853,12 +851,9 @@ document.write(`
         <span class="n">pbc</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="k">return</span> <span class="n">rebuild_tensor</span></div>
+    <span class="k">return</span> <span class="n">rebuild_tensor</span>
 
 
-
-<div class="viewcode-block" id="check_neighbor_list_rebuild_needed">
-<a class="viewcode-back" href="../../../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.rebuild_detection.check_neighbor_list_rebuild_needed">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">check_neighbor_list_rebuild_needed</span><span class="p">(</span>
     <span class="n">reference_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
@@ -911,8 +906,7 @@ document.write(`
         <span class="n">pbc</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="k">return</span> <span class="n">rebuild_tensor</span></div>
-
+    <span class="k">return</span> <span class="n">rebuild_tensor</span>
 
 
 <span class="c1">###########################################################################################</span>
@@ -1032,6 +1026,8 @@ document.write(`
     <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">reference_positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
 
 
+<div class="viewcode-block" id="batch_neighbor_list_needs_rebuild">
+<a class="viewcode-back" href="../../../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.rebuild_detection.batch_neighbor_list_needs_rebuild">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">batch_neighbor_list_needs_rebuild</span><span class="p">(</span>
     <span class="n">reference_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
@@ -1097,7 +1093,8 @@ document.write(`
         <span class="n">cell</span><span class="p">,</span>
         <span class="n">cell_inv</span><span class="p">,</span>
         <span class="n">pbc</span><span class="p">,</span>
-    <span class="p">)</span>
+    <span class="p">)</span></div>
+
 
 
 <span class="c1">###########################################################################################</span>
@@ -1199,6 +1196,8 @@ document.write(`
     <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">current_positions</span><span class="o">.</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span>
 
 
+<div class="viewcode-block" id="batch_cell_list_needs_rebuild">
+<a class="viewcode-back" href="../../../../modules/torch/neighbors.html#nvalchemiops.torch.neighbors.rebuild_detection.batch_cell_list_needs_rebuild">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">batch_cell_list_needs_rebuild</span><span class="p">(</span>
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
     <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
@@ -1252,7 +1251,8 @@ document.write(`
         <span class="n">cells_per_dimension</span><span class="p">,</span>
         <span class="n">cell</span><span class="p">,</span>
         <span class="n">pbc</span><span class="p">,</span>
-    <span class="p">)</span>
+    <span class="p">)</span></div>
+
 </pre></div>
 
                 </article>

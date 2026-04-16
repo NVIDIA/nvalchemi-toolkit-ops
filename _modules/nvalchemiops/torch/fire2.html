@@ -542,6 +542,13 @@ document.write(`
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
+<span class="sd">    Default hyperparameters (from the underlying Warp implementation):</span>
+<span class="sd">    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,</span>
+<span class="sd">    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,</span>
+<span class="sd">    ``tmin=0.005``, ``maxstep=0.1``.</span>
+<span class="sd">    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for</span>
+<span class="sd">    full descriptions.</span>
+
 <span class="sd">    For variable-cell optimization (coordinates + cell DOFs), use</span>
 <span class="sd">    :func:`fire2_step_coord_cell` instead.</span>
 
@@ -647,7 +654,8 @@ document.write(`
 <span class="sd">    results back.</span>
 
 <span class="sd">    The cell must be pre-aligned to upper-triangular form via</span>
-<span class="sd">    ``align_cell()`` before the first call.</span>
+<span class="sd">    :func:`nvalchemiops.dynamics.utils.cell_filter.align_cell` before</span>
+<span class="sd">    the first call.</span>
 
 <span class="sd">    Modifies *positions*, *velocities*, *cell*, *cell_velocities*,</span>
 <span class="sd">    *alpha*, *dt*, and *nsteps_inc* in-place.</span>
@@ -704,6 +712,13 @@ document.write(`
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
+<span class="sd">    Default hyperparameters (from the underlying Warp implementation):</span>
+<span class="sd">    ``delaystep=60``, ``dtgrow=1.05``, ``dtshrink=0.75``,</span>
+<span class="sd">    ``alphashrink=0.985``, ``alpha0=0.09``, ``tmax=0.08``,</span>
+<span class="sd">    ``tmin=0.005``, ``maxstep=0.1``.</span>
+<span class="sd">    See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for</span>
+<span class="sd">    full descriptions.</span>
+
 <span class="sd">    **Pre-computing static metadata for tight loops**</span>
 
 <span class="sd">    When *batch_idx* does not change between steps (fixed system sizes),</span>

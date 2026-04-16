@@ -747,7 +747,7 @@ Instead of calling the components separately, ``ewald_summation`` now supports
 
 
       Full Ewald charge gradients range: [-0.3609, 0.3609]
-      Unified vs component charge gradient max diff: 0.00e+00
+      Unified vs component charge gradient max diff: 5.55e-17
 
 
 
@@ -936,7 +936,6 @@ Build batched neighbor list and run:
     Warp DeprecationWarning: The symbol `warp.utils.torch` will soon be removed from the public API. It can still be accessed from `warp._src.utils.torch` but might be changed or removed without notice.
     Warp DeprecationWarning: The namespace `warp.torch` will soon be removed from the public API. It can still be accessed from `warp._src.torch` but might be changed or removed without notice.
     Warp DeprecationWarning: The symbol `warp.torch.contiguous_format` will soon be removed from the public API. It can still be accessed from `warp._src.torch.contiguous_format` but might be changed or removed without notice.
-    Warp DeprecationWarning: The symbol `warp.jax_experimental.torch` will soon be removed from the public API. Use `warp.torch` instead.
     Warp DeprecationWarning: The symbol `warp.types.torch` will soon be removed from the public API. Use `warp.torch` instead.
     Warp DeprecationWarning: The symbol `warp.utils.torch` will soon be removed from the public API. Use `warp.torch` instead.
 
@@ -1043,7 +1042,7 @@ Key equations implemented:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 5.266 seconds)
+   **Total running time of the script:** (0 minutes 1.169 seconds)
 
 
 .. _sphx_glr_download_examples_electrostatics_02_ewald_summation_example.py:

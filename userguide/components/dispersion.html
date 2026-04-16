@@ -368,6 +368,7 @@ document.write(`
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../about/install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../about/conventions.html">Conventions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/migration.html">Migration Guide (v0.3.0)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../about/faq.html">Frequently Asked Questions</a></li>
 </ul>
@@ -747,6 +748,15 @@ and materials science:</p>
 <code class="docutils literal notranslate"><span class="pre">scipy.constants.value('atomic</span> <span class="pre">unit</span> <span class="pre">of</span> <span class="pre">length')</span></code> for Bohr,
 <code class="docutils literal notranslate"><span class="pre">scipy.constants.value('Hartree</span> <span class="pre">energy</span> <span class="pre">in</span> <span class="pre">eV')</span></code> for Hartree.</p>
 </div>
+</section>
+<section id="virial-convention">
+<h3>Virial Convention<a class="headerlink" href="#virial-convention" title="Link to this heading">#</a></h3>
+<p>The DFT-D3 virial follows the project-wide convention:</p>
+<div class="math notranslate nohighlight">
+\[W_{ab} = -\partial E / \partial \varepsilon_{ab}\]</div>
+<p>Tensile-positive Cauchy stress is obtained via <span class="math notranslate nohighlight">\(\sigma = -W / V\)</span> where
+<span class="math notranslate nohighlight">\(V = |\det(\mathbf{C})|\)</span>.</p>
+<p>See <a class="reference internal" href="../about/conventions.html#conventions"><span class="std std-ref">Conventions</span></a> for the full project-wide definitions.</p>
 </section>
 <section id="data-types">
 <h3>Data Types<a class="headerlink" href="#data-types" title="Link to this heading">#</a></h3>
@@ -1299,10 +1309,10 @@ compute the chain-rule force contribution and add it to the direct forces.</p>
 neighbor representation format:</p>
 <ul class="simple">
 <li><p><strong>Neighbor matrix</strong> (<code class="docutils literal notranslate"><span class="pre">neighbor_matrix</span></code> argument): Dispatches to
-<code class="docutils literal notranslate"><span class="pre">_dftd3_nm_op</span></code>, which launches kernels that iterate over a
+<code class="docutils literal notranslate"><span class="pre">_dftd3_matrix_op</span></code>, which launches kernels that iterate over a
 dense <code class="docutils literal notranslate"><span class="pre">[num_atoms,</span> <span class="pre">max_neighbors]</span></code> array.</p></li>
 <li><p><strong>Neighbor list</strong> (<code class="docutils literal notranslate"><span class="pre">neighbor_list</span></code> + <code class="docutils literal notranslate"><span class="pre">neighbor_ptr</span></code> arguments): Dispatches to
-<code class="docutils literal notranslate"><span class="pre">_dftd3_nl_op</span></code>, which launches kernels that
+<code class="docutils literal notranslate"><span class="pre">_dftd3_op</span></code>, which launches kernels that
 use CSR (Compressed Sparse Row) format for memory-efficient sparse traversal.</p></li>
 </ul>
 <p>Both paths execute the same four-pass algorithm and produce identical results.
@@ -1416,6 +1426,7 @@ function in dispersion corrected density functional theory.”
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-representations">Neighbor Representations</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-to-use-each-format">When to Use Each Format</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#units">Units</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#virial-convention">Virial Convention</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#data-types">Data Types</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#padding-atoms">Padding Atoms</a></li>
 </ul>

@@ -442,6 +442,17 @@ document.write(`
 <span class="sd">- Anisotropic (orthorhombic): Independent x, y, z pressure control</span>
 <span class="sd">- Anisotropic (triclinic): Full stress tensor control (9 components)</span>
 
+<span class="sd">Conventions</span>
+<span class="sd">-----------</span>
+<span class="sd">**Cell velocities** (``cell_velocities``) are the absolute time derivative</span>
+<span class="sd">of the cell matrix: ḣ = dh/dt.  The strain rate tensor ε̇ = ḣ h⁻¹ is</span>
+<span class="sd">computed internally wherever it is needed (drag, position update, cell</span>
+<span class="sd">kinetic energy).  Callers should *not* pre-convert to strain rate.</span>
+
+<span class="sd">**Virial sign**: ``compute_pressure_tensor`` expects the virial</span>
+<span class="sd">W = -dE/dε as defined in ``docs/userguide/about/conventions.md``.</span>
+<span class="sd">All interaction kernels in this library produce this sign directly.</span>
+
 <span class="sd">References</span>
 <span class="sd">----------</span>
 <span class="sd">- Martyna, Tobias, Klein, J. Chem. Phys. 101, 4177 (1994)</span>
@@ -524,6 +535,80 @@ document.write(`
 
 
 <span class="c1"># =============================================================================</span>
+<span class="c1"># Helper: compute h_inv from volumes when cells_inv is not provided</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_build_identity_h_inv_kernel</span><span class="p">(</span>
+    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">h_inv_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Build h_inv = V^{-1/3} * I, valid for cubic cells.</span>
+
+<span class="sd">    Launch Grid: dim = [num_systems]</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">sys</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
+    <span class="n">inv_L</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">cbrt</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">volumes</span><span class="p">[</span><span class="n">sys</span><span class="p">])(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">volumes</span><span class="p">[</span><span class="n">sys</span><span class="p">])</span>
+    <span class="n">z</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">volumes</span><span class="p">[</span><span class="n">sys</span><span class="p">])(</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="n">h_inv_out</span><span class="p">[</span><span class="n">sys</span><span class="p">]</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">h_inv_out</span><span class="p">[</span><span class="n">sys</span><span class="p">])(</span><span class="n">inv_L</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">inv_L</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">inv_L</span><span class="p">)</span>
+
+
+<span class="n">_build_identity_h_inv_kernel_overload</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="k">for</span> <span class="n">_t</span><span class="p">,</span> <span class="n">_m</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span>
+    <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">],</span>
+    <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">mat33f</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">mat33d</span><span class="p">],</span>
+<span class="p">):</span>
+    <span class="n">_build_identity_h_inv_kernel_overload</span><span class="p">[</span><span class="n">_t</span><span class="p">]</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">overload</span><span class="p">(</span>
+        <span class="n">_build_identity_h_inv_kernel</span><span class="p">,</span>
+        <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">_t</span><span class="p">),</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">_m</span><span class="p">)],</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_ensure_cells_inv</span><span class="p">(</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return cells_inv if provided, otherwise build V^{-1/3}·I from volumes.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    cells_inv : wp.array or None</span>
+<span class="sd">        Caller-provided inverse cell matrices.</span>
+<span class="sd">    volumes : wp.array or None</span>
+<span class="sd">        Cell volumes, used as fallback.</span>
+<span class="sd">    cell_velocities : wp.array</span>
+<span class="sd">        Used only to infer mat dtype (mat33f or mat33d).</span>
+<span class="sd">    device : str or None</span>
+<span class="sd">        Warp device.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Inverse cell matrices (either caller-provided or computed).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">cells_inv</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">cells_inv</span>
+    <span class="k">if</span> <span class="n">volumes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Either cells_inv or volumes must be provided.&quot;</span><span class="p">)</span>
+    <span class="n">num_systems</span> <span class="o">=</span> <span class="n">volumes</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">mat_dtype</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="o">.</span><span class="n">device</span>
+    <span class="n">scalar_dtype</span> <span class="o">=</span> <span class="n">volumes</span><span class="o">.</span><span class="n">dtype</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">empty</span><span class="p">(</span><span class="n">num_systems</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">mat_dtype</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+        <span class="n">_build_identity_h_inv_kernel_overload</span><span class="p">[</span><span class="n">scalar_dtype</span><span class="p">],</span>
+        <span class="n">dim</span><span class="o">=</span><span class="n">num_systems</span><span class="p">,</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">volumes</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">],</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">h_inv</span>
+
+
+<span class="c1"># =============================================================================</span>
 <span class="c1"># Shared @wp.func for NPT/NPH physics</span>
 <span class="c1"># =============================================================================</span>
 
@@ -536,23 +621,26 @@ document.write(`
 
 
 <span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">V</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Isotropic drag: (coupling * Tr(h_dot)/(3V) + eta_dot_1) * v.&quot;&quot;&quot;</span>
-    <span class="n">trace_h_dot</span> <span class="o">=</span> <span class="n">h_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">h_dot</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">h_dot</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
-    <span class="n">eps_dot</span> <span class="o">=</span> <span class="n">trace_h_dot</span> <span class="o">/</span> <span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">V</span><span class="p">)(</span><span class="mf">3.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">V</span><span class="p">)</span>
-    <span class="k">return</span> <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_dot</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_drag_isotropic</span><span class="p">(</span>
+    <span class="n">h_dot</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">Any</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Isotropic drag: (coupling * Tr(ε̇)/3 + eta_dot_1) * v, where ε̇ = ḣ h⁻¹.&quot;&quot;&quot;</span>
+    <span class="n">eps_dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">)</span>
+    <span class="n">trace_eps</span> <span class="o">=</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+    <span class="n">eps_scalar</span> <span class="o">=</span> <span class="n">trace_eps</span> <span class="o">/</span> <span class="nb">type</span><span class="p">(</span><span class="n">trace_eps</span><span class="p">)(</span><span class="mf">3.0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_scalar</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span>
 
 
 <span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">V</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Anisotropic (diagonal) drag.&quot;&quot;&quot;</span>
-    <span class="n">eps_dot_xx</span> <span class="o">=</span> <span class="n">h_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="n">V</span>
-    <span class="n">eps_dot_yy</span> <span class="o">=</span> <span class="n">h_dot</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">/</span> <span class="n">V</span>
-    <span class="n">eps_dot_zz</span> <span class="o">=</span> <span class="n">h_dot</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">/</span> <span class="n">V</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_drag_anisotropic</span><span class="p">(</span>
+    <span class="n">h_dot</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">Any</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Anisotropic (diagonal) drag using ε̇ = ḣ h⁻¹.&quot;&quot;&quot;</span>
+    <span class="n">eps_dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">)</span>
     <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="n">v</span><span class="p">)(</span>
-        <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_dot_xx</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
-        <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_dot_yy</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
-        <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_dot_zz</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span>
+        <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span>
+        <span class="p">(</span><span class="n">coupling</span> <span class="o">*</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">+</span> <span class="n">eta_dot_1</span><span class="p">)</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span>
     <span class="p">)</span>
 
 
@@ -560,8 +648,8 @@ document.write(`
 <span class="k">def</span><span class="w"> </span><span class="nf">_drag_triclinic</span><span class="p">(</span>
     <span class="n">h_dot</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">coupling</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="n">Any</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Triclinic (full tensor) drag: (coupling * h_dot @ h_inv + eta_dot_1 * I) @ v.&quot;&quot;&quot;</span>
-    <span class="n">eps_dot</span> <span class="o">=</span> <span class="n">h_dot</span> <span class="o">*</span> <span class="n">h_inv</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Triclinic (full tensor) drag: (coupling * ḣ h⁻¹ + eta_dot_1 * I) @ v.&quot;&quot;&quot;</span>
+    <span class="n">eps_dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">)</span>
     <span class="n">drag_x</span> <span class="o">=</span> <span class="p">(</span>
         <span class="n">coupling</span> <span class="o">*</span> <span class="p">(</span><span class="n">eps_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">eps_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
         <span class="o">+</span> <span class="n">eta_dot_1</span> <span class="o">*</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
@@ -847,22 +935,24 @@ document.write(`
 <span class="nd">@wp</span><span class="o">.</span><span class="n">kernel</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">_compute_cell_kinetic_energy_kernel</span><span class="p">(</span>
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">kinetic_energy</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
 <span class="p">):</span>
-<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute cell kinetic energy: KE = 0.5 * W * ||ḣ||²_F.</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Compute cell kinetic energy: KE = 0.5 * W * ||ε̇||²_F, where ε̇ = ḣ h⁻¹.</span>
 
 <span class="sd">    Launch Grid: dim = [num_systems]</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">sys_id</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">tid</span><span class="p">()</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
     <span class="n">W</span> <span class="o">=</span> <span class="n">cell_masses</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
 
-    <span class="c1"># Frobenius norm squared</span>
+    <span class="n">eps_dot</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">)</span>
     <span class="n">ke</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">W</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
         <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
-            <span class="n">ke</span> <span class="o">=</span> <span class="n">ke</span> <span class="o">+</span> <span class="n">h_dot</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">h_dot</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
+            <span class="n">ke</span> <span class="o">=</span> <span class="n">ke</span> <span class="o">+</span> <span class="n">eps_dot</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">*</span> <span class="n">eps_dot</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
 
     <span class="n">kinetic_energy</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">W</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span> <span class="o">*</span> <span class="n">W</span> <span class="o">*</span> <span class="n">ke</span>
 
@@ -894,7 +984,7 @@ document.write(`
     <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_velocity</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volume</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">eta_dot</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -903,6 +993,8 @@ document.write(`
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;NPT isotropic velocity half-step, single system (out-only).</span>
 
 <span class="sd">    v_new = v + dt/2 * (F/m - (1 + 1/N_f) * ε̇ * v - η̇₁ * v)</span>
+
+<span class="sd">    where ε̇ = Tr(ḣ h⁻¹)/3 is the isotropic strain rate.</span>
 
 <span class="sd">    For in-place: host passes same array as velocities and velocities_out.</span>
 
@@ -913,14 +1005,14 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">eta_dot_1</span> <span class="o">=</span> <span class="n">eta_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
 
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volume</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">num_atoms</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -932,7 +1024,7 @@ document.write(`
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">eta_dots</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms_per_system</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -950,15 +1042,15 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
     <span class="n">eta_dot_1</span> <span class="o">=</span> <span class="n">eta_dots</span><span class="p">[</span><span class="n">sys_id</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
     <span class="n">N</span> <span class="o">=</span> <span class="n">num_atoms_per_system</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
 
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volumes</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">N</span><span class="p">)</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -974,7 +1066,7 @@ document.write(`
     <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_velocity</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volume</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -982,6 +1074,8 @@ document.write(`
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;NPH isotropic velocity half-step, single system (out-only).</span>
 
 <span class="sd">    v_new = v + dt/2 * (F/m - (1 + 1/N_f) * ε̇ * v)</span>
+
+<span class="sd">    where ε̇ = Tr(ḣ h⁻¹)/3 is the isotropic strain rate.</span>
 
 <span class="sd">    For in-place: host passes same array as velocities and velocities_out.</span>
 
@@ -992,13 +1086,13 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volume</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">num_atoms</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -1010,7 +1104,7 @@ document.write(`
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms_per_system</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1027,14 +1121,14 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
     <span class="n">N</span> <span class="o">=</span> <span class="n">num_atoms_per_system</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
 
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volumes</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">N</span><span class="p">)</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_isotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -1578,7 +1672,7 @@ document.write(`
     <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_velocity</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volume</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">eta_dot</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1595,14 +1689,14 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">eta_dot_1</span> <span class="o">=</span> <span class="n">eta_dot</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volume</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">num_atoms</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -1614,7 +1708,7 @@ document.write(`
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">eta_dots</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms_per_system</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1632,15 +1726,15 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
     <span class="n">eta_dot_1</span> <span class="o">=</span> <span class="n">eta_dots</span><span class="p">[</span><span class="n">sys_id</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span>
     <span class="n">N</span> <span class="o">=</span> <span class="n">num_atoms_per_system</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volumes</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
 
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">N</span><span class="p">)</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="n">eta_dot_1</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -1657,7 +1751,6 @@ document.write(`
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_velocity</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volume</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">eta_dot</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1694,7 +1787,6 @@ document.write(`
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">eta_dots</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array2d</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms_per_system</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1737,7 +1829,6 @@ document.write(`
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_velocity</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volume</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1772,7 +1863,6 @@ document.write(`
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms_per_system</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1807,7 +1897,7 @@ document.write(`
     <span class="n">masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">cell_velocity</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volume</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cell_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1823,13 +1913,13 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volume</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cell_inv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">num_atoms</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -1841,7 +1931,7 @@ document.write(`
     <span class="n">forces</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">batch_idx</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
-    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">num_atoms_per_system</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">wp</span><span class="o">.</span><span class="n">int32</span><span class="p">),</span>
     <span class="n">dt</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
     <span class="n">velocities_out</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">Any</span><span class="p">),</span>
@@ -1858,14 +1948,14 @@ document.write(`
     <span class="n">m</span> <span class="o">=</span> <span class="n">masses</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">f</span> <span class="o">=</span> <span class="n">forces</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span>
     <span class="n">h_dot</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">cells_inv</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
     <span class="n">N</span> <span class="o">=</span> <span class="n">num_atoms_per_system</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
-    <span class="n">V</span> <span class="o">=</span> <span class="n">volumes</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span>
 
     <span class="n">N_f</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">N</span><span class="p">)</span>
     <span class="n">coupling</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">+</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">N_f</span>
     <span class="n">dt_half</span> <span class="o">=</span> <span class="n">dt</span><span class="p">[</span><span class="n">sys_id</span><span class="p">]</span> <span class="o">*</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.5</span><span class="p">)</span>
     <span class="n">accel</span> <span class="o">=</span> <span class="n">_npt_accel</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">m</span><span class="p">)</span>
-    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
+    <span class="n">drag</span> <span class="o">=</span> <span class="n">_drag_anisotropic</span><span class="p">(</span><span class="n">h_dot</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">coupling</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">m</span><span class="p">)(</span><span class="mf">0.0</span><span class="p">),</span> <span class="n">v</span><span class="p">)</span>
 
     <span class="n">velocities_out</span><span class="p">[</span><span class="n">atom_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span> <span class="o">+</span> <span class="n">dt_half</span> <span class="o">*</span> <span class="p">(</span><span class="n">accel</span> <span class="o">-</span> <span class="n">drag</span><span class="p">)</span>
 
@@ -2022,7 +2112,7 @@ document.write(`
 <span class="sd">    masses : wp.array</span>
 <span class="sd">        Particle masses. Shape (N,).</span>
 <span class="sd">    virial_tensors : wp.array(dtype=vec9f or vec9d)</span>
-<span class="sd">        Virial tensor from forces. Shape (B,).</span>
+<span class="sd">        Virial tensor from forces (physics sign). Shape (B,).</span>
 <span class="sd">    cells : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
 <span class="sd">        Cell matrices. Shape (B,).</span>
 <span class="sd">    kinetic_tensors : wp.array(dtype=scalar, ndim=2)</span>
@@ -2384,21 +2474,30 @@ document.write(`
     <span class="n">cell_velocities</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
     <span class="n">cell_masses</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
     <span class="n">kinetic_energy</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">,</span>
+    <span class="n">cells_inv</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">volumes</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">device</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    Compute kinetic energy of cell degrees of freedom.</span>
 
-<span class="sd">    KE_cell = 0.5 * W * ||ḣ||²_F</span>
+<span class="sd">    KE_cell = 0.5 * W * ||ε̇||²_F, where ε̇ = ḣ h⁻¹</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
 <span class="sd">    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
-<span class="sd">        Cell velocity matrices. Shape (B,).</span>
+<span class="sd">        Cell velocity matrices ḣ = dh/dt. Shape (B,).</span>
 <span class="sd">    cell_masses : wp.array</span>
 <span class="sd">        Barostat masses. Shape (B,).</span>
 <span class="sd">    kinetic_energy : wp.array(dtype=scalar)</span>
 <span class="sd">        Output cell kinetic energy. Shape (B,).</span>
+<span class="sd">    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional</span>
+<span class="sd">        Inverse cell matrices h⁻¹. Shape (B,). Required for non-cubic</span>
+<span class="sd">        cells to compute the exact strain rate ε̇ = ḣ h⁻¹.</span>
+<span class="sd">    volumes : wp.array(dtype=scalar), optional</span>
+<span class="sd">        Cell volumes. Shape (B,). Used as fallback when ``cells_inv`` is not</span>
+<span class="sd">        provided: computes h⁻¹ = V^{-1/3} I, which is only valid for cubic</span>
+<span class="sd">        cells. For non-cubic cells the caller must provide ``cells_inv``.</span>
 <span class="sd">    device : str, optional</span>
 <span class="sd">        Warp device.</span>
 
@@ -2406,16 +2505,23 @@ document.write(`
 <span class="sd">    -------</span>
 <span class="sd">    wp.array</span>
 <span class="sd">        Cell kinetic energy. Shape (B,).</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    At least one of ``cells_inv`` or ``volumes`` must be provided.</span>
+<span class="sd">    If both are given, ``cells_inv`` takes precedence.</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">device</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="o">.</span><span class="n">device</span>
+
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">_ensure_cells_inv</span><span class="p">(</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">volumes</span><span class="p">,</span> <span class="n">cell_velocities</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
 
     <span class="n">num_systems</span> <span class="o">=</span> <span class="n">cell_velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
     <span class="n">wp</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
         <span class="n">_compute_cell_kinetic_energy_kernel</span><span class="p">,</span>
         <span class="n">dim</span><span class="o">=</span><span class="n">num_systems</span><span class="p">,</span>
-        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">cell_velocities</span><span class="p">,</span> <span class="n">cell_masses</span><span class="p">,</span> <span class="n">kinetic_energy</span><span class="p">],</span>
+        <span class="n">inputs</span><span class="o">=</span><span class="p">[</span><span class="n">cell_velocities</span><span class="p">,</span> <span class="n">h_inv</span><span class="p">,</span> <span class="n">cell_masses</span><span class="p">,</span> <span class="n">kinetic_energy</span><span class="p">],</span>
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span>
 
@@ -2808,18 +2914,17 @@ document.write(`
 
 <span class="sd">    - F_i / m_i is the acceleration from forces</span>
 <span class="sd">    - γ = 1 + 1/N_f is the coupling factor (N_f = 3N degrees of freedom)</span>
-<span class="sd">    - ε̇ is the strain rate from cell velocity</span>
+<span class="sd">    - ε̇ = ḣ h⁻¹ is the strain rate tensor</span>
 <span class="sd">    - η̇₁ is the first thermostat chain velocity</span>
 
 <span class="sd">    **Isotropic mode** (default):</span>
-<span class="sd">        Uses scalar strain rate ε̇ = Tr(ḣ)/V</span>
+<span class="sd">        Uses scalar strain rate ε̇ = Tr(ḣ h⁻¹)/3</span>
 
 <span class="sd">    **Anisotropic mode**:</span>
-<span class="sd">        Uses diagonal strain rates ε̇_ii = ḣ_ii/V for direction-dependent drag</span>
+<span class="sd">        Uses diagonal strain rates ε̇_ii = (ḣ h⁻¹)_ii for direction-dependent drag</span>
 
 <span class="sd">    **Triclinic mode**:</span>
-<span class="sd">        Uses full strain rate tensor ε̇ = ḣ @ h⁻¹ for full coupling.</span>
-<span class="sd">        Requires ``cells_inv`` parameter.</span>
+<span class="sd">        Uses full strain rate tensor ε̇ = ḣ h⁻¹ for full coupling</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -2830,9 +2935,10 @@ document.write(`
 <span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
 <span class="sd">        Forces on particles. Shape (N,).</span>
 <span class="sd">    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
-<span class="sd">        Cell velocity matrices ḣ. Shape (B,).</span>
+<span class="sd">        Cell velocity matrices ḣ = dh/dt. Shape (B,).</span>
 <span class="sd">    volumes : wp.array(dtype=scalar)</span>
-<span class="sd">        Cell volumes. Shape (B,).</span>
+<span class="sd">        Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when</span>
+<span class="sd">        ``cells_inv`` is not provided (only valid for cubic cells).</span>
 <span class="sd">    eta_dots : wp.array2d(dtype=scalar)</span>
 <span class="sd">        Thermostat chain velocities. Shape (B, chain_length).</span>
 <span class="sd">    num_atoms : wp.array(dtype=wp.int32)</span>
@@ -2845,27 +2951,28 @@ document.write(`
 <span class="sd">    num_atoms_per_system : wp.array(dtype=wp.int32), optional</span>
 <span class="sd">        Number of atoms per system. Required for batched simulations.</span>
 <span class="sd">    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional</span>
-<span class="sd">        Inverse cell matrices h⁻¹. Shape (B,). **Required for triclinic mode.**</span>
+<span class="sd">        Inverse cell matrices h⁻¹. Shape (B,). When provided, the</span>
+<span class="sd">        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</span>
 <span class="sd">    mode : str, optional</span>
 <span class="sd">        Pressure control mode. One of:</span>
 
 <span class="sd">        - ``&quot;isotropic&quot;`` (default): Uniform scalar strain rate coupling</span>
 <span class="sd">        - ``&quot;anisotropic&quot;``: Diagonal strain rate coupling (orthorhombic)</span>
-<span class="sd">        - ``&quot;triclinic&quot;``: Full tensor strain rate coupling (requires cells_inv)</span>
+<span class="sd">        - ``&quot;triclinic&quot;``: Full tensor strain rate coupling</span>
 
 <span class="sd">    device : str, optional</span>
 <span class="sd">        Warp device.</span>
 
 <span class="sd">    Examples</span>
 <span class="sd">    --------</span>
-<span class="sd">    Single system (isotropic):</span>
+<span class="sd">    Single system (isotropic, cubic cell):</span>
 
 <span class="sd">    &gt;&gt;&gt; npt_velocity_half_step(</span>
 <span class="sd">    ...     velocities, masses, forces, cell_velocities, volumes,</span>
 <span class="sd">    ...     eta_dots, num_atoms=100, dt=0.001</span>
 <span class="sd">    ... )</span>
 
-<span class="sd">    Triclinic cell:</span>
+<span class="sd">    Non-cubic cell (pass cells_inv for exact strain rate):</span>
 
 <span class="sd">    &gt;&gt;&gt; npt_velocity_half_step(</span>
 <span class="sd">    ...     velocities, masses, forces, cell_velocities, volumes,</span>
@@ -2928,8 +3035,13 @@ document.write(`
 <span class="sd">    ----------</span>
 <span class="sd">    velocities : wp.array</span>
 <span class="sd">        Input velocities (not modified when velocities_out differs).</span>
-<span class="sd">    masses, forces, cell_velocities, volumes, eta_dots : wp.array</span>
+<span class="sd">    masses, forces, cell_velocities : wp.array</span>
 <span class="sd">        System state arrays.</span>
+<span class="sd">    volumes : wp.array</span>
+<span class="sd">        Cell volumes. Shape (B,). Used as fallback when ``cells_inv``</span>
+<span class="sd">        is not provided (only valid for cubic cells).</span>
+<span class="sd">    eta_dots : wp.array</span>
+<span class="sd">        Thermostat chain velocities.</span>
 <span class="sd">    num_atoms : wp.array(dtype=wp.int32)</span>
 <span class="sd">        Atom count for single-system mode. Shape (1,).</span>
 <span class="sd">    dt : wp.array(dtype=scalar)</span>
@@ -2942,7 +3054,8 @@ document.write(`
 <span class="sd">    num_atoms_per_system : wp.array, optional</span>
 <span class="sd">        Atom counts per system.</span>
 <span class="sd">    cells_inv : wp.array, optional</span>
-<span class="sd">        Inverse cell matrices. Required for triclinic mode.</span>
+<span class="sd">        Inverse cell matrices h⁻¹. Shape (B,). When provided, the</span>
+<span class="sd">        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</span>
 <span class="sd">    mode : str, optional</span>
 <span class="sd">        Pressure control mode: &quot;isotropic&quot;, &quot;anisotropic&quot;, or &quot;triclinic&quot;.</span>
 <span class="sd">    device : str, optional</span>
@@ -2959,6 +3072,8 @@ document.write(`
     <span class="k">if</span> <span class="ow">not</span> <span class="n">_skip_validation</span><span class="p">:</span>
         <span class="n">validate_out_array</span><span class="p">(</span><span class="n">velocities_out</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="s2">&quot;velocities_out&quot;</span><span class="p">)</span>
 
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">_ensure_cells_inv</span><span class="p">(</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">volumes</span><span class="p">,</span> <span class="n">cell_velocities</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
     <span class="n">exec_mode</span> <span class="o">=</span> <span class="n">resolve_execution_mode</span><span class="p">(</span><span class="n">batch_idx</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
     <span class="n">n_atoms</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
@@ -2970,7 +3085,6 @@ document.write(`
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;mode=&#39;triclinic&#39; requires cells_inv parameter.&quot;</span><span class="p">)</span>
 
     <span class="n">family</span> <span class="o">=</span> <span class="n">_NPT_VELOCITY_FAMILIES</span><span class="p">[</span><span class="n">mode</span><span class="p">]</span>
-    <span class="n">extra</span> <span class="o">=</span> <span class="p">[</span><span class="n">cells_inv</span><span class="p">]</span> <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s2">&quot;triclinic&quot;</span> <span class="k">else</span> <span class="p">[]</span>
 
     <span class="n">launch_family</span><span class="p">(</span>
         <span class="n">family</span><span class="p">,</span>
@@ -2981,8 +3095,7 @@ document.write(`
             <span class="n">masses</span><span class="p">,</span>
             <span class="n">forces</span><span class="p">,</span>
             <span class="n">cell_velocities</span><span class="p">,</span>
-            <span class="o">*</span><span class="n">extra</span><span class="p">,</span>
-            <span class="n">volumes</span><span class="p">,</span>
+            <span class="n">h_inv</span><span class="p">,</span>
             <span class="n">eta_dots</span><span class="p">,</span>
             <span class="n">num_atoms</span><span class="p">,</span>
             <span class="n">dt</span><span class="p">,</span>
@@ -2994,8 +3107,7 @@ document.write(`
             <span class="n">forces</span><span class="p">,</span>
             <span class="n">batch_idx</span><span class="p">,</span>
             <span class="n">cell_velocities</span><span class="p">,</span>
-            <span class="o">*</span><span class="n">extra</span><span class="p">,</span>
-            <span class="n">volumes</span><span class="p">,</span>
+            <span class="n">h_inv</span><span class="p">,</span>
             <span class="n">eta_dots</span><span class="p">,</span>
             <span class="n">num_atoms_per_system</span><span class="p">,</span>
             <span class="n">dt</span><span class="p">,</span>
@@ -3326,7 +3438,8 @@ document.write(`
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="c1"># 3. Velocity half-step</span>
+    <span class="c1"># 3. Velocity half-step (needs h^-1 for strain rate)</span>
+    <span class="n">compute_cell_inverse</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
     <span class="n">npt_velocity_half_step</span><span class="p">(</span>
         <span class="n">velocities</span><span class="p">,</span>
         <span class="n">masses</span><span class="p">,</span>
@@ -3338,11 +3451,11 @@ document.write(`
         <span class="n">dt</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
         <span class="n">num_atoms_per_system</span><span class="o">=</span><span class="n">num_atoms_per_system</span><span class="p">,</span>
+        <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="c1"># 4. Position update</span>
-    <span class="n">compute_cell_inverse</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="c1"># 4. Position update (reuses cells_inv from step 3)</span>
     <span class="n">npt_position_update</span><span class="p">(</span>
         <span class="n">positions</span><span class="p">,</span>
         <span class="n">velocities</span><span class="p">,</span>
@@ -3361,8 +3474,9 @@ document.write(`
     <span class="k">if</span> <span class="n">compute_forces_fn</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">compute_forces_fn</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">virial_tensors</span><span class="p">)</span>
 
-    <span class="c1"># Recompute pressure and volumes</span>
+    <span class="c1"># Recompute pressure, volumes, and cell inverses after cell update</span>
     <span class="n">compute_cell_volume</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">volumes</span><span class="o">=</span><span class="n">volumes</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">compute_cell_inverse</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
     <span class="n">compute_kinetic_energy</span><span class="p">(</span>
         <span class="n">velocities</span><span class="p">,</span>
         <span class="n">masses</span><span class="p">,</span>
@@ -3394,6 +3508,7 @@ document.write(`
         <span class="n">dt</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
         <span class="n">num_atoms_per_system</span><span class="o">=</span><span class="n">num_atoms_per_system</span><span class="p">,</span>
+        <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span>
 
@@ -3663,13 +3778,13 @@ document.write(`
 
 <span class="sd">        \\dot{v}_i = \\frac{F_i}{m_i} - \\gamma \\cdot \\dot{\\varepsilon} \\cdot v_i</span>
 
-<span class="sd">    where γ = 1 + 1/N_f is the coupling factor.</span>
+<span class="sd">    where γ = 1 + 1/N_f is the coupling factor and ε̇ = ḣ h⁻¹.</span>
 
-<span class="sd">    **Isotropic mode**: Uses scalar strain rate ε̇ = Tr(ḣ)/V</span>
+<span class="sd">    **Isotropic mode**: Uses scalar strain rate ε̇ = Tr(ḣ h⁻¹)/3</span>
 
-<span class="sd">    **Anisotropic mode**: Uses diagonal strain rates ε̇_ii = ḣ_ii/V</span>
+<span class="sd">    **Anisotropic mode**: Uses diagonal strain rates ε̇_ii = (ḣ h⁻¹)_ii</span>
 
-<span class="sd">    **Triclinic mode**: Uses full strain rate tensor ε̇ = ḣ @ h⁻¹</span>
+<span class="sd">    **Triclinic mode**: Uses full strain rate tensor ε̇ = ḣ h⁻¹</span>
 
 <span class="sd">    Parameters</span>
 <span class="sd">    ----------</span>
@@ -3680,9 +3795,10 @@ document.write(`
 <span class="sd">    forces : wp.array(dtype=wp.vec3f or wp.vec3d)</span>
 <span class="sd">        Forces on particles.</span>
 <span class="sd">    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)</span>
-<span class="sd">        Cell velocity matrices.</span>
+<span class="sd">        Cell velocity matrices ḣ = dh/dt.</span>
 <span class="sd">    volumes : wp.array(dtype=scalar)</span>
-<span class="sd">        Cell volumes.</span>
+<span class="sd">        Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when</span>
+<span class="sd">        ``cells_inv`` is not provided (only valid for cubic cells).</span>
 <span class="sd">    num_atoms : wp.array(dtype=wp.int32)</span>
 <span class="sd">        Atom count for single-system mode. Shape (1,).</span>
 <span class="sd">    dt : wp.array(dtype=scalar)</span>
@@ -3692,14 +3808,15 @@ document.write(`
 <span class="sd">        System index for each atom.</span>
 <span class="sd">    num_atoms_per_system : wp.array, optional</span>
 <span class="sd">        Number of atoms per system.</span>
-<span class="sd">    cells_inv : wp.array, optional</span>
-<span class="sd">        Inverse cell matrices. Required for triclinic mode.</span>
+<span class="sd">    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional</span>
+<span class="sd">        Inverse cell matrices h⁻¹. Shape (B,). When provided, the</span>
+<span class="sd">        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</span>
 <span class="sd">    mode : str, optional</span>
 <span class="sd">        Pressure control mode:</span>
 
 <span class="sd">        - ``&quot;isotropic&quot;``: Uniform scalar strain rate coupling</span>
 <span class="sd">        - ``&quot;anisotropic&quot;``: Diagonal strain rate coupling (orthorhombic)</span>
-<span class="sd">        - ``&quot;triclinic&quot;``: Full tensor coupling (requires cells_inv)</span>
+<span class="sd">        - ``&quot;triclinic&quot;``: Full tensor coupling</span>
 
 <span class="sd">    device : str, optional</span>
 <span class="sd">        Warp device.</span>
@@ -3759,8 +3876,11 @@ document.write(`
 <span class="sd">    ----------</span>
 <span class="sd">    velocities : wp.array</span>
 <span class="sd">        Input velocities (not modified when velocities_out differs).</span>
-<span class="sd">    masses, forces, cell_velocities, volumes : wp.array</span>
+<span class="sd">    masses, forces, cell_velocities : wp.array</span>
 <span class="sd">        System state arrays.</span>
+<span class="sd">    volumes : wp.array</span>
+<span class="sd">        Cell volumes. Shape (B,). Used as fallback when ``cells_inv``</span>
+<span class="sd">        is not provided (only valid for cubic cells).</span>
 <span class="sd">    num_atoms : wp.array(dtype=wp.int32)</span>
 <span class="sd">        Atom count for single-system mode. Shape (1,).</span>
 <span class="sd">    dt : wp.array(dtype=scalar)</span>
@@ -3771,7 +3891,8 @@ document.write(`
 <span class="sd">    batch_idx, num_atoms_per_system : wp.array, optional</span>
 <span class="sd">        For batched simulations.</span>
 <span class="sd">    cells_inv : wp.array, optional</span>
-<span class="sd">        Inverse cell matrices. Required for triclinic mode.</span>
+<span class="sd">        Inverse cell matrices h⁻¹. Shape (B,). When provided, the</span>
+<span class="sd">        strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</span>
 <span class="sd">    mode : str, optional</span>
 <span class="sd">        Pressure control mode: &quot;isotropic&quot;, &quot;anisotropic&quot;, or &quot;triclinic&quot;.</span>
 <span class="sd">    device : str, optional</span>
@@ -3788,6 +3909,8 @@ document.write(`
     <span class="k">if</span> <span class="ow">not</span> <span class="n">_skip_validation</span><span class="p">:</span>
         <span class="n">validate_out_array</span><span class="p">(</span><span class="n">velocities_out</span><span class="p">,</span> <span class="n">velocities</span><span class="p">,</span> <span class="s2">&quot;velocities_out&quot;</span><span class="p">)</span>
 
+    <span class="n">h_inv</span> <span class="o">=</span> <span class="n">_ensure_cells_inv</span><span class="p">(</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">volumes</span><span class="p">,</span> <span class="n">cell_velocities</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
     <span class="n">exec_mode</span> <span class="o">=</span> <span class="n">resolve_execution_mode</span><span class="p">(</span><span class="n">batch_idx</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
     <span class="n">n_atoms</span> <span class="o">=</span> <span class="n">velocities</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 
@@ -3799,7 +3922,6 @@ document.write(`
         <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;mode=&#39;triclinic&#39; requires cells_inv parameter.&quot;</span><span class="p">)</span>
 
     <span class="n">family</span> <span class="o">=</span> <span class="n">_NPH_VELOCITY_FAMILIES</span><span class="p">[</span><span class="n">mode</span><span class="p">]</span>
-    <span class="n">extra</span> <span class="o">=</span> <span class="p">[</span><span class="n">cells_inv</span><span class="p">]</span> <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s2">&quot;triclinic&quot;</span> <span class="k">else</span> <span class="p">[]</span>
 
     <span class="n">launch_family</span><span class="p">(</span>
         <span class="n">family</span><span class="p">,</span>
@@ -3810,8 +3932,7 @@ document.write(`
             <span class="n">masses</span><span class="p">,</span>
             <span class="n">forces</span><span class="p">,</span>
             <span class="n">cell_velocities</span><span class="p">,</span>
-            <span class="o">*</span><span class="n">extra</span><span class="p">,</span>
-            <span class="n">volumes</span><span class="p">,</span>
+            <span class="n">h_inv</span><span class="p">,</span>
             <span class="n">num_atoms</span><span class="p">,</span>
             <span class="n">dt</span><span class="p">,</span>
             <span class="n">velocities_out</span><span class="p">,</span>
@@ -3822,8 +3943,7 @@ document.write(`
             <span class="n">forces</span><span class="p">,</span>
             <span class="n">batch_idx</span><span class="p">,</span>
             <span class="n">cell_velocities</span><span class="p">,</span>
-            <span class="o">*</span><span class="n">extra</span><span class="p">,</span>
-            <span class="n">volumes</span><span class="p">,</span>
+            <span class="n">h_inv</span><span class="p">,</span>
             <span class="n">num_atoms_per_system</span><span class="p">,</span>
             <span class="n">dt</span><span class="p">,</span>
             <span class="n">velocities_out</span><span class="p">,</span>
@@ -4021,7 +4141,8 @@ document.write(`
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="c1"># 2. Velocity half-step</span>
+    <span class="c1"># 2. Velocity half-step (needs h^-1 for strain rate)</span>
+    <span class="n">compute_cell_inverse</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
     <span class="n">nph_velocity_half_step</span><span class="p">(</span>
         <span class="n">velocities</span><span class="p">,</span>
         <span class="n">masses</span><span class="p">,</span>
@@ -4032,11 +4153,11 @@ document.write(`
         <span class="n">dt</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
         <span class="n">num_atoms_per_system</span><span class="o">=</span><span class="n">num_atoms_per_system</span><span class="p">,</span>
+        <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span>
 
-    <span class="c1"># 3. Position update</span>
-    <span class="n">compute_cell_inverse</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="c1"># 3. Position update (reuses cells_inv from step 2)</span>
     <span class="n">nph_position_update</span><span class="p">(</span>
         <span class="n">positions</span><span class="p">,</span>
         <span class="n">velocities</span><span class="p">,</span>
@@ -4055,8 +4176,9 @@ document.write(`
     <span class="k">if</span> <span class="n">compute_forces_fn</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
         <span class="n">compute_forces_fn</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">cells</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">virial_tensors</span><span class="p">)</span>
 
-    <span class="c1"># Recompute pressure and volumes</span>
+    <span class="c1"># Recompute pressure, volumes, and cell inverses after cell update</span>
     <span class="n">compute_cell_volume</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">volumes</span><span class="o">=</span><span class="n">volumes</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">compute_cell_inverse</span><span class="p">(</span><span class="n">cells</span><span class="p">,</span> <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
     <span class="n">compute_kinetic_energy</span><span class="p">(</span>
         <span class="n">velocities</span><span class="p">,</span>
         <span class="n">masses</span><span class="p">,</span>
@@ -4087,6 +4209,7 @@ document.write(`
         <span class="n">dt</span><span class="p">,</span>
         <span class="n">batch_idx</span><span class="o">=</span><span class="n">batch_idx</span><span class="p">,</span>
         <span class="n">num_atoms_per_system</span><span class="o">=</span><span class="n">num_atoms_per_system</span><span class="p">,</span>
+        <span class="n">cells_inv</span><span class="o">=</span><span class="n">cells_inv</span><span class="p">,</span>
         <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
     <span class="p">)</span>
 

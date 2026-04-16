@@ -50,7 +50,7 @@ First, we need to import the necessary modules and load the DFT-D3 parameters.
 The parameters contain element-specific C6 coefficients and radii that are
 used in the dispersion energy calculation.
 
-.. GENERATED FROM PYTHON SOURCE LINES 48-111
+.. GENERATED FROM PYTHON SOURCE LINES 48-116
 
 .. code-block:: Python
 
@@ -60,6 +60,11 @@ used in the dispersion energy calculation.
     import os
     import sys
     from pathlib import Path
+
+    # Prevent JAX from pre-allocating 75% of GPU memory at init, which fails
+    # when PyTorch has already reserved memory in the same process (e.g. during
+    # sphinx-gallery builds that run all examples sequentially).
+    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
     try:
         import jax
@@ -131,7 +136,7 @@ used in the dispersion energy calculation.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 112-117
+.. GENERATED FROM PYTHON SOURCE LINES 117-122
 
 Load Molecular Structure
 ------------------------
@@ -139,7 +144,7 @@ We'll load a molecular dimer from an XYZ file. This is a simple text format
 where the first line contains the number of atoms, the second line is a
 comment, and subsequent lines contain: element symbol, x, y, z coordinates.
 
-.. GENERATED FROM PYTHON SOURCE LINES 117-154
+.. GENERATED FROM PYTHON SOURCE LINES 122-159
 
 .. code-block:: Python
 
@@ -194,7 +199,7 @@ comment, and subsequent lines contain: element symbol, x, y, z coordinates.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 155-162
+.. GENERATED FROM PYTHON SOURCE LINES 160-167
 
 Compute Neighbor List
 ---------------------
@@ -204,7 +209,7 @@ range of each other. We use the GPU-accelerated neighbor list from nvalchemiops.
 For a non-periodic (molecular) system, we create a large cubic cell and set
 periodic boundary conditions (PBC) to False.
 
-.. GENERATED FROM PYTHON SOURCE LINES 162-181
+.. GENERATED FROM PYTHON SOURCE LINES 167-186
 
 .. code-block:: Python
 
@@ -241,7 +246,7 @@ periodic boundary conditions (PBC) to False.
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 182-195
+.. GENERATED FROM PYTHON SOURCE LINES 187-200
 
 Calculate Dispersion Energy and Forces
 ---------------------------------------
@@ -257,7 +262,7 @@ We use PBE0 functional parameters:
 - a1 = 0.4145 (BJ damping parameter, PBE0-specific)
 - a2 = 4.8593 (BJ damping radius, PBE0-specific)
 
-.. GENERATED FROM PYTHON SOURCE LINES 195-208
+.. GENERATED FROM PYTHON SOURCE LINES 200-213
 
 .. code-block:: Python
 
@@ -281,7 +286,7 @@ We use PBE0 functional parameters:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 209-214
+.. GENERATED FROM PYTHON SOURCE LINES 214-219
 
 Results
 -------
@@ -289,7 +294,7 @@ Convert outputs to conventional units for display:
 - Energy: Hartree -> eV
 - Forces: Hartree/Bohr -> eV/Angstrom
 
-.. GENERATED FROM PYTHON SOURCE LINES 214-227
+.. GENERATED FROM PYTHON SOURCE LINES 219-232
 
 .. code-block:: Python
 
@@ -329,7 +334,7 @@ Convert outputs to conventional units for display:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 228-242
+.. GENERATED FROM PYTHON SOURCE LINES 233-247
 
 JIT Compilation
 ---------------
@@ -346,7 +351,7 @@ For JIT compatibility:
   traced arrays
 - ``fill_value`` and ``num_systems`` should be static
 
-.. GENERATED FROM PYTHON SOURCE LINES 242-284
+.. GENERATED FROM PYTHON SOURCE LINES 247-289
 
 .. code-block:: Python
 
@@ -408,11 +413,11 @@ For JIT compatibility:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 285-286
+.. GENERATED FROM PYTHON SOURCE LINES 290-291
 
 Run the jitted function:
 
-.. GENERATED FROM PYTHON SOURCE LINES 286-322
+.. GENERATED FROM PYTHON SOURCE LINES 291-327
 
 .. code-block:: Python
 
@@ -472,7 +477,7 @@ Run the jitted function:
 
 
 
-.. GENERATED FROM PYTHON SOURCE LINES 323-342
+.. GENERATED FROM PYTHON SOURCE LINES 328-347
 
 Summary
 -------
@@ -494,7 +499,7 @@ Key JAX-specific patterns:
   (``a1``, ``a2``, ``s8``), specify ``max_neighbors`` for static shapes,
   and construct ``D3Parameters`` inside the jitted function
 
-.. GENERATED FROM PYTHON SOURCE LINES 342-353
+.. GENERATED FROM PYTHON SOURCE LINES 347-358
 
 .. code-block:: Python
 
@@ -537,7 +542,7 @@ Key JAX-specific patterns:
 
 .. rst-class:: sphx-glr-timing
 
-   **Total running time of the script:** (0 minutes 1.164 seconds)
+   **Total running time of the script:** (0 minutes 0.908 seconds)
 
 
 .. _sphx_glr_download_examples_dispersion_03_jax_dftd3_molecule.py:

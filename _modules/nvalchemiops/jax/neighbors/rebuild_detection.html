@@ -851,6 +851,8 @@ document.write(`
 <span class="c1"># ==============================================================================</span>
 
 
+<div class="viewcode-block" id="batch_neighbor_list_needs_rebuild">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.batch_neighbor_list_needs_rebuild">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">batch_neighbor_list_needs_rebuild</span><span class="p">(</span>
     <span class="n">reference_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
@@ -951,9 +953,12 @@ document.write(`
             <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
         <span class="p">)</span>
 
-    <span class="k">return</span> <span class="n">rebuild_flags</span>
+    <span class="k">return</span> <span class="n">rebuild_flags</span></div>
 
 
+
+<div class="viewcode-block" id="batch_cell_list_needs_rebuild">
+<a class="viewcode-back" href="../../../../modules/jax/neighbors.html#nvalchemiops.jax.neighbors.rebuild_detection.batch_cell_list_needs_rebuild">[docs]</a>
 <span class="k">def</span><span class="w"> </span><span class="nf">batch_cell_list_needs_rebuild</span><span class="p">(</span>
     <span class="n">current_positions</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
     <span class="n">atom_to_cell_mapping</span><span class="p">:</span> <span class="n">jax</span><span class="o">.</span><span class="n">Array</span><span class="p">,</span>
@@ -1024,7 +1029,8 @@ document.write(`
         <span class="n">launch_dims</span><span class="o">=</span><span class="p">(</span><span class="n">total_atoms</span><span class="p">,),</span>
     <span class="p">)</span>
 
-    <span class="k">return</span> <span class="n">rebuild_flags</span>
+    <span class="k">return</span> <span class="n">rebuild_flags</span></div>
+
 
 
 <span class="c1"># ==============================================================================</span>

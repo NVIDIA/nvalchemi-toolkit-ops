@@ -369,6 +369,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="../torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../torch/autograd.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.autograd</span></code>: Autograd Utilities</a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
@@ -1148,7 +1149,7 @@ and Martyna-Tobias-Klein barostat. Supports both isotropic and anisotropic press
 <dd class="field-odd"><ul class="simple">
 <li><p><strong>velocities</strong> (<em>wp.array</em><em>(</em><em>dtype=wp.vec3f</em><em> or </em><em>wp.vec3d</em><em>)</em>) – Particle velocities. Shape (N,).</p></li>
 <li><p><strong>masses</strong> (<em>wp.array</em>) – Particle masses. Shape (N,).</p></li>
-<li><p><strong>virial_tensors</strong> (<em>wp.array</em><em>(</em><em>dtype=vec9f</em><em> or </em><em>vec9d</em><em>)</em>) – Virial tensor from forces. Shape (B,).</p></li>
+<li><p><strong>virial_tensors</strong> (<em>wp.array</em><em>(</em><em>dtype=vec9f</em><em> or </em><em>vec9d</em><em>)</em>) – Virial tensor from forces (physics sign). Shape (B,).</p></li>
 <li><p><strong>cells</strong> (<em>wp.array</em><em>(</em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em><em>)</em>) – Cell matrices. Shape (B,).</p></li>
 <li><p><strong>kinetic_tensors</strong> (<em>wp.array</em><em>(</em><em>dtype=scalar</em><em>, </em><em>ndim=2</em><em>)</em>) – Scratch array for kinetic tensor accumulation. Shape (B, 9).
 Zeroed internally before each use.</p></li>
@@ -1412,16 +1413,15 @@ internally.</p>
 <ul class="simple">
 <li><p>F_i / m_i is the acceleration from forces</p></li>
 <li><p>γ = 1 + 1/N_f is the coupling factor (N_f = 3N degrees of freedom)</p></li>
-<li><p>ε̇ is the strain rate from cell velocity</p></li>
+<li><p>ε̇ = ḣ h⁻¹ is the strain rate tensor</p></li>
 <li><p>η̇₁ is the first thermostat chain velocity</p></li>
 </ul>
 <dl class="simple">
-<dt><strong>Isotropic mode</strong> (default):</dt><dd><p>Uses scalar strain rate ε̇ = Tr(ḣ)/V</p>
+<dt><strong>Isotropic mode</strong> (default):</dt><dd><p>Uses scalar strain rate ε̇ = Tr(ḣ h⁻¹)/3</p>
 </dd>
-<dt><strong>Anisotropic mode</strong>:</dt><dd><p>Uses diagonal strain rates ε̇_ii = ḣ_ii/V for direction-dependent drag</p>
+<dt><strong>Anisotropic mode</strong>:</dt><dd><p>Uses diagonal strain rates ε̇_ii = (ḣ h⁻¹)_ii for direction-dependent drag</p>
 </dd>
-<dt><strong>Triclinic mode</strong>:</dt><dd><p>Uses full strain rate tensor ε̇ = ḣ &#64; h⁻¹ for full coupling.
-Requires <code class="docutils literal notranslate"><span class="pre">cells_inv</span></code> parameter.</p>
+<dt><strong>Triclinic mode</strong>:</dt><dd><p>Uses full strain rate tensor ε̇ = ḣ h⁻¹ for full coupling</p>
 </dd>
 </dl>
 <dl class="field-list simple">
@@ -1444,13 +1444,14 @@ Requires <code class="docutils literal notranslate"><span class="pre">cells_inv<
 <dd class="field-even"><p>wp.array(dtype=wp.vec3f or wp.vec3d)</p>
 </dd>
 <dt class="field-odd">param cell_velocities<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Cell velocity matrices ḣ. Shape (B,).</p>
+<dd class="field-odd"><p>Cell velocity matrices ḣ = dh/dt. Shape (B,).</p>
 </dd>
 <dt class="field-even">type cell_velocities<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=wp.mat33f or wp.mat33d)</p>
 </dd>
 <dt class="field-odd">param volumes<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Cell volumes. Shape (B,).</p>
+<dd class="field-odd"><p>Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when
+<code class="docutils literal notranslate"><span class="pre">cells_inv</span></code> is not provided (only valid for cubic cells).</p>
 </dd>
 <dt class="field-even">type volumes<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=scalar)</p>
@@ -1487,7 +1488,8 @@ internally.</p>
 <dd class="field-even"><p>wp.array(dtype=wp.int32), optional</p>
 </dd>
 <dt class="field-odd">param cells_inv<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Inverse cell matrices h⁻¹. Shape (B,). <strong>Required for triclinic mode.</strong></p>
+<dd class="field-odd"><p>Inverse cell matrices h⁻¹. Shape (B,). When provided, the
+strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</p>
 </dd>
 <dt class="field-even">type cells_inv<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=wp.mat33f or wp.mat33d), optional</p>
@@ -1497,7 +1499,7 @@ internally.</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;isotropic&quot;</span></code> (default): Uniform scalar strain rate coupling</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;anisotropic&quot;</span></code>: Diagonal strain rate coupling (orthorhombic)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;triclinic&quot;</span></code>: Full tensor strain rate coupling (requires cells_inv)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;triclinic&quot;</span></code>: Full tensor strain rate coupling</p></li>
 </ul>
 </dd>
 <dt class="field-even">type mode<span class="colon">:</span></dt>
@@ -1511,14 +1513,14 @@ internally.</p>
 </dd>
 </dl>
 <p class="rubric">Examples</p>
-<p>Single system (isotropic):</p>
+<p>Single system (isotropic, cubic cell):</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">npt_velocity_half_step</span><span class="p">(</span>
 <span class="gp">... </span>    <span class="n">velocities</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">cell_velocities</span><span class="p">,</span> <span class="n">volumes</span><span class="p">,</span>
 <span class="gp">... </span>    <span class="n">eta_dots</span><span class="p">,</span> <span class="n">num_atoms</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.001</span>
 <span class="gp">... </span><span class="p">)</span>
 </pre></div>
 </div>
-<p>Triclinic cell:</p>
+<p>Non-cubic cell (pass cells_inv for exact strain rate):</p>
 <div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">npt_velocity_half_step</span><span class="p">(</span>
 <span class="gp">... </span>    <span class="n">velocities</span><span class="p">,</span> <span class="n">masses</span><span class="p">,</span> <span class="n">forces</span><span class="p">,</span> <span class="n">cell_velocities</span><span class="p">,</span> <span class="n">volumes</span><span class="p">,</span>
 <span class="gp">... </span>    <span class="n">eta_dots</span><span class="p">,</span> <span class="n">num_atoms</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span>
@@ -1616,15 +1618,17 @@ a new array instead of modifying in-place.</p>
 <li><p><strong>masses</strong> (<em>wp.array</em>) – System state arrays.</p></li>
 <li><p><strong>forces</strong> (<em>wp.array</em>) – System state arrays.</p></li>
 <li><p><strong>cell_velocities</strong> (<em>wp.array</em>) – System state arrays.</p></li>
-<li><p><strong>volumes</strong> (<em>wp.array</em>) – System state arrays.</p></li>
-<li><p><strong>eta_dots</strong> (<em>wp.array</em>) – System state arrays.</p></li>
+<li><p><strong>volumes</strong> (<em>wp.array</em>) – Cell volumes. Shape (B,). Used as fallback when <code class="docutils literal notranslate"><span class="pre">cells_inv</span></code>
+is not provided (only valid for cubic cells).</p></li>
+<li><p><strong>eta_dots</strong> (<em>wp.array</em>) – Thermostat chain velocities.</p></li>
 <li><p><strong>num_atoms</strong> (<em>wp.array</em><em>(</em><em>dtype=wp.int32</em><em>)</em>) – Atom count for single-system mode. Shape (1,).</p></li>
 <li><p><strong>dt</strong> (<em>wp.array</em><em>(</em><em>dtype=scalar</em><em>)</em>) – Full time step per system. Shape (B,). The half-step factor is applied
 internally.</p></li>
 <li><p><strong>velocities_out</strong> (<em>wp.array</em>) – Pre-allocated output array.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – System indices for batched simulations.</p></li>
 <li><p><strong>num_atoms_per_system</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – Atom counts per system.</p></li>
-<li><p><strong>cells_inv</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – Inverse cell matrices. Required for triclinic mode.</p></li>
+<li><p><strong>cells_inv</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – Inverse cell matrices h⁻¹. Shape (B,). When provided, the
+strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</p></li>
 <li><p><strong>mode</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>optional</em>) – Pressure control mode: “isotropic”, “anisotropic”, or “triclinic”.</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>optional</em>) – Warp device.</p></li>
 <li><p><strong>_skip_validation</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
@@ -1895,10 +1899,10 @@ naturally on the constant-enthalpy surface.</p>
 <p>The NPH velocity equation of motion:</p>
 <div class="math notranslate nohighlight">
 \[\dot{v}_i = \frac{F_i}{m_i} - \gamma \cdot \dot{\varepsilon} \cdot v_i\]</div>
-<p>where γ = 1 + 1/N_f is the coupling factor.</p>
-<p><strong>Isotropic mode</strong>: Uses scalar strain rate ε̇ = Tr(ḣ)/V</p>
-<p><strong>Anisotropic mode</strong>: Uses diagonal strain rates ε̇_ii = ḣ_ii/V</p>
-<p><strong>Triclinic mode</strong>: Uses full strain rate tensor ε̇ = ḣ &#64; h⁻¹</p>
+<p>where γ = 1 + 1/N_f is the coupling factor and ε̇ = ḣ h⁻¹.</p>
+<p><strong>Isotropic mode</strong>: Uses scalar strain rate ε̇ = Tr(ḣ h⁻¹)/3</p>
+<p><strong>Anisotropic mode</strong>: Uses diagonal strain rates ε̇_ii = (ḣ h⁻¹)_ii</p>
+<p><strong>Triclinic mode</strong>: Uses full strain rate tensor ε̇ = ḣ h⁻¹</p>
 <dl class="field-list simple">
 <dt class="field-odd">param velocities<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Particle velocities. <strong>MODIFIED in-place.</strong></p>
@@ -1919,13 +1923,14 @@ naturally on the constant-enthalpy surface.</p>
 <dd class="field-even"><p>wp.array(dtype=wp.vec3f or wp.vec3d)</p>
 </dd>
 <dt class="field-odd">param cell_velocities<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Cell velocity matrices.</p>
+<dd class="field-odd"><p>Cell velocity matrices ḣ = dh/dt.</p>
 </dd>
 <dt class="field-even">type cell_velocities<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=wp.mat33f or wp.mat33d)</p>
 </dd>
 <dt class="field-odd">param volumes<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Cell volumes.</p>
+<dd class="field-odd"><p>Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when
+<code class="docutils literal notranslate"><span class="pre">cells_inv</span></code> is not provided (only valid for cubic cells).</p>
 </dd>
 <dt class="field-even">type volumes<span class="colon">:</span></dt>
 <dd class="field-even"><p>wp.array(dtype=scalar)</p>
@@ -1956,17 +1961,18 @@ internally.</p>
 <dd class="field-even"><p>wp.array, optional</p>
 </dd>
 <dt class="field-odd">param cells_inv<span class="colon">:</span></dt>
-<dd class="field-odd"><p>Inverse cell matrices. Required for triclinic mode.</p>
+<dd class="field-odd"><p>Inverse cell matrices h⁻¹. Shape (B,). When provided, the
+strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</p>
 </dd>
 <dt class="field-even">type cells_inv<span class="colon">:</span></dt>
-<dd class="field-even"><p>wp.array, optional</p>
+<dd class="field-even"><p>wp.array(dtype=wp.mat33f or wp.mat33d), optional</p>
 </dd>
 <dt class="field-odd">param mode<span class="colon">:</span></dt>
 <dd class="field-odd"><p>Pressure control mode:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;isotropic&quot;</span></code>: Uniform scalar strain rate coupling</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;anisotropic&quot;</span></code>: Diagonal strain rate coupling (orthorhombic)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;triclinic&quot;</span></code>: Full tensor coupling (requires cells_inv)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;triclinic&quot;</span></code>: Full tensor coupling</p></li>
 </ul>
 </dd>
 <dt class="field-even">type mode<span class="colon">:</span></dt>
@@ -2068,14 +2074,16 @@ internally.</p>
 <li><p><strong>masses</strong> (<em>wp.array</em>) – System state arrays.</p></li>
 <li><p><strong>forces</strong> (<em>wp.array</em>) – System state arrays.</p></li>
 <li><p><strong>cell_velocities</strong> (<em>wp.array</em>) – System state arrays.</p></li>
-<li><p><strong>volumes</strong> (<em>wp.array</em>) – System state arrays.</p></li>
+<li><p><strong>volumes</strong> (<em>wp.array</em>) – Cell volumes. Shape (B,). Used as fallback when <code class="docutils literal notranslate"><span class="pre">cells_inv</span></code>
+is not provided (only valid for cubic cells).</p></li>
 <li><p><strong>num_atoms</strong> (<em>wp.array</em><em>(</em><em>dtype=wp.int32</em><em>)</em>) – Atom count for single-system mode. Shape (1,).</p></li>
 <li><p><strong>dt</strong> (<em>wp.array</em><em>(</em><em>dtype=scalar</em><em>)</em>) – Full time step per system. Shape (B,). The half-step factor is applied
 internally.</p></li>
 <li><p><strong>velocities_out</strong> (<em>wp.array</em>) – Pre-allocated output array.</p></li>
 <li><p><strong>batch_idx</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – For batched simulations.</p></li>
 <li><p><strong>num_atoms_per_system</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – For batched simulations.</p></li>
-<li><p><strong>cells_inv</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – Inverse cell matrices. Required for triclinic mode.</p></li>
+<li><p><strong>cells_inv</strong> (<em>wp.array</em><em>, </em><em>optional</em>) – Inverse cell matrices h⁻¹. Shape (B,). When provided, the
+strain rate ε̇ = ḣ h⁻¹ is used. Required for non-cubic cells.</p></li>
 <li><p><strong>mode</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>optional</em>) – Pressure control mode: “isotropic”, “anisotropic”, or “triclinic”.</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>optional</em>) – Warp device.</p></li>
 <li><p><strong>_skip_validation</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#bool" title="(in Python v3.14)"><em>bool</em></a>)</p></li>
@@ -2236,15 +2244,20 @@ is responsible for broadcasting scalar values to arrays before calling.</p></li>
 
 <dl class="py function">
 <dt class="sig sig-object py" id="nvalchemiops.dynamics.integrators.npt.compute_cell_kinetic_energy">
-<span class="sig-prename descclassname"><span class="pre">nvalchemiops.dynamics.integrators.npt.</span></span><span class="sig-name descname"><span class="pre">compute_cell_kinetic_energy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell_velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_masses</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kinetic_energy</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/dynamics/integrators/npt.html#compute_cell_kinetic_energy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.dynamics.integrators.npt.compute_cell_kinetic_energy" title="Link to this definition">#</a></dt>
+<span class="sig-prename descclassname"><span class="pre">nvalchemiops.dynamics.integrators.npt.</span></span><span class="sig-name descname"><span class="pre">compute_cell_kinetic_energy</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">cell_velocities</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cell_masses</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">kinetic_energy</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cells_inv</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">volumes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">device</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../../_modules/nvalchemiops/dynamics/integrators/npt.html#compute_cell_kinetic_energy"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#nvalchemiops.dynamics.integrators.npt.compute_cell_kinetic_energy" title="Link to this definition">#</a></dt>
 <dd><p>Compute kinetic energy of cell degrees of freedom.</p>
-<p>KE_cell = 0.5 * W * ||ḣ||²_F</p>
+<p>KE_cell = 0.5 * W * ||ε̇||²_F, where ε̇ = ḣ h⁻¹</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>cell_velocities</strong> (<em>wp.array</em><em>(</em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em><em>)</em>) – Cell velocity matrices. Shape (B,).</p></li>
+<li><p><strong>cell_velocities</strong> (<em>wp.array</em><em>(</em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em><em>)</em>) – Cell velocity matrices ḣ = dh/dt. Shape (B,).</p></li>
 <li><p><strong>cell_masses</strong> (<em>wp.array</em>) – Barostat masses. Shape (B,).</p></li>
 <li><p><strong>kinetic_energy</strong> (<em>wp.array</em><em>(</em><em>dtype=scalar</em><em>)</em>) – Output cell kinetic energy. Shape (B,).</p></li>
+<li><p><strong>cells_inv</strong> (<em>wp.array</em><em>(</em><em>dtype=wp.mat33f</em><em> or </em><em>wp.mat33d</em><em>)</em><em>, </em><em>optional</em>) – Inverse cell matrices h⁻¹. Shape (B,). Required for non-cubic
+cells to compute the exact strain rate ε̇ = ḣ h⁻¹.</p></li>
+<li><p><strong>volumes</strong> (<em>wp.array</em><em>(</em><em>dtype=scalar</em><em>)</em><em>, </em><em>optional</em>) – Cell volumes. Shape (B,). Used as fallback when <code class="docutils literal notranslate"><span class="pre">cells_inv</span></code> is not
+provided: computes h⁻¹ = V^{-1/3} I, which is only valid for cubic
+cells. For non-cubic cells the caller must provide <code class="docutils literal notranslate"><span class="pre">cells_inv</span></code>.</p></li>
 <li><p><strong>device</strong> (<a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#str" title="(in Python v3.14)"><em>str</em></a><em>, </em><em>optional</em>) – Warp device.</p></li>
 </ul>
 </dd>
@@ -2255,6 +2268,9 @@ is responsible for broadcasting scalar values to arrays before calling.</p></li>
 <dd class="field-odd"><p>wp.array</p>
 </dd>
 </dl>
+<p class="rubric">Notes</p>
+<p>At least one of <code class="docutils literal notranslate"><span class="pre">cells_inv</span></code> or <code class="docutils literal notranslate"><span class="pre">volumes</span></code> must be provided.
+If both are given, <code class="docutils literal notranslate"><span class="pre">cells_inv</span></code> takes precedence.</p>
 </dd></dl>
 
 <dl class="py function">

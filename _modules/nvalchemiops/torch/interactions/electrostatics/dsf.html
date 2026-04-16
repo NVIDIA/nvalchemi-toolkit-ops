@@ -449,9 +449,9 @@ document.write(`
 <span class="sd">- DSF does not require double backward (Hessian / gradients of forces w.r.t.</span>
 <span class="sd">  positions). Forces and charge gradients are computed analytically in the</span>
 <span class="sd">  forward Warp kernel, so there is no need for a Warp backward tape.</span>
-<span class="sd">- Charge gradients are propagated through PyTorch autograd via a</span>
-<span class="sd">  &quot;straight-through trick&quot;: a zero-valued correction term whose gradient</span>
-<span class="sd">  equals the kernel-computed dE/dq is added to the energy tensor.</span>
+<span class="sd">- Charge gradients are propagated through PyTorch autograd via</span>
+<span class="sd">  a custom ``torch.autograd.Function`` that injects</span>
+<span class="sd">  the kernel-computed dE/dq into the energy&#39;s backward graph.</span>
 <span class="sd">- ``register_fake`` enables ``torch.compile`` compatibility.</span>
 
 <span class="sd">Examples</span>
@@ -483,6 +483,7 @@ document.write(`
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.interactions.electrostatics.dsf</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">dsf_matrix</span> <span class="k">as</span> <span class="n">wp_dsf_matrix</span><span class="p">,</span>
 <span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.interactions.electrostatics._util</span><span class="w"> </span><span class="kn">import</span> <span class="n">_InjectChargeGrad</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_wp_dtype</span><span class="p">,</span> <span class="n">get_wp_mat_dtype</span><span class="p">,</span> <span class="n">get_wp_vec_dtype</span>
 
 <span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
@@ -976,27 +977,8 @@ document.write(`
             <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
         <span class="p">)</span>
 
-    <span class="c1"># Charge gradient support via straight-through trick</span>
-    <span class="c1"># This makes energy differentiable w.r.t. charges without Warp tape.</span>
-    <span class="c1"># The correction term has value 0 but gradient dE/dq w.r.t. charges.</span>
     <span class="k">if</span> <span class="n">compute_charge_grad</span><span class="p">:</span>
-        <span class="c1"># Cast to float64 for numerical stability in the correction computation.</span>
-        <span class="c1"># charge_grad_out is in input precision (possibly float32).</span>
-        <span class="n">cg_f64</span> <span class="o">=</span> <span class="n">charge_grad_out</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
-        <span class="n">charges_f64</span> <span class="o">=</span> <span class="n">charges</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
-        <span class="n">charges_detached_f64</span> <span class="o">=</span> <span class="n">charges_f64</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span>
-        <span class="c1"># correction[i] = dE_dq[i] * (q[i] - q_detached[i]) = dE_dq[i] * 0 = 0</span>
-        <span class="c1"># but d(correction)/d(q[i]) = dE_dq[i]</span>
-        <span class="n">correction</span> <span class="o">=</span> <span class="n">cg_f64</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span> <span class="o">*</span> <span class="p">(</span><span class="n">charges_f64</span> <span class="o">-</span> <span class="n">charges_detached_f64</span><span class="p">)</span>
-
-        <span class="k">if</span> <span class="n">batch_idx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="n">system_correction</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">energy</span><span class="p">)</span>
-            <span class="n">system_correction</span><span class="o">.</span><span class="n">scatter_add_</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">batch_idx</span><span class="o">.</span><span class="n">long</span><span class="p">(),</span> <span class="n">correction</span><span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="c1"># Single system: sum all corrections</span>
-            <span class="n">system_correction</span> <span class="o">=</span> <span class="n">correction</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">unsqueeze</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
-
-        <span class="n">energy</span> <span class="o">=</span> <span class="n">energy</span> <span class="o">+</span> <span class="n">system_correction</span>
+        <span class="n">energy</span> <span class="o">=</span> <span class="n">_InjectChargeGrad</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">energy</span><span class="p">,</span> <span class="n">charges</span><span class="p">,</span> <span class="n">charge_grad_out</span><span class="p">,</span> <span class="n">batch_idx</span><span class="p">)</span>
 
     <span class="c1"># Build return tuple</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="n">compute_forces</span><span class="p">:</span>

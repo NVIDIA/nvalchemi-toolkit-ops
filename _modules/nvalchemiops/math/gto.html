@@ -535,7 +535,9 @@ document.write(`
 <span class="c1"># pi and related constants</span>
 <span class="n">PI</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">))</span>
 <span class="n">TWOPI</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">))</span>
+<span class="n">SQRT_PI</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)))</span>  <span class="c1"># sqrt(pi)</span>
 <span class="n">SQRT_4PI</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mf">4.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)))</span>  <span class="c1"># sqrt(4*pi)</span>
+<span class="n">TWOPI_3_2</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">((</span><span class="mf">2.0</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span> <span class="o">**</span> <span class="mf">1.5</span><span class="p">))</span>  <span class="c1"># (2*pi)^(3/2)</span>
 
 <span class="c1"># Small value for numerical stability</span>
 <span class="n">EPSILON</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">constant</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1e-30</span><span class="p">))</span>
@@ -577,9 +579,7 @@ document.write(`
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="n">sigma2</span> <span class="o">=</span> <span class="n">sigma</span> <span class="o">*</span> <span class="n">sigma</span>
     <span class="n">sigma3</span> <span class="o">=</span> <span class="n">sigma2</span> <span class="o">*</span> <span class="n">sigma</span>
-    <span class="c1"># (2*pi)^(3/2) = (2*pi) * sqrt(2*pi) ~= 15.7496...</span>
-    <span class="n">twopi_3_2</span> <span class="o">=</span> <span class="n">TWOPI</span> <span class="o">*</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">TWOPI</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">SQRT_4PI</span> <span class="o">/</span> <span class="p">(</span><span class="n">twopi_3_2</span> <span class="o">*</span> <span class="n">sigma3</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">SQRT_4PI</span> <span class="o">/</span> <span class="p">(</span><span class="n">TWOPI_3_2</span> <span class="o">*</span> <span class="n">sigma3</span><span class="p">)</span>
 
 
 <span class="nd">@wp</span><span class="o">.</span><span class="n">func</span>
@@ -930,8 +930,7 @@ document.write(`
     <span class="c1">#           = 1 / (2*pi^(1/2) * sigma^3)</span>
     <span class="c1">#           = 1 / (2*sqrt(pi) * sigma^3)</span>
 
-    <span class="n">sqrt_pi</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">PI</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">sqrt_pi</span> <span class="o">*</span> <span class="n">sigma3</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">*</span> <span class="n">SQRT_PI</span> <span class="o">*</span> <span class="n">sigma3</span><span class="p">)</span>
 
 
 <span class="c1"># =============================================================================</span>

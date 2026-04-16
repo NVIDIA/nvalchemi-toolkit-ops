@@ -1216,20 +1216,20 @@ document.write(`
 <span class="sd">    atoms_per_cell_count : wp.array, shape (max_total_cells,), dtype=wp.int32</span>
 <span class="sd">        OUTPUT: Number of atoms in each cell. Must be zeroed by caller before first use.</span>
 <span class="sd">    cell_atom_start_indices : wp.array, shape (max_total_cells,), dtype=wp.int32</span>
-<span class="sd">        OUTPUT: Starting index in cell_atom_list for each cell&#39;s atoms.</span>
-<span class="sd">        Must be filled with cumulative sums by caller between kernel launches.</span>
+<span class="sd">        OUTPUT: Array for cell start offsets. Caller provides pre-allocated</span>
+<span class="sd">        and zeroed array.</span>
 <span class="sd">    cell_atom_list : wp.array, shape (total_atoms,), dtype=wp.int32</span>
 <span class="sd">        OUTPUT: Flattened list of atom indices organized by cell.</span>
 <span class="sd">    wp_dtype : type</span>
-<span class="sd">        Warp dtype (wp.float32, wp.float64, or wp.float16).</span>
+<span class="sd">        Warp dtype (``wp.float32`` or ``wp.float64``).</span>
 <span class="sd">    device : str</span>
 <span class="sd">        Warp device string (e.g., &#39;cuda:0&#39;, &#39;cpu&#39;).</span>
 
 <span class="sd">    Notes</span>
 <span class="sd">    -----</span>
-<span class="sd">    - This is a low-level warp interface. Caller must ensure atoms_per_cell_count is zeroed.</span>
-<span class="sd">    - atoms_per_cell_count must be zeroed before calling this function.</span>
-<span class="sd">    - This function handles the cumsum internally using wp.utils.array_scan.</span>
+<span class="sd">    - This is a low-level Warp interface. The caller must ensure</span>
+<span class="sd">      ``atoms_per_cell_count`` is zeroed before calling.</span>
+<span class="sd">    - This function handles the cumsum internally using ``wp.utils.array_scan``.</span>
 <span class="sd">    - For framework bindings, use the torch/jax wrappers instead.</span>
 
 <span class="sd">    See Also</span>
@@ -1357,7 +1357,7 @@ document.write(`
 <span class="sd">    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32</span>
 <span class="sd">        OUTPUT: Number of neighbors found for each atom.</span>
 <span class="sd">    wp_dtype : type</span>
-<span class="sd">        Warp dtype (wp.float32, wp.float64, or wp.float16).</span>
+<span class="sd">        Warp dtype (``wp.float32`` or ``wp.float64``).</span>
 <span class="sd">    device : str</span>
 <span class="sd">        Warp device string (e.g., &#39;cuda:0&#39;, &#39;cpu&#39;).</span>
 <span class="sd">    half_fill : bool, default=False</span>

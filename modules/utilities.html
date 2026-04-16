@@ -368,6 +368,7 @@ document.write(`
 <li class="toctree-l1"><a class="reference internal" href="torch/dispersion.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.dispersion</span></code>: Dispersion Corrections</a></li>
 <li class="toctree-l1"><a class="reference internal" href="torch/electrostatics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.interactions.electrostatics</span></code>: Electrostatics</a></li>
 <li class="toctree-l1"><a class="reference internal" href="torch/dynamics.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>: Dynamics Optimizers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="torch/autograd.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.torch.autograd</span></code>: Autograd Utilities</a></li>
 </ul>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="jax/neighbors.html"><code class="xref py py-mod docutils literal notranslate"><span class="pre">nvalchemiops.jax.neighbors</span></code>: Neighbor Lists</a></li>
@@ -566,17 +567,17 @@ Warp kernels and launcher functions.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>positions</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a>) – Input positions [N, 3] as float64.</p></li>
+<li><p><strong>positions</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Input positions [N, 3] as float64.</p></li>
 <li><p><strong>sigma</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Gaussian width parameter.</p></li>
 <li><p><strong>L_max</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum angular momentum (0, 1, or 2). Default: 2.</p></li>
-<li><p><strong>device</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.10)"><em>torch.device</em></a><em>, </em><em>optional</em>) – Device for computation.</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.11)"><em>torch.device</em></a><em>, </em><em>optional</em>) – Device for computation.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
 <dd class="field-even"><p>GTO density values [N, num_components].</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)">torch.Tensor</a></p>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a></p>
 </dd>
 </dl>
 </dd></dl>
@@ -588,17 +589,17 @@ Warp kernels and launcher functions.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>k_vectors</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)"><em>torch.Tensor</em></a>) – Input wave vectors [K, 3] as float64.</p></li>
+<li><p><strong>k_vectors</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)"><em>torch.Tensor</em></a>) – Input wave vectors [K, 3] as float64.</p></li>
 <li><p><strong>sigma</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#float" title="(in Python v3.14)"><em>float</em></a>) – Gaussian width parameter.</p></li>
 <li><p><strong>L_max</strong> (<a class="reference external" href="https://docs.python.org/3/library/functions.html#int" title="(in Python v3.14)"><em>int</em></a>) – Maximum angular momentum (0, 1, or 2). Default: 2.</p></li>
-<li><p><strong>device</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.10)"><em>torch.device</em></a><em>, </em><em>optional</em>) – Device for computation.</p></li>
+<li><p><strong>device</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.device" title="(in PyTorch v2.11)"><em>torch.device</em></a><em>, </em><em>optional</em>) – Device for computation.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
 <dd class="field-even"><p>(real_part, imag_part) each of shape [K, num_components].</p>
 </dd>
 <dt class="field-odd">Return type<span class="colon">:</span></dt>
-<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)">torch.Tensor</a>, <a class="reference external" href="https://pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.10)">torch.Tensor</a>]</p>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3/library/stdtypes.html#tuple" title="(in Python v3.14)">tuple</a>[<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a>, <a class="reference external" href="https://docs.pytorch.org/docs/stable/tensors.html#torch.Tensor" title="(in PyTorch v2.11)">torch.Tensor</a>]</p>
 </dd>
 </dl>
 </dd></dl>
@@ -721,7 +722,7 @@ Warp kernels and launcher functions.</p>
 <dd><p>Get the warp dtype for a given torch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.10)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
 </dd>
 </dl>
 </dd></dl>
@@ -732,7 +733,7 @@ Warp kernels and launcher functions.</p>
 <dd><p>Get the warp mat dtype for a given torch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.10)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
 </dd>
 </dl>
 </dd></dl>
@@ -743,7 +744,7 @@ Warp kernels and launcher functions.</p>
 <dd><p>Get the warp vec dtype for a given torch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.10)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
 </dd>
 </dl>
 </dd></dl>
@@ -754,7 +755,7 @@ Warp kernels and launcher functions.</p>
 <dd><p>Get the warp dtype for a given torch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.10)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
 </dd>
 </dl>
 </dd></dl>
@@ -765,7 +766,7 @@ Warp kernels and launcher functions.</p>
 <dd><p>Get the warp vec dtype for a given torch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.10)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
 </dd>
 </dl>
 </dd></dl>
@@ -776,7 +777,7 @@ Warp kernels and launcher functions.</p>
 <dd><p>Get the warp mat dtype for a given torch dtype.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
-<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.10)"><em>dtype</em></a>)</p>
+<dd class="field-odd"><p><strong>dtype</strong> (<a class="reference external" href="https://docs.pytorch.org/docs/stable/tensor_attributes.html#torch.dtype" title="(in PyTorch v2.11)"><em>dtype</em></a>)</p>
 </dd>
 </dl>
 </dd></dl>

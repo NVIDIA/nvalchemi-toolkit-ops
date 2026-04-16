@@ -27,6 +27,14 @@ See the [installation guide](install) for full prerequisites.
 If the existing API is missing functionality you need and you think it would
 benefit the community, please start a discussion on Github [Issues][issues_].
 
+### How do I install with CUDA 13?
+
+Blackwell GPUs require CUDA 13. `torch>=2.11.0` and `jax[cuda13]` publish
+CUDA 13 wheels on the default PyPI index for x86. On Arm platforms (e.g. DGX
+Spark), an `--extra-index-url` is needed for PyTorch. See the
+[CUDA 13 installation section](install.md#cuda-13-installation) in the
+installation guide for step-by-step instructions.
+
 ## Neighbor Lists
 
 ### What is the difference between cell_list and naive algorithms?

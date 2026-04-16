@@ -1,0 +1,1619 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nvalchemiops.torch.autograd &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "light";
+  </script>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/bootstrap.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+
+  
+  <link href="../../../_static/vendor/fontawesome/6.5.1/css/all.min.css?digest=8d27b9dea8ad943066ae" rel="stylesheet" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-solid-900.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-brands-400.woff2" />
+<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../_static/vendor/fontawesome/6.5.1/webfonts/fa-regular-400.woff2" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/togglebutton.css?v=13237357" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery.css?v=d2d258e8" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-binder.css?v=f4aeca0c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-dataframe.css?v=2082cf3c" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sg_gallery-rendered-html.css?v=1277b6f3" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/css/nvidia-sphinx-theme.css?v=b165022f" />
+  
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae" />
+  <script src="../../../_static/vendor/fontawesome/6.5.1/js/all.min.js?digest=8d27b9dea8ad943066ae"></script>
+
+    <script src="../../../_static/documentation_options.js?v=f129cdf0"></script>
+    <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../../_static/togglebutton.js?v=4a39c7ea"></script>
+    <script src="../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/nvalchemiops/torch/autograd';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <a id="pst-skip-link" class="skip-link" href="#main-content">Skip to main content</a>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>
+    Back to top
+  </button>
+
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__primary"
+          id="__primary"/>
+  <label class="overlay overlay-primary" for="__primary"></label>
+  
+  <input type="checkbox"
+          class="sidebar-toggle"
+          name="__secondary"
+          id="__secondary"/>
+  <label class="overlay overlay-secondary" for="__secondary"></label>
+  
+  <div class="search-button__wrapper">
+    <div class="search-button__overlay"></div>
+    <div class="search-button__search-container">
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         id="search-input"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form></div>
+  </div>
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar">
+<div class="bd-header__inner bd-page-width">
+  <label class="sidebar-toggle primary-toggle" for="__primary">
+    <span class="fa-solid fa-bars"></span>
+  </label>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForLightBG.png" class="logo__image only-light" alt=""/>
+    <script>document.write(`<img src="../../../_static/NVIDIA-Logo-V-ForScreen-ForDarkBG.png" class="logo__image only-dark" alt=""/>`);</script>
+  
+  
+    <p class="title logo__title">ALCHEMI Toolkit-Ops</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+ <script>
+ document.write(`
+   <button class="btn navbar-btn search-button-field search-button__button" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <span class="search-button__default-text">Search</span>
+    <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+   </button>
+ `);
+ </script>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <div class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          <div class="navbar-item">
+<nav class="navbar-nav">
+  <ul class="bd-navbar-elements navbar-nav">
+    
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../userguide/index.html">
+                        User Guide
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../examples/index.html">
+                        Examples Gallery
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../benchmarks/index.html">
+                        Benchmarks
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../changes.html">
+                        Change Log
+                      </a>
+                    </li>
+                
+
+                    <li class="nav-item">
+                      <a class="nav-link nav-internal" href="../../../modules/index.html">
+                        API
+                      </a>
+                    </li>
+                
+  </ul>
+</nav></div>
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<script>
+document.write(`
+  <button class="btn btn-sm navbar-btn theme-switch-button" title="light/dark" aria-label="light/dark" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="theme-switch nav-link" data-mode="light"><i class="fa-solid fa-sun fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="dark"><i class="fa-solid fa-moon fa-lg"></i></span>
+    <span class="theme-switch nav-link" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg"></i></span>
+  </button>
+`);
+</script></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links navbar-nav"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops" title="Github" class="nav-link" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><span><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i></span>
+            <span class="sr-only">Github</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+  
+  <div id="rtd-footer-container"></div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+
+
+<nav aria-label="Breadcrumb">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page">nvalchemiops...</li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for nvalchemiops.torch.autograd</h1><div class="highlight"><pre>
+<span></span><span class="c1"># SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="c1"># SPDX-License-Identifier: Apache-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="c1"># you may not use this file except in compliance with the License.</span>
+<span class="c1"># You may obtain a copy of the License at</span>
+<span class="c1">#</span>
+<span class="c1"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="c1">#</span>
+<span class="c1"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="c1"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="c1"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="c1"># See the License for the specific language governing permissions and</span>
+<span class="c1"># limitations under the License.</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">Autograd Utilities for Warp-PyTorch Integration</span>
+<span class="sd">================================================</span>
+
+<span class="sd">This module provides utilities for integrating Warp&#39;s automatic differentiation</span>
+<span class="sd">with PyTorch custom operators. It abstracts common patterns for:</span>
+
+<span class="sd">1. Checking if any tensor requires gradients</span>
+<span class="sd">2. Conditionally creating Warp tapes</span>
+<span class="sd">3. Storing tape and warp arrays on output tensors</span>
+<span class="sd">4. Retrieving them in backward passes</span>
+<span class="sd">5. Decorator-based custom op registration with automatic backward generation</span>
+
+<span class="sd">import warp as wp</span>
+<span class="sd">import torch</span>
+<span class="sd">from contextlib import contextmanager, nullcontext</span>
+<span class="sd">from typing import Any, Optional, Sequence, Union</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">inspect</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">itertools</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">weakref</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">contextmanager</span><span class="p">,</span> <span class="n">nullcontext</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">wraps</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">get_args</span><span class="p">,</span> <span class="n">get_origin</span><span class="p">,</span> <span class="n">get_type_hints</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch._subclasses.fake_tensor</span><span class="w"> </span><span class="kn">import</span> <span class="n">is_fake</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">nvalchemiops.torch.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_wp_dtype</span><span class="p">,</span> <span class="n">get_wp_vec_dtype</span>
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Dtype Resolution Helper</span>
+<span class="c1"># =============================================================================</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_warp_dtype</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="n">tensor</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve a potentially generic Warp dtype to a concrete dtype.</span>
+
+<span class="sd">    This handles:</span>
+<span class="sd">    - typing.Any: infer from tensor dtype</span>
+<span class="sd">    - wp.array(dtype=Any, ...): extract inner dtype and infer</span>
+<span class="sd">    - Concrete dtypes (wp.float64, wp.vec3d, etc.): pass through</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    dtype : Any</span>
+<span class="sd">        The dtype specification, which may be typing.Any, a wp.array type,</span>
+<span class="sd">        or a concrete Warp dtype.</span>
+<span class="sd">    tensor : torch.Tensor</span>
+<span class="sd">        The tensor to infer dtype from if needed.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.dtype</span>
+<span class="sd">        Concrete Warp dtype.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Handle typing.Any directly</span>
+    <span class="k">if</span> <span class="n">dtype</span> <span class="ow">is</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="c1"># Check tensor shape to determine if it&#39;s scalar or vector</span>
+        <span class="k">if</span> <span class="n">tensor</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">get_wp_vec_dtype</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">get_wp_dtype</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="c1"># Handle wp.array types that have Any as inner dtype</span>
+    <span class="c1"># These look like: array(ndim=2, dtype=typing.Any)</span>
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">dtype</span><span class="p">,</span> <span class="s2">&quot;dtype&quot;</span><span class="p">):</span>
+        <span class="n">inner_dtype</span> <span class="o">=</span> <span class="n">dtype</span><span class="o">.</span><span class="n">dtype</span>
+        <span class="k">if</span> <span class="n">inner_dtype</span> <span class="ow">is</span> <span class="n">Any</span><span class="p">:</span>
+            <span class="c1"># Check tensor shape to determine if it&#39;s scalar or vector</span>
+            <span class="k">if</span> <span class="n">tensor</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">tensor</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">get_wp_vec_dtype</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">get_wp_dtype</span><span class="p">(</span><span class="n">tensor</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+
+    <span class="c1"># Return the dtype as-is if it&#39;s concrete</span>
+    <span class="k">return</span> <span class="n">dtype</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_output_dtype</span><span class="p">(</span><span class="n">dtype_spec</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve an OutputSpec dtype, which may be a callable or concrete type.</span>
+
+<span class="sd">    Warp dtypes (e.g. ``wp.float64``) are *type* objects and therefore</span>
+<span class="sd">    ``callable``.  We distinguish user-provided resolver functions (lambdas,</span>
+<span class="sd">    regular functions) from Warp types by checking ``isinstance(dtype_spec, type)``.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    dtype_spec : Any</span>
+<span class="sd">        Concrete Warp dtype **or** a callable ``(*forward_args) -&gt; wp_dtype``.</span>
+<span class="sd">    *args</span>
+<span class="sd">        Forward-pass positional arguments, forwarded to the callable.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.dtype</span>
+<span class="sd">        Resolved concrete Warp dtype.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">dtype_spec</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">dtype_spec</span><span class="p">,</span> <span class="nb">type</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">dtype_spec</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">dtype_spec</span>
+
+
+<span class="c1"># Warp dtype -&gt; PyTorch dtype mapping (scalar dtype underlying vec/mat types)</span>
+<span class="n">_WP_TO_TORCH</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">type</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">float16</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">float64</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">vec3h</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">vec3f</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">vec3d</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">mat33h</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">mat33f</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span>
+    <span class="n">wp</span><span class="o">.</span><span class="n">mat33d</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_wp_dtype_to_torch</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Map a Warp scalar/vec/mat dtype to its PyTorch scalar dtype.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">_WP_TO_TORCH</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">wp_dtype</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+
+<span class="c1"># =============================================================================</span>
+<span class="c1"># Output Specification for warp_custom_op decorator</span>
+<span class="c1"># =============================================================================</span>
+
+
+<div class="viewcode-block" id="OutputSpec">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.OutputSpec">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">OutputSpec</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Specification for a custom op output.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Name of the output (used for backward pass).</span>
+<span class="sd">    dtype : wp dtype</span>
+<span class="sd">        Warp dtype (e.g., wp.float64, wp.vec3d).</span>
+<span class="sd">    shape : Callable or tuple</span>
+<span class="sd">        Either a tuple of ints, or a callable that takes the input tensors</span>
+<span class="sd">        and returns the shape. For callable, signature should match the</span>
+<span class="sd">        custom op&#39;s input signature.</span>
+<span class="sd">    torch_dtype : torch.dtype, optional</span>
+<span class="sd">        PyTorch dtype override. If omitted (``None``), the dtype is inferred</span>
+<span class="sd">        from the resolved Warp dtype via ``_wp_dtype_to_torch``.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; OutputSpec(&quot;energies&quot;, wp.float64, lambda pos, *_: (pos.shape[0],))</span>
+<span class="sd">    &gt;&gt;&gt; OutputSpec(&quot;forces&quot;, wp.vec3d, lambda pos, *_: (pos.shape[0], 3))</span>
+<span class="sd">    &gt;&gt;&gt; OutputSpec(&quot;virial&quot;, wp.mat33d, (3, 3))  # Static shape</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">dtype</span><span class="p">:</span> <span class="n">Any</span>  <span class="c1"># Warp dtype</span>
+    <span class="n">shape</span><span class="p">:</span> <span class="n">Callable</span> <span class="o">|</span> <span class="nb">tuple</span>
+    <span class="n">torch_dtype</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">dtype</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span></div>
+
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">_RegisteredBackwardState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Runtime Warp state stored behind a saved tensor token.&quot;&quot;&quot;</span>
+
+    <span class="n">tape</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">Tape</span>
+    <span class="n">arrays</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]</span>
+
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">_TensorGradInputSpec</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Metadata for tensor-valued inputs in the generated backward wrapper.&quot;&quot;&quot;</span>
+
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">optional</span><span class="p">:</span> <span class="nb">bool</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_tensor_annotation</span><span class="p">(</span><span class="n">annotation</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return True when a type annotation contains ``torch.Tensor``.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Signature</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">if</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="n">origin</span> <span class="o">=</span> <span class="n">get_origin</span><span class="p">(</span><span class="n">annotation</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">origin</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">return</span> <span class="nb">any</span><span class="p">(</span><span class="n">_is_tensor_annotation</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span> <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">get_args</span><span class="p">(</span><span class="n">annotation</span><span class="p">))</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_optional_tensor_annotation</span><span class="p">(</span><span class="n">annotation</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return True when a type annotation is ``torch.Tensor | None``-like.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Signature</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="n">origin</span> <span class="o">=</span> <span class="n">get_origin</span><span class="p">(</span><span class="n">annotation</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">origin</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">get_args</span><span class="p">(</span><span class="n">annotation</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="ow">in</span> <span class="n">args</span> <span class="ow">and</span> <span class="nb">type</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span> <span class="ow">in</span> <span class="n">args</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_schema_arg_from_parameter</span><span class="p">(</span>
+    <span class="n">parameter</span><span class="p">:</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Parameter</span><span class="p">,</span>
+    <span class="n">resolved_annotation</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Translate a Python annotation/default pair into a custom-op schema arg.&quot;&quot;&quot;</span>
+    <span class="n">annotation</span> <span class="o">=</span> <span class="n">resolved_annotation</span>
+    <span class="k">if</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">schema_type</span> <span class="o">=</span> <span class="s2">&quot;Tensor&quot;</span>
+    <span class="k">elif</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="n">schema_type</span> <span class="o">=</span> <span class="s2">&quot;float&quot;</span>
+    <span class="k">elif</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="n">schema_type</span> <span class="o">=</span> <span class="s2">&quot;SymInt&quot;</span>
+    <span class="k">elif</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="n">schema_type</span> <span class="o">=</span> <span class="s2">&quot;bool&quot;</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">origin</span> <span class="o">=</span> <span class="n">get_origin</span><span class="p">(</span><span class="n">annotation</span><span class="p">)</span>
+        <span class="n">args</span> <span class="o">=</span> <span class="n">get_args</span><span class="p">(</span><span class="n">annotation</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">origin</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">annotation</span> <span class="ow">is</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Signature</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Unsupported annotation </span><span class="si">{</span><span class="n">annotation</span><span class="si">!r}</span><span class="s2"> for warp_custom_op input &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">parameter</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;.&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="ow">in</span> <span class="n">args</span> <span class="ow">and</span> <span class="nb">type</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span> <span class="ow">in</span> <span class="n">args</span><span class="p">:</span>
+            <span class="n">schema_type</span> <span class="o">=</span> <span class="s2">&quot;Tensor?&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Unsupported annotation </span><span class="si">{</span><span class="n">annotation</span><span class="si">!r}</span><span class="s2"> for warp_custom_op input &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">parameter</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;.&quot;</span>
+            <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">parameter</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Signature</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">schema_type</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">parameter</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">if</span> <span class="n">parameter</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">schema_type</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">parameter</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">=None&quot;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">schema_type</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">parameter</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">=</span><span class="si">{</span><span class="n">parameter</span><span class="o">.</span><span class="n">default</span><span class="si">!r}</span><span class="s2">&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_normalize_outputs</span><span class="p">(</span><span class="n">result</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Normalize a custom-op result into a tuple of tensors.&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">result</span><span class="p">,)</span>
+
+
+<div class="viewcode-block" id="warp_stream_from_torch">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.warp_stream_from_torch">[docs]</a>
+<span class="nd">@contextmanager</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">warp_stream_from_torch</span><span class="p">(</span><span class="o">*</span><span class="n">values</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Bind Warp launches to PyTorch&#39;s current CUDA stream when tensors are CUDA.&quot;&quot;&quot;</span>
+    <span class="n">stream_tensor</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span>
+        <span class="p">(</span>
+            <span class="n">value</span>
+            <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">values</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="ow">and</span> <span class="n">value</span><span class="o">.</span><span class="n">is_cuda</span>
+        <span class="p">),</span>
+        <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">stream_tensor</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="n">nullcontext</span><span class="p">():</span>
+            <span class="k">yield</span> <span class="kc">None</span>
+        <span class="k">return</span>
+
+    <span class="n">torch_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">current_stream</span><span class="p">(</span><span class="n">stream_tensor</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">wp</span><span class="o">.</span><span class="n">ScopedStream</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">stream_from_torch</span><span class="p">(</span><span class="n">torch_stream</span><span class="p">)):</span>
+        <span class="k">yield</span> <span class="n">torch_stream</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_first_tensor_device</span><span class="p">(</span><span class="o">*</span><span class="n">values</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the first tensor device found, or CPU as a defensive fallback.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">values</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">value</span><span class="o">.</span><span class="n">device</span>
+    <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_zero_grads_for_inputs</span><span class="p">(</span>
+    <span class="n">tensor_inputs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+    <span class="n">fallback_device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return zero-valued gradient placeholders matching tensor_inputs.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    tensor_inputs : tuple[torch.Tensor | None, ...]</span>
+<span class="sd">        The saved tensor inputs from the forward pass.</span>
+<span class="sd">    fallback_device : torch.device</span>
+<span class="sd">        Device to use for scalar zero when an input is None.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    torch.Tensor | tuple[torch.Tensor, ...]</span>
+<span class="sd">        Single tensor if one input, otherwise a tuple.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">grads</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span>
+        <span class="k">else</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((),</span> <span class="n">device</span><span class="o">=</span><span class="n">fallback_device</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tensor_inputs</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">grads</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">grads</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">grads</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_set_output_gradients</span><span class="p">(</span>
+    <span class="n">arrays</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">],</span>
+    <span class="n">output_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">grad_outputs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Copy upstream PyTorch gradients into Warp output arrays.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">output_name</span><span class="p">,</span> <span class="n">grad_output</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">output_names</span><span class="p">,</span> <span class="n">grad_outputs</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">grad_output</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">output_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">arrays</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">output_array</span> <span class="o">=</span> <span class="n">arrays</span><span class="p">[</span><span class="n">output_name</span><span class="p">]</span>
+        <span class="n">expected_torch_dtype</span> <span class="o">=</span> <span class="n">_wp_dtype_to_torch</span><span class="p">(</span><span class="n">output_array</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">grad_tensor</span> <span class="o">=</span> <span class="n">grad_output</span><span class="o">.</span><span class="n">contiguous</span><span class="p">()</span>
+        <span class="n">grad_tensor</span> <span class="o">=</span> <span class="n">grad_tensor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">expected_torch_dtype</span><span class="p">)</span>
+        <span class="n">wp_grad</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">grad_tensor</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">output_array</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+        <span class="n">wp</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">output_array</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">wp_grad</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_extract_tensor_input_gradients</span><span class="p">(</span>
+    <span class="n">arrays</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">],</span>
+    <span class="n">tensor_input_specs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">_TensorGradInputSpec</span><span class="p">],</span>
+    <span class="n">tensor_inputs</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Materialize Warp input gradients as PyTorch tensors.&quot;&quot;&quot;</span>
+    <span class="n">placeholder_device</span> <span class="o">=</span> <span class="n">_first_tensor_device</span><span class="p">(</span><span class="o">*</span><span class="n">tensor_inputs</span><span class="p">)</span>
+    <span class="n">gradients</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">spec</span><span class="p">,</span> <span class="n">tensor_input</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">tensor_input_specs</span><span class="p">,</span> <span class="n">tensor_inputs</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">tensor_input</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+            <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">((),</span> <span class="n">device</span><span class="o">=</span><span class="n">placeholder_device</span><span class="p">))</span>
+        <span class="k">elif</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">arrays</span> <span class="ow">and</span> <span class="n">arrays</span><span class="p">[</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">grad</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">to_torch</span><span class="p">(</span><span class="n">arrays</span><span class="p">[</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">grad</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">tensor_input</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">gradients</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="warp_custom_op">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.warp_custom_op">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">warp_custom_op</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">outputs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">OutputSpec</span><span class="p">],</span>
+    <span class="n">grad_arrays</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">mutates_args</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">=</span> <span class="p">(),</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Decorator to create a Warp-backed PyTorch op with compile-safe autograd.</span>
+
+<span class="sd">    This decorator eliminates boilerplate by automatically generating:</span>
+<span class="sd">    - A ``torch.library.custom_op`` forward registered with fake/meta support</span>
+<span class="sd">    - A hidden token input for runtime state handoff while the public wrapper</span>
+<span class="sd">      still exposes only the user-visible signature</span>
+<span class="sd">    - A traceable ``register_autograd`` wrapper that replays Warp tapes through</span>
+<span class="sd">      an opaque backward custom op</span>
+<span class="sd">    - Stream binding so Warp launches execute on PyTorch&#39;s current CUDA stream</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    name : str</span>
+<span class="sd">        Full custom op name (e.g., &quot;alchemiops::_my_kernel&quot;).</span>
+<span class="sd">    outputs : list[OutputSpec]</span>
+<span class="sd">        Specifications for each output tensor.</span>
+<span class="sd">    grad_arrays : list[str], optional</span>
+<span class="sd">        Names of warp arrays to track for gradients. Should include output names</span>
+<span class="sd">        first, then differentiable input names. If None, auto-generated from</span>
+<span class="sd">        outputs + all inputs that are likely differentiable (excludes common</span>
+<span class="sd">        non-differentiable names like neighbor_list, batch_idx, etc.).</span>
+<span class="sd">    mutates_args : tuple, default=()</span>
+<span class="sd">        Arguments that are mutated by the op (passed to custom_op).</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    Callable</span>
+<span class="sd">        Decorator function.</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; @warp_custom_op(</span>
+<span class="sd">    ...     name=&quot;alchemiops::_ewald_real_space_energy&quot;,</span>
+<span class="sd">    ...     outputs=[</span>
+<span class="sd">    ...         OutputSpec(&quot;energies&quot;, wp.float64, lambda pos, *_: (pos.shape[0],)),</span>
+<span class="sd">    ...     ],</span>
+<span class="sd">    ...     grad_arrays=[&quot;energies&quot;, &quot;positions&quot;, &quot;charges&quot;, &quot;cell&quot;, &quot;alpha&quot;],</span>
+<span class="sd">    ... )</span>
+<span class="sd">    ... def _ewald_real_space_energy(</span>
+<span class="sd">    ...     positions: torch.Tensor,</span>
+<span class="sd">    ...     charges: torch.Tensor,</span>
+<span class="sd">    ...     cell: torch.Tensor,</span>
+<span class="sd">    ...     alpha: torch.Tensor,</span>
+<span class="sd">    ...     neighbor_list: torch.Tensor,</span>
+<span class="sd">    ...     neighbor_shifts: torch.Tensor,</span>
+<span class="sd">    ... ) -&gt; torch.Tensor:</span>
+<span class="sd">    ...     # Implementation here - no boilerplate needed!</span>
+<span class="sd">    ...     ...</span>
+<span class="sd">    ...     return energies</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    The decorated function should still call ``attach_for_backward()`` at the</span>
+<span class="sd">    end of grad-enabled forward execution so the registered forward op can</span>
+<span class="sd">    collect the runtime Warp tape and arrays from the real output tensor.</span>
+
+<span class="sd">    ``retain_graph=True`` is supported: the Warp tape is preserved across</span>
+<span class="sd">    backward passes and zeroed before each replay.  ``create_graph=True``</span>
+<span class="sd">    is **not** supported -- Warp backward ops do not register a second-order</span>
+<span class="sd">    autograd formula, so higher-order differentiation through them will raise.</span>
+<span class="sd">    Use ``hybrid_forces=True`` in electrostatics APIs when you need to combine</span>
+<span class="sd">    explicit Warp forces with autograd-based charge-gradient forces.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Non-differentiable input names (won&#39;t receive gradients)</span>
+    <span class="n">NON_GRAD_INPUTS</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;neighbor_list&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;neighbor_shifts&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;neighbor_matrix&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;neighbor_matrix_shifts&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;batch_idx&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;mask_value&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;idx_i&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;idx_j&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;unit_shifts&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;compute_virial&quot;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">decorator</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">:</span>
+        <span class="n">_state_counter</span> <span class="o">=</span> <span class="n">itertools</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">_state_registry</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">_RegisteredBackwardState</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_get_state</span><span class="p">(</span><span class="n">token_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">_RegisteredBackwardState</span><span class="p">:</span>
+            <span class="n">state</span> <span class="o">=</span> <span class="n">_state_registry</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">token_id</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">state</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;Missing registered Warp backward state for token </span><span class="si">{</span><span class="n">token_id</span><span class="si">}</span><span class="s2">. &quot;</span>
+                    <span class="s2">&quot;The forward custom op likely did not attach a tape, or the &quot;</span>
+                    <span class="s2">&quot;graph was freed before backward executed.&quot;</span>
+                <span class="p">)</span>
+            <span class="k">return</span> <span class="n">state</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_discard_state</span><span class="p">(</span><span class="n">token_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">            </span><span class="sd">&quot;&quot;&quot;Best-effort cleanup for runtime Warp state when graphs are abandoned.&quot;&quot;&quot;</span>
+            <span class="n">_state_registry</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">token_id</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="c1"># Extract input names from function signature</span>
+        <span class="n">sig</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">signature</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+        <span class="n">resolved_hints</span> <span class="o">=</span> <span class="n">get_type_hints</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+        <span class="n">input_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+        <span class="n">tensor_input_names</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">name</span>
+            <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">input_names</span>
+            <span class="k">if</span> <span class="n">_is_tensor_annotation</span><span class="p">(</span>
+                <span class="n">resolved_hints</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">annotation</span><span class="p">)</span>
+            <span class="p">)</span>
+        <span class="p">]</span>
+
+        <span class="c1"># Auto-generate grad_arrays if not provided</span>
+        <span class="k">nonlocal</span> <span class="n">grad_arrays</span>
+        <span class="k">if</span> <span class="n">grad_arrays</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">outputs</span><span class="p">]</span>
+            <span class="n">differentiable_inputs</span> <span class="o">=</span> <span class="p">[</span><span class="n">n</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">input_names</span> <span class="k">if</span> <span class="n">n</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">NON_GRAD_INPUTS</span><span class="p">]</span>
+            <span class="n">grad_arrays</span> <span class="o">=</span> <span class="n">output_names</span> <span class="o">+</span> <span class="n">differentiable_inputs</span>
+
+        <span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">outputs</span><span class="p">]</span>
+        <span class="n">differentiable_input_names</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">n</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">input_names</span> <span class="k">if</span> <span class="n">n</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">NON_GRAD_INPUTS</span>
+        <span class="p">]</span>
+        <span class="n">hidden_state_name</span> <span class="o">=</span> <span class="s2">&quot;_warp_state&quot;</span>
+        <span class="n">hidden_input_position</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span>
+            <span class="p">(</span>
+                <span class="n">index</span>
+                <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">input_names</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">default</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">inspect</span><span class="o">.</span><span class="n">Signature</span><span class="o">.</span><span class="n">empty</span>
+            <span class="p">),</span>
+            <span class="nb">len</span><span class="p">(</span><span class="n">input_names</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="n">raw_input_names</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">input_names</span><span class="p">[:</span><span class="n">hidden_input_position</span><span class="p">]</span>
+            <span class="o">+</span> <span class="p">[</span><span class="n">hidden_state_name</span><span class="p">]</span>
+            <span class="o">+</span> <span class="n">input_names</span><span class="p">[</span><span class="n">hidden_input_position</span><span class="p">:]</span>
+        <span class="p">)</span>
+        <span class="n">raw_input_positions</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="n">raw_name</span><span class="p">:</span> <span class="n">index</span> <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">raw_name</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">raw_input_names</span><span class="p">)</span>
+        <span class="p">}</span>
+        <span class="n">tensor_grad_input_specs</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">_TensorGradInputSpec</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
+                <span class="n">optional</span><span class="o">=</span><span class="n">_is_optional_tensor_annotation</span><span class="p">(</span>
+                    <span class="n">resolved_hints</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">annotation</span><span class="p">)</span>
+                <span class="p">),</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">differentiable_input_names</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">tensor_input_names</span>
+        <span class="p">]</span>
+        <span class="n">tensor_grad_input_name_set</span> <span class="o">=</span> <span class="p">{</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">tensor_grad_input_specs</span><span class="p">}</span>
+        <span class="n">raw_forward_input_args</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">raw_name</span> <span class="ow">in</span> <span class="n">raw_input_names</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">raw_name</span> <span class="o">==</span> <span class="n">hidden_state_name</span><span class="p">:</span>
+                <span class="n">raw_forward_input_args</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Tensor </span><span class="si">{</span><span class="n">hidden_state_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">raw_forward_input_args</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="n">_schema_arg_from_parameter</span><span class="p">(</span>
+                        <span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="p">[</span><span class="n">raw_name</span><span class="p">],</span>
+                        <span class="n">resolved_hints</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                            <span class="n">raw_name</span><span class="p">,</span> <span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="p">[</span><span class="n">raw_name</span><span class="p">]</span><span class="o">.</span><span class="n">annotation</span>
+                        <span class="p">),</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+        <span class="n">raw_forward_inputs</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">raw_forward_input_args</span><span class="p">)</span>
+        <span class="n">return_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">outputs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">return_count</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">forward_schema</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">raw_forward_inputs</span><span class="si">}</span><span class="s2">) -&gt; Tensor&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">forward_returns</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;Tensor&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">return_count</span><span class="p">))</span>
+            <span class="n">forward_schema</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">raw_forward_inputs</span><span class="si">}</span><span class="s2">) -&gt; (</span><span class="si">{</span><span class="n">forward_returns</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_bind_call</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+            <span class="n">bound</span> <span class="o">=</span> <span class="n">sig</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+            <span class="n">bound</span><span class="o">.</span><span class="n">apply_defaults</span><span class="p">()</span>
+            <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">bound</span><span class="o">.</span><span class="n">arguments</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">input_names</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_needs_registered_backward</span><span class="p">(</span><span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">any</span><span class="p">(</span>
+                <span class="nb">isinstance</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="ow">and</span> <span class="n">arg</span><span class="o">.</span><span class="n">requires_grad</span>
+                <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">arg</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">input_names</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">tensor_grad_input_name_set</span>
+            <span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_register_runtime_state</span><span class="p">(</span>
+            <span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+            <span class="n">result</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+            <span class="n">token_tensor</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">_needs_registered_backward</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>
+                <span class="k">return</span>
+
+            <span class="n">first_output</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">first_output</span><span class="p">,</span> <span class="s2">&quot;_warp_tape&quot;</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> did not attach Warp backward state to its first output. &quot;</span>
+                    <span class="s2">&quot;Gradient-enabled warp_custom_op calls must use attach_for_backward().&quot;</span>
+                <span class="p">)</span>
+
+            <span class="n">arrays</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="n">array_name</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">first_output</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;_wp_</span><span class="si">{</span><span class="n">array_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">array_name</span> <span class="ow">in</span> <span class="n">grad_arrays</span>
+                <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">first_output</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;_wp_</span><span class="si">{</span><span class="n">array_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="p">}</span>
+            <span class="n">state</span> <span class="o">=</span> <span class="n">_RegisteredBackwardState</span><span class="p">(</span>
+                <span class="n">tape</span><span class="o">=</span><span class="n">first_output</span><span class="o">.</span><span class="n">_warp_tape</span><span class="p">,</span>
+                <span class="n">arrays</span><span class="o">=</span><span class="n">arrays</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="n">token_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">token_tensor</span><span class="o">.</span><span class="n">item</span><span class="p">())</span>
+            <span class="n">_state_registry</span><span class="p">[</span><span class="n">token_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">state</span>
+            <span class="n">weakref</span><span class="o">.</span><span class="n">finalize</span><span class="p">(</span><span class="n">token_tensor</span><span class="p">,</span> <span class="n">_discard_state</span><span class="p">,</span> <span class="n">token_id</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">array_name</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">arrays</span><span class="p">):</span>
+                <span class="nb">delattr</span><span class="p">(</span><span class="n">first_output</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;_wp_</span><span class="si">{</span><span class="n">array_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">delattr</span><span class="p">(</span><span class="n">first_output</span><span class="p">,</span> <span class="s2">&quot;_warp_tape&quot;</span><span class="p">)</span>
+
+        <span class="nd">@torch</span><span class="o">.</span><span class="n">library</span><span class="o">.</span><span class="n">custom_op</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">mutates_args</span><span class="o">=</span><span class="n">mutates_args</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="n">forward_schema</span><span class="p">)</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">custom_op_impl</span><span class="p">(</span><span class="o">*</span><span class="n">all_args</span><span class="p">):</span>
+            <span class="n">token_tensor</span> <span class="o">=</span> <span class="n">all_args</span><span class="p">[</span><span class="n">hidden_input_position</span><span class="p">]</span>
+            <span class="n">args</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">all_args</span><span class="p">[:</span><span class="n">hidden_input_position</span><span class="p">]</span> <span class="o">+</span> <span class="n">all_args</span><span class="p">[</span><span class="n">hidden_input_position</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:]</span>
+            <span class="p">)</span>
+            <span class="k">with</span> <span class="n">warp_stream_from_torch</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">):</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">_normalize_outputs</span><span class="p">(</span><span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">))</span>
+            <span class="n">_register_runtime_state</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">token_tensor</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">result</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">result</span>
+
+        <span class="nd">@custom_op_impl</span><span class="o">.</span><span class="n">register_fake</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">fake_impl</span><span class="p">(</span><span class="o">*</span><span class="n">all_args</span><span class="p">):</span>
+            <span class="n">args</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">all_args</span><span class="p">[:</span><span class="n">hidden_input_position</span><span class="p">]</span> <span class="o">+</span> <span class="n">all_args</span><span class="p">[</span><span class="n">hidden_input_position</span> <span class="o">+</span> <span class="mi">1</span> <span class="p">:]</span>
+            <span class="p">)</span>
+            <span class="n">device</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">args</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">arg</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+                    <span class="n">device</span> <span class="o">=</span> <span class="n">arg</span><span class="o">.</span><span class="n">device</span>
+                    <span class="k">break</span>
+            <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cpu&quot;</span><span class="p">)</span>
+
+            <span class="n">fake_outputs</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">outputs</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">shape</span><span class="p">):</span>
+                    <span class="n">shape</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">shape</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">shape</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">shape</span>
+                <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">torch_dtype</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">tdtype</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">torch_dtype</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">resolved_wp</span> <span class="o">=</span> <span class="n">_resolve_output_dtype</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">)</span>
+                    <span class="n">tdtype</span> <span class="o">=</span> <span class="n">_wp_dtype_to_torch</span><span class="p">(</span><span class="n">resolved_wp</span><span class="p">)</span>
+                <span class="n">fake_outputs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">tdtype</span><span class="p">))</span>
+
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">fake_outputs</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">fake_outputs</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">fake_outputs</span><span class="p">)</span>
+
+        <span class="n">backward_custom_op</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">tensor_grad_input_specs</span><span class="p">:</span>
+            <span class="n">backward_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">_backward&quot;</span>
+            <span class="n">backward_inputs</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="s2">&quot;Tensor token&quot;</span><span class="p">,</span>
+                    <span class="o">*</span><span class="p">[</span><span class="sa">f</span><span class="s2">&quot;Tensor? grad_</span><span class="si">{</span><span class="n">output_name</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">output_name</span> <span class="ow">in</span> <span class="n">output_names</span><span class="p">],</span>
+                    <span class="o">*</span><span class="p">[</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;Tensor?&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">spec</span><span class="o">.</span><span class="n">optional</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;Tensor&#39;</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+                        <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">tensor_grad_input_specs</span>
+                    <span class="p">],</span>
+                <span class="p">]</span>
+            <span class="p">)</span>
+            <span class="n">backward_returns</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;Tensor&quot;</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">tensor_grad_input_specs</span><span class="p">)</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">tensor_grad_input_specs</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">backward_schema</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">backward_inputs</span><span class="si">}</span><span class="s2">) -&gt; Tensor&quot;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">backward_schema</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">backward_inputs</span><span class="si">}</span><span class="s2">) -&gt; (</span><span class="si">{</span><span class="n">backward_returns</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+            <span class="nd">@torch</span><span class="o">.</span><span class="n">library</span><span class="o">.</span><span class="n">custom_op</span><span class="p">(</span>
+                <span class="n">backward_name</span><span class="p">,</span>
+                <span class="n">mutates_args</span><span class="o">=</span><span class="p">(),</span>
+                <span class="n">schema</span><span class="o">=</span><span class="n">backward_schema</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">backward_custom_op_impl</span><span class="p">(</span><span class="o">*</span><span class="n">all_args</span><span class="p">):</span>
+                <span class="n">token</span> <span class="o">=</span> <span class="n">all_args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="n">num_outputs</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span>
+                <span class="n">grad_outputs</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">all_args</span><span class="p">[</span><span class="mi">1</span> <span class="p">:</span> <span class="mi">1</span> <span class="o">+</span> <span class="n">num_outputs</span><span class="p">])</span>
+                <span class="n">tensor_inputs</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">all_args</span><span class="p">[</span><span class="mi">1</span> <span class="o">+</span> <span class="n">num_outputs</span> <span class="p">:])</span>
+                <span class="k">if</span> <span class="n">is_fake</span><span class="p">(</span><span class="n">token</span><span class="p">):</span>
+                    <span class="n">device</span> <span class="o">=</span> <span class="n">_first_tensor_device</span><span class="p">(</span><span class="o">*</span><span class="n">grad_outputs</span><span class="p">,</span> <span class="o">*</span><span class="n">tensor_inputs</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="n">_zero_grads_for_inputs</span><span class="p">(</span><span class="n">tensor_inputs</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+                <span class="n">state</span> <span class="o">=</span> <span class="n">_get_state</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">token</span><span class="o">.</span><span class="n">item</span><span class="p">()))</span>
+                <span class="k">with</span> <span class="n">warp_stream_from_torch</span><span class="p">(</span><span class="o">*</span><span class="n">grad_outputs</span><span class="p">,</span> <span class="o">*</span><span class="n">tensor_inputs</span><span class="p">):</span>
+                    <span class="n">state</span><span class="o">.</span><span class="n">tape</span><span class="o">.</span><span class="n">zero</span><span class="p">()</span>
+                    <span class="n">_set_output_gradients</span><span class="p">(</span><span class="n">state</span><span class="o">.</span><span class="n">arrays</span><span class="p">,</span> <span class="n">output_names</span><span class="p">,</span> <span class="n">grad_outputs</span><span class="p">)</span>
+                    <span class="n">state</span><span class="o">.</span><span class="n">tape</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+                <span class="n">gradients</span> <span class="o">=</span> <span class="n">_extract_tensor_input_gradients</span><span class="p">(</span>
+                    <span class="n">state</span><span class="o">.</span><span class="n">arrays</span><span class="p">,</span>
+                    <span class="n">tensor_grad_input_specs</span><span class="p">,</span>
+                    <span class="n">tensor_inputs</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">gradients</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="n">gradients</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="k">return</span> <span class="n">gradients</span>
+
+            <span class="nd">@backward_custom_op_impl</span><span class="o">.</span><span class="n">register_fake</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">backward_fake_impl</span><span class="p">(</span><span class="o">*</span><span class="n">all_args</span><span class="p">):</span>
+                <span class="n">tensor_inputs</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">all_args</span><span class="p">[</span><span class="mi">1</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span> <span class="p">:])</span>
+                <span class="n">device</span> <span class="o">=</span> <span class="n">_first_tensor_device</span><span class="p">(</span>
+                    <span class="o">*</span><span class="n">all_args</span><span class="p">[</span><span class="mi">1</span> <span class="p">:</span> <span class="mi">1</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">output_names</span><span class="p">)],</span>
+                    <span class="o">*</span><span class="n">tensor_inputs</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">return</span> <span class="n">_zero_grads_for_inputs</span><span class="p">(</span><span class="n">tensor_inputs</span><span class="p">,</span> <span class="n">device</span><span class="p">)</span>
+
+            <span class="n">backward_custom_op</span> <span class="o">=</span> <span class="n">backward_custom_op_impl</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">setup_context_impl</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">inputs</span><span class="p">,</span> <span class="n">output</span><span class="p">):</span>
+                <span class="k">del</span> <span class="n">output</span>
+                <span class="n">token_tensor</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="n">hidden_input_position</span><span class="p">]</span>
+                <span class="n">saved_tensors</span> <span class="o">=</span> <span class="p">[</span><span class="n">token_tensor</span><span class="p">]</span>
+                <span class="n">runtime_input_meta</span> <span class="o">=</span> <span class="p">[]</span>
+                <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">tensor_grad_input_specs</span><span class="p">:</span>
+                    <span class="n">inp</span> <span class="o">=</span> <span class="n">inputs</span><span class="p">[</span><span class="n">raw_input_positions</span><span class="p">[</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">]]</span>
+                    <span class="n">was_present</span> <span class="o">=</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">inp</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span>
+                    <span class="n">required_grad</span> <span class="o">=</span> <span class="n">was_present</span> <span class="ow">and</span> <span class="n">inp</span><span class="o">.</span><span class="n">requires_grad</span>
+                    <span class="n">runtime_input_meta</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">was_present</span><span class="p">,</span> <span class="n">required_grad</span><span class="p">))</span>
+                    <span class="k">if</span> <span class="n">was_present</span><span class="p">:</span>
+                        <span class="n">saved_tensors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">inp</span><span class="p">)</span>
+                <span class="n">ctx</span><span class="o">.</span><span class="n">_tensor_grad_runtime_meta</span> <span class="o">=</span> <span class="n">runtime_input_meta</span>
+                <span class="n">ctx</span><span class="o">.</span><span class="n">save_for_backward</span><span class="p">(</span><span class="o">*</span><span class="n">saved_tensors</span><span class="p">)</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">backward_impl</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="o">*</span><span class="n">grad_outputs</span><span class="p">):</span>
+                <span class="n">saved_tensors</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">saved_tensors</span>
+                <span class="n">token</span> <span class="o">=</span> <span class="n">saved_tensors</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="n">saved_runtime_tensors</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">saved_tensors</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+                <span class="n">tensor_inputs</span> <span class="o">=</span> <span class="p">[]</span>
+                <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">was_present</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">_tensor_grad_runtime_meta</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">was_present</span><span class="p">:</span>
+                        <span class="n">tensor_inputs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">saved_runtime_tensors</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">tensor_inputs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+                <span class="n">raw_gradients</span> <span class="o">=</span> <span class="n">backward_custom_op</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="o">*</span><span class="n">grad_outputs</span><span class="p">,</span> <span class="o">*</span><span class="n">tensor_inputs</span><span class="p">)</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">tensor_grad_input_specs</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+                    <span class="n">raw_gradients</span> <span class="o">=</span> <span class="p">(</span><span class="n">raw_gradients</span><span class="p">,)</span>
+                <span class="n">gradients_by_name</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">grad</span>
+                    <span class="k">for</span> <span class="n">spec</span><span class="p">,</span> <span class="n">grad</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">tensor_grad_input_specs</span><span class="p">,</span> <span class="n">raw_gradients</span><span class="p">)</span>
+                <span class="p">}</span>
+                <span class="n">runtime_input_meta</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">name</span><span class="p">:</span> <span class="p">(</span><span class="n">was_present</span><span class="p">,</span> <span class="n">required_grad</span><span class="p">)</span>
+                    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">was_present</span><span class="p">,</span> <span class="n">required_grad</span> <span class="ow">in</span> <span class="n">ctx</span><span class="o">.</span><span class="n">_tensor_grad_runtime_meta</span>
+                <span class="p">}</span>
+                <span class="n">gradients</span> <span class="o">=</span> <span class="p">[]</span>
+                <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">input_names</span><span class="p">:</span>
+                    <span class="n">was_present</span><span class="p">,</span> <span class="n">required_grad</span> <span class="o">=</span> <span class="n">runtime_input_meta</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                        <span class="n">name</span><span class="p">,</span> <span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+                    <span class="p">)</span>
+                    <span class="k">if</span> <span class="n">was_present</span> <span class="ow">and</span> <span class="n">required_grad</span><span class="p">:</span>
+                        <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">gradients_by_name</span><span class="p">[</span><span class="n">name</span><span class="p">])</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+                <span class="n">gradients</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">hidden_input_position</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">gradients</span><span class="p">)</span>
+
+            <span class="n">torch</span><span class="o">.</span><span class="n">library</span><span class="o">.</span><span class="n">register_autograd</span><span class="p">(</span>
+                <span class="n">custom_op_impl</span><span class="p">,</span>
+                <span class="n">backward_impl</span><span class="p">,</span>
+                <span class="n">setup_context</span><span class="o">=</span><span class="n">setup_context_impl</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+            <span class="n">bound_args</span> <span class="o">=</span> <span class="n">_bind_call</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+            <span class="n">token_tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="nb">next</span><span class="p">(</span><span class="n">_state_counter</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int64</span><span class="p">)</span>
+            <span class="n">raw_args</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">bound_args</span><span class="p">[:</span><span class="n">hidden_input_position</span><span class="p">]</span>
+                <span class="o">+</span> <span class="p">(</span><span class="n">token_tensor</span><span class="p">,)</span>
+                <span class="o">+</span> <span class="n">bound_args</span><span class="p">[</span><span class="n">hidden_input_position</span><span class="p">:]</span>
+            <span class="p">)</span>
+            <span class="k">return</span> <span class="n">custom_op_impl</span><span class="p">(</span><span class="o">*</span><span class="n">raw_args</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">wrapper</span>
+
+    <span class="k">return</span> <span class="n">decorator</span></div>
+
+
+
+<div class="viewcode-block" id="warp_from_torch">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.warp_from_torch">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">warp_from_torch</span><span class="p">(</span>
+    <span class="n">tensor</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">warp_dtype</span><span class="p">:</span> <span class="nb">type</span><span class="p">,</span>
+    <span class="n">requires_grad</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Convert a PyTorch tensor to a Warp array with proper gradient tracking.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    tensor : torch.Tensor</span>
+<span class="sd">        Input PyTorch tensor</span>
+<span class="sd">    warp_dtype : wp.dtype</span>
+<span class="sd">        Warp data type for the array</span>
+<span class="sd">    requires_grad : bool | None, optional</span>
+<span class="sd">        Override gradient tracking. If None, inherits from tensor.requires_grad</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    wp.array</span>
+<span class="sd">        Warp array with gradient tracking if needed</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Determine if we need gradient tracking</span>
+    <span class="n">needs_grad</span> <span class="o">=</span> <span class="n">requires_grad</span> <span class="k">if</span> <span class="n">requires_grad</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">tensor</span><span class="o">.</span><span class="n">requires_grad</span>
+
+    <span class="c1"># For backward compatibility, we need full warp arrays, not ctypes</span>
+    <span class="c1"># ctypes are lightweight wrappers that don&#39;t work with tape.backward()</span>
+    <span class="n">use_ctype</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">needs_grad</span>
+    <span class="k">return</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span>
+        <span class="n">tensor</span><span class="o">.</span><span class="n">detach</span><span class="p">(),</span>
+        <span class="n">dtype</span><span class="o">=</span><span class="n">warp_dtype</span><span class="p">,</span>
+        <span class="n">requires_grad</span><span class="o">=</span><span class="n">needs_grad</span><span class="p">,</span>
+        <span class="n">return_ctype</span><span class="o">=</span><span class="n">use_ctype</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="needs_grad">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.needs_grad">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">needs_grad</span><span class="p">(</span><span class="o">*</span><span class="n">tensors</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Check if any of the provided tensors requires gradients.</span>
+
+<span class="sd">    This is useful for conditionally enabling Warp gradient tracking</span>
+<span class="sd">    and tape recording only when needed for backpropagation.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    *tensors : torch.Tensor</span>
+<span class="sd">        Variable number of PyTorch tensors to check</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    bool</span>
+<span class="sd">        True if any tensor requires gradients, False otherwise</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; positions = torch.randn(100, 3, requires_grad=True)</span>
+<span class="sd">    &gt;&gt;&gt; charges = torch.randn(100, requires_grad=False)</span>
+<span class="sd">    &gt;&gt;&gt; needs_grad(positions, charges)</span>
+<span class="sd">    True</span>
+<span class="sd">    &gt;&gt;&gt; needs_grad(charges)</span>
+<span class="sd">    False</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">any</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">requires_grad</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tensors</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">))</span></div>
+
+
+
+<div class="viewcode-block" id="WarpAutogradContextManager">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.WarpAutogradContextManager">[docs]</a>
+<span class="nd">@contextmanager</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">WarpAutogradContextManager</span><span class="p">(</span><span class="n">enable</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Conditionally create a Warp tape as a context manager.</span>
+
+<span class="sd">    Returns a Warp Tape if enable=True for gradient recording,</span>
+<span class="sd">    otherwise returns a nullcontext (no-op) for zero overhead.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    enable : bool</span>
+<span class="sd">        Whether to create a tape for gradient recording</span>
+
+<span class="sd">    Yields</span>
+<span class="sd">    ------</span>
+<span class="sd">    wp.Tape or nullcontext</span>
+<span class="sd">        Active tape for recording if enabled, otherwise nullcontext</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; needs_grad_flag = needs_grad(positions, charges)</span>
+<span class="sd">    &gt;&gt;&gt; with WarpAutogradContextManager(needs_grad_flag) as tape:</span>
+<span class="sd">    ...     wp.launch(kernel, ...)</span>
+<span class="sd">    &gt;&gt;&gt; if needs_grad_flag:</span>
+<span class="sd">    ...     # tape is a wp.Tape instance</span>
+<span class="sd">    ...     tape.backward()</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">enable</span><span class="p">:</span>
+        <span class="n">tape</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">Tape</span><span class="p">()</span>
+        <span class="k">with</span> <span class="n">tape</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">tape</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">with</span> <span class="n">nullcontext</span><span class="p">():</span>
+            <span class="k">yield</span> <span class="kc">None</span></div>
+
+
+
+<div class="viewcode-block" id="attach_for_backward">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.attach_for_backward">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">attach_for_backward</span><span class="p">(</span>
+    <span class="n">output</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">tape</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">Tape</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">warp_arrays</span><span class="p">:</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Attach Warp tape and arrays to a PyTorch tensor for later retrieval in backward.</span>
+
+<span class="sd">    This stores the tape and warp arrays as attributes on the output tensor,</span>
+<span class="sd">    allowing them to be retrieved in the backward pass of a custom operator.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    output : torch.Tensor</span>
+<span class="sd">        PyTorch tensor to attach attributes to (usually the output of forward)</span>
+<span class="sd">    tape : wp.Tape, optional</span>
+<span class="sd">        Warp tape containing recorded operations for backward pass</span>
+<span class="sd">    **warp_arrays : wp.array</span>
+<span class="sd">        Named warp arrays to store (e.g., positions=wp_positions, charges=wp_charges)</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; attach_for_backward(</span>
+<span class="sd">    ...     output,</span>
+<span class="sd">    ...     tape=tape,</span>
+<span class="sd">    ...     positions=wp_positions,</span>
+<span class="sd">    ...     charges=wp_charges,</span>
+<span class="sd">    ...     energies=wp_energies,</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; # Later in backward:</span>
+<span class="sd">    &gt;&gt;&gt; tape = output._warp_tape</span>
+<span class="sd">    &gt;&gt;&gt; wp_positions = output._wp_positions</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">tape</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">output</span><span class="o">.</span><span class="n">_warp_tape</span> <span class="o">=</span> <span class="n">tape</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">array</span> <span class="ow">in</span> <span class="n">warp_arrays</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">setattr</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;_wp_</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">array</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="retrieve_for_backward">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.retrieve_for_backward">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">retrieve_for_backward</span><span class="p">(</span>
+    <span class="n">output</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="o">*</span><span class="n">array_names</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">Tape</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Retrieve Warp tape and arrays from a PyTorch tensor in backward pass.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    output : torch.Tensor</span>
+<span class="sd">        PyTorch tensor that has attached Warp objects (from attach_for_backward)</span>
+<span class="sd">    *array_names : str</span>
+<span class="sd">        Names of warp arrays to retrieve (without &#39;_wp_&#39; prefix)</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tape : wp.Tape</span>
+<span class="sd">        The stored Warp tape</span>
+<span class="sd">    arrays : dict[str, wp.array]</span>
+<span class="sd">        Dictionary mapping names to warp arrays</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; tape, arrays = retrieve_for_backward(</span>
+<span class="sd">    ...     ctx.output,</span>
+<span class="sd">    ...     &#39;positions&#39;, &#39;charges&#39;, &#39;energies&#39;</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; wp_positions = arrays[&#39;positions&#39;]</span>
+<span class="sd">    &gt;&gt;&gt; tape.backward()</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">tape</span> <span class="o">=</span> <span class="n">output</span><span class="o">.</span><span class="n">_warp_tape</span>
+    <span class="c1"># Some optional outputs (e.g., virial in forward-only mode) may not be attached.</span>
+    <span class="c1"># Keep retrieval tolerant so backward can skip non-attached arrays.</span>
+    <span class="n">arrays</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;_wp_</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">array_names</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;_wp_</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">tape</span><span class="p">,</span> <span class="n">arrays</span></div>
+
+
+
+<div class="viewcode-block" id="extract_gradients">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.extract_gradients">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">extract_gradients</span><span class="p">(</span>
+    <span class="n">ctx</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">warp_arrays</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">wp</span><span class="o">.</span><span class="n">array</span><span class="p">],</span>
+    <span class="n">input_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Extract gradients from warp arrays and return in correct order for PyTorch.</span>
+
+<span class="sd">    This helper extracts gradients from warp arrays and returns them in the</span>
+<span class="sd">    same order as the forward pass inputs, with None for inputs that don&#39;t</span>
+<span class="sd">    require gradients.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    ctx : Any</span>
+<span class="sd">        PyTorch autograd context with saved tensors (must have attributes</span>
+<span class="sd">        matching input_names)</span>
+<span class="sd">    warp_arrays : dict[str, wp.array]</span>
+<span class="sd">        Dictionary mapping input names to warp arrays with computed gradients</span>
+<span class="sd">    input_names : Sequence[str]</span>
+<span class="sd">        Names of inputs in the order they appear in forward function signature</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[Optional[torch.Tensor], ...]</span>
+<span class="sd">        Gradients in order, with None for inputs without requires_grad</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; # In backward function:</span>
+<span class="sd">    &gt;&gt;&gt; tape, arrays = retrieve_for_backward(ctx.output, &#39;positions&#39;, &#39;charges&#39;)</span>
+<span class="sd">    &gt;&gt;&gt; tape.backward()</span>
+<span class="sd">    &gt;&gt;&gt; return extract_gradients(</span>
+<span class="sd">    ...     ctx,</span>
+<span class="sd">    ...     arrays,</span>
+<span class="sd">    ...     [&#39;positions&#39;, &#39;charges&#39;, &#39;cell&#39;, &#39;alpha&#39;]</span>
+<span class="sd">    ... )</span>
+<span class="sd">    &gt;&gt;&gt; # Returns: (grad_pos, grad_charges, None, None)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">gradients</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">input_names</span><span class="p">:</span>
+        <span class="n">input_tensor</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">input_tensor</span><span class="p">,</span> <span class="s2">&quot;requires_grad&quot;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">input_tensor</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">warp_arrays</span><span class="p">:</span>
+                <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">wp</span><span class="o">.</span><span class="n">to_torch</span><span class="p">(</span><span class="n">warp_arrays</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">grad</span><span class="p">))</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># Warp array not provided, return zeros</span>
+                <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">input_tensor</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">gradients</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">gradients</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="standard_backward">
+<a class="viewcode-back" href="../../../modules/torch/autograd.html#nvalchemiops.torch.autograd.standard_backward">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">standard_backward</span><span class="p">(</span>
+    <span class="n">ctx</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="n">grad_outputs</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+    <span class="n">output_names</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">array_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">input_names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span>
+    <span class="n">output_dtypes</span><span class="p">:</span> <span class="n">Any</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="o">...</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Standard backward implementation for Warp-PyTorch custom operators.</span>
+
+<span class="sd">    This function handles both single-output and multiple-output operators.</span>
+<span class="sd">    It encapsulates the common backward pattern:</span>
+<span class="sd">    1. Retrieve tape and warp arrays from context</span>
+<span class="sd">    2. Set gradient(s) on output(s)</span>
+<span class="sd">    3. Run tape backward</span>
+<span class="sd">    4. Extract and return gradients</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    ctx : Any</span>
+<span class="sd">        PyTorch autograd context with saved tensors</span>
+<span class="sd">    grad_outputs : torch.Tensor or tuple[Optional[torch.Tensor], ...]</span>
+<span class="sd">        Gradient(s) from upstream operations.</span>
+<span class="sd">        - Single output: pass the gradient tensor directly</span>
+<span class="sd">        - Multiple outputs: pass tuple of gradient tensors (None if unused in loss)</span>
+<span class="sd">    output_names : str or Sequence[str]</span>
+<span class="sd">        Name(s) of the output array(s) stored in ctx.</span>
+<span class="sd">        - Single output: &#39;output&#39; or &#39;energies&#39;</span>
+<span class="sd">        - Multiple outputs: [&#39;energies&#39;, &#39;forces&#39;]</span>
+<span class="sd">    array_names : Sequence[str]</span>
+<span class="sd">        Names of ALL warp arrays that were attached (outputs + inputs).</span>
+<span class="sd">        MUST include all output array names first!</span>
+<span class="sd">        Examples:</span>
+<span class="sd">        - Single output: [&#39;output&#39;, &#39;positions&#39;, &#39;charges&#39;]</span>
+<span class="sd">        - Multiple outputs: [&#39;energies&#39;, &#39;forces&#39;, &#39;positions&#39;]</span>
+<span class="sd">    input_names : Sequence[str]</span>
+<span class="sd">        Names of all inputs in forward function signature order</span>
+<span class="sd">    output_dtypes : Any or Sequence[Any], optional</span>
+<span class="sd">        Warp dtype(s) for each output. Required for multiple outputs or non-float32 outputs.</span>
+<span class="sd">        - Single output: wp.float32 (default) or wp.vec3f</span>
+<span class="sd">        - Multiple outputs: [wp.float32, wp.vec3f]</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    tuple[Optional[torch.Tensor], ...]</span>
+<span class="sd">        Gradients for all inputs (None for those without requires_grad)</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    Single output operator:</span>
+
+<span class="sd">    &gt;&gt;&gt; # In forward:</span>
+<span class="sd">    &gt;&gt;&gt; attach_for_backward(output, tape=tape, output=wp_output,</span>
+<span class="sd">    ...                     positions=wp_positions, charges=wp_charges)</span>
+<span class="sd">    &gt;&gt;&gt;</span>
+<span class="sd">    &gt;&gt;&gt; # In backward:</span>
+<span class="sd">    &gt;&gt;&gt; def backward(ctx, grad_output):</span>
+<span class="sd">    ...     return standard_backward(</span>
+<span class="sd">    ...         ctx,</span>
+<span class="sd">    ...         grad_outputs=grad_output,  # Single tensor (note: parameter name)</span>
+<span class="sd">    ...         output_names=&#39;output&#39;,  # Single string</span>
+<span class="sd">    ...         array_names=[&#39;output&#39;, &#39;positions&#39;, &#39;charges&#39;],</span>
+<span class="sd">    ...         input_names=[&#39;positions&#39;, &#39;charges&#39;, &#39;cell&#39;, &#39;alpha&#39;],</span>
+<span class="sd">    ...     )</span>
+
+<span class="sd">    Multiple output operator:</span>
+
+<span class="sd">    &gt;&gt;&gt; # In forward:</span>
+<span class="sd">    &gt;&gt;&gt; attach_for_backward(energies, tape=tape, energies=wp_energies,</span>
+<span class="sd">    ...                     forces=wp_forces, positions=wp_positions)</span>
+<span class="sd">    &gt;&gt;&gt; return energies, forces</span>
+<span class="sd">    &gt;&gt;&gt;</span>
+<span class="sd">    &gt;&gt;&gt; # In backward:</span>
+<span class="sd">    &gt;&gt;&gt; def backward(ctx, grad_energies, grad_forces):</span>
+<span class="sd">    ...     return standard_backward(</span>
+<span class="sd">    ...         ctx,</span>
+<span class="sd">    ...         grad_outputs=(grad_energies, grad_forces),  # Tuple</span>
+<span class="sd">    ...         output_names=[&#39;energies&#39;, &#39;forces&#39;],  # List</span>
+<span class="sd">    ...         output_dtypes=[wp.float32, wp.vec3f],  # Required!</span>
+<span class="sd">    ...         array_names=[&#39;energies&#39;, &#39;forces&#39;, &#39;positions&#39;],</span>
+<span class="sd">    ...         input_names=[&#39;positions&#39;],</span>
+<span class="sd">    ...     )</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># Normalize inputs to lists/tuples for uniform handling</span>
+    <span class="n">is_single_output</span> <span class="o">=</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">output_names</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">is_single_output</span><span class="p">:</span>
+        <span class="c1"># Single output case</span>
+        <span class="n">output_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">output_names</span><span class="p">]</span>
+        <span class="n">grad_outputs</span> <span class="o">=</span> <span class="p">[</span><span class="n">grad_outputs</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">output_dtypes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">output_dtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">wp</span><span class="o">.</span><span class="n">float32</span><span class="p">]</span>  <span class="c1"># Default for single output</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">output_dtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">output_dtypes</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># Multiple outputs case</span>
+        <span class="k">if</span> <span class="n">output_dtypes</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;output_dtypes must be specified for multiple outputs. &quot;</span>
+                <span class="s2">&quot;Example: output_dtypes=[wp.float32, wp.vec3f]&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">grad_outputs</span><span class="p">,</span> <span class="p">(</span><span class="nb">tuple</span><span class="p">,</span> <span class="nb">list</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="s2">&quot;grad_outputs must be a tuple/list for multiple outputs. &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Got: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">grad_outputs</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="c1"># Validate lengths match</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">grad_outputs</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">output_names</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Mismatch: got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">grad_outputs</span><span class="p">)</span><span class="si">}</span><span class="s2"> grad_outputs but </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span><span class="si">}</span><span class="s2"> output_names&quot;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">output_dtypes</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">output_names</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Mismatch: got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">output_dtypes</span><span class="p">)</span><span class="si">}</span><span class="s2"> output_dtypes but </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">output_names</span><span class="p">)</span><span class="si">}</span><span class="s2"> output_names&quot;</span>
+            <span class="p">)</span>
+
+    <span class="c1"># Get the first output tensor from context (tape is attached there)</span>
+    <span class="n">first_output</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">output_names</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+    <span class="c1"># Retrieve tape and warp arrays</span>
+    <span class="n">tape</span><span class="p">,</span> <span class="n">arrays</span> <span class="o">=</span> <span class="n">retrieve_for_backward</span><span class="p">(</span><span class="n">first_output</span><span class="p">,</span> <span class="o">*</span><span class="n">array_names</span><span class="p">)</span>
+
+    <span class="n">stream_values</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">grad_outputs</span><span class="p">)</span>
+    <span class="n">stream_values</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">input_names</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">warp_stream_from_torch</span><span class="p">(</span><span class="o">*</span><span class="n">stream_values</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">output_name</span><span class="p">,</span> <span class="n">grad_output</span><span class="p">,</span> <span class="n">dtype</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span>
+            <span class="n">output_names</span><span class="p">,</span> <span class="n">grad_outputs</span><span class="p">,</span> <span class="n">output_dtypes</span>
+        <span class="p">):</span>
+            <span class="k">if</span> <span class="n">grad_output</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">output_name</span> <span class="ow">in</span> <span class="n">arrays</span><span class="p">:</span>
+                <span class="n">output_array</span> <span class="o">=</span> <span class="n">arrays</span><span class="p">[</span><span class="n">output_name</span><span class="p">]</span>
+                <span class="n">actual_dtype</span> <span class="o">=</span> <span class="n">output_array</span><span class="o">.</span><span class="n">dtype</span>
+                <span class="n">wp_grad</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">grad_output</span><span class="o">.</span><span class="n">contiguous</span><span class="p">(),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">actual_dtype</span><span class="p">)</span>
+                <span class="n">wp</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">output_array</span><span class="o">.</span><span class="n">grad</span><span class="p">,</span> <span class="n">wp_grad</span><span class="p">)</span>
+
+        <span class="n">tape</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+
+    <span class="c1"># Extract and return gradients</span>
+    <span class="k">return</span> <span class="n">extract_gradients</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">arrays</span><span class="p">,</span> <span class="n">input_names</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <div class="bd-sidebar-secondary bd-toc"></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script src="../../../_static/scripts/bootstrap.js?digest=8d27b9dea8ad943066ae"></script>
+<script src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8d27b9dea8ad943066ae"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2025, NVIDIA.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 9.1.0.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.15.2.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

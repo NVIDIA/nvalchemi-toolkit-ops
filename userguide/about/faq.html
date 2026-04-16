@@ -366,6 +366,7 @@ document.write(`
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
+<li class="toctree-l1"><a class="reference internal" href="conventions.html">Conventions</a></li>
 <li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide (v0.3.0)</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Frequently Asked Questions</a></li>
 </ul>
@@ -458,6 +459,14 @@ See the <a class="reference internal" href="install.html"><span class="doc std s
 <h3>I need a kernel that does not exist yet<a class="headerlink" href="#i-need-a-kernel-that-does-not-exist-yet" title="Link to this heading">#</a></h3>
 <p>If the existing API is missing functionality you need and you think it would
 benefit the community, please start a discussion on Github <a class="reference external" href="https://www.github.com/NVIDIA/nvalchemi-toolkit-ops/issues/new/choose">Issues</a>.</p>
+</section>
+<section id="how-do-i-install-with-cuda-13">
+<h3>How do I install with CUDA 13?<a class="headerlink" href="#how-do-i-install-with-cuda-13" title="Link to this heading">#</a></h3>
+<p>Blackwell GPUs require CUDA 13. <code class="docutils literal notranslate"><span class="pre">torch&gt;=2.11.0</span></code> and <code class="docutils literal notranslate"><span class="pre">jax[cuda13]</span></code> publish
+CUDA 13 wheels on the default PyPI index for x86. On Arm platforms (e.g. DGX
+Spark), an <code class="docutils literal notranslate"><span class="pre">--extra-index-url</span></code> is needed for PyTorch. See the
+<a class="reference internal" href="install.html#cuda-13-installation"><span class="std std-ref">CUDA 13 installation section</span></a> in the
+installation guide for step-by-step instructions.</p>
 </section>
 </section>
 <section id="neighbor-lists">
@@ -572,6 +581,7 @@ please open a Github <a class="reference external" href="https://www.github.com/
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#how-do-i-get-started">How do I get started?</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-hardware-does-this-support">What hardware does this support?</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#i-need-a-kernel-that-does-not-exist-yet">I need a kernel that does not exist yet</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#how-do-i-install-with-cuda-13">How do I install with CUDA 13?</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#neighbor-lists">Neighbor Lists</a><ul class="visible nav section-nav flex-column">

@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
     <link href="../../_static/favicon.ico" rel="icon" type="image/x-icon">
-    <title>Migration Guide (v0.3.0) &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
+    <title>Conventions &#8212; ALCHEMI Toolkit-Ops 0.3.0 documentation</title>
   
   
   
@@ -51,11 +51,13 @@
     <script src="../../_static/togglebutton.js?v=4a39c7ea"></script>
     <script src="../../_static/design-tabs.js?v=f930bc37"></script>
     <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
-    <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/migration';</script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'userguide/about/conventions';</script>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="Frequently Asked Questions" href="faq.html" />
-    <link rel="prev" title="Conventions" href="conventions.html" />
+    <link rel="next" title="Migration Guide (v0.3.0)" href="migration.html" />
+    <link rel="prev" title="Introduction to ALCHEMI Toolkit-Ops" href="intro.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   </head>
@@ -366,8 +368,8 @@ document.write(`
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="install.html">Installation Guide</a></li>
 <li class="toctree-l1"><a class="reference internal" href="intro.html">Introduction to ALCHEMI Toolkit-Ops</a></li>
-<li class="toctree-l1"><a class="reference internal" href="conventions.html">Conventions</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Migration Guide (v0.3.0)</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Conventions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="migration.html">Migration Guide (v0.3.0)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="faq.html">Frequently Asked Questions</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Core Components</span></p>
@@ -416,7 +418,7 @@ document.write(`
     
     <li class="breadcrumb-item"><a href="../index.html" class="nav-link">User Guide</a></li>
     
-    <li class="breadcrumb-item active" aria-current="page">Migration...</li>
+    <li class="breadcrumb-item active" aria-current="page">Conventions</li>
   </ul>
 </nav>
 </div>
@@ -433,79 +435,45 @@ document.write(`
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <!-- markdownlint-disable MD025 -->
-<section class="tex2jax_ignore mathjax_ignore" id="migration-guide-v0-3-0">
-<span id="migration-guide"></span><h1>Migration Guide (v0.3.0)<a class="headerlink" href="#migration-guide-v0-3-0" title="Link to this heading">#</a></h1>
-<p>Starting with version 0.3.0, PyTorch is now an optional dependency. The previous
-PyTorch-based functionality has been moved to a separate <code class="docutils literal notranslate"><span class="pre">nvalchemiops.torch</span></code>
-namespace. This guide provides a mapping of old import paths to new ones.</p>
-<section id="import-path-changes">
-<h2>Import Path Changes<a class="headerlink" href="#import-path-changes" title="Link to this heading">#</a></h2>
-<table class="table">
-<thead>
-<tr class="row-odd"><th class="head"><p>Old Import Path</p></th>
-<th class="head"><p>New Import Path</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.interactions.dispersion</span> <span class="pre">import</span> <span class="pre">dftd3</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.torch.interactions.dispersion</span> <span class="pre">import</span> <span class="pre">dftd3</span></code></p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.interactions.dispersion</span> <span class="pre">import</span> <span class="pre">D3Parameters</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.torch.interactions.dispersion</span> <span class="pre">import</span> <span class="pre">D3Parameters</span></code></p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.neighbors</span> <span class="pre">import</span> <span class="pre">neighbor_list</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.torch.neighbors</span> <span class="pre">import</span> <span class="pre">neighbor_list</span></code></p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.neighbors</span> <span class="pre">import</span> <span class="pre">estimate_max_neighbors</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.torch.neighbors.neighbor_utils</span> <span class="pre">import</span> <span class="pre">estimate_max_neighbors</span></code></p></td>
-</tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.neighborlist</span> <span class="pre">import</span> <span class="pre">neighbor_list</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.torch.neighbors</span> <span class="pre">import</span> <span class="pre">neighbor_list</span></code></p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.neighborlist</span> <span class="pre">import</span> <span class="pre">cell_list</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">nvalchemiops.torch.neighbors</span> <span class="pre">import</span> <span class="pre">cell_list</span></code></p></td>
-</tr>
-</tbody>
-</table>
+  <section class="tex2jax_ignore mathjax_ignore" id="conventions">
+<span id="id1"></span><h1>Conventions<a class="headerlink" href="#conventions" title="Link to this heading">#</a></h1>
+<p>This page documents the project-wide sign conventions used across all
+interaction modules (electrostatics, dispersion, Lennard-Jones).</p>
+<section id="virial">
+<h2>Virial<a class="headerlink" href="#virial" title="Link to this heading">#</a></h2>
+<p>All modules return the virial tensor defined as the negative strain derivative
+of the energy:</p>
+<div class="math notranslate nohighlight">
+\[W_{ab} = -\frac{\partial E}{\partial \varepsilon_{ab}}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\varepsilon\)</span> is the symmetric infinitesimal strain tensor.</p>
+<p>For pairwise real-space interactions this is equivalent to:</p>
+<div class="math notranslate nohighlight">
+\[W = -\sum_{i &lt; j} \mathbf{r}_{ij} \otimes \mathbf{F}_{ij}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i\)</span> and <span class="math notranslate nohighlight">\(\mathbf{F}_{ij}\)</span>
+is the force on atom <span class="math notranslate nohighlight">\(i\)</span> due to atom <span class="math notranslate nohighlight">\(j\)</span>.
+Individual kernel implementations may use the reversed separation vector or the
+reaction force internally, but returned virials always follow this convention.</p>
 </section>
-<section id="backwards-compatibility">
-<h2>Backwards Compatibility<a class="headerlink" href="#backwards-compatibility" title="Link to this heading">#</a></h2>
-<p>The old import paths will continue to work but will emit <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code>
-messages. They will be removed in a future release.</p>
+<section id="stress">
+<h2>Stress<a class="headerlink" href="#stress" title="Link to this heading">#</a></h2>
+<p>The tensile-positive Cauchy stress is obtained from the virial as:</p>
+<div class="math notranslate nohighlight">
+\[\sigma = -\frac{W}{V}\]</div>
+<p>where <span class="math notranslate nohighlight">\(V = |\det(\mathbf{C})|\)</span> is the cell volume.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Some molecular-dynamics codes use the opposite (compression-positive or
+“pressure”) convention <span class="math notranslate nohighlight">\(\sigma = W / V\)</span>. When comparing against external
+references, check which convention they follow.</p>
+</div>
 </section>
-<section id="naive-pbc-metadata-changes">
-<h2>Naive PBC Metadata Changes<a class="headerlink" href="#naive-pbc-metadata-changes" title="Link to this heading">#</a></h2>
-<p>Advanced callers that precompute periodic metadata for naive neighbor-list
-methods should update cached arguments as follows:</p>
-<table class="table">
-<thead>
-<tr class="row-odd"><th class="head"><p>Old Cached Inputs</p></th>
-<th class="head"><p>New Cached Inputs</p></th>
-</tr>
-</thead>
-<tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">shift_range_per_dimension</span></code>, <code class="docutils literal notranslate"><span class="pre">shift_offset</span></code>, <code class="docutils literal notranslate"><span class="pre">total_shifts</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">shift_range_per_dimension</span></code>, <code class="docutils literal notranslate"><span class="pre">num_shifts_per_system</span></code>, <code class="docutils literal notranslate"><span class="pre">max_shifts_per_system</span></code></p></td>
-</tr>
-</tbody>
-</table>
-<p>The public Torch and JAX APIs now decode periodic shifts on-the-fly inside the
-neighbor kernels. Materialized shift buffers and <code class="docutils literal notranslate"><span class="pre">shift_offset</span></code> / <code class="docutils literal notranslate"><span class="pre">total_shifts</span></code>
-are no longer part of the public naive-PBC workflow.</p>
-</section>
-<section id="warp-kernels">
-<h2>Warp Kernels<a class="headerlink" href="#warp-kernels" title="Link to this heading">#</a></h2>
-<p>If you need direct access to the underlying Warp kernels (without PyTorch),
-use the non-torch namespaces:</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">nvalchemiops.neighbors</span></code> - Warp neighbor list kernels</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">nvalchemiops.interactions.dispersion</span></code> - Warp dispersion kernels</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">nvalchemiops.interactions.electrostatics</span></code> - Warp electrostatics kernels</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">nvalchemiops.math</span></code> - Warp math and spline kernels</p></li>
-</ul>
-<p>These modules comprise both targeted kernels as well as end-to-end launchers where
-possible, which run the full workflow based on <code class="docutils literal notranslate"><span class="pre">warp.array</span></code>s.</p>
+<section id="separation-vector">
+<h2>Separation Vector<a class="headerlink" href="#separation-vector" title="Link to this heading">#</a></h2>
+<p>The canonical separation vector points from atom <span class="math notranslate nohighlight">\(i\)</span> to atom <span class="math notranslate nohighlight">\(j\)</span>:</p>
+<div class="math notranslate nohighlight">
+\[\mathbf{r}_{ij} = \mathbf{r}_j - \mathbf{r}_i\]</div>
+<p>Individual kernel implementations may use either direction internally, but the
+returned virial always follows the convention above.</p>
 </section>
 </section>
 
@@ -520,20 +488,20 @@ possible, which run the full workflow based on <code class="docutils literal not
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="conventions.html"
+       href="intro.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Conventions</p>
+        <p class="prev-next-title">Introduction to ALCHEMI Toolkit-Ops</p>
       </div>
     </a>
     <a class="right-next"
-       href="faq.html"
+       href="migration.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Frequently Asked Questions</p>
+        <p class="prev-next-title">Migration Guide (v0.3.0)</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -555,17 +523,16 @@ possible, which run the full workflow based on <code class="docutils literal not
   </div>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#import-path-changes">Import Path Changes</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#backwards-compatibility">Backwards Compatibility</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#naive-pbc-metadata-changes">Naive PBC Metadata Changes</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-kernels">Warp Kernels</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#virial">Virial</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#stress">Stress</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#separation-vector">Separation Vector</a></li>
 </ul>
   </nav></div>
 
   <div class="sidebar-secondary-item">
 
   <div class="tocsection sourcelink">
-    <a href="../../_sources/userguide/about/migration.md.txt">
+    <a href="../../_sources/userguide/about/conventions.md.txt">
       <i class="fa-solid fa-file-lines"></i> Show Source
     </a>
   </div>
