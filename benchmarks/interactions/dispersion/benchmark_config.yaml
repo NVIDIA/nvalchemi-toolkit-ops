@@ -15,7 +15,7 @@
 # -----------------------------------------------------------------------------
 parameters:
   cutoffs: [15.0, 25.0]            # Angstroms (converted to Bohr internally)
-  warmup_runs: 3
+  warmup_runs: 10
   timing_runs: 20
 
   # cutoff_limits intentionally left empty: OOM thresholds are

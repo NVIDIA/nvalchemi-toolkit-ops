@@ -15,7 +15,7 @@
 # -----------------------------------------------------------------------------
 parameters:
   cutoffs: [6.0, 15.0, 25.0]       # Angstroms
-  warmup_runs: 3
+  warmup_runs: 10
   timing_runs: 20
 
   # Per-cutoff atom limits (larger cutoffs = more memory)
