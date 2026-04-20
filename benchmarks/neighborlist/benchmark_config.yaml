@@ -1,32 +1,74 @@
 # Neighbor List Benchmark Configuration
 # =====================================
-# This file defines which methods to benchmark and their parameters.
+# Per-module config following upstream pattern.
+# Two systems (CsCl, NH3) × three scaling modes.
+#
+# Usage (run from the repository root):
+#   python -m benchmarks.neighborlist.benchmark_neighborlist \
+#       --config benchmarks/neighborlist/benchmark_config.yaml
+#   python -m benchmarks.neighborlist.benchmark_neighborlist \
+#       --config benchmarks/neighborlist/benchmark_config.yaml \
+#       --output-dir docs/benchmarks/benchmark_results
 
+# -----------------------------------------------------------------------------
+# Global Parameters
+# -----------------------------------------------------------------------------
 parameters:
-  cutoff: 5.0  # Angstrom
-  warmup_iterations: 10
-  timing_iterations: 100
-  dtype: float32  #  float32, or float64
+  cutoffs: [6.0, 15.0, 25.0]       # Angstroms
+  warmup_runs: 3
+  timing_runs: 20
 
+  # Per-cutoff atom limits (larger cutoffs = more memory)
+  cutoff_limits:
+    25.0: 131072                    # Limit 25 Å to 128k atoms max
+
+# -----------------------------------------------------------------------------
+# Systems
+# -----------------------------------------------------------------------------
+systems:
+  cscl:
+    enabled: true
+    atom_counts: [128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+    constant_atoms_sizes: [250, 8192]   # CsCl valid: 2*5^3=250, 2*16^3=8192
+
+  nh3:
+    enabled: true
+    pdb_dir: ../nh3
+    constant_atoms_sizes: [256, 8192]   # Must match available PDB sizes
+
+# -----------------------------------------------------------------------------
+# Scaling Modes
+# -----------------------------------------------------------------------------
+scaling:
+  # Mode 1: System Size Scaling (batch=1, vary N)
+  system_size:
+    enabled: true
+    batch_size: 1
+
+  # Mode 2: Constant Workload (fix total ~128k atoms, vary how they're split)
+  constant_workload:
+    enabled: true
+    target_atoms: 131072
+
+  # Mode 3: Batch Scaling (fix N per system, grow batch count up to 128k total)
+  batch_scaling:
+    enabled: true
+    max_total_atoms: 131072
+
+# -----------------------------------------------------------------------------
+# Methods
+# -----------------------------------------------------------------------------
 methods:
-  # Naive algorithm: O(N²) scaling - only test small systems
   - name: naive
-    atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384]
-    batch_sizes: [1]
-    wrap_positions: true
+    enabled: true
+    description: "Brute-force O(N²) - best for small systems"
 
-  # Cell list algorithm: O(N) scaling - test larger systems
-  - name: cell_list
-    atom_counts: [64, 256, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 256000, 524288, 1048576]
-    batch_sizes: [1]
+  - name: cell
+    enabled: true
+    description: "Cell list O(N) - recommended for large systems"
 
-  # Batch naive: small systems, various batch sizes
-  - name: batch_naive
-    atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
-    batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]
-    wrap_positions: true
-
-  # # Batch cell list: larger systems, various batch sizes
-  - name: batch_cell_list
-    atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072]
-    batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]
+# -----------------------------------------------------------------------------
+# Output
+# -----------------------------------------------------------------------------
+output:
+  base_dir: ../benchmark-results   # Relative to benchmarks/ directory

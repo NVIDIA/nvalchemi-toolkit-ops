@@ -1,0 +1,5 @@
+system,scaling_mode,method,backend,atoms_per_system,batch_size,cutoff,accuracy,failure_reason
+nh3,batch_scaling,naive,jax,256,512,25.0,,OOM_kernel
+nh3,batch_scaling,cell,jax,256,512,25.0,,OOM_kernel
+nh3,batch_scaling,naive,jax,8000,16,25.0,,OOM_kernel
+nh3,batch_scaling,cell,jax,8000,16,25.0,,OOM_kernel

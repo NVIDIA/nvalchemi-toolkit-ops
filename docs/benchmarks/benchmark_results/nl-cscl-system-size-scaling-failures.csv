@@ -1,0 +1,5 @@
+system,scaling_mode,method,backend,atoms_per_system,batch_size,cutoff,accuracy,failure_reason
+cscl,system_size,cell,torch,137842,1,25.0,,OOM_preempt
+cscl,system_size,cell,jax,137842,1,25.0,,OOM_preempt
+cscl,system_size,naive,torch,137842,1,25.0,,OOM_preempt
+cscl,system_size,naive,jax,137842,1,25.0,,OOM_preempt

@@ -1,8 +1,8 @@
 # DFT-D3 Dispersion Benchmarks
 
-This page presents benchmark results for DFT-D3 dispersion corrections across different
-GPU hardware. Results show the scaling behavior with increasing system size for
-periodic systems, including both single-system and batched computations.
+Performance benchmarks for DFT-D3 dispersion corrections in ALCHEMI Toolkit-Ops.
+Results show scaling behaviour with increasing system size for periodic systems,
+including both single-system and batched computations.
 
 ```{warning}
 These results are intended to be indicative _only_: your actual performance may
@@ -13,266 +13,483 @@ and we encourage users to benchmark on their own systems of interest.
 ## How to Read These Charts
 
 Time Scaling
-: Median execution time (ms) vs. system size. Lower is better. Timings exclude
-  neighbor list construction, and only comprises the DFT-D3 computation.
+: Mean execution time (ms) vs. system size. Lower is better. Timings exclude
+  neighbor list construction, and only comprise the DFT-D3 computation.
 
 Throughput
-: Atoms processed per millisecond. Higher is better. This indicates where
-the scaling point where the GPU saturates.
+: Atoms processed per millisecond. Higher is better. This indicates the scaling
+  point where the GPU saturates.
 
 Memory
-: Peak GPU memory usage (MB) vs. system size. This is particularly useful
-for estimating/gauging memory requirements for your system.
+: Peak GPU memory usage (MB) vs. system size. Useful for estimating memory
+  requirements for your target system.
 
 ## Performance Results
 
 ::::{tab-set}
 
+:::{tab-item} Torch
+:selected:
+
+`````{tab-set}
+
+````{tab-item} CsCl
+:selected:
+
+```{eval-rst}
+.. tab-set::
+
+    .. tab-item:: System Size Scaling
+
+        .. figure:: _static/d3-cscl-system-size-scaling-time.png
+           :width: 90%
+           :align: center
+
+           Mean execution time vs. system size (Torch, CsCl).
+
+        .. figure:: _static/d3-cscl-system-size-scaling-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput (atoms/ms) vs. system size.
+
+        .. figure:: _static/d3-cscl-system-size-scaling-memory.png
+           :width: 90%
+           :align: center
+
+           Peak GPU memory (MB) vs. system size.
+
+    .. tab-item:: Constant Workload
+
+        .. figure:: _static/d3-cscl-constant-workload-scaling-time.png
+           :width: 90%
+           :align: center
+
+           Execution time at constant total atom count, varying batch size.
+
+        .. figure:: _static/d3-cscl-constant-workload-scaling-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput at constant total atom count.
+
+        .. figure:: _static/d3-cscl-constant-workload-scaling-memory.png
+           :width: 90%
+           :align: center
+
+           Peak GPU memory at constant total atom count.
+
+    .. tab-item:: Batch Scaling
+
+        .. figure:: _static/d3-cscl-batch-scaling-time.png
+           :width: 90%
+           :align: center
+
+           Execution time vs. batch size (fixed atoms per system).
+
+        .. figure:: _static/d3-cscl-batch-scaling-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput vs. batch size.
+
+        .. figure:: _static/d3-cscl-batch-scaling-memory.png
+           :width: 90%
+           :align: center
+
+           Peak GPU memory vs. batch size.
+```
+
+````
+
+````{tab-item} NH₃
+
+```{eval-rst}
+.. tab-set::
+
+    .. tab-item:: System Size Scaling
+
+        .. figure:: _static/d3-nh3-system-size-scaling-time.png
+           :width: 90%
+           :align: center
+
+           Mean execution time vs. system size (Torch, NH₃).
+
+        .. figure:: _static/d3-nh3-system-size-scaling-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput (atoms/ms) vs. system size (NH₃).
+
+        .. figure:: _static/d3-nh3-system-size-scaling-memory.png
+           :width: 90%
+           :align: center
+
+           Peak GPU memory (MB) vs. system size (NH₃).
+
+    .. tab-item:: Constant Workload
+
+        .. figure:: _static/d3-nh3-constant-workload-scaling-time.png
+           :width: 90%
+           :align: center
+
+           Execution time at constant total atom count (NH₃).
+
+        .. figure:: _static/d3-nh3-constant-workload-scaling-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput at constant total atom count (NH₃).
+
+        .. figure:: _static/d3-nh3-constant-workload-scaling-memory.png
+           :width: 90%
+           :align: center
+
+           Peak GPU memory at constant total atom count (NH₃).
+
+    .. tab-item:: Batch Scaling
+
+        .. figure:: _static/d3-nh3-batch-scaling-time.png
+           :width: 90%
+           :align: center
+
+           Execution time vs. batch size (NH₃).
+
+        .. figure:: _static/d3-nh3-batch-scaling-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput vs. batch size (NH₃).
+
+        .. figure:: _static/d3-nh3-batch-scaling-memory.png
+           :width: 90%
+           :align: center
+
+           Peak GPU memory vs. batch size (NH₃).
+```
+
+````
+
+`````
+
+:::
+
+:::{tab-item} JAX
+
+`````{tab-set}
+
+````{tab-item} CsCl
+:selected:
+
+```{eval-rst}
+.. tab-set::
+
+    .. tab-item:: System Size Scaling
+
+        .. figure:: _static/d3-cscl-system-size-scaling-jax-time.png
+           :width: 90%
+           :align: center
+
+           Mean execution time vs. system size (JAX, CsCl).
+
+        .. figure:: _static/d3-cscl-system-size-scaling-jax-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput (atoms/ms) vs. system size (JAX).
+
+    .. tab-item:: Constant Workload
+
+        .. figure:: _static/d3-cscl-constant-workload-scaling-jax-time.png
+           :width: 90%
+           :align: center
+
+           Execution time at constant total atom count (JAX).
+
+        .. figure:: _static/d3-cscl-constant-workload-scaling-jax-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput at constant total atom count (JAX).
+
+    .. tab-item:: Batch Scaling
+
+        .. figure:: _static/d3-cscl-batch-scaling-jax-time.png
+           :width: 90%
+           :align: center
+
+           Execution time vs. batch size (JAX).
+
+        .. figure:: _static/d3-cscl-batch-scaling-jax-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput vs. batch size (JAX).
+
+```
+
+```{note}
+JAX memory plots are omitted. XLA's pool allocator pre-allocates 75% of GPU
+VRAM and reuses it across calls, preventing reliable per-config measurement.
+Torch memory plots are representative — both backends use identical Warp GPU
+kernels with the same memory footprint.
+```
+
+````
+
+````{tab-item} NH₃
+
+```{eval-rst}
+.. tab-set::
+
+    .. tab-item:: System Size Scaling
+
+        .. figure:: _static/d3-nh3-system-size-scaling-jax-time.png
+           :width: 90%
+           :align: center
+
+           Mean execution time vs. system size (JAX, NH₃).
+
+        .. figure:: _static/d3-nh3-system-size-scaling-jax-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput (atoms/ms) vs. system size (JAX, NH₃).
+
+    .. tab-item:: Constant Workload
+
+        .. figure:: _static/d3-nh3-constant-workload-scaling-jax-time.png
+           :width: 90%
+           :align: center
+
+           Execution time at constant total atom count (JAX, NH₃).
+
+        .. figure:: _static/d3-nh3-constant-workload-scaling-jax-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput at constant total atom count (JAX, NH₃).
+
+    .. tab-item:: Batch Scaling
+
+        .. figure:: _static/d3-nh3-batch-scaling-jax-time.png
+           :width: 90%
+           :align: center
+
+           Execution time vs. batch size (JAX, NH₃).
+
+        .. figure:: _static/d3-nh3-batch-scaling-jax-throughput.png
+           :width: 90%
+           :align: center
+
+           Throughput vs. batch size (JAX, NH₃).
+
+```
+
+```{note}
+JAX memory plots are omitted. XLA's pool allocator pre-allocates 75% of GPU
+VRAM and reuses it across calls, preventing reliable per-config measurement.
+Torch memory plots are representative — both backends use identical Warp GPU
+kernels with the same memory footprint.
+```
+
+````
+
+`````
+
+:::
+
 :::{tab-item} Backend Comparison
 
-Simple comparison of single (non-batched) system computations between backends,
-where we scale up the size of the supercell.
+`````{tab-set}
 
-### Time Scaling
+````{tab-item} CsCl
+:selected:
 
-```{figure} _static/dftd3_scaling_comparison_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 backend time comparison
+```{eval-rst}
+.. tab-set::
 
-Median execution time comparison between backends for single systems.
+    .. tab-item:: System Size Scaling
+
+        .. figure:: _static/d3-cscl-system-size-comparison-time.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX execution time comparison (CsCl).
+
+        .. figure:: _static/d3-cscl-system-size-comparison-throughput.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX throughput comparison.
+
+        .. figure:: _static/d3-cscl-system-size-comparison-memory.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX memory comparison.
+
+    .. tab-item:: Constant Workload
+
+        .. figure:: _static/d3-cscl-constant-workload-comparison-time.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX execution time at constant workload.
+
+        .. figure:: _static/d3-cscl-constant-workload-comparison-throughput.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX throughput at constant workload.
+
+        .. figure:: _static/d3-cscl-constant-workload-comparison-memory.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX memory at constant workload.
+
+    .. tab-item:: Batch Scaling
+
+        .. figure:: _static/d3-cscl-batch-comparison-time.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX execution time vs. batch size.
+
+        .. figure:: _static/d3-cscl-batch-comparison-throughput.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX throughput vs. batch size.
+
+        .. figure:: _static/d3-cscl-batch-comparison-memory.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX memory vs. batch size.
 ```
 
-### Throughput
+````
 
-```{figure} _static/dftd3_throughput_comparison_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 backend throughput comparison
+````{tab-item} NH₃
 
-Throughput (atoms/ms) comparison between backends. Higher values indicate better performance.
+```{eval-rst}
+.. tab-set::
+
+    .. tab-item:: System Size Scaling
+
+        .. figure:: _static/d3-nh3-system-size-comparison-time.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX execution time comparison (NH₃).
+
+        .. figure:: _static/d3-nh3-system-size-comparison-throughput.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX throughput comparison (NH₃).
+
+        .. figure:: _static/d3-nh3-system-size-comparison-memory.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX memory comparison (NH₃).
+
+    .. tab-item:: Constant Workload
+
+        .. figure:: _static/d3-nh3-constant-workload-comparison-time.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX execution time at constant workload (NH₃).
+
+        .. figure:: _static/d3-nh3-constant-workload-comparison-throughput.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX throughput at constant workload (NH₃).
+
+        .. figure:: _static/d3-nh3-constant-workload-comparison-memory.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX memory at constant workload (NH₃).
+
+    .. tab-item:: Batch Scaling
+
+        .. figure:: _static/d3-nh3-batch-comparison-time.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX execution time vs. batch size (NH₃).
+
+        .. figure:: _static/d3-nh3-batch-comparison-throughput.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX throughput vs. batch size (NH₃).
+
+        .. figure:: _static/d3-nh3-batch-comparison-memory.png
+           :width: 90%
+           :align: center
+
+           Torch vs. JAX memory vs. batch size (NH₃).
 ```
 
-### Memory Usage
+````
 
-```{figure} _static/dftd3_memory_comparison_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 backend memory comparison
-
-Peak GPU memory consumption comparison between backends. Lower is better,
-indicating that the backend has lower memory requirements.
-```
-
-:::
-
-:::{tab-item} nvalchemiops (Torch)
-
-Scaling of single and batched computation with the `nvalchemiops` Torch backend.
-Shows how performance scales with different batch sizes.
-
-### Time Scaling
-
-```{figure} _static/dftd3_scaling_torch_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 nvalchemiops (Torch) time scaling
-
-Execution time scaling for single and batched systems.
-```
-
-### Throughput
-
-```{figure} _static/dftd3_throughput_torch_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 nvalchemiops (Torch) throughput
-
-Throughput (atoms/ms) for single and batched systems.
-```
-
-### Memory Usage
-
-```{figure} _static/dftd3_memory_torch_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 nvalchemiops (Torch) memory usage
-
-Peak GPU memory consumption for single and batched systems.
-```
-
-:::
-
-:::{tab-item} nvalchemiops (JAX)
-
-Scaling of single and batched computation with the `nvalchemiops` JAX backend.
-Shows how performance scales with different batch sizes.
-
-### Time Scaling
-
-```{figure} _static/dftd3_scaling_jax_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 nvalchemiops (JAX) time scaling
-
-Execution time scaling for single and batched systems.
-```
-
-### Throughput
-
-```{figure} _static/dftd3_throughput_jax_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 nvalchemiops (JAX) throughput
-
-Throughput (atoms/ms) for single and batched systems.
-```
-
-### Memory Usage
-
-```{figure} _static/dftd3_memory_jax_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 nvalchemiops (JAX) memory usage
-
-Peak GPU memory consumption for single and batched systems.
-```
-
-:::
-
-:::{tab-item} torch-dftd
-
-Scaling of single and batched computation with the `torch-dftd` backend.
-Shows how performance scales with different batch sizes.
-
-### Time Scaling
-
-```{figure} _static/dftd3_scaling_torch_dftd_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 torch-dftd time scaling
-
-Execution time scaling for single and batched systems.
-```
-
-### Throughput
-
-```{figure} _static/dftd3_throughput_torch_dftd_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 torch-dftd throughput
-
-Throughput (atoms/ms) for single and batched systems.
-```
-
-### Memory Usage
-
-```{figure} _static/dftd3_memory_torch_dftd_h100-80gb-hbm3.png
-:width: 90%
-:align: center
-:alt: DFT-D3 torch-dftd memory usage
-
-Peak GPU memory consumption for single and batched systems.
-```
+`````
 
 :::
 
 ::::
 
-## Hardware Information
-
-**GPU**: NVIDIA H100 80GB HBM3
-
 ## Benchmark Configuration
 
 | Parameter | Value |
 | --------- | ----- |
-| Cutoff | 21.2 Å (40 Bohr) |
-| System Type | CsCl supercells with periodic boundaries |
+| Cutoffs | 15.0, 25.0 Å |
+| System Type | CsCl supercells (pymatgen), NH₃ (PDB) |
 | Neighbor List | Cell list algorithm ($O(N)$ scaling) |
 | Warmup Iterations | 3 |
-| Timing Iterations | 10 |
+| Timing Iterations | 20 |
 | Precision | `float32` |
 
-### DFT-D3 Parameters
+### DFT-D3 Parameters (BJ-damping, PBE)
+
+Pulled from ``benchmarks/interactions/dispersion/benchmark_config.yaml``
+under ``dftd3_parameters``:
 
 | Parameter | Value |
 | --------- | ----- |
-| Functional | BJ-damping |
-| `a1` | 0.4289 |
-| `a2` | 4.4407 |
+| `a1` | 0.4145 |
+| `a2` | 4.8593 |
 | `s6` | 1.0 |
-| `s8` | 0.7875 |
-
-## Interpreting Results
-
-`total_atoms`
-: Total number of atoms in the supercell.
-
-`batch_size`
-: Number of systems processed simultaneously.
-
-`supercell_size`
-: Linear dimension of supercell ($n^3$).
-
-`total_neighbors`
-: Total number of neighbor pairs within cutoff.
-
-`median_time_ms`
-: Median execution time in milliseconds (lower is better).
-
-`peak_memory_mb`
-: Peak GPU memory usage in megabytes.
-
-```{note}
-Timings exclude neighbor list construction and only measure the DFT-D3
-energy/force calculation.
-```
+| `s8` | 1.2177 |
+| `k1` | 16.0 |
+| `k3` | -4.0 |
 
 ## Running Your Own Benchmarks
 
-To generate benchmark results for your hardware:
+Run from the repository root.
 
-### `torch` Backend (default)
+### Torch Backend (default)
 
 ```bash
-cd benchmarks/interactions/dispersion
-python benchmark_dftd3.py \
-    --config benchmark_config.yaml \
+python -m benchmarks.interactions.dispersion.benchmark_dftd3 \
+    --config benchmarks/interactions/dispersion/benchmark_config.yaml \
     --backend torch \
-    --output-dir ../../../docs/benchmarks/benchmark_results
+    --output-dir docs/benchmarks/benchmark_results
 ```
 
-### `jax` Backend
+### JAX Backend
 
 ```bash
-cd benchmarks/interactions/dispersion
-python benchmark_dftd3.py \
-    --config benchmark_config.yaml \
+XLA_PYTHON_CLIENT_PREALLOCATE=false \
+python -m benchmarks.interactions.dispersion.benchmark_dftd3 \
+    --config benchmarks/interactions/dispersion/benchmark_config.yaml \
     --backend jax \
-    --output-dir ../../../docs/benchmarks/benchmark_results
+    --output-dir docs/benchmarks/benchmark_results
 ```
-
-### `torch_dftd` Backend
-
-```bash
-cd benchmarks/interactions/dispersion
-python benchmark_dftd3.py \
-    --config benchmark_config.yaml \
-    --backend torch_dftd \
-    --output-dir ../../../docs/benchmarks/benchmark_results
-```
-
-### Options
-
-`--backend {torch,jax,torch_dftd}`
-: Select backend (default: `torch`).
-
-`--gpu-sku <name>`
-: Override GPU SKU name for output files (default: auto-detect).
-
-`--config <path>`
-: Path to YAML configuration file.
-
-Results will be saved as CSV files and plots will be automatically generated
-during the next documentation build.

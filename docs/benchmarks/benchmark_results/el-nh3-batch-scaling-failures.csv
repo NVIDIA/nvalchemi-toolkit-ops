@@ -1,0 +1,17 @@
+system,scaling_mode,method,backend,atoms_per_system,batch_size,cutoff,accuracy,failure_reason
+nh3,batch_scaling,pme,jax,8000,16,,0.0001,OOM_NL_build
+nh3,batch_scaling,pme,jax,8000,16,,1e-06,OOM_NL_build
+nh3,batch_scaling,pme_cg,jax,8000,16,,0.0001,OOM_NL_build
+nh3,batch_scaling,pme_cg,jax,8000,16,,1e-06,OOM_NL_build
+nh3,batch_scaling,ewald,jax,8000,16,,0.0001,OOM_NL_build
+nh3,batch_scaling,ewald,jax,8000,16,,1e-06,OOM_NL_build
+nh3,batch_scaling,pme,jax,8000,8,,0.0001,OOM_NL_build
+nh3,batch_scaling,pme,jax,8000,8,,1e-06,OOM_NL_build
+nh3,batch_scaling,pme_cg,jax,8000,8,,0.0001,OOM_NL_build
+nh3,batch_scaling,pme_cg,jax,8000,8,,1e-06,OOM_NL_build
+nh3,batch_scaling,ewald,jax,8000,8,,0.0001,OOM_NL_build
+nh3,batch_scaling,ewald,jax,8000,8,,1e-06,OOM_NL_build
+nh3,batch_scaling,ewald,jax,8192,16,,1e-06,OOM_preempt
+nh3,batch_scaling,ewald_cg,jax,8192,16,,1e-06,OOM_preempt
+nh3,batch_scaling,pme,jax,8192,16,,1e-06,OOM_preempt
+nh3,batch_scaling,pme_cg,jax,8192,16,,1e-06,OOM_preempt

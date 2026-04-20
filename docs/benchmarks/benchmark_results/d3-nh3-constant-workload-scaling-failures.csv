@@ -1,0 +1,11 @@
+system,scaling_mode,method,backend,atoms_per_system,batch_size,cutoff,accuracy,failure_reason
+nh3,constant_workload,,jax,128,1024,25.0,,OOM_kernel
+nh3,constant_workload,,jax,256,512,25.0,,OOM_kernel
+nh3,constant_workload,,jax,512,256,25.0,,OOM_kernel
+nh3,constant_workload,,jax,1000,128,25.0,,OOM_kernel
+nh3,constant_workload,,jax,2000,64,25.0,,OOM_kernel
+nh3,constant_workload,,jax,4000,32,25.0,,OOM_kernel
+nh3,constant_workload,,jax,8000,16,25.0,,OOM_kernel
+nh3,constant_workload,,jax,16000,8,25.0,,OOM_kernel
+nh3,constant_workload,,jax,32000,4,25.0,,OOM_kernel
+nh3,constant_workload,,jax,64000,2,25.0,,OOM_kernel

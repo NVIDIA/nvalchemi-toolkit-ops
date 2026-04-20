@@ -1,0 +1,13 @@
+system,scaling_mode,method,backend,atoms_per_system,batch_size,cutoff,accuracy,failure_reason
+cscl,system_size,pme,jax,64000,1,,0.0001,OOM_NL_build
+cscl,system_size,pme,jax,64000,1,,1e-06,OOM_NL_build
+cscl,system_size,pme_cg,jax,64000,1,,0.0001,OOM_NL_build
+cscl,system_size,pme_cg,jax,64000,1,,1e-06,OOM_NL_build
+cscl,system_size,ewald,jax,64000,1,,0.0001,OOM_NL_build
+cscl,system_size,ewald,jax,64000,1,,1e-06,OOM_NL_build
+cscl,system_size,pme,jax,34000,1,,0.0001,OOM_NL_build
+cscl,system_size,pme,jax,34000,1,,1e-06,OOM_NL_build
+cscl,system_size,pme_cg,jax,34000,1,,0.0001,OOM_NL_build
+cscl,system_size,pme_cg,jax,34000,1,,1e-06,OOM_NL_build
+cscl,system_size,ewald,jax,34000,1,,0.0001,OOM_NL_build
+cscl,system_size,ewald,jax,34000,1,,1e-06,OOM_NL_build

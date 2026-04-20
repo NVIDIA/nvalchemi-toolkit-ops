@@ -1,0 +1,3 @@
+system,scaling_mode,method,backend,atoms_per_system,batch_size,cutoff,accuracy,failure_reason
+cscl,batch_scaling,,jax,250,512,25.0,,OOM_kernel
+cscl,batch_scaling,,jax,8000,16,25.0,,OOM_kernel

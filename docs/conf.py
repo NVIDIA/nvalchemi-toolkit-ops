@@ -83,7 +83,13 @@ intersphinx_mapping = {
 source_suffix = [".rst", ".md"]
 myst_enable_extensions = ["colon_fence", "dollarmath"]
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "sphinxext.py", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "sphinxext.py",
+    "Thumbs.db",
+    ".DS_Store",
+    "benchmarks/_backup_upstream_v030",
+]
 autodoc_typehints = "description"
 autodoc_preserve_defaults = True
 
@@ -94,6 +100,7 @@ html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static", "benchmarks/_static"]
 html_css_files = [
     "css/nvidia-sphinx-theme.css",
+    "css/custom.css",
 ]
 html_theme_options = {
     "logo": {

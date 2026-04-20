@@ -19,6 +19,39 @@ html {
   max-width: 100rem;  /* default is 88rem */
 }
 
+/* --- Nested benchmark tab fixes --- */
+.sd-tab-content {
+  box-shadow: 0 -0.0625rem var(--sd-color-tabs-overline) !important;
+}
+.sd-tab-content .sd-tab-set {
+  margin-bottom: 0 !important;
+}
+.sd-tab-content figure + figure {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--pst-color-border);
+}
+.sd-tab-content figure figcaption {
+  margin-bottom: 0 !important;
+}
+.sd-tab-content figure figcaption p {
+  margin-bottom: 0.25rem !important;
+}
+.sd-tab-content figure:last-child {
+  margin-bottom: 0 !important;
+}
+.sd-tab-content figure:last-child figcaption p {
+  margin-bottom: 0 !important;
+}
+.sd-tab-content {
+  padding-bottom: 0.25rem !important;
+}
+#performance-results {
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--pst-color-border);
+  margin-bottom: 1.5rem;
+}
+
 /*******************************************************************************
 * light theme
 *

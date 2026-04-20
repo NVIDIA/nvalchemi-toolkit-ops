@@ -1,1116 +1,805 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-import argparse
+"""Benchmark timing, memory measurement, and utility functions.
+
+Timing: batched mean across N back-to-back calls with synchronisation only
+at the start and end of the batch.
+
+    Torch (CUDA events):
+        sync → start.record() → N × fn() → end.record() → sync
+        return elapsed_seconds / N
+
+    JAX (wall-clock):
+        block_until_ready(warmup) → t0 = perf_counter()
+        → N × fn() → block_until_ready(last) → elapsed / N
+"""
+
+from __future__ import annotations
+
 import csv
-import signal
-import time
+import gc
+import os
 from collections.abc import Callable
-from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, TypedDict
 
-import numpy as np
-from pymatgen.core import Lattice, Structure
+import torch
+import warp as wp
 
-# Lazy import for torch - allows module to be imported without torch installed
-# Other functions in this file still use torch types in their signatures
+__all__ = [
+    "MemInfo",
+    "build_result",
+    "clean_gpu",
+    "create_run_directory",
+    "cuda_timed_batch",
+    "cuda_timed_runs",
+    "current_alloc_gb",
+    "ensure_jax_available",
+    "format_num",
+    "get_gpu_memory_info",
+    "get_timestamp",
+    "jax_timed_batch",
+    "lazy_import_jax",
+    "make_csv_name",
+    "make_row_meta",
+    "measure_memory_jax",
+    "measure_memory_torch",
+    "save_results",
+    "write_run_log",
+]
+
+
+class MemInfo(TypedDict):
+    """Minimal memory info dict returned by :func:`measure_memory_torch`
+    and :func:`measure_memory_jax` and consumed by :func:`build_result`.
+
+    The two keys map directly to CSV columns — ``mem_delta_mb`` is the
+    meaningful value for JAX (NVML delta), ``mem_peak_gb`` is for torch
+    (allocator peak). JAX always reports ``mem_peak_gb=0``; the plotter
+    filters zeros.
+    """
+
+    mem_delta_mb: float
+    mem_peak_gb: float
+
+
+# =============================================================================
+# GPU Utilities
+# =============================================================================
+
+# GPU memory tracking -- initialize pynvml once at module level
 try:
-    import torch
-    from torch.cuda import cudart
-except ImportError:
-    torch = None
-    cudart = None
+    import pynvml as _pynvml
 
-try:
-    import jax
-    from jax import numpy as jnp
-except ImportError:
-    jax = None
-    jnp = None
-
-BackendType = Literal["torch", "jax", "warp"]
+    _pynvml.nvmlInit()
+    _GPU_HANDLE = _pynvml.nvmlDeviceGetHandleByIndex(0)
+    _PYNVML_AVAILABLE = True
+except Exception:
+    _PYNVML_AVAILABLE = False
+    _GPU_HANDLE = None
 
 
-def _nvml_get_device_name(device_index: int = 0) -> str:
-    """Get GPU device name using NVML.
+def clean_gpu() -> None:
+    """Clean GPU memory between benchmark atom-size groups.
 
-    Parameters
-    ----------
-    device_index : int, default=0
-        GPU device index.
+    Call once per atom-size change, NOT per (method, cutoff) config.
+    """
+    torch.cuda.synchronize()
+    wp.synchronize()
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.synchronize()
+
+
+def get_gpu_memory_info() -> dict:
+    """Get GPU memory usage. Uses cached pynvml handle.
 
     Returns
     -------
-    str
-        GPU device name (e.g., "NVIDIA H100 80GB HBM3").
+    dict
+        Keys: 'used' (bytes), 'total' (bytes), 'percent' (float).
+    """
+    if _PYNVML_AVAILABLE:
+        info = _pynvml.nvmlDeviceGetMemoryInfo(_GPU_HANDLE)
+        return {
+            "used": info.used,
+            "total": info.total,
+            "percent": 100.0 * info.used / info.total,
+        }
+    else:
+        used = torch.cuda.memory_allocated()
+        total = torch.cuda.get_device_properties(0).total_memory
+        return {"used": used, "total": total, "percent": 100.0 * used / total}
+
+
+# =============================================================================
+# Lazy JAX Imports
+# =============================================================================
+
+
+def lazy_import_jax(
+    *,
+    need_electrostatics: bool = False,
+    need_dispersion: bool = False,
+) -> dict:
+    """Lazy-import JAX and the selected nvalchemiops.jax submodules.
+
+    Each benchmark runner needs a different subset of the JAX API.
+    Consolidating the try/except and install-hint here keeps the error
+    message consistent and centralizes the fp64 ordering constraint.
+
+    Parameters
+    ----------
+    need_electrostatics : bool
+        If True, import the electrostatics symbols used by the EL runner
+        and enable x64 beforehand. ``jax_enable_x64`` must be set before
+        the first electrostatics import — module-level code there captures
+        dtypes that cannot be changed post-import.
+    need_dispersion : bool
+        If True, import the ``dftd3`` symbol used by the D3 runner.
+
+    Returns
+    -------
+    dict
+        Always contains ``jax``, ``jnp``, and ``neighbor_list``. The
+        electrostatics and dispersion keys are populated only when the
+        corresponding ``need_*`` flag is True.
 
     Raises
     ------
     ImportError
-        If pynvml (nvidia-ml-py) is not installed.
-    RuntimeError
-        If NVML initialization fails (e.g., no GPU available).
+        If JAX or any requested submodule is unavailable, with a single
+        install hint: ``uv sync --extra torch --extra jax``.
     """
     try:
-        import pynvml
+        # x64 MUST be set via env before JAX is imported. `jax.config.update`
+        # after import is a no-op once any traced array has been created,
+        # which is exactly what happens when the suite runs NL before EL
+        # and both share the same Python process. Setting the env var
+        # unconditionally here is safe — runners that don't need f64
+        # still work correctly; only EL relies on it.
+        if need_electrostatics:
+            os.environ.setdefault("JAX_ENABLE_X64", "1")
 
-        pynvml.nvmlInit()
-    except ImportError:
-        raise ImportError(
-            "`pynvml` required for benchmarks; run `uv pip install nvidia-ml-py`."
+        import jax
+        import jax.numpy as jnp
+
+        if need_electrostatics:
+            jax.config.update("jax_enable_x64", True)
+
+        from nvalchemiops.jax.neighbors import (
+            compute_naive_num_shifts,
+            estimate_batch_cell_list_sizes,
+            neighbor_list as jax_neighbor_list,
         )
+
+        api: dict = {
+            "jax": jax,
+            "jnp": jnp,
+            "neighbor_list": jax_neighbor_list,
+            # Sizing helpers: CPU-side, called outside jit to compute the
+            # static kwargs the jitted `neighbor_list` needs.
+            "estimate_batch_cell_list_sizes": estimate_batch_cell_list_sizes,
+            "compute_naive_num_shifts": compute_naive_num_shifts,
+        }
+
+        if need_electrostatics:
+            from nvalchemiops.jax.interactions.electrostatics import (
+                estimate_ewald_parameters,
+                estimate_pme_parameters,
+                ewald_summation,
+                generate_k_vectors_ewald_summation,
+                generate_k_vectors_pme,
+                particle_mesh_ewald,
+            )
+
+            api.update(
+                {
+                    "ewald_summation": ewald_summation,
+                    "particle_mesh_ewald": particle_mesh_ewald,
+                    "generate_k_vectors_pme": generate_k_vectors_pme,
+                    "generate_k_vectors_ewald_summation": generate_k_vectors_ewald_summation,
+                    "estimate_pme_parameters": estimate_pme_parameters,
+                    "estimate_ewald_parameters": estimate_ewald_parameters,
+                }
+            )
+
+        if need_dispersion:
+            from nvalchemiops.jax.interactions.dispersion import dftd3 as jax_dftd3
+
+            api["dftd3"] = jax_dftd3
+    except ImportError as e:
+        raise ImportError(
+            "JAX backend requested but jax is not installed. "
+            "Install with: uv sync --extra torch --extra jax"
+        ) from e
+    return api
+
+
+def ensure_jax_available(
+    *,
+    need_electrostatics: bool = False,
+    need_dispersion: bool = False,
+) -> None:
+    """Fail-fast wrapper around :func:`lazy_import_jax` for runners' ``main()``.
+
+    Prints the error message and exits with code 1 when jax is unavailable.
+    Each benchmark runner calls this at startup when the user selects the
+    jax backend so the failure surfaces immediately instead of partway
+    through the benchmark loop.
+    """
     try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
-        name = pynvml.nvmlDeviceGetName(handle)
-        return name
-    finally:
-        pynvml.nvmlShutdown()
+        lazy_import_jax(
+            need_electrostatics=need_electrostatics,
+            need_dispersion=need_dispersion,
+        )
+    except ImportError as e:
+        print(f"ERROR: {e}")
+        raise SystemExit(1) from e
 
 
-def _nvml_get_gpu_memory_used_mb(device_index: int = 0) -> float:
-    """Get current GPU memory usage in MB using NVML.
+def current_alloc_gb(backend: str) -> float:
+    """Return the current GPU memory footprint (in GB) for the given backend.
+
+    Uses ``torch.cuda.memory_allocated`` for torch (allocator-level) and the
+    NVML-based :func:`get_gpu_memory_info` for jax (since XLA allocations
+    are invisible to torch). Used for the pre-kernel ``[GPU: X.X GB]``
+    diagnostic line printed by each runner.
+    """
+    if backend == "torch":
+        return torch.cuda.memory_allocated() / 1024**3
+    return get_gpu_memory_info()["used"] / 1024**3
+
+
+def make_row_meta(
+    sys_name: str,
+    mode_name: str,
+    backend: str,
+    atoms_per_system: int,
+    batch_size: int,
+    total_atoms: int,
+) -> dict:
+    """Build the six identity columns shared by every CSV row.
+
+    Pulled from the three runners where the same dict construction appeared
+    verbatim. Callers pass this to :func:`build_result` as ``**row_meta``
+    along with the method-specific fields. Accepts the three atom-count
+    values directly so EL (which extracts them from ``_el_setup_config``
+    after ``data`` is released) can use it without reconstructing a dict.
+    """
+    return {
+        "system": sys_name,
+        "scaling_mode": mode_name,
+        "backend": backend,
+        "atoms_per_system": atoms_per_system,
+        "batch_size": batch_size,
+        "total_atoms": total_atoms,
+    }
+
+
+# =============================================================================
+# Timing Functions
+# =============================================================================
+
+
+def cuda_timed_batch(
+    fn: Callable[[], Any], num_runs: int, warmup_runs: int = 3
+) -> float:
+    """Time a function using CUDA events — batch pattern (throughput).
+
+    Pattern (verified by senior engineer):
+        sync() → start.record() → N × fn() → end.record() → sync()
+        No sync inside loop. Returns total_elapsed / N.
+
+    This measures sustained GPU throughput without sync overhead pollution.
 
     Parameters
     ----------
-    device_index : int, default=0
-        GPU device index.
+    fn : callable
+        Zero-argument function to time.
+    num_runs : int
+        Number of timing iterations.
+    warmup_runs : int, default=3
+        Number of warmup runs (not timed).
 
     Returns
     -------
     float
-        Memory used in megabytes.
+        Mean time per run in seconds.
     """
-    import pynvml
+    # Warmup (separate from timing)
+    for _ in range(warmup_runs):
+        fn()
+    torch.cuda.synchronize()
+    wp.synchronize()
 
-    pynvml.nvmlInit()
-    try:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
-        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        return mem_info.used / (1024**2)
-    finally:
-        pynvml.nvmlShutdown()
+    # Batch timing: sync only at start and end
+    torch.cuda.synchronize()
+    wp.synchronize()
+
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+
+    start.record()
+    for _ in range(num_runs):
+        fn()  # NO sync inside loop
+    end.record()
+
+    torch.cuda.synchronize()
+    wp.synchronize()
+
+    elapsed_ms = start.elapsed_time(end)
+    return (elapsed_ms / 1000.0) / num_runs  # seconds per run
 
 
-def _nvml_get_gpu_sku(device_index: int = 0) -> str:
-    """Get GPU SKU name for filename generation using NVML.
+def cuda_timed_runs(
+    fn: Callable[[], Any],
+    num_runs: int,
+    warmup_runs: int = 3,
+    backend: str = "torch",
+) -> float:
+    """Time ``fn`` and return the mean seconds per call, dispatching on backend.
+
+    Torch uses CUDA events (:func:`cuda_timed_batch`); JAX uses wall-clock
+    + ``jax.block_until_ready`` (:func:`jax_timed_batch`). See the module
+    docstring for the batch-timing rationale.
 
     Parameters
     ----------
-    device_index : int, default=0
-        GPU device index.
+    fn : callable
+        Zero-argument function to time. For JAX, ``fn`` must return a
+        jax.Array (or pytree) so ``jax.block_until_ready`` can flush
+        async dispatch.
+    num_runs : int
+        Number of timing iterations.
+    warmup_runs : int, default=3
+        Number of warmup calls (not counted; the first JAX warmup
+        triggers JIT compile).
+    backend : str, default='torch'
+        ``'torch'`` or ``'jax'``.
 
     Returns
     -------
-    str
-        Cleaned GPU SKU string suitable for filenames (e.g., "h100-80gb-hbm3").
+    float
+        Mean seconds per call across ``num_runs`` back-to-back executions.
     """
-    name = _nvml_get_device_name(device_index)
-    sku = name.replace(" ", "-").replace("_", "-")
-    sku = sku.replace("NVIDIA-", "").replace("GeForce-", "")
-    return sku.lower()
+    if backend == "jax":
+        return jax_timed_batch(fn, num_runs, warmup_runs)
+    return cuda_timed_batch(fn, num_runs, warmup_runs)
 
 
-class TimeoutError(Exception):
-    """Exception raised when a benchmark times out."""
+# =============================================================================
+# JAX Timing
+# =============================================================================
 
-    pass
 
+def jax_timed_batch(
+    fn: Callable[[], Any], num_runs: int, warmup_runs: int = 3
+) -> float:
+    """Time a JAX function using wall-clock timing — batch pattern.
 
-@contextmanager
-def timeout(seconds):
-    """Context manager for timing out a code block.
+    CUDA events do not see JAX work. Instead, warm up (to trigger JIT
+    compile, which is NOT counted in timing), then measure N calls with
+    ``time.perf_counter`` and flush async dispatch with
+    :func:`jax.block_until_ready` once at the end.
 
     Parameters
     ----------
-    seconds : int
-        Number of seconds before timeout.
+    fn : callable
+        Zero-argument function. Must return a jax.Array (or pytree of arrays)
+        so ``jax.block_until_ready`` can complete dispatch.
+    num_runs : int
+        Number of timing iterations.
+    warmup_runs : int, default=3
+        Number of warmup runs. First warmup triggers JIT compile.
 
-    Raises
-    ------
-    TimeoutError
-        If the code block takes longer than the specified timeout.
-
-    Notes
-    -----
-    Uses SIGALRM on Unix systems. On Windows, this is a no-op (no timeout).
+    Returns
+    -------
+    float
+        Mean time per run in seconds (excludes JIT compile).
     """
+    import time
 
-    def timeout_handler(signum, frame):
-        raise TimeoutError(f"Operation timed out after {seconds} seconds")
+    import jax
 
-    # Set up signal handler (Unix only)
-    if hasattr(signal, "SIGALRM"):
-        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(seconds)
-        try:
-            yield
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
-    else:
-        # No timeout on Windows
-        yield
+    # Warmup — first call triggers JIT. Block so compile time doesn't bleed in.
+    for _ in range(warmup_runs):
+        out = fn()
+        jax.block_until_ready(out)
 
-
-class BenchmarkTimer:
-    """High-precision timing utility with CPU/GPU synchronization support.
-
-    Supports multiple backends (torch, jax, warp) with backend-specific
-    synchronization, memory tracking, and timing mechanisms.
-
-    Includes graceful error handling for timeouts and OOM errors.
-    """
-
-    def __init__(
-        self,
-        backend: BackendType = "torch",
-        device: str | None = None,
-        warmup_runs: int = 3,
-        timing_runs: int = 10,
-        timeout_seconds: int = 60,
-    ):
-        """Initialize benchmark timer.
-
-        Parameters
-        ----------
-        backend : BackendType, default="torch"
-            Backend framework to use. Supported: "torch", "jax", "warp".
-        device : str | None, default=None
-            Device for computation. Meaning varies by backend:
-            - torch: Device string like "cuda:0", "cpu". If None, defaults to "cuda" if available.
-            - jax: Not used directly; JAX selects devices automatically.
-            - warp: Not yet supported.
-        warmup_runs : int, default=3
-            Number of warmup runs before timing.
-        timing_runs : int, default=10
-            Number of timing runs for averaging.
-        timeout_seconds : int, default=60
-            Maximum time (in seconds) allowed for a single benchmark run.
-            If exceeded, the benchmark will fail gracefully.
-
-        Raises
-        ------
-        ImportError
-            If the requested backend library is not installed.
-        NotImplementedError
-            If the warp backend is requested (not yet supported).
-        """
-        self.backend = backend
-        self.device = device
-        self.warmup_runs = warmup_runs
-        self.timing_runs = timing_runs
-        self.timeout_seconds = timeout_seconds
-
-        # Backend-specific initialization
-        self._torch = None
-        self._jax = None
-        self._cudart = None
-        self.is_cuda = False
-
-        match backend:
-            case "torch":
-                try:
-                    import torch as _torch
-                    from torch.cuda import cudart as _cudart
-
-                    self._torch = _torch
-                    self._cudart = _cudart
-                except ImportError as e:
-                    raise ImportError(
-                        "torch backend requires PyTorch. Run `uv sync --extra torch"
-                    ) from e
-
-                # Determine if using CUDA
-                if device is None:
-                    self.is_cuda = self._torch.cuda.is_available()
-                    self.device = "cuda" if self.is_cuda else "cpu"
-                else:
-                    self.is_cuda = "cuda" in str(device)
-
-            case "jax":
-                try:
-                    import jax as _jax
-
-                    self._jax = _jax
-                except ImportError as e:
-                    raise ImportError(
-                        "jax backend requires JAX. Run `uv sync --extra 'jax'"
-                    ) from e
-
-                # Check if JAX is using GPU
-                try:
-                    devices = self._jax.local_devices()
-                    self.is_cuda = any(d.platform == "gpu" for d in devices)
-                except Exception:
-                    self.is_cuda = False
-
-            case "warp":
-                raise NotImplementedError(
-                    "warp backend benchmarking is not yet supported"
-                )
-
-            case _:
-                raise ValueError(
-                    f"Unsupported backend: {backend}. "
-                    "Supported backends: 'torch', 'jax', 'warp'"
-                )
-
-    def synchronize(self, result: Any | None = None):
-        """Synchronize device, optionally blocking on a computation result.
-
-        Parameters
-        ----------
-        result : Any, optional
-            Computation result to block on (used for JAX backend).
-        """
-        match self.backend:
-            case "torch":
-                if self.is_cuda:
-                    self._torch.cuda.synchronize()
-            case "jax":
-                if result is not None:
-                    self._jax.block_until_ready(result)
-
-    def get_peak_memory(self) -> float | None:
-        """Get peak GPU memory usage in MB, or None if unavailable.
-
-        Returns
-        -------
-        float | None
-            Peak memory usage in megabytes, or None if not available.
-        """
-        match self.backend:
-            case "torch":
-                if self.is_cuda:
-                    return self._torch.cuda.max_memory_allocated() / (1024**2)
-                return None
-            case "jax":
-                if self.is_cuda:
-                    try:
-                        return _nvml_get_gpu_memory_used_mb()
-                    except Exception:
-                        return None
-                return None
-        return None
-
-    def clear_memory(self):
-        """Clear GPU memory caches and reset peak memory stats."""
-        match self.backend:
-            case "torch":
-                if self.is_cuda:
-                    self._torch.cuda.empty_cache()
-                    self._torch.cuda.reset_peak_memory_stats()
-            case "jax":
-                pass  # JAX manages memory automatically
-
-    def _get_oom_exception_type(self) -> type:
-        """Return the OOM exception class for the current backend.
-
-        Returns
-        -------
-        type
-            Exception class to catch for OOM errors.
-        """
-        match self.backend:
-            case "torch":
-                return self._torch.cuda.OutOfMemoryError
-            case "jax":
-                return RuntimeError  # JAX OOM manifests as RuntimeError
-        return RuntimeError
-
-    def time_function(self, func: Callable, *args, **kwargs) -> dict[str, float | None]:
-        """Time a function with proper synchronization and error handling.
-
-        Parameters
-        ----------
-        func : Callable
-            Function to time.
-        *args, **kwargs
-            Arguments to pass to function.
-
-        Returns
-        -------
-        dict[str, float | None]
-            Timing statistics including median time in milliseconds, or None if failed.
-            Additional keys:
-            - "median": Median time in milliseconds (or None if failed)
-            - "times": List of individual run times (empty if failed)
-            - "compile_ms": Wall-clock time for all warmup runs in ms (captures
-              JIT compilation overhead for JAX; also measured for other backends)
-            - "peak_memory_mb": Peak GPU memory usage in MB (or None if CPU/failed)
-            - "success": Boolean indicating if benchmark completed successfully
-            - "error": Error message if benchmark failed (optional)
-            - "error_type": Type of error that occurred (optional)
-
-        Notes
-        -----
-        This method handles:
-        - OOM errors (gracefully caught and reported)
-        - Timeout errors (if execution exceeds timeout_seconds)
-        - General exceptions during warmup or timing
-        """
-        oom_exception = self._get_oom_exception_type()
-
-        compile_ms: float | None = None
-
-        try:
-            # Warmup runs with timeout (timed to capture compile overhead)
-            warmup_start = time.perf_counter()
-            with timeout(self.timeout_seconds):
-                for i in range(self.warmup_runs):
-                    try:
-                        result = func(*args, **kwargs)
-                        self.synchronize(result)
-                    except oom_exception:
-                        self.clear_memory()
-                        return {
-                            "median": None,
-                            "times": [],
-                            "compile_ms": None,
-                            "peak_memory_mb": None,
-                            "success": False,
-                            "error": f"Out of Memory during warmup run {i + 1}",
-                            "error_type": "OOM",
-                            "last_result": None,
-                        }
-                    except Exception as e:
-                        return {
-                            "median": None,
-                            "times": [],
-                            "compile_ms": None,
-                            "peak_memory_mb": None,
-                            "success": False,
-                            "error": f"Warmup run {i + 1} failed: {str(e)}",
-                            "error_type": type(e).__name__,
-                            "last_result": None,
-                        }
-            compile_ms = (time.perf_counter() - warmup_start) * 1000.0
-
-            # Reset peak memory stats before timing runs
-            self.clear_memory()
-
-            # Timing runs
-            times = []
-            last_result = None
-
-            # Start profiler (torch backend only)
-            if self.backend == "torch" and self._cudart is not None:
-                self._cudart().cudaProfilerStart()
-
-            for i in range(self.timing_runs):
-                try:
-                    with timeout(self.timeout_seconds):
-                        match self.backend:
-                            case "torch":
-                                if self.is_cuda:
-                                    self._torch.cuda.synchronize()
-                                    start_event = self._torch.cuda.Event(
-                                        enable_timing=True
-                                    )
-                                    end_event = self._torch.cuda.Event(
-                                        enable_timing=True
-                                    )
-
-                                    start_event.record()
-                                    last_result = func(*args, **kwargs)
-                                    end_event.record()
-
-                                    self._torch.cuda.synchronize()
-                                    elapsed_time = start_event.elapsed_time(
-                                        end_event
-                                    )  # milliseconds
-                                    times.append(elapsed_time)
-                                else:
-                                    start_time = time.perf_counter()
-                                    last_result = func(*args, **kwargs)
-                                    end_time = time.perf_counter()
-                                    times.append(
-                                        (end_time - start_time) * 1000.0
-                                    )  # Convert to ms
-
-                            case "jax":
-                                start_time = time.perf_counter()
-                                result = func(*args, **kwargs)
-                                # Block until computation is complete
-                                self._jax.block_until_ready(result)
-                                end_time = time.perf_counter()
-                                last_result = result
-                                times.append(
-                                    (end_time - start_time) * 1000.0
-                                )  # Convert to ms
-
-                except oom_exception:
-                    self.clear_memory()
-                    # Stop profiler (torch backend only)
-                    if self.backend == "torch" and self._cudart is not None:
-                        self._cudart().cudaProfilerStop()
-                    return {
-                        "median": None,
-                        "times": times,  # Return partial results
-                        "compile_ms": compile_ms,
-                        "peak_memory_mb": None,
-                        "success": False,
-                        "error": f"Out of Memory during timing run {i + 1}/{self.timing_runs}",
-                        "error_type": "OOM",
-                        "last_result": None,
-                    }
-                except TimeoutError as e:
-                    # Stop profiler (torch backend only)
-                    if self.backend == "torch" and self._cudart is not None:
-                        self._cudart().cudaProfilerStop()
-                    return {
-                        "median": None,
-                        "times": times,  # Return partial results
-                        "compile_ms": compile_ms,
-                        "peak_memory_mb": None,
-                        "success": False,
-                        "error": f"Timeout during timing run {i + 1}/{self.timing_runs}: {str(e)}",
-                        "error_type": "Timeout",
-                        "last_result": None,
-                    }
-                except Exception as e:
-                    # Stop profiler (torch backend only)
-                    if self.backend == "torch" and self._cudart is not None:
-                        self._cudart().cudaProfilerStop()
-                    return {
-                        "median": None,
-                        "times": times,  # Return partial results
-                        "compile_ms": compile_ms,
-                        "peak_memory_mb": None,
-                        "success": False,
-                        "error": f"Timing run {i + 1} failed: {str(e)}",
-                        "error_type": type(e).__name__,
-                        "last_result": None,
-                    }
-
-            # Stop profiler (torch backend only)
-            if self.backend == "torch" and self._cudart is not None:
-                self._cudart().cudaProfilerStop()
-
-            # Get peak memory usage
-            peak_memory_mb = self.get_peak_memory()
-
-            if not times:
-                return {
-                    "median": None,
-                    "times": [],
-                    "compile_ms": compile_ms,
-                    "peak_memory_mb": peak_memory_mb,
-                    "success": False,
-                    "error": "No successful timing runs",
-                    "error_type": "NoData",
-                    "last_result": None,
-                }
-
-            return {
-                "median": float(np.median(times)),
-                "times": times,
-                "compile_ms": compile_ms,
-                "peak_memory_mb": peak_memory_mb,
-                "success": True,
-                "last_result": last_result,
-            }
-
-        except TimeoutError as e:
-            return {
-                "median": None,
-                "times": [],
-                "compile_ms": compile_ms,
-                "peak_memory_mb": None,
-                "success": False,
-                "error": f"Overall timeout: {str(e)}",
-                "error_type": "Timeout",
-                "last_result": None,
-            }
-        except Exception as e:
-            return {
-                "median": None,
-                "times": [],
-                "compile_ms": compile_ms,
-                "peak_memory_mb": None,
-                "success": False,
-                "error": f"Unexpected error: {str(e)}",
-                "error_type": type(e).__name__,
-                "last_result": None,
-            }
+    # Batch timing: dispatch N calls, block once at the end.
+    t0 = time.perf_counter()
+    last = None
+    for _ in range(num_runs):
+        last = fn()
+    jax.block_until_ready(last)
+    elapsed = time.perf_counter() - t0
+    return elapsed / num_runs
 
 
-def save_benchmark_results(
-    results: list[dict], output_file: str, method_name: str
-) -> None:
-    """Save benchmark results to CSV file.
+# =============================================================================
+# Memory Measurement
+# =============================================================================
+
+
+def measure_memory_torch(fn: Callable[[], Any]) -> tuple[Any, MemInfo]:
+    """Run ``fn`` once and capture torch-side peak allocator memory.
+
+    Does NOT call :func:`clean_gpu`. The runner clears caches per
+    atom-size group, not per (method, cutoff) config, so allocator
+    peaks accumulate inside a group intentionally.
 
     Parameters
     ----------
-    results : List[Dict]
-        List of benchmark result dictionaries.
-    output_file : str
+    fn : callable
+        Zero-argument function that executes the kernel under
+        measurement. Its return value is passed through unchanged.
+
+    Returns
+    -------
+    (result, mem_info)
+        ``result`` is whatever ``fn`` returned; ``mem_info`` has keys
+        ``mem_delta_mb`` and ``mem_peak_gb`` — the two fields the lean
+        CSV schema consumes.
+    """
+    torch.cuda.reset_peak_memory_stats()
+    mem_before = torch.cuda.memory_allocated()
+    result = fn()
+    torch.cuda.synchronize()
+    wp.synchronize()
+    mem_peak = torch.cuda.max_memory_allocated()
+    mem_info: MemInfo = {
+        "mem_delta_mb": (mem_peak - mem_before) / 1024**2,
+        "mem_peak_gb": mem_peak / 1024**3,
+    }
+    return result, mem_info
+
+
+def measure_memory_jax(fn: Callable[[], Any], jax_module: Any) -> tuple[Any, MemInfo]:
+    """Run ``fn`` once and capture the JAX-side GPU memory delta via NVML.
+
+    ``torch.cuda.max_memory_allocated`` cannot see XLA allocations, so we
+    sample NVML before/after instead. ``mem_peak_gb=0`` is deliberate: the
+    XLA pool makes peak memory uninformative. The plotter filters zero
+    peaks out, so this is a lossless placeholder.
+
+    Parameters
+    ----------
+    fn : callable
+        Zero-argument function returning a jax.Array (or pytree).
+    jax_module : module
+        The ``jax`` module (typically ``lazy_import_jax()["jax"]``),
+        passed explicitly to avoid an inline import on each call.
+
+    Returns
+    -------
+    (result, mem_info)
+        Same pair shape as :func:`measure_memory_torch`.
+    """
+    mem_before = get_gpu_memory_info()["used"]
+    result = fn()
+    jax_module.block_until_ready(result)
+    mem_after = get_gpu_memory_info()["used"]
+    mem_info: MemInfo = {
+        "mem_delta_mb": max(0.0, (mem_after - mem_before) / 1024**2),
+        "mem_peak_gb": 0.0,
+    }
+    return result, mem_info
+
+
+# =============================================================================
+# Result Building & CSV Output
+# =============================================================================
+
+
+def build_result(
+    *,
+    # Identity
+    system: str,
+    scaling_mode: str,
+    method: str,
+    backend: str = "torch",
+    atoms_per_system: int,
+    batch_size: int,
+    total_atoms: int,
+    # Timing
+    time_seconds: float,
+    # Memory
+    mem_info: MemInfo,
+    # Status
+    success: bool = True,
+    # Optional extras (method-specific: cutoff, accuracy, time_d3_us_per_atom)
+    **extra: Any,
+) -> dict:
+    """Build a standardized benchmark result dictionary.
+
+    Emits only the columns the plotter reads; unused metrics are not stored.
+    All benchmark scripts should use this to ensure consistent CSV columns.
+
+    Parameters
+    ----------
+    system : str
+        Chemical system ('cscl' or 'nh3').
+    scaling_mode : str
+        'system_size', 'constant_workload', or 'batch_scaling'.
+    method : str
+        Method name (e.g. 'naive', 'cell', 'dftd3', 'pme_cg', 'ewald_cg').
+    backend : str, default='torch'
+        Framework backend ('torch' or 'jax').
+    atoms_per_system : int
+        Atoms in each individual system.
+    batch_size : int
+        Number of systems in the batch.
+    total_atoms : int
+        atoms_per_system * batch_size.
+    time_seconds : float
+        Mean time per call in seconds.
+    mem_info : dict
+        Output from :func:`measure_memory_torch` or :func:`measure_memory_jax`;
+        must contain 'mem_delta_mb' and 'mem_peak_gb'.
+    success : bool, default=True
+        Whether the benchmark completed successfully. Failed rows are filtered
+        out by the plotter on load.
+    **extra
+        Additional method-specific fields:
+        - cutoff (NL, D3)
+        - accuracy (EL)
+        - time_d3_us_per_atom (D3-only time, excludes NL)
+
+    Returns
+    -------
+    dict
+        Standardized result with minimal columns required by the plotter.
+    """
+    time_us_per_atom = (time_seconds * 1e6) / total_atoms if total_atoms > 0 else 0.0
+    throughput_atoms_per_sec = total_atoms / time_seconds if time_seconds > 0 else 0.0
+
+    result = {
+        # Identity
+        "system": system,
+        "scaling_mode": scaling_mode,
+        "method": method,
+        "backend": backend,
+        "atoms_per_system": atoms_per_system,
+        "batch_size": batch_size,
+        "total_atoms": total_atoms,
+        # Time
+        "time_us_per_atom": time_us_per_atom,
+        # Throughput
+        "throughput_atoms_per_sec": throughput_atoms_per_sec,
+        # Memory — mem_peak_gb for torch, mem_delta_mb for jax
+        "mem_delta_mb": mem_info["mem_delta_mb"],
+        "mem_peak_gb": mem_info["mem_peak_gb"],
+        # Status
+        "success": success,
+    }
+
+    # Add any extra method-specific fields (cutoff, accuracy, time_d3_us_per_atom)
+    result.update(extra)
+    return result
+
+
+def save_results(results: list[dict], output_path: Path | str) -> None:
+    """Save benchmark results to CSV.
+
+    If ``output_path`` already exists and its header matches ``results`` field
+    names, new rows are appended. This lets torch and jax runs share one
+    output directory without clobbering each other. If the existing header
+    differs, the file is overwritten fresh.
+
+    Parameters
+    ----------
+    results : list[dict]
+        List of result dicts from build_result().
+    output_path : str or Path
         Path to output CSV file.
-    method_name : str
-        Name of the benchmarked method.
     """
-    output_path = Path(output_file)
+    output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not results:
-        print(f"No results to save for {method_name}")
+        print(f"No results to save to {output_path}")
         return
 
-    # Get all unique keys from all results
-    all_keys = set()
-    for result in results:
-        all_keys.update(result.keys())
+    fieldnames = list(results[0].keys())
 
-    fieldnames = ["method"] + sorted(all_keys)
+    # Append if existing file has same schema, else overwrite fresh
+    if output_path.exists():
+        with open(output_path, newline="") as f:
+            existing_fields = csv.DictReader(f).fieldnames or []
+        if list(existing_fields) == fieldnames:
+            with open(output_path, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writerows(results)
+            print(f"Appended {len(results)} results to {output_path}")
+            return
 
-    with open(output_path, "w", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
+        writer.writerows(results)
 
-        for result in results:
-            row = {"method": method_name, **result}
-            writer.writerow(row)
-
-    print(f"Saved {len(results)} benchmark results to {output_path}")
+    print(f"Saved {len(results)} results to {output_path}")
 
 
-def parse_benchmark_args() -> argparse.Namespace:
-    """Parse standard benchmark command line arguments.
+# =============================================================================
+# Formatting Utilities
+# =============================================================================
+
+
+def format_num(n: int) -> str:
+    """Format atom count using binary prefix: 1024→'1k', 131072→'128k'."""
+    if n >= 1048576:
+        return f"{n // 1048576}M"
+    elif n >= 1024:
+        return f"{n // 1024}k"
+    return str(n)
+
+
+def get_timestamp() -> str:
+    """Generate timestamp string: YYYY-MM-DD_HH-MM-SS."""
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+
+def create_run_directory(base_dir: Path | str, prefix: str = "run") -> Path:
+    """Create a timestamped run directory for benchmark results.
+
+    Parameters
+    ----------
+    base_dir : str or Path
+        Base directory (e.g., benchmark-results/).
+    prefix : str
+        Directory prefix (e.g., 'run').
 
     Returns
     -------
-    argparse.Namespace
-        Parsed command line arguments.
+    Path
+        Created directory path.
     """
-    parser = argparse.ArgumentParser(description="Benchmark cuAlchemi methods")
-
-    parser.add_argument(
-        "--system-types",
-        nargs="+",
-        default=["crystal", "random"],
-        choices=["molecular", "crystal", "random", "random_nonperiodic"],
-        help="System types to benchmark",
-    )
-
-    parser.add_argument(
-        "--atom-counts",
-        nargs="+",
-        type=int,
-        default=[64, 128, 256, 512, 1024, 2048, 4096, 10000, 20000, 50000, 100000],
-        help="Atom counts to benchmark",
-    )
-
-    parser.add_argument(
-        "--device", default="cuda:0", help="Device for computation (cuda:0, cpu, etc.)"
-    )
-
-    parser.add_argument(
-        "--dtype",
-        default="float64",
-        choices=["float16", "float32", "float64"],
-        help="Data type for computations",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        default="benchmark_results",
-        help="Directory for output CSV files",
-    )
-
-    parser.add_argument(
-        "--warmup-runs", type=int, default=3, help="Number of warmup runs"
-    )
-
-    parser.add_argument(
-        "--timing-runs",
-        type=int,
-        default=10,
-        help="Number of timing runs for averaging",
-    )
-
-    parser.add_argument(
-        "--test-compile", action="store_true", help="Test torch.compile compatibility"
-    )
-
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-
-    return parser.parse_args()
+    run_dir = Path(base_dir) / f"{prefix}_{get_timestamp()}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "plots").mkdir(exist_ok=True)
+    return run_dir
 
 
-def get_dtype(dtype_str: str) -> torch.dtype:
-    """Convert string to torch dtype.
+def make_csv_name(module: str, system: str, mode: str) -> str:
+    """Generate standardized CSV filename.
+
+    Pattern: {module}-{system}-{mode_label}.csv
+    Examples: nl-cscl-system-size-scaling.csv, d3-nh3-batch-scaling.csv
 
     Parameters
     ----------
-    dtype_str : str
-        String representation of dtype.
-
-    Returns
-    -------
-    torch.dtype
-        Corresponding PyTorch dtype.
-    """
-    dtype_map = {
-        "float16": torch.float16,
-        "float32": torch.float32,
-        "float64": torch.float64,
-    }
-    return dtype_map[dtype_str]
-
-
-def print_system_info(system: dict[str, torch.Tensor], verbose: bool = False) -> None:
-    """Print information about a test system.
-
-    Parameters
-    ----------
-    system : Dict[str, torch.Tensor]
-        System dictionary.
-    verbose : bool, default=False
-        Whether to print detailed information.
-    """
-    num_atoms = system["num_atoms"]
-    system_type = system["system_type"]
-    device = system["positions"].device
-    dtype = system["positions"].dtype
-
-    print(f"System: {system_type}, {num_atoms} atoms, {device}, {dtype}")
-
-    if verbose:
-        if "density" in system:
-            print(f"  Density: {system['density']:.3f}")
-        if "box_size" in system:
-            print(f"  Box size: {system['box_size']:.3f}")
-        if "lattice_type" in system:
-            print(f"  Lattice: {system['lattice_type']}")
-        print(f"  Periodic: {system['pbc'].tolist()}")
-        print(f"  Total charge: {system['atomic_charges'].sum().item():.6f}")
-
-
-def get_memory_usage(device: torch.device) -> float | None:
-    """Get current GPU memory usage in GB.
-
-    Parameters
-    ----------
-    device : torch.device
-        Device to check memory for.
-
-    Returns
-    -------
-    Optional[float]
-        Memory usage in GB, or None if not CUDA.
-    """
-    if device.type == "cuda":
-        return torch.cuda.memory_allocated(device) / 1024**3
-    return None
-
-
-def print_benchmark_summary(
-    results: list[dict], method_name: str, verbose: bool = False
-) -> None:
-    """Print a formatted summary of benchmark results.
-
-    Parameters
-    ----------
-    results : List[Dict]
-        List of benchmark result dictionaries.
-    method_name : str
-        Name of the benchmarked method category.
-    verbose : bool, default=False
-        Whether to print detailed breakdown.
-    """
-    if not results:
-        print(f"\nNo benchmark results for {method_name}!")
-        return
-
-    print(f"\n{'=' * 60}")
-    print(f"{method_name.upper()} BENCHMARK SUMMARY")
-    print(f"{'=' * 60}")
-
-    # Overall statistics
-    total_tests = len(results)
-    avg_time = (
-        sum(r.get("time_mean", r.get("compile_total_time_mean", 0)) for r in results)
-        / total_tests
-    )
-
-    functions = {r.get("function", "unknown") for r in results}
-    atom_counts = sorted({r.get("num_atoms", 0) for r in results})
-    system_types = {r.get("system_type", "unknown") for r in results}
-
-    print(f"Total tests: {total_tests}")
-    print(f"Functions tested: {', '.join(functions)}")
-    print(f"System types: {', '.join(system_types)}")
-    print(
-        f"Atom counts: {min(atom_counts)} - {max(atom_counts)} ({len(atom_counts)} sizes)"
-    )
-    print(f"Average time: {avg_time:.4f}s")
-
-    # Summary by function
-    print("\nPERFORMANCE BY FUNCTION:")
-    print(
-        f"{'Function':<25} {'Avg Time (ms)':<12} {'Std Dev (ms)':<10} {'Best Perf':<15}"
-    )
-    print(f"{'-' * 62}")
-
-    by_function = {}
-    for result in results:
-        func = result.get("function", "unknown")
-        if func not in by_function:
-            by_function[func] = []
-        by_function[func].append(result)
-
-    for func, func_results in by_function.items():
-        times = [r["time_mean"] for r in func_results if "time_mean" in r] + [
-            r["compile_total_time_mean"]
-            for r in func_results
-            if "compile_total_time_mean" in r
-        ]
-        if times:
-            avg_time = np.mean(times)
-            std_time = np.std(times)
-            best_perf_key = (
-                "pairs_per_sec"
-                if "pairs_per_sec" in func_results[0]
-                else "atoms_per_sec"
-            )
-            if best_perf_key in func_results[0]:
-                best_perf = max(r[best_perf_key] for r in func_results)
-                best_perf_str = f"{best_perf:.0f} {best_perf_key.split('_')[0]}/s"
-            else:
-                best_perf_str = "N/A"
-
-            print(f"{func:<25} {avg_time:<12.4f} {std_time:<10.4f} {best_perf_str:<15}")
-
-    # Summary by atom count
-    if len(atom_counts) > 1:
-        print("\nSCALING BY ATOM COUNT:")
-        print(f"{'Atoms':<8} {'Avg Time (ms)':<12} {'Best Perf':<15}")
-        print(f"{'-' * 35}")
-
-        by_atoms = {}
-        for result in results:
-            atoms = result.get("num_atoms", 0)
-            if atoms not in by_atoms:
-                by_atoms[atoms] = []
-            by_atoms[atoms].append(result)
-
-        for atoms in sorted(by_atoms.keys()):
-            atom_results = by_atoms[atoms]
-            times = [r["time_mean"] for r in atom_results if "time_mean" in r] + [
-                r["compile_total_time_mean"]
-                for r in atom_results
-                if "compile_total_time_mean" in r
-            ]
-            if times:
-                avg_time = np.mean(times)
-                # Find best performance metric
-                perf_metrics = ["pairs_per_sec", "atoms_per_sec", "kvectors_per_sec"]
-                best_perf_str = "N/A"
-                for metric in perf_metrics:
-                    if any(metric in r for r in atom_results):
-                        best_perf = max(r[metric] for r in atom_results if metric in r)
-                        best_perf_str = f"{best_perf:1.3e} {metric.split('_')[0]}/s"
-                        break
-
-                print(f"{atoms:<8} {avg_time:<12.4f} {best_perf_str:<15}")
-
-    # Summary by cutoff (if applicable)
-    cutoff_keys = ["cutoff", "real_cutoff", "dispersion_cutoff", "cutoff"]
-    cutoff_key = None
-    for key in cutoff_keys:
-        if any(key in r for r in results):
-            cutoff_key = key
-            break
-
-    if cutoff_key and verbose:
-        cutoffs = sorted({r[cutoff_key] for r in results if cutoff_key in r})
-        if len(cutoffs) > 1:
-            print(f"\nSCALING BY {cutoff_key.upper()}:")
-            print(f"{'Cutoff':<8} {'Avg Time (ms)':<12} {'Avg Pairs':<12}")
-            print(f"{'-' * 32}")
-
-            by_cutoff = {}
-            for result in results:
-                cutoff = result.get(cutoff_key)
-                if cutoff is not None:
-                    if cutoff not in by_cutoff:
-                        by_cutoff[cutoff] = []
-                    by_cutoff[cutoff].append(result)
-
-            for cutoff in sorted(by_cutoff.keys()):
-                cutoff_results = by_cutoff[cutoff]
-                times = [r["time_mean"] for r in cutoff_results if "time_mean" in r] + [
-                    r["compile_total_time_mean"]
-                    for r in cutoff_results
-                    if "compile_total_time_mean" in r
-                ]
-                pairs = [r.get("num_pairs", 0) for r in cutoff_results]
-                if times:
-                    avg_time = np.mean(times)
-                    avg_pairs = np.mean(pairs) if pairs else 0
-                    print(f"{cutoff:<8.1f} {avg_time:<12.4f} {avg_pairs:<12.0f}")
-
-    # torch.compile summary (if applicable)
-    compile_results = [r for r in results if r.get("compile_compatible") is not None]
-    if compile_results:
-        compatible_count = len(
-            [r for r in compile_results if r.get("compile_compatible")]
-        )
-        total_compile_tests = len(compile_results)
-
-        print("\nTORCH.COMPILE COMPATIBILITY:")
-        print(f"Compatible: {compatible_count}/{total_compile_tests} functions")
-
-        if compatible_count > 0:
-            speedups = [
-                r.get("compile_speedup", 1.0)
-                for r in compile_results
-                if r.get("compile_compatible") and r.get("compile_speedup")
-            ]
-            if speedups:
-                avg_speedup = np.mean(speedups)
-                max_speedup = np.max(speedups)
-                print(f"Average speedup: {avg_speedup:.2f}x")
-                print(f"Best speedup: {max_speedup:.2f}x")
-
-    # Memory usage summary (if applicable)
-    memory_results = [
-        r for r in results if "memory_gb" in r and r["memory_gb"] is not None
-    ]
-    if memory_results:
-        avg_memory = np.mean([r["memory_gb"] for r in memory_results])
-        max_memory = np.max([r["memory_gb"] for r in memory_results])
-        print("\nMEMORY USAGE:")
-        print(f"Average GPU memory: {avg_memory:.2f} GB")
-        print(f"Peak GPU memory: {max_memory:.2f} GB")
-
-    print(f"{'=' * 60}")
-
-
-def format_performance_table(results: list[dict], group_by: str = "function") -> str:
-    """Format results into a performance comparison table.
-
-    Parameters
-    ----------
-    results : List[Dict]
-        Benchmark results.
-    group_by : str, default='function'
-        Key to group results by.
+    module : str
+        'nl', 'd3', or 'el'.
+    system : str
+        'cscl' or 'nh3'.
+    mode : str
+        Scaling mode key from YAML.
 
     Returns
     -------
     str
-        Formatted table string.
+        Filename string.
     """
-    if not results:
-        return "No results to format"
-
-    # Group results
-    grouped = {}
-    for result in results:
-        key = result.get(group_by, "unknown")
-        if key not in grouped:
-            grouped[key] = []
-        grouped[key].append(result)
-
-    # Create table
-    header = f"{'Method':<20} {'Avg Time (ms)':<12} {'Best Perf':<15}"
-    separator = "-" * len(header)
-    rows = [header, separator]
-
-    for key, group_results in grouped.items():
-        times = [r["time_mean"] for r in group_results if "time_mean" in r] + [
-            r["compile_total_time_mean"]
-            for r in group_results
-            if "compile_total_time_mean" in r
-        ]
-        if times:
-            avg_time = np.mean(times)
-
-            # Find best performance metric
-            best_perf_str = "N/A"
-            for metric in ["atoms_per_sec", "pairs_per_sec", "kvectors_per_sec"]:
-                if any(metric in r for r in group_results):
-                    best_perf = max(r[metric] for r in group_results if metric in r)
-                    best_perf_str = f"{best_perf:1.3e} {metric.split('_')[0]}/s"
-                    break
-
-            row = f"{key:<20} {avg_time:<12.4f} {best_perf_str:<15}"
-            rows.append(row)
-
-    return "\n".join(rows)
-
-
-# ==============================================================================
-# Pymatgen Structure Utilities
-# ==============================================================================
-
-
-def create_bulk_structure(
-    symbol: str, crystal_type: str, a: float, cubic: bool = False
-) -> Structure:
-    """Create a bulk crystal structure using pymatgen.
-
-    Creates standard crystal structures with common lattice types.
-
-    Parameters
-    ----------
-    symbol : str
-        Chemical symbol of the element (e.g., "Al", "Fe").
-    crystal_type : str
-        Crystal structure type. Supported: "fcc", "bcc", "sc" (simple cubic).
-    a : float
-        Lattice constant in Angstroms.
-    cubic : bool, default=False
-        If True, create a cubic supercell for non-cubic structures.
-
-    Returns
-    -------
-    Structure
-        pymatgen Structure object representing the bulk crystal.
-
-    Examples
-    --------
-    >>> fcc_al = create_bulk_structure("Al", "fcc", a=4.05)
-    >>> bcc_fe = create_bulk_structure("Fe", "bcc", a=2.87, cubic=True)
-    """
-    lattice = Lattice.cubic(a)
-
-    if crystal_type.lower() == "fcc":
-        # Face-centered cubic: atoms at corners and face centers
-        coords = np.array(
-            [[0.0, 0.0, 0.0], [0.5, 0.5, 0.0], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5]]
-        )
-        species = [symbol] * 4
-    elif crystal_type.lower() == "bcc":
-        # Body-centered cubic: atoms at corners and body center
-        coords = np.array([[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]])
-        species = [symbol] * 2
-    elif crystal_type.lower() in ["sc", "simple_cubic"]:
-        # Simple cubic: atom at corner only
-        coords = np.array([[0.0, 0.0, 0.0]])
-        species = [symbol]
-    else:
-        raise ValueError(
-            f"Unsupported crystal type: {crystal_type}. "
-            "Supported types: 'fcc', 'bcc', 'sc' (simple cubic)"
-        )
-
-    structure = Structure(lattice, species, coords, coords_are_cartesian=False)
-
-    return structure
-
-
-def get_structure_atomic_numbers(structure: Structure) -> np.ndarray:
-    """Extract atomic numbers from a pymatgen Structure.
-
-    Parameters
-    ----------
-    structure : Structure
-        pymatgen Structure object.
-
-    Returns
-    -------
-    np.ndarray
-        Array of atomic numbers (integers) with shape (num_atoms,).
-
-    Examples
-    --------
-    >>> structure = create_bulk_structure("Al", "fcc", a=4.05)
-    >>> atomic_numbers = get_structure_atomic_numbers(structure)
-    >>> print(atomic_numbers)  # [13, 13, 13, 13] for Al
-    """
-    return np.array([site.specie.Z for site in structure], dtype=np.int32)
-
-
-def create_molecule_structure(name: str, box_size: float = 10.0) -> Structure:
-    """Create a simple molecular structure with predefined coordinates.
-
-    Provides common small molecules with approximate equilibrium geometries.
-
-    Parameters
-    ----------
-    name : str
-        Name of the molecule. Supported: "H2O", "CO2", "CH4".
-    box_size : float, default=10.0
-        Size of the cubic box in Angstroms (used for periodic boundary conditions).
-
-    Returns
-    -------
-    Structure
-        pymatgen Structure object with the molecule centered in a box.
-
-    Raises
-    ------
-    ValueError
-        If the molecule name is not supported.
-
-    Notes
-    -----
-    Coordinates are approximate equilibrium geometries and not optimized.
-    The molecules are placed in a cubic box with periodic boundary conditions.
-
-    Examples
-    --------
-    >>> water = create_molecule_structure("H2O", box_size=15.0)
-    >>> co2 = create_molecule_structure("CO2")
-    """
-    # Define molecule coordinates (Cartesian, in Angstroms)
-    # Centered around origin, will be shifted to box center
-    molecules = {
-        "H2O": {
-            "species": ["O", "H", "H"],
-            "coords": np.array(
-                [[0.0, 0.0, 0.0], [0.757, 0.586, 0.0], [-0.757, 0.586, 0.0]]
-            ),
-        },
-        "CO2": {
-            "species": ["C", "O", "O"],
-            "coords": np.array([[0.0, 0.0, 0.0], [1.16, 0.0, 0.0], [-1.16, 0.0, 0.0]]),
-        },
-        "CH4": {
-            "species": ["C", "H", "H", "H", "H"],
-            "coords": np.array(
-                [
-                    [0.0, 0.0, 0.0],
-                    [0.629, 0.629, 0.629],
-                    [-0.629, -0.629, 0.629],
-                    [-0.629, 0.629, -0.629],
-                    [0.629, -0.629, -0.629],
-                ]
-            ),
-        },
+    mode_labels = {
+        "system_size": "system-size-scaling",
+        "constant_workload": "constant-workload-scaling",
+        "batch_scaling": "batch-scaling",
     }
+    label = mode_labels.get(mode, mode.replace("_", "-"))
+    return f"{module}-{system}-{label}.csv"
 
-    if name not in molecules:
-        raise ValueError(
-            f"Unsupported molecule: {name}. "
-            f"Supported molecules: {list(molecules.keys())}"
-        )
 
-    mol_data = molecules[name]
-    species = mol_data["species"]
-    coords = mol_data["coords"]
+def write_run_log(
+    run_dir: Path | str,
+    start_time: datetime,
+    end_time: datetime | None = None,
+    extra_info: dict | None = None,
+) -> None:
+    """Write a RUN_LOG.md with environment and reproducibility info.
 
-    # Center the molecule in the box
-    coords_centered = coords + box_size / 2.0
+    Parameters
+    ----------
+    run_dir : Path
+        Run directory.
+    start_time : datetime
+        When the run started.
+    end_time : datetime, optional
+        When the run ended.
+    extra_info : dict, optional
+        Additional key-value pairs to include.
+    """
+    import platform
 
-    # Create cubic lattice
-    lattice = Lattice.cubic(box_size)
+    # Normalise to Path up front: ``run_dir.name`` below would crash on str.
+    run_dir = Path(run_dir)
 
-    # Create structure with Cartesian coordinates
-    structure = Structure(lattice, species, coords_centered, coords_are_cartesian=True)
+    gpu_name = "N/A"
+    gpu_mem = "N/A"
+    cuda_version = "N/A"
+    try:
+        gpu_name = torch.cuda.get_device_name(0)
+        props = torch.cuda.get_device_properties(0)
+        gpu_mem = f"{props.total_memory / 1024**3:.0f} GB"
+    except (AssertionError, RuntimeError):
+        pass
+    try:
+        cuda_version = torch.version.cuda or "N/A"
+    except AttributeError:
+        pass
 
-    return structure
+    try:
+        import nvalchemiops
+
+        toolkit_version = nvalchemiops.__version__
+    except (ImportError, AttributeError):
+        toolkit_version = "N/A"
+
+    try:
+        import warp as wp_ver
+
+        warp_version = wp_ver.__version__
+    except (ImportError, AttributeError):
+        warp_version = "N/A"
+
+    elapsed = ""
+    if end_time:
+        delta = end_time - start_time
+        minutes = delta.total_seconds() / 60
+        elapsed = f"\n- **Total runtime**: {minutes:.1f} minutes"
+
+    lines = [
+        f"# Benchmark Run: {run_dir.name}",
+        "",
+        "## Environment",
+        "",
+        f"- **GPU**: {gpu_name} ({gpu_mem})",
+        f"- **CUDA**: {cuda_version}",
+        f"- **PyTorch**: {torch.__version__}",
+        f"- **nvalchemi-toolkit-ops**: {toolkit_version}",
+        f"- **Warp**: {warp_version}",
+        f"- **Python**: {platform.python_version()}",
+        f"- **OS**: {platform.system()} {platform.release()}",
+        f"- **Date**: {start_time.strftime('%Y-%m-%d %H:%M:%S')}",
+        elapsed,
+        "",
+        "## Timing Methodology",
+        "",
+        "Batch timing pattern (sync outside loop):",
+        "```",
+        "sync() -> start.record() -> N x fn() -> end.record() -> sync()",
+        "```",
+        "Returns mean time per call. Measures sustained GPU throughput.",
+        "",
+        "## Files",
+        "",
+        "CSV naming: `{module}-{system}-{scaling-mode}.csv`",
+        "",
+        "| Column | Description |",
+        "|--------|-------------|",
+        "| `time_us_per_atom` | Time per atom [microseconds] |",
+        "| `throughput_atoms_per_sec` | Atoms processed per second |",
+        "| `mem_delta_mb` | Memory delta from warmup call [MB] |",
+        "| `mem_peak_gb` | Peak GPU VRAM usage [GB] (torch only; 0 for jax) |",
+        "",
+        "## Reproducibility",
+        "",
+        "```bash",
+        "uv sync --all-extras",
+        "python -m benchmarks.benchmark_suite --benchmark all",
+        "```",
+        "",
+    ]
+
+    if extra_info:
+        lines.append("## Additional Info")
+        lines.append("")
+        for k, v in extra_info.items():
+            lines.append(f"- **{k}**: {v}")
+        lines.append("")
+
+    log_path = run_dir / "RUN_LOG.md"
+    log_path.write_text("\n".join(lines))
