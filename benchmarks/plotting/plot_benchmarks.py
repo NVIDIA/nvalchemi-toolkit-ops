@@ -1285,23 +1285,25 @@ def plot_comparison_panel(
         if is_batch and aps is not None:
             # Batch comparison needs three visual channels
             # (backend × method × aps). Encoding:
-            #   color        = aps (viridis-like palette)
+            #   color family = backend (Greens=torch, Blues=jax)
+            #   color depth  = aps (lighter = smaller system, darker = larger)
             #   linestyle    = backend (solid=torch, dotted=jax)
             #   marker fill  = backend (filled=torch, hollow=jax)
             #   linewidth    = backend (thicker=torch)
-            # Backend distinction is duplicated across linestyle + marker
-            # fill because lines can overlap tightly on log axes — filled
-            # vs. hollow markers stay visible even when lines coincide.
+            # Backend is duplicated across every channel so overlapping
+            # lines stay readable; aps is encoded by depth within each
+            # backend's color family.
             aps_values = sorted({k[2] for k in grouped.keys() if k[2] is not None})
-            aps_palette = (
-                NL_BATCH_PALETTE
-                if module == "nl"
-                else [NVIDIA_GREEN, "#31688E", "#440154"]
-            )
-            aps_colors = {
-                a: aps_palette[i % len(aps_palette)] for i, a in enumerate(aps_values)
-            }
-            color = aps_colors.get(aps, GRAY)
+            n = max(len(aps_values), 1)
+            depth = lambda i: 0.45 + 0.45 * (i / max(n - 1, 1))
+            torch_palette = [plt.cm.Greens(depth(i)) for i in range(n)]
+            jax_palette = [plt.cm.Blues(depth(i)) for i in range(n)]
+            palette = torch_palette if backend == "torch" else jax_palette
+            try:
+                aps_idx = aps_values.index(aps)
+            except ValueError:
+                aps_idx = 0
+            color = palette[aps_idx]
             if backend == "torch":
                 linestyle = "-"
                 linewidth = 2.5
@@ -1315,6 +1317,13 @@ def plot_comparison_panel(
             color = backend_colors.get(backend, GRAY)
             linestyle = SECONDARY_LINESTYLE if is_secondary else "-"
             linewidth = 2.0
+            # Backend distinction is duplicated across color + marker fill
+            # so it survives when lines overlap, the plot is printed in
+            # grayscale, or a module has only one method (D3) and marker
+            # shape alone can't differentiate backends.
+            if backend == "jax":
+                extra_kwargs["markerfacecolor"] = "white"
+                extra_kwargs["markeredgewidth"] = 1.8
 
         # Clean method name for legend
         if method == "cell/naive":
