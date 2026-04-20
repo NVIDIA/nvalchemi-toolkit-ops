@@ -23,9 +23,7 @@ nh3,constant_workload,pme_cg,jax,64000,2,,0.0001,OOM_NL_build
 nh3,constant_workload,pme_cg,jax,64000,2,,1e-06,OOM_NL_build
 nh3,constant_workload,ewald,jax,64000,2,,0.0001,OOM_NL_build
 nh3,constant_workload,ewald,jax,64000,2,,1e-06,OOM_NL_build
-nh3,constant_workload,pme,jax,128,1024,,0.0001,OOM_kernel
 nh3,constant_workload,pme,jax,128,1024,,1e-06,OOM_kernel
-nh3,constant_workload,pme_cg,jax,128,1024,,0.0001,OOM_kernel
 nh3,constant_workload,pme_cg,jax,128,1024,,1e-06,OOM_kernel
 nh3,constant_workload,pme,jax,2000,64,,0.0001,OOM_NL_build
 nh3,constant_workload,pme,jax,2000,64,,1e-06,OOM_NL_build
