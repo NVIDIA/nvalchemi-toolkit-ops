@@ -437,7 +437,7 @@ keep the plot readable.
 | Cutoffs | 6.0, 15.0, 25.0 Å |
 | Methods | naive, cell list |
 | System Type | CsCl (pymatgen), NH₃ (PDB) |
-| Warmup Iterations | 3 |
+| Warmup Iterations | 10 |
 | Timing Iterations | 20 |
 | Dtype | `float32` |
 

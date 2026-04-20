@@ -475,7 +475,7 @@ cost for force-only usage.
 | Methods | PME, Ewald summation |
 | System Type | CsCl supercells (pymatgen), NH₃ (PDB) |
 | Neighbor List | Cell list algorithm ($O(N)$ scaling) |
-| Warmup Iterations | 3 |
+| Warmup Iterations | 10 |
 | Timing Iterations | 20 |
 | Precision | `float64` |
 

@@ -453,7 +453,7 @@ kernels with the same memory footprint.
 | Cutoffs | 15.0, 25.0 Å |
 | System Type | CsCl supercells (pymatgen), NH₃ (PDB) |
 | Neighbor List | Cell list algorithm ($O(N)$ scaling) |
-| Warmup Iterations | 3 |
+| Warmup Iterations | 10 |
 | Timing Iterations | 20 |
 | Precision | `float32` |
 

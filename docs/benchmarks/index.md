@@ -23,7 +23,7 @@ dynamics
 | **Torch** | CUDA Events | `start_event.record()` / `end_event.record()` around the kernel call, then `torch.cuda.synchronize()`. No host-side sync inside the timed loop. |
 | **JAX** | Wall-clock + `block_until_ready` | `time.perf_counter()` before and after the kernel; `jax.block_until_ready(result)` after the **last** call in the batch to flush the dispatch queue. No per-iteration sync. |
 
-For every configuration the benchmark runs *warmup* iterations (default 3)
+For every configuration the benchmark runs *warmup* iterations (default 10)
 followed by *timing* iterations (default 20, configurable via
 ``parameters.timing_runs`` in each module's YAML). The reported value is the
 **mean time per call** across a single batch of N back-to-back runs, with
@@ -102,7 +102,7 @@ which is how the shipped plots are built.
 ### Wall-time on NVIDIA H100 80GB HBM3
 
 Measured on a single H100 80 GB HBM3 with the shipped YAML
-defaults (``timing_runs: 20``, ``warmup_runs: 3``, both systems,
+defaults (``timing_runs: 20``, ``warmup_runs: 10``, both systems,
 all three scaling modes). Numbers are rounded indicatively; your
 mileage will vary.
 
