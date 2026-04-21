@@ -247,6 +247,10 @@ __all__ = [
     "_cn_forces_contrib_kernel_overload",
 ]
 
+# Threads per atom (CUDA block size) for tile-based _direct_forces_and_dE_dCN_kernel_matrix.
+# One warp per atom: all reductions use warp shuffles with no shared memory.
+DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE = 32
+
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
@@ -744,6 +748,7 @@ def _compute_cartesian_shifts_matrix(
     )
 
 
+
 @wp.kernel(enable_backward=False)
 def _cn_kernel_matrix(
     positions: wp.array(dtype=Any),
@@ -855,7 +860,7 @@ def _cn_kernel_matrix(
     coord_num[atom_i] = cn_acc
 
 
-@wp.kernel(enable_backward=False)
+@wp.kernel(enable_backward=False, launch_bounds=(32, 24))
 def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     positions: wp.array(dtype=Any),
     numbers: wp.array(dtype=wp.int32),
@@ -874,6 +879,7 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     s5_smoothing_off: wp.float32,
     inv_w: wp.float32,
     fill_value: wp.int32,
+    block_stride: wp.int32,
     periodic: bool,
     batch_idx: wp.array(dtype=wp.int32),
     compute_virial: bool,
@@ -932,8 +938,9 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
 
     Notes
     -----
-    - Launch with dim=num_atoms (one thread per atom)
-    - Each thread iterates over all neighbors and accumulates results in local registers
+    - Launch with dim=(num_atoms, DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE), block_dim=DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE
+    - One warp per atom; threads stride over the neighbor list BLOCK_SIZE apart
+    - Tile reduction (warp shuffles) eliminates atomics for forces and dE/dCN
     - Direct forces are F = :math:`-(\\partial E/\\partial r)|_\text{CN}`, without chain rule term
     - dE_dCN[i] = :math:`\\sum_j \\partial E_{ij}/\\partial \text{CN}_i` accumulated over all pairs containing atom i
     - Neighbor entries with j >= fill_value are padding and are skipped
@@ -947,10 +954,11 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     :func:`_s5_switch` : Called for cutoff smoothing
     :func:`dftd3` : High-level wrapper that orchestrates all passes
     """
-    atom_i = wp.tid()
+    # One warp per atom: atom_i owns the block, thread_in_block indexes within the warp
+    atom_i, thread_in_block = wp.tid()
     if atom_i >= numbers.shape[0]:
         return
-    # skip padding atoms
+    # skip padding atoms (uniform across block — all threads share atom_i)
     if numbers[atom_i] == 0:
         return
 
@@ -960,89 +968,107 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     z_i = numbers[atom_i]
     r4r2_i = r4r2[z_i]
 
-    # Accumulate in local registers (using float64 for better precision)
-    F_acc = wp.vec3d()  # NOSONAR (S117) "math formula"
+    # Thread-local partial accumulators (float64 for precision)
+    F_acc_x = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    F_acc_y = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    F_acc_z = wp.float64(0.0)  # NOSONAR (S117) "math formula"
     dE_dCN_acc = wp.float32(0.0)  # NOSONAR (S117) "math formula"
     energy_acc = wp.float64(0.0)
 
-    # Initialize virial accumulator
     if compute_virial:
         virial_acc = wp.mat33d()
 
-    for neighbor_idx in range(max_neighbors):
+    # Stride loop: each thread covers neighbors at thread_in_block, +BLOCK_SIZE, +2*BLOCK_SIZE, ...
+    neighbor_idx = thread_in_block
+    while neighbor_idx < max_neighbors:
         atom_j = neighbor_matrix[atom_i, neighbor_idx]
-        if atom_j >= fill_value:
-            continue
-        # skip padding atoms
-        if numbers[atom_j] == 0:
-            continue
+        if atom_j < fill_value and numbers[atom_j] != 0:
+            # Geometry
+            r, r_inv, r_hat, r_ij = _compute_distance_vector_pbc(
+                pos_i,
+                positions[atom_j],
+                cartesian_shifts[atom_i, neighbor_idx],
+                periodic,
+                True,
+            )
+            if r >= wp.float32(1e-12):
+                cn_j = coord_num[atom_j]
+                z_j = numbers[atom_j]
 
-        # Geometry
-        r, r_inv, r_hat, r_ij = _compute_distance_vector_pbc(
-            pos_i,
-            positions[atom_j],
-            cartesian_shifts[atom_i, neighbor_idx],
-            periodic,
-            True,
-        )
-        if r < 1e-12:
-            continue
+                # C6 interpolation
+                c6ab_mat = c6_reference[z_i, z_j]
+                cnref_i_mat = coord_num_ref[z_i, z_j]
+                cnref_j_mat = coord_num_ref[z_j, z_i]
 
-        cn_j = coord_num[atom_j]
-        z_j = numbers[atom_j]
+                c6_ij, dC6_dCNi, dC6_dCNj = _c6ab_interpolate(  # NOSONAR (S125) "math formula"
+                    cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                )
+                if c6_ij >= wp.float32(1e-12):
+                    # BJ damping
+                    damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
+                        r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
+                    )
 
-        # C6 interpolation
-        c6ab_mat = c6_reference[z_i, z_j]
-        cnref_i_mat = coord_num_ref[z_i, z_j]
-        cnref_j_mat = coord_num_ref[z_j, z_i]
+                    # Energy and direct force
+                    e_ij_sw, F_direct = _dispersion_energy_force(
+                        c6_ij,
+                        r,
+                        r_hat,
+                        damp_sum,
+                        r4r2_ij,
+                        r6,
+                        r4,
+                        den6_inv,
+                        den8_inv,
+                        s6,
+                        s8,
+                        s5_smoothing_on,
+                        s5_smoothing_off,
+                        inv_w,
+                    )
 
-        c6_ij, dC6_dCNi, dC6_dCNj = _c6ab_interpolate(  # NOSONAR (S125) "math formula"
-            cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
-        )
-        if c6_ij < 1e-12:
-            continue
+                    # Accumulate in thread-local registers
+                    F_direct_d = wp.vec3d(F_direct)
+                    F_acc_x += F_direct_d[0]  # NOSONAR (S117) "math formula"
+                    F_acc_y += F_direct_d[1]  # NOSONAR (S117) "math formula"
+                    F_acc_z += F_direct_d[2]  # NOSONAR (S117) "math formula"
+                    energy_acc += wp.float64(e_ij_sw)
+                    dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
 
-        # BJ damping
-        damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
-            r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
-        )
+                    if compute_virial:
+                        virial_acc += wp.mat33d(wp.outer(F_direct, r_ij))
 
-        # Energy and direct force
-        e_ij_sw, F_direct = _dispersion_energy_force(
-            c6_ij,
-            r,
-            r_hat,
-            damp_sum,
-            r4r2_ij,
-            r6,
-            r4,
-            den6_inv,
-            den8_inv,
-            s6,
-            s8,
-            s5_smoothing_on,
-            s5_smoothing_off,
-            inv_w,
-        )
+        neighbor_idx += block_stride
 
-        # Accumulate in registers
-        F_acc += wp.vec3d(F_direct)  # NOSONAR (S117) "math formula"
-        energy_acc += wp.float64(e_ij_sw)
-        dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
+    # Block-level tile reductions via warp shuffles (BLOCK_SIZE=32 → no shared memory)
+    sum_fx     = wp.tile_sum(wp.tile(F_acc_x))[0]
+    sum_fy     = wp.tile_sum(wp.tile(F_acc_y))[0]
+    sum_fz     = wp.tile_sum(wp.tile(F_acc_z))[0]
+    sum_dEdCN  = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
+    sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
 
-        # Accumulate virial if requested
-        if compute_virial:
-            virial_acc += wp.mat33d(wp.outer(F_direct, r_ij))
+    # Thread 0 writes atom-level results without atomics
+    if thread_in_block == 0:
+        forces[atom_i] = wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        dE_dCN[atom_i] = sum_dEdCN
+        wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
 
-    # Write final results once (atomic only for shared batch array)
-    # Convert from float64 accumulation to float32 output
-    forces[atom_i] = wp.vec3f(F_acc)
-    dE_dCN[atom_i] = dE_dCN_acc
-    wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(energy_acc))
-
-    # Add virial contribution with -0.5 scaling for correct sign and double counting
     if compute_virial:
-        wp.atomic_add(virial, batch_idx[atom_i], -0.5 * wp.mat33f(virial_acc))
+        sum_v00 = wp.tile_sum(wp.tile(virial_acc[0, 0]))[0]  # NOSONAR (S117)
+        sum_v01 = wp.tile_sum(wp.tile(virial_acc[0, 1]))[0]
+        sum_v02 = wp.tile_sum(wp.tile(virial_acc[0, 2]))[0]
+        sum_v10 = wp.tile_sum(wp.tile(virial_acc[1, 0]))[0]
+        sum_v11 = wp.tile_sum(wp.tile(virial_acc[1, 1]))[0]
+        sum_v12 = wp.tile_sum(wp.tile(virial_acc[1, 2]))[0]
+        sum_v20 = wp.tile_sum(wp.tile(virial_acc[2, 0]))[0]
+        sum_v21 = wp.tile_sum(wp.tile(virial_acc[2, 1]))[0]
+        sum_v22 = wp.tile_sum(wp.tile(virial_acc[2, 2]))[0]
+        if thread_in_block == 0:
+            wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
+                wp.vec3d(sum_v00, sum_v01, sum_v02),
+                wp.vec3d(sum_v10, sum_v11, sum_v12),
+                wp.vec3d(sum_v20, sum_v21, sum_v22),
+            )))
 
 
 @wp.kernel(enable_backward=False)
@@ -1600,6 +1626,7 @@ for t, v, m in zip(T, V, M):
             wp.float32,
             wp.float32,
             wp.int32,
+            wp.int32,    # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
             wp.bool,
@@ -1871,9 +1898,11 @@ def dftd3_matrix(
 
     # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
     # compute_virial=False for non-periodic systems
+    _block_size = DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE if "cuda" in device else 1
     wp.launch(
         kernel=_direct_forces_and_dE_dCN_kernel_matrix_overload[wp_dtype],
-        dim=num_atoms,
+        dim=(num_atoms, _block_size),
+        block_dim=_block_size,
         inputs=[
             positions,
             numbers,
@@ -1892,6 +1921,7 @@ def dftd3_matrix(
             wp.float32(s5_smoothing_off),
             wp.float32(inv_w),
             wp.int32(fill_value),
+            wp.int32(_block_size),
             periodic,
             batch_idx,
             False,  # compute_virial=False for non-periodic
@@ -2113,9 +2143,11 @@ def dftd3_matrix_pbc(
     )
 
     # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
+    _block_size = DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE if "cuda" in device else 1
     wp.launch(
         kernel=_direct_forces_and_dE_dCN_kernel_matrix_overload[wp_dtype],
-        dim=num_atoms,
+        dim=(num_atoms, _block_size),
+        block_dim=_block_size,
         inputs=[
             positions,
             numbers,
@@ -2134,6 +2166,7 @@ def dftd3_matrix_pbc(
             wp.float32(s5_smoothing_off),
             wp.float32(inv_w),
             wp.int32(fill_value),
+            wp.int32(_block_size),
             periodic,
             batch_idx,
             compute_virial,
