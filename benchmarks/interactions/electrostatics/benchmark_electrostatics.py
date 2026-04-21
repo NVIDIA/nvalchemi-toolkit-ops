@@ -631,9 +631,13 @@ def _el_run_method(
             accuracy=accuracy,
             **row_meta,
         )
+        mem_suffix = (
+            f" | {result['mem_peak_gb']:.1f} GB"
+            if inputs.backend == "torch"
+            else ""
+        )
         print(
-            f"    {label:10s}: {result['time_us_per_atom']:.3f} μs/atom | "
-            f"{result['mem_peak_gb']:.1f} GB"
+            f"    {label:10s}: {result['time_us_per_atom']:.3f} μs/atom{mem_suffix}"
         )
         return result
     except NotImplementedError as e:

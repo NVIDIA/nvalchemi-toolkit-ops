@@ -73,11 +73,14 @@ so that one file format works for all three modules:
 | `accuracy` | float | Populated for EL rows; blank for NL and D3 |
 | `failure_reason` | str | `OOM_kernel`, `OOM_NL_build`, or `OOM_preempt` |
 
-**Contract:** a sidecar file is shipped only when the corresponding main
-CSV has at least one skipped config. An absent sidecar means "no
-failures on the reference H100"; it does not mean the run was
-incomplete. Sidecars are consumed by the plotter to annotate missing
-points; see `benchmarks/plotting/plot_benchmarks.py::load_failures`.
+**Contract:** a sidecar file is shipped only when the corresponding
+main CSV has at least one skipped config. An absent sidecar means
+"no failures on the reference H100"; it does not mean the run was
+incomplete. Sidecars are ship-only artefacts for downstream
+tooling (analysis scripts that want to distinguish a preempted
+config from one outside the grid). The shipped plotter does not
+read them — `plot_comparison_panel` explicitly skips any CSV whose
+stem ends in `-failures`.
 
 ## Reproducing
 
