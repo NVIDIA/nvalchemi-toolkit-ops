@@ -21,16 +21,18 @@ calls. Missing points = OOM on the reference H100 80 GB.
 ## How to Read These Charts
 
 Time Scaling
-: Mean execution time (ms) vs. system size. Lower is better. Timings include
-  both real-space and reciprocal-space contributions when running "full" mode.
+: Mean execution time (µs/atom) vs. system size. Lower is better. Timings
+  include both real-space and reciprocal-space contributions when running
+  "full" mode.
 
 Throughput
-: Atoms processed per millisecond. Higher is better. This indicates the scaling
-  point where the GPU saturates.
+: Atoms processed per second (plotted as 10⁶ atoms/s). Higher is better.
+  This indicates the scaling point where the GPU saturates.
 
 Memory
-: Peak GPU memory usage (MB) vs. system size. Useful for estimating memory
-  requirements for your target system.
+: Peak GPU memory usage vs. system size. Units switch between MB and GB
+  automatically on the y-axis. Useful for estimating memory requirements
+  for your target system.
 
 ## Performance Results
 
@@ -59,13 +61,13 @@ Memory
            :width: 90%
            :align: center
 
-           Throughput (atoms/ms) vs. system size.
+           Throughput (10⁶ atoms/s) vs. system size.
 
         .. figure:: _static/el-cscl-system-size-scaling-memory.png
            :width: 90%
            :align: center
 
-           Peak GPU memory (MB) vs. system size.
+           Peak GPU memory vs. system size.
 
     .. tab-item:: Constant Workload
 
@@ -127,13 +129,13 @@ Memory
            :width: 90%
            :align: center
 
-           Throughput (atoms/ms) vs. system size (NH₃).
+           Throughput (10⁶ atoms/s) vs. system size (NH₃).
 
         .. figure:: _static/el-nh3-system-size-scaling-memory.png
            :width: 90%
            :align: center
 
-           Peak GPU memory (MB) vs. system size (NH₃).
+           Peak GPU memory vs. system size (NH₃).
 
     .. tab-item:: Constant Workload
 
@@ -209,7 +211,7 @@ Ewald summation. Those configurations are skipped; PME results are unaffected.
            :width: 90%
            :align: center
 
-           Throughput (atoms/ms) vs. system size (JAX).
+           Throughput (10⁶ atoms/s) vs. system size (JAX).
 
     .. tab-item:: Constant Workload
 
@@ -242,9 +244,11 @@ Ewald summation. Those configurations are skipped; PME results are unaffected.
 ```
 
 ```{note}
-JAX memory plots are omitted. XLA's pool allocator pre-allocates 75% of GPU
-VRAM and reuses it across calls, preventing reliable per-config measurement.
-Torch memory plots are representative — both backends use identical Warp GPU
+JAX memory plots are omitted. The suite does not measure JAX memory:
+XLA's allocator — whether the default BFC pool (which pre-allocates most
+of VRAM) or the on-demand variant (which fragments on retry) — makes
+per-call memory attribution unreliable. Torch memory plots are
+representative; both backends dispatch through identical Warp GPU
 kernels with the same memory footprint.
 ```
 
@@ -267,7 +271,7 @@ kernels with the same memory footprint.
            :width: 90%
            :align: center
 
-           Throughput (atoms/ms) vs. system size (JAX, NH₃).
+           Throughput (10⁶ atoms/s) vs. system size (JAX, NH₃).
 
     .. tab-item:: Constant Workload
 
@@ -300,9 +304,11 @@ kernels with the same memory footprint.
 ```
 
 ```{note}
-JAX memory plots are omitted. XLA's pool allocator pre-allocates 75% of GPU
-VRAM and reuses it across calls, preventing reliable per-config measurement.
-Torch memory plots are representative — both backends use identical Warp GPU
+JAX memory plots are omitted. The suite does not measure JAX memory:
+XLA's allocator — whether the default BFC pool (which pre-allocates most
+of VRAM) or the on-demand variant (which fragments on retry) — makes
+per-call memory attribution unreliable. Torch memory plots are
+representative; both backends dispatch through identical Warp GPU
 kernels with the same memory footprint.
 ```
 
@@ -348,7 +354,7 @@ cost for force-only usage.
            :width: 90%
            :align: center
 
-           Torch vs. JAX memory comparison.
+           Memory vs. system size (Torch only — JAX memory not measured).
 
     .. tab-item:: Constant Workload
 
@@ -368,7 +374,7 @@ cost for force-only usage.
            :width: 90%
            :align: center
 
-           Torch vs. JAX memory at constant workload.
+           Memory at constant total atom count (Torch only — JAX memory not measured).
 
     .. tab-item:: Batch Scaling
 
@@ -388,7 +394,7 @@ cost for force-only usage.
            :width: 90%
            :align: center
 
-           Torch vs. JAX memory vs. batch size.
+           Memory vs. batch size (Torch only — JAX memory not measured).
 ```
 
 ````
@@ -416,7 +422,7 @@ cost for force-only usage.
            :width: 90%
            :align: center
 
-           Torch vs. JAX memory comparison (NH₃).
+           Memory vs. system size (NH₃; Torch only — JAX memory not measured).
 
     .. tab-item:: Constant Workload
 
@@ -436,7 +442,7 @@ cost for force-only usage.
            :width: 90%
            :align: center
 
-           Torch vs. JAX memory at constant workload (NH₃).
+           Memory at constant total atom count (NH₃; Torch only — JAX memory not measured).
 
     .. tab-item:: Batch Scaling
 
@@ -456,7 +462,7 @@ cost for force-only usage.
            :width: 90%
            :align: center
 
-           Torch vs. JAX memory vs. batch size (NH₃).
+           Memory vs. batch size (NH₃; Torch only — JAX memory not measured).
 ```
 
 ````
@@ -474,7 +480,7 @@ cost for force-only usage.
 | Accuracies | $10^{-4}$ / $10^{-6}$ |
 | Methods | PME, Ewald summation |
 | System Type | CsCl supercells (pymatgen), NH₃ (PDB) |
-| Neighbor List | Cell list algorithm ($O(N)$ scaling) |
+| Neighbor List | Naive algorithm ($O(N^2)$ scaling) — EL dispatches through ``batch_naive_neighbor_list`` |
 | Warmup Iterations | 10 |
 | Timing Iterations | 20 |
 | Precision | `float64` |
