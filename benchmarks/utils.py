@@ -54,10 +54,12 @@ class MemInfo(TypedDict):
     """Minimal memory info dict returned by :func:`measure_memory_torch`
     and :func:`measure_memory_jax` and consumed by :func:`build_result`.
 
-    The two keys map directly to CSV columns — ``mem_delta_mb`` is the
-    meaningful value for JAX (NVML delta), ``mem_peak_gb`` is for torch
-    (allocator peak). JAX always reports ``mem_peak_gb=0``; the plotter
-    filters zeros.
+    The two keys map directly to CSV columns. For torch, ``mem_delta_mb``
+    is the delta from the pre-timing measurement call and
+    ``mem_peak_gb`` is the allocator peak. For JAX, both are always
+    0.0 — the XLA pool (BFC or platform) makes per-call memory
+    attribution unreliable, so the suite does not track JAX memory.
+    The plotter filters zero-valued JAX rows out of memory panels.
     """
 
     mem_delta_mb: float
@@ -458,12 +460,15 @@ def measure_memory_torch(fn: Callable[[], Any]) -> tuple[Any, MemInfo]:
 
 
 def measure_memory_jax(fn: Callable[[], Any], jax_module: Any) -> tuple[Any, MemInfo]:
-    """Run ``fn`` once and capture the JAX-side GPU memory delta via NVML.
+    """Run ``fn`` once and return zero memory info.
 
-    ``torch.cuda.max_memory_allocated`` cannot see XLA allocations, so we
-    sample NVML before/after instead. ``mem_peak_gb=0`` is deliberate: the
-    XLA pool makes peak memory uninformative. The plotter filters zero
-    peaks out, so this is a lossless placeholder.
+    JAX memory is not tracked by this suite. XLA's BFC pool preallocates
+    a large fraction of VRAM at process start and reuses across calls,
+    which makes NVML-based deltas and ``mem_peak_gb`` both uninformative.
+    We run the kernel once (so the caller sees a consistent control-flow
+    shape and gets a real result back for inspection) but do not sample
+    memory. Kept as a thin wrapper for API symmetry with
+    :func:`measure_memory_torch`.
 
     Parameters
     ----------
@@ -471,22 +476,16 @@ def measure_memory_jax(fn: Callable[[], Any], jax_module: Any) -> tuple[Any, Mem
         Zero-argument function returning a jax.Array (or pytree).
     jax_module : module
         The ``jax`` module (typically ``lazy_import_jax()["jax"]``),
-        passed explicitly to avoid an inline import on each call.
+        used to block on the result before returning.
 
     Returns
     -------
     (result, mem_info)
-        Same pair shape as :func:`measure_memory_torch`.
+        ``mem_info`` is always ``{"mem_delta_mb": 0.0, "mem_peak_gb": 0.0}``.
     """
-    mem_before = get_gpu_memory_info()["used"]
     result = fn()
     jax_module.block_until_ready(result)
-    mem_after = get_gpu_memory_info()["used"]
-    mem_info: MemInfo = {
-        "mem_delta_mb": max(0.0, (mem_after - mem_before) / 1024**2),
-        "mem_peak_gb": 0.0,
-    }
-    return result, mem_info
+    return result, {"mem_delta_mb": 0.0, "mem_peak_gb": 0.0}
 
 
 # =============================================================================
@@ -782,7 +781,7 @@ def write_run_log(
         "|--------|-------------|",
         "| `time_us_per_atom` | Time per atom [microseconds] |",
         "| `throughput_atoms_per_sec` | Atoms processed per second |",
-        "| `mem_delta_mb` | Memory delta from warmup call [MB] |",
+        "| `mem_delta_mb` | Memory delta from the pre-timing measurement call [MB] (torch only; 0 for jax) |",
         "| `mem_peak_gb` | Peak GPU VRAM usage [GB] (torch only; 0 for jax) |",
         "",
         "## Reproducibility",

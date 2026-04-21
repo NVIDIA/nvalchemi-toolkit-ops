@@ -407,9 +407,11 @@ def _d3_run_one_cutoff(
             time_d3_us_per_atom=time_d3_us_per_atom,
             **row_meta,
         )
+        mem_suffix = (
+            f" | {result['mem_delta_mb']:.1f} MB" if backend == "torch" else ""
+        )
         print(
-            f"    {cutoff}Å: D3={time_d3_us_per_atom:.3f} μs/atom | "
-            f"{result['mem_delta_mb']:.1f} MB"
+            f"    {cutoff}Å: D3={time_d3_us_per_atom:.3f} μs/atom{mem_suffix}"
         )
         return result
     except torch.cuda.OutOfMemoryError:

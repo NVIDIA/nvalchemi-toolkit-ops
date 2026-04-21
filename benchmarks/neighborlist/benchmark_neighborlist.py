@@ -304,11 +304,13 @@ def _nl_run_one_method(
             **row_meta,
         )
         throughput_matoms = result["throughput_atoms_per_sec"] / 1e6
+        mem_suffix = (
+            f" | {result['mem_delta_mb']:.1f} MB" if backend == "torch" else ""
+        )
         print(
             f"    {cutoff}Å {method:5s}: "
             f"{result['time_us_per_atom']:.3f} μs/atom | "
-            f"{throughput_matoms:.1f} Matom/s | "
-            f"{result['mem_delta_mb']:.1f} MB"
+            f"{throughput_matoms:.1f} Matom/s{mem_suffix}"
         )
         return result
     except torch.cuda.OutOfMemoryError:
