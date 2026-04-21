@@ -44,7 +44,6 @@ if TYPE_CHECKING:
 from benchmarks.plotting.styles import (
     ACCURACY_COLORS,
     AXIS_LABEL_SIZE,
-    BACKEND_STYLES,
     CUTOFF_COLORS,
     D3_CUTOFF_COLORS,
     D3_CUTOFF_STYLES,
@@ -222,128 +221,6 @@ def load_csv(filepath: str | Path) -> list[dict[str, Any]]:
     return results
 
 
-def load_failures(csv_path: str | Path) -> list[dict[str, Any]]:
-    """Load the OOM/failure sidecar for a CSV, if present.
-
-    Expected sidecar name: ``{csv-stem}-failures.csv``. Columns:
-    system, scaling_mode, method, backend, atoms_per_system, batch_size,
-    cutoff, accuracy, failure_reason. Types coerced like load_csv.
-    Returns [] if the sidecar is missing so callers can just iterate.
-    """
-    csv_path = Path(csv_path)
-    sidecar = csv_path.parent / f"{csv_path.stem}-failures.csv"
-    if not sidecar.exists():
-        return []
-    results = []
-    with open(sidecar) as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            for key, val in list(row.items()):
-                try:
-                    if val == "":
-                        continue
-                    if "." in val or "e" in val.lower():
-                        row[key] = float(val)
-                    elif val.lstrip("-").isdigit():
-                        row[key] = int(val)
-                except (ValueError, AttributeError):
-                    pass
-            results.append(row)
-    return results
-
-
-def _failure_x(r: dict[str, Any], x_key: str) -> float | None:
-    """Extract the x coordinate for a failure row, matching the renderer's
-    choice of x_key ("total_atoms" or "atoms_per_system")."""
-    if x_key == "total_atoms":
-        aps = r.get("atoms_per_system")
-        if aps in (None, ""):
-            return None
-        bs = r.get("batch_size", 1) or 1
-        try:
-            return float(aps) * float(bs)
-        except (TypeError, ValueError):
-            return None
-    val = r.get(x_key)
-    if val in (None, ""):
-        return None
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return None
-
-
-def draw_oom_markers(
-    ax,
-    failures: list[dict[str, Any]],
-    *,
-    x_key: str,
-    color_resolver: Callable[[dict[str, Any]], str] | None = None,
-) -> None:
-    """Render an "×" marker near the top of the plot at each OOMed x
-    position, colour-matched to the line that owned the failed series.
-
-    The marker is drawn with alpha=0.55 (subtle) and a short dotted
-    vertical connector runs from just below the marker down into the
-    plot area at alpha=0.2, visually tying the × back to where the
-    missing line would have continued.
-
-    Parameters
-    ----------
-    ax
-        The axes receiving the markers.
-    failures
-        Rows from :func:`load_failures`.
-    x_key
-        Which field carries the x coordinate — mirrors the main
-        renderer's choice ("total_atoms" for system_size / batch,
-        "atoms_per_system" for constant_workload).
-    color_resolver
-        Optional callable that takes a failure row and returns the
-        line colour for that row's series. When absent, a neutral
-        grey is used for all markers.
-    """
-    if not failures:
-        return
-
-    default_color = "#888888"
-    seen: set[tuple[float, str]] = set()
-    legend_added = False
-    for r in failures:
-        x = _failure_x(r, x_key)
-        if x is None:
-            continue
-        color = color_resolver(r) if color_resolver else default_color
-        key = (x, color)
-        if key in seen:
-            continue
-        seen.add(key)
-        ax.plot(
-            [x],
-            [0.92],
-            transform=ax.get_xaxis_transform(),
-            marker="x",
-            color=color,
-            alpha=0.55,
-            markersize=9,
-            markeredgewidth=2.0,
-            linestyle="None",
-            label="OOM" if not legend_added else None,
-            zorder=10,
-        )
-        ax.plot(
-            [x, x],
-            [0.72, 0.905],
-            transform=ax.get_xaxis_transform(),
-            color=color,
-            alpha=0.22,
-            linestyle=":",
-            linewidth=1.1,
-            zorder=9,
-        )
-        legend_added = True
-
-
 # =============================================================================
 # NL Plotting
 # =============================================================================
@@ -458,13 +335,13 @@ def plot_single_panel(
     # Detect module + mode from filename
     module, mode = detect_module_mode(name)
 
-    # Dispatch to the right plotting logic. `failures=` is accepted by
-    # each renderer but unused — OOMed configs surface as a missing
-    # point on the right-hand end of their line, and the policy is
-    # explained in the "Missing data points" admonition in
-    # docs/benchmarks/index.md. The sidecar {stem}-failures.csv files
-    # still ship so tooling can distinguish "didn't run (OOM)" from
-    # "wasn't in the grid".
+    # Dispatch to the right plotting logic. OOMed configs surface as
+    # a missing point on the right-hand end of their line; see the
+    # "Missing data points" admonition in docs/benchmarks/index.md.
+    # Sidecar {stem}-failures.csv files still ship so downstream
+    # tooling can distinguish "didn't run (OOM)" from "wasn't in
+    # the grid" — schema is documented in
+    # docs/benchmarks/benchmark_results/README.md.
     if module == "nl":
         render_nl_panel(ax, data, system, mode, panel)
     elif module == "d3":
@@ -793,8 +670,6 @@ def _render_nl_by_cutoff(
 
 def render_nl_panel(
     ax: Axes, data: list[dict[str, Any]], system: str, mode: str, panel: str,
-    *,
-    failures: list[dict[str, Any]] | None = None,
 ) -> None:
     """Render a single NL panel onto *ax*.
 
@@ -850,8 +725,6 @@ def render_nl_panel(
 
 def render_d3_panel(
     ax: Axes, data: list[dict[str, Any]], system: str, mode: str, panel: str,
-    *,
-    failures: list[dict[str, Any]] | None = None,
 ) -> None:
     """Render a single D3 panel onto *ax*.
 
@@ -939,8 +812,6 @@ def render_d3_panel(
 
 def render_el_panel(
     ax: Axes, data: list[dict[str, Any]], system: str, mode: str, panel: str,
-    *,
-    failures: list[dict[str, Any]] | None = None,
 ) -> None:
     """Render a single Electrostatics panel onto *ax*.
 
@@ -1399,6 +1270,12 @@ def generate_comparison_panels(csv_dir: str | Path, output_dir: str | Path) -> N
     output_dir = Path(output_dir)
 
     for csv_path in sorted(csv_dir.glob("*.csv")):
+        # Skip failures sidecars — they share the {module}-* prefix but carry
+        # a different schema (no time_us_per_atom) and the renderer would
+        # raise. generate_plots.py already filters these for single-panel
+        # output; this is the corresponding filter for comparison panels.
+        if csv_path.stem.endswith("-failures"):
+            continue
         name = csv_path.stem
         # Detect module
         if name.startswith(("nl-", "nl_")):

@@ -27,13 +27,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 
 
-class LineStyle(TypedDict):
-    """Style parameters for a backend comparison line."""
-
-    linestyle: str
-    linewidth: float
-
-
 class CutoffStyle(TypedDict):
     """Style parameters for a cutoff-specific line."""
 
@@ -44,7 +37,6 @@ class CutoffStyle(TypedDict):
 __all__ = [
     # TypedDicts
     "CutoffStyle",
-    "LineStyle",
     # Colors
     "ACCURACY_COLORS",
     "CUTOFF_COLORS",
@@ -54,12 +46,9 @@ __all__ = [
     "NL_BATCH_PALETTE",
     "NVIDIA_GREEN",
     # Styles
-    "BACKEND_STYLES",
-    "CUTOFF_STYLES",
     "D3_CUTOFF_STYLES",
     "GRID_STYLE",
     # Tolerances
-    "CUTOFF_MATCH_TOLERANCE",
     "MEMORY_MERGE_TOLERANCE",
     # References
     "GPU_VRAM_REFS",
@@ -116,34 +105,20 @@ EL_BATCH_PALETTE = [NVIDIA_GREEN, "#31688E", "#E67E22", "#440154"]
 # NL batch mode palette (3 colors — green, blue, purple)
 NL_BATCH_PALETTE = [NVIDIA_GREEN, "#31688E", "#440154"]
 
-# Backend line styles (for comparison panels -- torch vs jax)
-BACKEND_STYLES: dict[str, LineStyle] = {
-    "torch": {"linestyle": "-", "linewidth": 2.5},  # solid, thicker
-    "jax": {"linestyle": "--", "linewidth": 1.5},  # dashed, thinner
-}
-
 # Tolerances
 MEMORY_MERGE_TOLERANCE = 0.05  # Merge NL cell/naive memory if within 5%
-CUTOFF_MATCH_TOLERANCE = 1.0  # Angstrom tolerance for cutoff filtering
 
 # GPU VRAM reference lines for memory panels (keep minimal)
 GPU_VRAM_REFS = {
     "H100": 80,  # GB
 }
 
-# Cutoff styles: marker alone distinguishes cutoffs; all lines stay solid
-# so that linestyle can be reserved for method family in comparison panels.
-# Small cutoff → circle, middle → triangle, large → square.
-CUTOFF_STYLES: dict[float, CutoffStyle] = {
-    6.0: {"marker": "o", "linestyle": "-"},  # circle, solid
+# D3 cutoff styles: 2 cutoffs, marker-only differentiation (all solid).
+# NL does not use a lookup table — its per-panel rendering hard-codes
+# markers by (method, is_large) rather than by cutoff alone.
+D3_CUTOFF_STYLES: dict[float, CutoffStyle] = {
     15.0: {"marker": "^", "linestyle": "-"},  # triangle, solid
     25.0: {"marker": "s", "linestyle": "-"},  # square, solid
-}
-
-# D3 cutoff styles: 2 cutoffs, same markers as NL for the shared values.
-D3_CUTOFF_STYLES: dict[float, CutoffStyle] = {
-    15.0: {"marker": "^", "linestyle": "-"},  # triangle, solid (matches NL)
-    25.0: {"marker": "s", "linestyle": "-"},  # square, solid (matches NL)
 }
 
 # Grid style matching benchmarks-temp/

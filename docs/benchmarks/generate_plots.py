@@ -426,7 +426,12 @@ def _generate_benchmark_plots(results_dir: Path, output_dir: Path) -> None:
             module, mode = detect_module_mode(name)
             if module and module in renderers:
                 system = jax_data[0].get("system", "unknown")
-                for panel in ("time", "throughput", "memory"):
+                # Skip the memory panel for JAX: the suite doesn't
+                # measure JAX memory (see benchmarks/utils.py::
+                # measure_memory_jax), so rendering it produces an
+                # empty log-scale frame. Time/throughput panels are
+                # the informative ones.
+                for panel in ("time", "throughput"):
                     fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_SIZE)
                     try:
                         renderers[module](ax, jax_data, system, mode, panel)
