@@ -240,7 +240,9 @@ __all__ = [
     "_compute_cartesian_shifts_matrix_overload",
     "_cn_kernel_matrix_overload",
     "_direct_forces_and_dE_dCN_kernel_matrix_overload",
+    "_direct_forces_and_dE_dCN_kernel_matrix_virial_overload",
     "_cn_forces_contrib_kernel_matrix_overload",
+    "_cn_forces_contrib_kernel_matrix_virial_overload",
     "_compute_cartesian_shifts_overload",
     "_cn_kernel_overload",
     "_direct_forces_and_dE_dCN_kernel_overload",
@@ -881,11 +883,9 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     block_stride: wp.int32,
     periodic: bool,
     batch_idx: wp.array(dtype=wp.int32),
-    compute_virial: bool,
     dE_dCN: wp.array(dtype=wp.float32),  # NOSONAR (S125) "math formula"
     forces: wp.array(dtype=wp.vec3f),
     energy: wp.array(dtype=wp.float32),
-    virial: wp.array(dtype=Any),
 ):
     """
     Pass 2: Compute direct forces, energy, and accumulate dE/dCN per atom.
@@ -974,9 +974,6 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     dE_dCN_acc = wp.float32(0.0)  # NOSONAR (S117) "math formula"
     energy_acc = wp.float64(0.0)
 
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
     # Stride loop: each thread covers neighbors at thread_in_block, +BLOCK_SIZE, +2*BLOCK_SIZE, ...
     neighbor_idx = thread_in_block
     while neighbor_idx < max_neighbors:
@@ -1034,9 +1031,6 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
                     energy_acc += wp.float64(e_ij_sw)
                     dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
 
-                    if compute_virial:
-                        virial_acc += wp.mat33d(wp.outer(F_direct, r_ij))
-
         neighbor_idx += block_stride
 
     # Block-level tile reductions via warp shuffles (BLOCK_SIZE=32 → no shared memory)
@@ -1052,22 +1046,129 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
         dE_dCN[atom_i] = sum_dEdCN
         wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
 
-    if compute_virial:
-        sum_v00 = wp.tile_sum(wp.tile(virial_acc[0, 0]))[0]  # NOSONAR (S117)
-        sum_v01 = wp.tile_sum(wp.tile(virial_acc[0, 1]))[0]
-        sum_v02 = wp.tile_sum(wp.tile(virial_acc[0, 2]))[0]
-        sum_v10 = wp.tile_sum(wp.tile(virial_acc[1, 0]))[0]
-        sum_v11 = wp.tile_sum(wp.tile(virial_acc[1, 1]))[0]
-        sum_v12 = wp.tile_sum(wp.tile(virial_acc[1, 2]))[0]
-        sum_v20 = wp.tile_sum(wp.tile(virial_acc[2, 0]))[0]
-        sum_v21 = wp.tile_sum(wp.tile(virial_acc[2, 1]))[0]
-        sum_v22 = wp.tile_sum(wp.tile(virial_acc[2, 2]))[0]
-        if thread_in_block == 0:
-            wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
-                wp.vec3d(sum_v00, sum_v01, sum_v02),
-                wp.vec3d(sum_v10, sum_v11, sum_v12),
-                wp.vec3d(sum_v20, sum_v21, sum_v22),
-            )))
+
+@wp.kernel(enable_backward=False, launch_bounds=(32, 24))
+def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math formula"
+    positions: wp.array(dtype=Any),
+    numbers: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    cartesian_shifts: wp.array2d(dtype=Any),
+    coord_num: wp.array(dtype=wp.float32),
+    r4r2: wp.array(dtype=wp.float32),
+    c6_reference: wp.array4d(dtype=wp.float32),
+    coord_num_ref: wp.array4d(dtype=wp.float32),
+    k3: wp.float32,
+    a1: wp.float32,
+    a2: wp.float32,
+    s6: wp.float32,
+    s8: wp.float32,
+    s5_smoothing_on: wp.float32,
+    s5_smoothing_off: wp.float32,
+    inv_w: wp.float32,
+    fill_value: wp.int32,
+    block_stride: wp.int32,
+    periodic: bool,
+    batch_idx: wp.array(dtype=wp.int32),
+    dE_dCN: wp.array(dtype=wp.float32),  # NOSONAR (S125) "math formula"
+    forces: wp.array(dtype=wp.vec3f),
+    energy: wp.array(dtype=wp.float32),
+    virial: wp.array(dtype=Any),
+):
+    """Pass 2 with virial. See _direct_forces_and_dE_dCN_kernel_matrix for full docs."""
+    atom_i, thread_in_block = wp.tid()
+    if atom_i >= numbers.shape[0]:
+        return
+    if numbers[atom_i] == 0:
+        return
+
+    max_neighbors = neighbor_matrix.shape[1]
+    pos_i = positions[atom_i]
+    cn_i = coord_num[atom_i]
+    z_i = numbers[atom_i]
+    r4r2_i = r4r2[z_i]
+
+    F_acc_x = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    F_acc_y = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    F_acc_z = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    dE_dCN_acc = wp.float32(0.0)  # NOSONAR (S117) "math formula"
+    energy_acc = wp.float64(0.0)
+    virial_acc = wp.mat33d()
+
+    neighbor_idx = thread_in_block
+    while neighbor_idx < max_neighbors:
+        atom_j = neighbor_matrix[atom_i, neighbor_idx]
+        if atom_j < fill_value and numbers[atom_j] != 0:
+            r, r_inv, r_hat, r_ij = _compute_distance_vector_pbc(
+                pos_i,
+                positions[atom_j],
+                cartesian_shifts[atom_i, neighbor_idx],
+                periodic,
+                True,
+            )
+            if r >= wp.float32(1e-12):
+                cn_j = coord_num[atom_j]
+                z_j = numbers[atom_j]
+                c6ab_mat = c6_reference[z_i, z_j]
+                cnref_i_mat = coord_num_ref[z_i, z_j]
+                cnref_j_mat = coord_num_ref[z_j, z_i]
+                c6_ij, dC6_dCNi, dC6_dCNj = _c6ab_interpolate(  # NOSONAR (S125) "math formula"
+                    cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                )
+                if c6_ij >= wp.float32(1e-12):
+                    damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
+                        r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
+                    )
+                    e_ij_sw, F_direct = _dispersion_energy_force(
+                        c6_ij,
+                        r,
+                        r_hat,
+                        damp_sum,
+                        r4r2_ij,
+                        r6,
+                        r4,
+                        den6_inv,
+                        den8_inv,
+                        s6,
+                        s8,
+                        s5_smoothing_on,
+                        s5_smoothing_off,
+                        inv_w,
+                    )
+                    F_direct_d = wp.vec3d(F_direct)
+                    F_acc_x += F_direct_d[0]  # NOSONAR (S117) "math formula"
+                    F_acc_y += F_direct_d[1]  # NOSONAR (S117) "math formula"
+                    F_acc_z += F_direct_d[2]  # NOSONAR (S117) "math formula"
+                    energy_acc += wp.float64(e_ij_sw)
+                    dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
+                    virial_acc += wp.mat33d(wp.outer(F_direct, r_ij))
+        neighbor_idx += block_stride
+
+    sum_fx     = wp.tile_sum(wp.tile(F_acc_x))[0]
+    sum_fy     = wp.tile_sum(wp.tile(F_acc_y))[0]
+    sum_fz     = wp.tile_sum(wp.tile(F_acc_z))[0]
+    sum_dEdCN  = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
+    sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
+
+    if thread_in_block == 0:
+        forces[atom_i] = wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        dE_dCN[atom_i] = sum_dEdCN
+        wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
+
+    sum_v00 = wp.tile_sum(wp.tile(virial_acc[0, 0]))[0]  # NOSONAR (S117)
+    sum_v01 = wp.tile_sum(wp.tile(virial_acc[0, 1]))[0]
+    sum_v02 = wp.tile_sum(wp.tile(virial_acc[0, 2]))[0]
+    sum_v10 = wp.tile_sum(wp.tile(virial_acc[1, 0]))[0]
+    sum_v11 = wp.tile_sum(wp.tile(virial_acc[1, 1]))[0]
+    sum_v12 = wp.tile_sum(wp.tile(virial_acc[1, 2]))[0]
+    sum_v20 = wp.tile_sum(wp.tile(virial_acc[2, 0]))[0]
+    sum_v21 = wp.tile_sum(wp.tile(virial_acc[2, 1]))[0]
+    sum_v22 = wp.tile_sum(wp.tile(virial_acc[2, 2]))[0]
+    if thread_in_block == 0:
+        wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
+            wp.vec3d(sum_v00, sum_v01, sum_v02),
+            wp.vec3d(sum_v10, sum_v11, sum_v12),
+            wp.vec3d(sum_v20, sum_v21, sum_v22),
+        )))
 
 
 @wp.kernel(enable_backward=False, launch_bounds=(32, 24))
@@ -1082,10 +1183,7 @@ def _cn_forces_contrib_kernel_matrix(
     fill_value: wp.int32,
     block_stride: wp.int32,
     periodic: bool,
-    batch_idx: wp.array(dtype=wp.int32),
-    compute_virial: bool,
     forces: wp.array(dtype=wp.vec3f),
-    virial: wp.array(dtype=Any),
 ):
     """
     Pass 3: Add CN-dependent force contribution.
@@ -1122,7 +1220,7 @@ def _cn_forces_contrib_kernel_matrix(
     -----
     - Launch with dim=(num_atoms, DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE), block_dim=DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE
     - One warp per atom; threads stride over the neighbor list block_stride apart
-    - Block-level tile_sum reduction; thread 0 writes force and virial contributions
+    - Block-level tile_sum reduction; thread 0 writes force contributions
     - Skips C6 interpolation and damping calculations
     - Uses precomputed dE_dCN[i] = :math:`\\sum_k \\partial E_{ik}/\\partial \text{CN}_i` from all pairs
     - Neighbor entries with j >= fill_value are padding and are skipped
@@ -1148,8 +1246,68 @@ def _cn_forces_contrib_kernel_matrix(
     F_chain_acc_y = wp.float64(0.0)  # NOSONAR (S117) "math formula"
     F_chain_acc_z = wp.float64(0.0)  # NOSONAR (S117) "math formula"
 
-    if compute_virial:
-        virial_chain_acc = wp.mat33d()
+    neighbor_idx = thread_in_block
+    while neighbor_idx < max_neighbors:
+        atom_j = neighbor_matrix[atom_i, neighbor_idx]
+        if atom_j < fill_value and numbers[atom_j] != 0:
+            r, r_inv, r_hat, r_ij = _compute_distance_vector_pbc(
+                pos_i,
+                positions[atom_j],
+                cartesian_shifts[atom_i, neighbor_idx],
+                periodic,
+                True,
+            )
+            if r >= wp.float32(1e-12):
+                f_cn, dCN_dr = _cn_counting(
+                    r_inv, rcov_i, covalent_radii[numbers[atom_j]], k1, True
+                )
+                dE_dCN_j = dE_dCN[atom_j]  # NOSONAR (S125) "math formula"
+                dE_dr_chain = (dE_dCN_i + dE_dCN_j) * dCN_dr  # NOSONAR (S125) "math formula"
+                F_chain = dE_dr_chain * r_hat  # NOSONAR (S125) "math formula"
+                F_chain_acc_x += wp.float64(F_chain[0])  # NOSONAR (S117) "math formula"
+                F_chain_acc_y += wp.float64(F_chain[1])  # NOSONAR (S117) "math formula"
+                F_chain_acc_z += wp.float64(F_chain[2])  # NOSONAR (S117) "math formula"
+        neighbor_idx += block_stride
+
+    sum_fx = wp.tile_sum(wp.tile(F_chain_acc_x))[0]  # NOSONAR (S117) "math formula"
+    sum_fy = wp.tile_sum(wp.tile(F_chain_acc_y))[0]  # NOSONAR (S117) "math formula"
+    sum_fz = wp.tile_sum(wp.tile(F_chain_acc_z))[0]  # NOSONAR (S117) "math formula"
+    if thread_in_block == 0:
+        forces[atom_i] = forces[atom_i] + wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+
+
+@wp.kernel(enable_backward=False, launch_bounds=(32, 24))
+def _cn_forces_contrib_kernel_matrix_virial(
+    positions: wp.array(dtype=Any),
+    numbers: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    cartesian_shifts: wp.array2d(dtype=Any),
+    covalent_radii: wp.array(dtype=wp.float32),
+    dE_dCN: wp.array(dtype=wp.float32),  # NOSONAR (S125) "math formula"
+    k1: wp.float32,
+    fill_value: wp.int32,
+    block_stride: wp.int32,
+    periodic: bool,
+    batch_idx: wp.array(dtype=wp.int32),
+    forces: wp.array(dtype=wp.vec3f),
+    virial: wp.array(dtype=Any),
+):
+    """Pass 3 with virial. See _cn_forces_contrib_kernel_matrix for full docs."""
+    atom_i, thread_in_block = wp.tid()
+    if atom_i >= numbers.shape[0]:
+        return
+    if numbers[atom_i] == 0:
+        return
+
+    max_neighbors = neighbor_matrix.shape[1]
+    dE_dCN_i = dE_dCN[atom_i]  # NOSONAR (S125) "math formula"
+    pos_i = positions[atom_i]
+    rcov_i = covalent_radii[numbers[atom_i]]
+
+    F_chain_acc_x = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    F_chain_acc_y = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    F_chain_acc_z = wp.float64(0.0)  # NOSONAR (S117) "math formula"
+    virial_chain_acc = wp.mat33d()
 
     neighbor_idx = thread_in_block
     while neighbor_idx < max_neighbors:
@@ -1172,8 +1330,7 @@ def _cn_forces_contrib_kernel_matrix(
                 F_chain_acc_x += wp.float64(F_chain[0])  # NOSONAR (S117) "math formula"
                 F_chain_acc_y += wp.float64(F_chain[1])  # NOSONAR (S117) "math formula"
                 F_chain_acc_z += wp.float64(F_chain[2])  # NOSONAR (S117) "math formula"
-                if compute_virial:
-                    virial_chain_acc += wp.mat33d(wp.outer(F_chain, r_ij))
+                virial_chain_acc += wp.mat33d(wp.outer(F_chain, r_ij))
         neighbor_idx += block_stride
 
     sum_fx = wp.tile_sum(wp.tile(F_chain_acc_x))[0]  # NOSONAR (S117) "math formula"
@@ -1182,22 +1339,21 @@ def _cn_forces_contrib_kernel_matrix(
     if thread_in_block == 0:
         forces[atom_i] = forces[atom_i] + wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
 
-    if compute_virial:
-        sum_v00 = wp.tile_sum(wp.tile(virial_chain_acc[0, 0]))[0]  # NOSONAR (S117)
-        sum_v01 = wp.tile_sum(wp.tile(virial_chain_acc[0, 1]))[0]
-        sum_v02 = wp.tile_sum(wp.tile(virial_chain_acc[0, 2]))[0]
-        sum_v10 = wp.tile_sum(wp.tile(virial_chain_acc[1, 0]))[0]
-        sum_v11 = wp.tile_sum(wp.tile(virial_chain_acc[1, 1]))[0]
-        sum_v12 = wp.tile_sum(wp.tile(virial_chain_acc[1, 2]))[0]
-        sum_v20 = wp.tile_sum(wp.tile(virial_chain_acc[2, 0]))[0]
-        sum_v21 = wp.tile_sum(wp.tile(virial_chain_acc[2, 1]))[0]
-        sum_v22 = wp.tile_sum(wp.tile(virial_chain_acc[2, 2]))[0]
-        if thread_in_block == 0:
-            wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
-                wp.vec3d(sum_v00, sum_v01, sum_v02),
-                wp.vec3d(sum_v10, sum_v11, sum_v12),
-                wp.vec3d(sum_v20, sum_v21, sum_v22),
-            )))
+    sum_v00 = wp.tile_sum(wp.tile(virial_chain_acc[0, 0]))[0]  # NOSONAR (S117)
+    sum_v01 = wp.tile_sum(wp.tile(virial_chain_acc[0, 1]))[0]
+    sum_v02 = wp.tile_sum(wp.tile(virial_chain_acc[0, 2]))[0]
+    sum_v10 = wp.tile_sum(wp.tile(virial_chain_acc[1, 0]))[0]
+    sum_v11 = wp.tile_sum(wp.tile(virial_chain_acc[1, 1]))[0]
+    sum_v12 = wp.tile_sum(wp.tile(virial_chain_acc[1, 2]))[0]
+    sum_v20 = wp.tile_sum(wp.tile(virial_chain_acc[2, 0]))[0]
+    sum_v21 = wp.tile_sum(wp.tile(virial_chain_acc[2, 1]))[0]
+    sum_v22 = wp.tile_sum(wp.tile(virial_chain_acc[2, 2]))[0]
+    if thread_in_block == 0:
+        wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
+            wp.vec3d(sum_v00, sum_v01, sum_v02),
+            wp.vec3d(sum_v10, sum_v11, sum_v12),
+            wp.vec3d(sum_v20, sum_v21, sum_v22),
+        )))
 
 
 # ==============================================================================
@@ -1576,7 +1732,9 @@ M = [wp.mat33f, wp.mat33d]
 _compute_cartesian_shifts_matrix_overload = {}
 _cn_kernel_matrix_overload = {}
 _direct_forces_and_dE_dCN_kernel_matrix_overload = {}
+_direct_forces_and_dE_dCN_kernel_matrix_virial_overload = {}
 _cn_forces_contrib_kernel_matrix_overload = {}
+_cn_forces_contrib_kernel_matrix_virial_overload = {}
 
 # Neighbor list kernel overload dictionaries (CSR format) - default naming convention
 _compute_cartesian_shifts_overload = {}
@@ -1636,7 +1794,34 @@ for t, v, m in zip(T, V, M):
             wp.int32,    # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
+            wp.array(dtype=wp.float32),
+            wp.array(dtype=wp.vec3f),
+            wp.array(dtype=wp.float32),
+        ],
+    )
+    _direct_forces_and_dE_dCN_kernel_matrix_virial_overload[t] = wp.overload(
+        _direct_forces_and_dE_dCN_kernel_matrix_virial,
+        [
+            wp.array(dtype=v),
+            wp.array(dtype=wp.int32),
+            wp.array2d(dtype=wp.int32),
+            wp.array2d(dtype=v),
+            wp.array(dtype=wp.float32),
+            wp.array(dtype=wp.float32),
+            wp.array4d(dtype=wp.float32),
+            wp.array4d(dtype=wp.float32),
+            wp.float32,
+            wp.float32,
+            wp.float32,
+            wp.float32,
+            wp.float32,
+            wp.float32,
+            wp.float32,
+            wp.float32,
+            wp.int32,
+            wp.int32,    # block_stride
             wp.bool,
+            wp.array(dtype=wp.int32),
             wp.array(dtype=wp.float32),
             wp.array(dtype=wp.vec3f),
             wp.array(dtype=wp.float32),
@@ -1656,8 +1841,23 @@ for t, v, m in zip(T, V, M):
             wp.int32,
             wp.int32,          # block_stride
             wp.bool,
+            wp.array(dtype=wp.vec3f),
+        ],
+    )
+    _cn_forces_contrib_kernel_matrix_virial_overload[t] = wp.overload(
+        _cn_forces_contrib_kernel_matrix_virial,
+        [
+            wp.array(dtype=v),
             wp.array(dtype=wp.int32),
+            wp.array2d(dtype=wp.int32),
+            wp.array2d(dtype=v),
+            wp.array(dtype=wp.float32),
+            wp.array(dtype=wp.float32),
+            wp.float32,
+            wp.int32,
+            wp.int32,          # block_stride
             wp.bool,
+            wp.array(dtype=wp.int32),
             wp.array(dtype=wp.vec3f),
             wp.array(dtype=wp.mat33f),
         ],
@@ -1910,7 +2110,6 @@ def dftd3_matrix(
     )
 
     # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
-    # compute_virial=False for non-periodic systems
     wp.launch(
         kernel=_direct_forces_and_dE_dCN_kernel_matrix_overload[wp_dtype],
         dim=(num_atoms, _block_size),
@@ -1936,9 +2135,8 @@ def dftd3_matrix(
             wp.int32(_block_size),
             periodic,
             batch_idx,
-            False,  # compute_virial=False for non-periodic
         ],
-        outputs=[dE_dCN, forces, energy, virial],
+        outputs=[dE_dCN, forces, energy],
         device=device,
     )
 
@@ -1958,10 +2156,8 @@ def dftd3_matrix(
             wp.int32(fill_value),
             wp.int32(_block_size),
             periodic,
-            batch_idx,
-            False,  # compute_virial=False for non-periodic
         ],
-        outputs=[forces, virial],
+        outputs=[forces],
         device=device,
     )
 
@@ -2162,59 +2358,109 @@ def dftd3_matrix_pbc(
     )
 
     # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
-    wp.launch(
-        kernel=_direct_forces_and_dE_dCN_kernel_matrix_overload[wp_dtype],
-        dim=(num_atoms, _block_size),
-        block_dim=_block_size,
-        inputs=[
-            positions,
-            numbers,
-            neighbor_matrix,
-            cartesian_shifts,
-            coord_num,
-            r4r2,
-            c6_reference,
-            coord_num_ref,
-            wp.float32(k3),
-            wp.float32(a1),
-            wp.float32(a2),
-            wp.float32(s6),
-            wp.float32(s8),
-            wp.float32(s5_smoothing_on),
-            wp.float32(s5_smoothing_off),
-            wp.float32(inv_w),
-            wp.int32(fill_value),
-            wp.int32(_block_size),
-            periodic,
-            batch_idx,
-            compute_virial,
-        ],
-        outputs=[dE_dCN, forces, energy, virial],
-        device=device,
-    )
+    if compute_virial:
+        wp.launch(
+            kernel=_direct_forces_and_dE_dCN_kernel_matrix_virial_overload[wp_dtype],
+            dim=(num_atoms, _block_size),
+            block_dim=_block_size,
+            inputs=[
+                positions,
+                numbers,
+                neighbor_matrix,
+                cartesian_shifts,
+                coord_num,
+                r4r2,
+                c6_reference,
+                coord_num_ref,
+                wp.float32(k3),
+                wp.float32(a1),
+                wp.float32(a2),
+                wp.float32(s6),
+                wp.float32(s8),
+                wp.float32(s5_smoothing_on),
+                wp.float32(s5_smoothing_off),
+                wp.float32(inv_w),
+                wp.int32(fill_value),
+                wp.int32(_block_size),
+                periodic,
+                batch_idx,
+            ],
+            outputs=[dE_dCN, forces, energy, virial],
+            device=device,
+        )
+    else:
+        wp.launch(
+            kernel=_direct_forces_and_dE_dCN_kernel_matrix_overload[wp_dtype],
+            dim=(num_atoms, _block_size),
+            block_dim=_block_size,
+            inputs=[
+                positions,
+                numbers,
+                neighbor_matrix,
+                cartesian_shifts,
+                coord_num,
+                r4r2,
+                c6_reference,
+                coord_num_ref,
+                wp.float32(k3),
+                wp.float32(a1),
+                wp.float32(a2),
+                wp.float32(s6),
+                wp.float32(s8),
+                wp.float32(s5_smoothing_on),
+                wp.float32(s5_smoothing_off),
+                wp.float32(inv_w),
+                wp.int32(fill_value),
+                wp.int32(_block_size),
+                periodic,
+                batch_idx,
+            ],
+            outputs=[dE_dCN, forces, energy],
+            device=device,
+        )
 
     # Pass 3: Add CN-dependent force contribution
-    wp.launch(
-        kernel=_cn_forces_contrib_kernel_matrix_overload[wp_dtype],
-        dim=(num_atoms, _block_size),
-        block_dim=_block_size,
-        inputs=[
-            positions,
-            numbers,
-            neighbor_matrix,
-            cartesian_shifts,
-            covalent_radii,
-            dE_dCN,
-            wp.float32(k1),
-            wp.int32(fill_value),
-            wp.int32(_block_size),
-            periodic,
-            batch_idx,
-            compute_virial,
-        ],
-        outputs=[forces, virial],
-        device=device,
-    )
+    if compute_virial:
+        wp.launch(
+            kernel=_cn_forces_contrib_kernel_matrix_virial_overload[wp_dtype],
+            dim=(num_atoms, _block_size),
+            block_dim=_block_size,
+            inputs=[
+                positions,
+                numbers,
+                neighbor_matrix,
+                cartesian_shifts,
+                covalent_radii,
+                dE_dCN,
+                wp.float32(k1),
+                wp.int32(fill_value),
+                wp.int32(_block_size),
+                periodic,
+                batch_idx,
+            ],
+            outputs=[forces, virial],
+            device=device,
+        )
+    else:
+        wp.launch(
+            kernel=_cn_forces_contrib_kernel_matrix_overload[wp_dtype],
+            dim=(num_atoms, _block_size),
+            block_dim=_block_size,
+            inputs=[
+                positions,
+                numbers,
+                neighbor_matrix,
+                cartesian_shifts,
+                covalent_radii,
+                dE_dCN,
+                wp.float32(k1),
+                wp.int32(fill_value),
+                wp.int32(_block_size),
+                periodic,
+            ],
+            outputs=[forces],
+            device=device,
+        )
 
 
 def dftd3(
