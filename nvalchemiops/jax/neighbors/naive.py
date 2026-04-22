@@ -25,6 +25,7 @@ import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_graph_mode,
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
 )
@@ -145,13 +146,6 @@ _jax_wrap_positions_single_f64 = jax_kernel(
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
 )
-
-
-def _validate_graph_mode(graph_mode: str) -> Literal["none", "warp"]:
-    """Validate the public graph-mode string."""
-    if graph_mode not in {"none", "warp"}:
-        raise ValueError("graph_mode must be one of {'none', 'warp'}")
-    return graph_mode
 
 
 def _reset_graph_neighbor_outputs(
@@ -841,22 +835,29 @@ def naive_neighbor_list(
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
-    inv_cell : jax.Array, shape (1, 3, 3), dtype=float32 or float64, optional
+    inv_cell : jax.Array, shape (1, 3, 3), dtype matches positions, optional
         Inverse cell matrix consumed by the wrap kernel. Only used when
         ``pbc`` is provided and ``wrap_positions=True``. Pass in a
         precomputed value to avoid a per-call ``jnp.linalg.inv`` and to
         keep the input pointer stable for ``graph_mode="warp"`` graph
         replay (omitting it forces cache-miss-per-call on the wrapped
-        path). If None, computed from ``cell`` each call.
+        path). If None, computed from ``cell`` each call. The shape must
+        be exactly ``(1, 3, 3)`` (matching the internally-normalized
+        ``cell``); a ``(3, 3)`` array would silently allocate a different
+        buffer per call and break ``graph_mode="warp"`` cache replay,
+        which is why a mismatched shape now raises ``ValueError``.
     positions_wrapped : jax.Array, shape (total_atoms, 3), dtype matches positions, optional
         Scratch buffer the wrap kernel writes into. Pass in a pre-shaped
         array to keep the buffer pointer stable across ``graph_mode="warp"``
         calls (required for graph-replay cache hits on the wrapped path).
-        If None, allocated fresh each call.
+        If None, allocated fresh each call. A mismatched shape or dtype
+        raises ``ValueError`` to prevent silent graph-replay cache misses.
     per_atom_cell_offsets : jax.Array, shape (total_atoms, 3), dtype=int32, optional
         Scratch buffer the wrap kernel uses to record per-atom cell offsets.
         Pass in a pre-shaped array to keep the buffer pointer stable for
         ``graph_mode="warp"`` replay. If None, allocated fresh each call.
+        A mismatched shape or dtype raises ``ValueError`` to prevent
+        silent graph-replay cache misses.
     graph_mode : {"none", "warp"}, default="none"
         Execution mode for the underlying Warp launches. ``"none"``
         preserves the existing per-kernel ``jax_kernel`` dispatch path.
@@ -999,6 +1000,47 @@ def naive_neighbor_list(
             cell = cell.astype(positions.dtype)
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
+
+    # Validate caller-supplied scratch buffers used by the wrap kernel. Shape
+    # or dtype mismatches would silently break graph_mode="warp" cache replay
+    # by changing input buffer pointers/layouts on every call, so reject them
+    # early with a clear error.
+    if inv_cell is not None:
+        if inv_cell.shape != (1, 3, 3):
+            raise ValueError(
+                f"inv_cell must have shape (1, 3, 3) to match the internal "
+                f"cell layout; got {inv_cell.shape}. A mismatched shape "
+                f"silently breaks graph_mode='warp' cache replay."
+            )
+        if inv_cell.dtype != positions.dtype:
+            raise ValueError(
+                f"inv_cell dtype must match positions dtype "
+                f"({positions.dtype}); got {inv_cell.dtype}."
+            )
+    if positions_wrapped is not None:
+        expected_pw_shape = (positions.shape[0], 3)
+        if positions_wrapped.shape != expected_pw_shape:
+            raise ValueError(
+                f"positions_wrapped must have shape {expected_pw_shape}; "
+                f"got {positions_wrapped.shape}."
+            )
+        if positions_wrapped.dtype != positions.dtype:
+            raise ValueError(
+                f"positions_wrapped dtype must match positions dtype "
+                f"({positions.dtype}); got {positions_wrapped.dtype}."
+            )
+    if per_atom_cell_offsets is not None:
+        expected_off_shape = (positions.shape[0], 3)
+        if per_atom_cell_offsets.shape != expected_off_shape:
+            raise ValueError(
+                f"per_atom_cell_offsets must have shape {expected_off_shape}; "
+                f"got {per_atom_cell_offsets.shape}."
+            )
+        if per_atom_cell_offsets.dtype != jnp.int32:
+            raise ValueError(
+                f"per_atom_cell_offsets dtype must be int32; "
+                f"got {per_atom_cell_offsets.dtype}."
+            )
 
     if max_neighbors is None and (
         neighbor_matrix is None

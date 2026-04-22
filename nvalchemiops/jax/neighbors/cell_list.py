@@ -25,6 +25,7 @@ import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    _validate_graph_mode,
     get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.neighbors.cell_list import (
@@ -127,13 +128,6 @@ __all__ = [
 ]
 
 
-def _validate_graph_mode(graph_mode: str) -> Literal["none", "warp"]:
-    """Validate the public graph-mode string."""
-    if graph_mode not in {"none", "warp"}:
-        raise ValueError("graph_mode must be one of {'none', 'warp'}")
-    return graph_mode
-
-
 def _reset_query_outputs(
     neighbor_matrix,
     neighbor_matrix_shifts,
@@ -161,6 +155,12 @@ def _run_graph_build_cell_list(
 ) -> None:
     """Execute the fused cell-list build callback."""
     atoms_per_cell_count.zero_()
+    # Graph-capture contract: ``_warp_build_cell_list`` is the Python-level
+    # Warp launcher and takes a device string. Inside this jax_callable body
+    # the device is a Python constant captured once at CUDA-graph capture
+    # time, so subsequent replays reuse the same device. If the launcher
+    # signature ever grows a stream/context parameter, that argument must
+    # also be hoisted out of the per-replay path here.
     _warp_build_cell_list(
         positions,
         cell,
@@ -211,6 +211,12 @@ def _run_graph_query_cell_list(
             inputs=[num_neighbors, rebuild_flags],
         )
 
+    # Graph-capture contract: ``_warp_query_cell_list`` is the Python-level
+    # Warp launcher and takes a device string. Inside this jax_callable body
+    # the device is a Python constant captured once at CUDA-graph capture
+    # time, so subsequent replays reuse the same device. If the launcher
+    # signature ever grows a stream/context parameter, that argument must
+    # also be hoisted out of the per-replay path here.
     _warp_query_cell_list(
         positions,
         cell,

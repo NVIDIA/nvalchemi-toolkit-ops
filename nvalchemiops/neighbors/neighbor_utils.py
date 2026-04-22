@@ -390,7 +390,7 @@ def zero_array(
     """Core warp launcher for zeroing an array.
 
     .. deprecated::
-        Use ``array.zero_()`` (Warp's built-in in-place zero) instead. 
+        Use ``array.zero_()`` (Warp's built-in in-place zero) instead.
 
     Zeros all elements of an array in parallel using pure warp operations.
 
