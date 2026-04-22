@@ -81,9 +81,6 @@ from nvalchemiops.neighbors import (
 from nvalchemiops.neighbors import (
     query_cell_list as wp_query_cell_list,
 )
-from nvalchemiops.neighbors import (
-    zero_array as wp_zero_array,
-)
 
 # Emit deprecation warning on first import of this module
 warnings.warn(
@@ -179,7 +176,6 @@ __all__ = [
     "wp_check_cell_list_rebuild",
     "wp_check_neighbor_list_rebuild",
     "wp_compute_naive_num_shifts",
-    "wp_zero_array",
     "estimate_max_neighbors",
     "neighbor_list",
     # Submodules for backwards compatibility
