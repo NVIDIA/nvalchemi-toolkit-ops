@@ -568,7 +568,7 @@ def prepare_system_and_neighborlist(
     backend_data = convert_to_backend(np_data, "torch", device, dtype_str)
 
     # Step 3: Compute neighbor list
-    neighbor_data, num_neighbor_data, _ = compute_neighbor_list(
+    neighbor_data, num_neighbor_data, unit_shifts = compute_neighbor_list(
         backend_data, "torch", cutoff, max_neighbors, return_neighbor_list
     )
 
@@ -588,6 +588,7 @@ def prepare_system_and_neighborlist(
         "pbc": backend_data["pbc"],
         "neighbor_data": neighbor_data,
         "num_neighbor_data": num_neighbor_data,
+        "unit_shifts": unit_shifts,
         "batch_idx": backend_data["batch_idx"],
         "batch_ptr": backend_data["batch_ptr"],
         "total_atoms": backend_data["total_atoms"],
@@ -645,10 +646,11 @@ def run_dftd3_nvalchemiops_benchmark(
     device: str,
     dtype: "torch.dtype",
     batch_size: int = 1,
+    return_neighbor_list: bool = False,
+    compute_virial: bool = False,
 ) -> dict:
     """Run DFT-D3 benchmark using nvalchemiops backend (single or batched)."""
     try:
-        # Prepare system and neighbor list (matrix format for nvalchemiops)
         system_data = prepare_system_and_neighborlist(
             supercell_size,
             cutoff,
@@ -656,35 +658,68 @@ def run_dftd3_nvalchemiops_benchmark(
             device,
             dtype,
             batch_size,
-            return_neighbor_list=False,
+            return_neighbor_list=return_neighbor_list,
         )
 
         positions = system_data["positions"]
         numbers = system_data["numbers"]
-        neighbor_matrix = system_data["neighbor_data"]
         total_atoms = system_data["total_atoms"]
         total_neighbors = system_data["total_neighbors"]
         batch_idx = system_data["batch_idx"]
+        cell = system_data["cell"]
 
         # Define the function to benchmark
-        def dftd3_call():
-            return torch_dftd3(
-                positions=positions,
-                numbers=numbers,
-                d3_params=d3_params,
-                neighbor_matrix=neighbor_matrix,
-                fill_value=total_atoms,
-                a1=dftd3_config["a1"],
-                a2=dftd3_config["a2"],
-                s6=dftd3_config["s6"],
-                s8=dftd3_config["s8"],
-                k1=dftd3_config["k1"],
-                k3=dftd3_config["k3"],
-                batch_idx=batch_idx,
-                s5_smoothing_on=dftd3_config["s5_smoothing_on"],
-                s5_smoothing_off=dftd3_config["s5_smoothing_off"],
-                device=device,
-            )
+        if return_neighbor_list:
+            neighbor_list_data = system_data["neighbor_data"]   # (2, num_pairs)
+            neighbor_ptr = system_data["num_neighbor_data"]     # (N+1,)
+            unit_shifts = system_data["unit_shifts"]
+
+            def dftd3_call():
+                return torch_dftd3(
+                    positions=positions,
+                    numbers=numbers,
+                    d3_params=d3_params,
+                    neighbor_list=neighbor_list_data,
+                    neighbor_ptr=neighbor_ptr,
+                    unit_shifts=unit_shifts,
+                    cell=cell,
+                    a1=dftd3_config["a1"],
+                    a2=dftd3_config["a2"],
+                    s6=dftd3_config["s6"],
+                    s8=dftd3_config["s8"],
+                    k1=dftd3_config["k1"],
+                    k3=dftd3_config["k3"],
+                    batch_idx=batch_idx,
+                    s5_smoothing_on=dftd3_config["s5_smoothing_on"],
+                    s5_smoothing_off=dftd3_config["s5_smoothing_off"],
+                    compute_virial=compute_virial,
+                    device=device,
+                )
+        else:
+            neighbor_matrix = system_data["neighbor_data"]
+            neighbor_matrix_shifts = system_data["unit_shifts"]
+
+            def dftd3_call():
+                return torch_dftd3(
+                    positions=positions,
+                    numbers=numbers,
+                    d3_params=d3_params,
+                    neighbor_matrix=neighbor_matrix,
+                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    fill_value=total_atoms,
+                    cell=cell,
+                    a1=dftd3_config["a1"],
+                    a2=dftd3_config["a2"],
+                    s6=dftd3_config["s6"],
+                    s8=dftd3_config["s8"],
+                    k1=dftd3_config["k1"],
+                    k3=dftd3_config["k3"],
+                    batch_idx=batch_idx,
+                    s5_smoothing_on=dftd3_config["s5_smoothing_on"],
+                    s5_smoothing_off=dftd3_config["s5_smoothing_off"],
+                    compute_virial=compute_virial,
+                    device=device,
+                )
 
         # Time the function
         timing_results = timer.time_function(dftd3_call)
@@ -1104,6 +1139,18 @@ def main():
         help="Override GPU SKU name for output files (default: auto-detect)",
     )
     parser.add_argument(
+        "--neighbor-format",
+        type=str,
+        choices=["matrix", "list"],
+        default="matrix",
+        help="Neighbor representation format for dftd3 kernel (default: matrix)",
+    )
+    parser.add_argument(
+        "--virial",
+        action="store_true",
+        help="Enable virial computation (requires PBC; passes cell and shifts to dftd3)",
+    )
+    parser.add_argument(
         "--jax-allocator",
         type=str,
         choices=["throughput", "memory"],
@@ -1250,6 +1297,8 @@ def main():
                             device,
                             dtype,
                             batch_size,
+                            return_neighbor_list=(args.neighbor_format == "list"),
+                            compute_virial=args.virial,
                         )
                     case "jax":
                         result = run_dftd3_nvalchemiops_jax_benchmark(
