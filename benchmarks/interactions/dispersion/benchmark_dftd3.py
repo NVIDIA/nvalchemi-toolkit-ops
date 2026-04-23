@@ -670,8 +670,8 @@ def run_dftd3_nvalchemiops_benchmark(
 
         # Define the function to benchmark
         if return_neighbor_list:
-            neighbor_list_data = system_data["neighbor_data"]   # (2, num_pairs)
-            neighbor_ptr = system_data["num_neighbor_data"]     # (N+1,)
+            neighbor_list_data = system_data["neighbor_data"]  # (2, num_pairs)
+            neighbor_ptr = system_data["num_neighbor_data"]  # (N+1,)
             unit_shifts = system_data["unit_shifts"]
 
             def dftd3_call():

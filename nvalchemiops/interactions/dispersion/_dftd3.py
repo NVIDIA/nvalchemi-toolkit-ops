@@ -760,7 +760,6 @@ def _compute_cartesian_shifts_matrix(
     )
 
 
-
 @wp.kernel(enable_backward=False, launch_bounds=(64, 32))
 def _cn_kernel_matrix(
     positions: wp.array(dtype=Any),
@@ -1001,8 +1000,10 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
                 cnref_i_mat = coord_num_ref[z_i, z_j]
                 cnref_j_mat = coord_num_ref[z_j, z_i]
 
-                c6_ij, dC6_dCNi, dC6_dCNj = _c6ab_interpolate(  # NOSONAR (S125) "math formula"
-                    cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                c6_ij, dC6_dCNi, dC6_dCNj = (
+                    _c6ab_interpolate(  # NOSONAR (S125) "math formula"
+                        cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                    )
                 )
                 if c6_ij >= wp.float32(1e-12):
                     # BJ damping
@@ -1039,15 +1040,17 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
         neighbor_idx += block_stride
 
     # Block-level tile reductions via warp shuffles (BLOCK_SIZE=32 → no shared memory)
-    sum_fx     = wp.tile_sum(wp.tile(F_acc_x))[0]
-    sum_fy     = wp.tile_sum(wp.tile(F_acc_y))[0]
-    sum_fz     = wp.tile_sum(wp.tile(F_acc_z))[0]
-    sum_dEdCN  = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
+    sum_fx = wp.tile_sum(wp.tile(F_acc_x))[0]
+    sum_fy = wp.tile_sum(wp.tile(F_acc_y))[0]
+    sum_fz = wp.tile_sum(wp.tile(F_acc_z))[0]
+    sum_dEdCN = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
     sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
 
     # Thread 0 writes atom-level results without atomics
     if thread_in_block == 0:
-        forces[atom_i] = wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
         dE_dCN[atom_i] = sum_dEdCN
         wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
 
@@ -1116,8 +1119,10 @@ def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math for
                 c6ab_mat = c6_reference[z_i, z_j]
                 cnref_i_mat = coord_num_ref[z_i, z_j]
                 cnref_j_mat = coord_num_ref[z_j, z_i]
-                c6_ij, dC6_dCNi, dC6_dCNj = _c6ab_interpolate(  # NOSONAR (S125) "math formula"
-                    cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                c6_ij, dC6_dCNi, dC6_dCNj = (
+                    _c6ab_interpolate(  # NOSONAR (S125) "math formula"
+                        cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                    )
                 )
                 if c6_ij >= wp.float32(1e-12):
                     damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
@@ -1148,14 +1153,16 @@ def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math for
                     virial_acc += wp.mat33d(wp.outer(F_direct, r_ij))
         neighbor_idx += block_stride
 
-    sum_fx     = wp.tile_sum(wp.tile(F_acc_x))[0]
-    sum_fy     = wp.tile_sum(wp.tile(F_acc_y))[0]
-    sum_fz     = wp.tile_sum(wp.tile(F_acc_z))[0]
-    sum_dEdCN  = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
+    sum_fx = wp.tile_sum(wp.tile(F_acc_x))[0]
+    sum_fy = wp.tile_sum(wp.tile(F_acc_y))[0]
+    sum_fz = wp.tile_sum(wp.tile(F_acc_z))[0]
+    sum_dEdCN = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
     sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
 
     if thread_in_block == 0:
-        forces[atom_i] = wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
         dE_dCN[atom_i] = sum_dEdCN
         wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
 
@@ -1169,11 +1176,18 @@ def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math for
     sum_v21 = wp.tile_sum(wp.tile(virial_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_acc[2, 2]))[0]
     if thread_in_block == 0:
-        wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
-            wp.vec3d(sum_v00, sum_v01, sum_v02),
-            wp.vec3d(sum_v10, sum_v11, sum_v12),
-            wp.vec3d(sum_v20, sum_v21, sum_v22),
-        )))
+        wp.atomic_add(
+            virial,
+            batch_idx[atom_i],
+            wp.float32(-0.5)
+            * wp.mat33f(
+                wp.matrix_from_rows(
+                    wp.vec3d(sum_v00, sum_v01, sum_v02),
+                    wp.vec3d(sum_v10, sum_v11, sum_v12),
+                    wp.vec3d(sum_v20, sum_v21, sum_v22),
+                )
+            ),
+        )
 
 
 @wp.kernel(enable_backward=False, launch_bounds=(32, 24))
@@ -1267,7 +1281,9 @@ def _cn_forces_contrib_kernel_matrix(
                     r_inv, rcov_i, covalent_radii[numbers[atom_j]], k1, True
                 )
                 dE_dCN_j = dE_dCN[atom_j]  # NOSONAR (S125) "math formula"
-                dE_dr_chain = (dE_dCN_i + dE_dCN_j) * dCN_dr  # NOSONAR (S125) "math formula"
+                dE_dr_chain = (
+                    dE_dCN_i + dE_dCN_j
+                ) * dCN_dr  # NOSONAR (S125) "math formula"
                 F_chain = dE_dr_chain * r_hat  # NOSONAR (S125) "math formula"
                 F_chain_acc_x += wp.float64(F_chain[0])  # NOSONAR (S117) "math formula"
                 F_chain_acc_y += wp.float64(F_chain[1])  # NOSONAR (S117) "math formula"
@@ -1278,7 +1294,9 @@ def _cn_forces_contrib_kernel_matrix(
     sum_fy = wp.tile_sum(wp.tile(F_chain_acc_y))[0]  # NOSONAR (S117) "math formula"
     sum_fz = wp.tile_sum(wp.tile(F_chain_acc_z))[0]  # NOSONAR (S117) "math formula"
     if thread_in_block == 0:
-        forces[atom_i] = forces[atom_i] + wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = forces[atom_i] + wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
 
 
 @wp.kernel(enable_backward=False, launch_bounds=(32, 24))
@@ -1330,7 +1348,9 @@ def _cn_forces_contrib_kernel_matrix_virial(
                     r_inv, rcov_i, covalent_radii[numbers[atom_j]], k1, True
                 )
                 dE_dCN_j = dE_dCN[atom_j]  # NOSONAR (S125) "math formula"
-                dE_dr_chain = (dE_dCN_i + dE_dCN_j) * dCN_dr  # NOSONAR (S125) "math formula"
+                dE_dr_chain = (
+                    dE_dCN_i + dE_dCN_j
+                ) * dCN_dr  # NOSONAR (S125) "math formula"
                 F_chain = dE_dr_chain * r_hat  # NOSONAR (S125) "math formula"
                 F_chain_acc_x += wp.float64(F_chain[0])  # NOSONAR (S117) "math formula"
                 F_chain_acc_y += wp.float64(F_chain[1])  # NOSONAR (S117) "math formula"
@@ -1342,7 +1362,9 @@ def _cn_forces_contrib_kernel_matrix_virial(
     sum_fy = wp.tile_sum(wp.tile(F_chain_acc_y))[0]  # NOSONAR (S117) "math formula"
     sum_fz = wp.tile_sum(wp.tile(F_chain_acc_z))[0]  # NOSONAR (S117) "math formula"
     if thread_in_block == 0:
-        forces[atom_i] = forces[atom_i] + wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = forces[atom_i] + wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
 
     sum_v00 = wp.tile_sum(wp.tile(virial_chain_acc[0, 0]))[0]  # NOSONAR (S117)
     sum_v01 = wp.tile_sum(wp.tile(virial_chain_acc[0, 1]))[0]
@@ -1354,11 +1376,18 @@ def _cn_forces_contrib_kernel_matrix_virial(
     sum_v21 = wp.tile_sum(wp.tile(virial_chain_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_chain_acc[2, 2]))[0]
     if thread_in_block == 0:
-        wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
-            wp.vec3d(sum_v00, sum_v01, sum_v02),
-            wp.vec3d(sum_v10, sum_v11, sum_v12),
-            wp.vec3d(sum_v20, sum_v21, sum_v22),
-        )))
+        wp.atomic_add(
+            virial,
+            batch_idx[atom_i],
+            wp.float32(-0.5)
+            * wp.mat33f(
+                wp.matrix_from_rows(
+                    wp.vec3d(sum_v00, sum_v01, sum_v02),
+                    wp.vec3d(sum_v10, sum_v11, sum_v12),
+                    wp.vec3d(sum_v20, sum_v21, sum_v22),
+                )
+            ),
+        )
 
 
 # ==============================================================================
@@ -1577,16 +1606,30 @@ def _direct_forces_and_dE_dCN_kernel(  # NOSONAR (S1542) "math formula"
                 c6ab_mat = c6_reference[z_i, z_j]
                 cnref_i_mat = coord_num_ref[z_i, z_j]
                 cnref_j_mat = coord_num_ref[z_j, z_i]
-                c6_ij, dC6_dCNi, dC6_dCNj = _c6ab_interpolate(  # NOSONAR (S125) "math formula"
-                    cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                c6_ij, dC6_dCNi, dC6_dCNj = (
+                    _c6ab_interpolate(  # NOSONAR (S125) "math formula"
+                        cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                    )
                 )
                 if c6_ij >= wp.float32(1e-12):
                     damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
                         r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
                     )
                     e_ij_sw, F_direct = _dispersion_energy_force(
-                        c6_ij, r, r_hat, damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv,
-                        s6, s8, s5_smoothing_on, s5_smoothing_off, inv_w,
+                        c6_ij,
+                        r,
+                        r_hat,
+                        damp_sum,
+                        r4r2_ij,
+                        r6,
+                        r4,
+                        den6_inv,
+                        den8_inv,
+                        s6,
+                        s8,
+                        s5_smoothing_on,
+                        s5_smoothing_off,
+                        inv_w,
                     )
                     F_direct_d = wp.vec3d(F_direct)
                     F_acc_x += F_direct_d[0]  # NOSONAR (S117) "math formula"
@@ -1597,14 +1640,16 @@ def _direct_forces_and_dE_dCN_kernel(  # NOSONAR (S1542) "math formula"
 
         edge_idx += block_stride
 
-    sum_fx     = wp.tile_sum(wp.tile(F_acc_x))[0]
-    sum_fy     = wp.tile_sum(wp.tile(F_acc_y))[0]
-    sum_fz     = wp.tile_sum(wp.tile(F_acc_z))[0]
-    sum_dEdCN  = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
+    sum_fx = wp.tile_sum(wp.tile(F_acc_x))[0]
+    sum_fy = wp.tile_sum(wp.tile(F_acc_y))[0]
+    sum_fz = wp.tile_sum(wp.tile(F_acc_z))[0]
+    sum_dEdCN = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
     sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
 
     if thread_in_block == 0:
-        forces[atom_i] = wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
         dE_dCN[atom_i] = sum_dEdCN
         wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
 
@@ -1673,16 +1718,30 @@ def _direct_forces_and_dE_dCN_kernel_virial(  # NOSONAR (S1542) "math formula"
                 c6ab_mat = c6_reference[z_i, z_j]
                 cnref_i_mat = coord_num_ref[z_i, z_j]
                 cnref_j_mat = coord_num_ref[z_j, z_i]
-                c6_ij, dC6_dCNi, dC6_dCNj = _c6ab_interpolate(  # NOSONAR (S125) "math formula"
-                    cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                c6_ij, dC6_dCNi, dC6_dCNj = (
+                    _c6ab_interpolate(  # NOSONAR (S125) "math formula"
+                        cn_i, cn_j, c6ab_mat, cnref_i_mat, cnref_j_mat, k3
+                    )
                 )
                 if c6_ij >= wp.float32(1e-12):
                     damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
                         r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
                     )
                     e_ij_sw, F_direct = _dispersion_energy_force(
-                        c6_ij, r, r_hat, damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv,
-                        s6, s8, s5_smoothing_on, s5_smoothing_off, inv_w,
+                        c6_ij,
+                        r,
+                        r_hat,
+                        damp_sum,
+                        r4r2_ij,
+                        r6,
+                        r4,
+                        den6_inv,
+                        den8_inv,
+                        s6,
+                        s8,
+                        s5_smoothing_on,
+                        s5_smoothing_off,
+                        inv_w,
                     )
                     F_direct_d = wp.vec3d(F_direct)
                     F_acc_x += F_direct_d[0]  # NOSONAR (S117) "math formula"
@@ -1694,14 +1753,16 @@ def _direct_forces_and_dE_dCN_kernel_virial(  # NOSONAR (S1542) "math formula"
 
         edge_idx += block_stride
 
-    sum_fx     = wp.tile_sum(wp.tile(F_acc_x))[0]
-    sum_fy     = wp.tile_sum(wp.tile(F_acc_y))[0]
-    sum_fz     = wp.tile_sum(wp.tile(F_acc_z))[0]
-    sum_dEdCN  = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
+    sum_fx = wp.tile_sum(wp.tile(F_acc_x))[0]
+    sum_fy = wp.tile_sum(wp.tile(F_acc_y))[0]
+    sum_fz = wp.tile_sum(wp.tile(F_acc_z))[0]
+    sum_dEdCN = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
     sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
 
     if thread_in_block == 0:
-        forces[atom_i] = wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
         dE_dCN[atom_i] = sum_dEdCN
         wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
 
@@ -1715,11 +1776,18 @@ def _direct_forces_and_dE_dCN_kernel_virial(  # NOSONAR (S1542) "math formula"
     sum_v21 = wp.tile_sum(wp.tile(virial_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_acc[2, 2]))[0]
     if thread_in_block == 0:
-        wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
-            wp.vec3d(sum_v00, sum_v01, sum_v02),
-            wp.vec3d(sum_v10, sum_v11, sum_v12),
-            wp.vec3d(sum_v20, sum_v21, sum_v22),
-        )))
+        wp.atomic_add(
+            virial,
+            batch_idx[atom_i],
+            wp.float32(-0.5)
+            * wp.mat33f(
+                wp.matrix_from_rows(
+                    wp.vec3d(sum_v00, sum_v01, sum_v02),
+                    wp.vec3d(sum_v10, sum_v11, sum_v12),
+                    wp.vec3d(sum_v20, sum_v21, sum_v22),
+                )
+            ),
+        )
 
 
 @wp.kernel(enable_backward=False, launch_bounds=(32, 24))
@@ -1776,7 +1844,9 @@ def _cn_forces_contrib_kernel(
                     r_inv, rcov_i, covalent_radii[numbers[atom_j]], k1, True
                 )
                 dE_dCN_j = dE_dCN[atom_j]  # NOSONAR (S125) "math formula"
-                dE_dr_chain = (dE_dCN_i + dE_dCN_j) * dCN_dr  # NOSONAR (S125) "math formula"
+                dE_dr_chain = (
+                    dE_dCN_i + dE_dCN_j
+                ) * dCN_dr  # NOSONAR (S125) "math formula"
                 F_chain = dE_dr_chain * r_hat  # NOSONAR (S125) "math formula"
                 F_chain_acc_x += wp.float64(F_chain[0])  # NOSONAR (S117) "math formula"
                 F_chain_acc_y += wp.float64(F_chain[1])  # NOSONAR (S117) "math formula"
@@ -1788,7 +1858,9 @@ def _cn_forces_contrib_kernel(
     sum_fy = wp.tile_sum(wp.tile(F_chain_acc_y))[0]  # NOSONAR (S117) "math formula"
     sum_fz = wp.tile_sum(wp.tile(F_chain_acc_z))[0]  # NOSONAR (S117) "math formula"
     if thread_in_block == 0:
-        forces[atom_i] = forces[atom_i] + wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = forces[atom_i] + wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
 
 
 @wp.kernel(enable_backward=False, launch_bounds=(32, 24))
@@ -1840,7 +1912,9 @@ def _cn_forces_contrib_kernel_virial(
                     r_inv, rcov_i, covalent_radii[numbers[atom_j]], k1, True
                 )
                 dE_dCN_j = dE_dCN[atom_j]  # NOSONAR (S125) "math formula"
-                dE_dr_chain = (dE_dCN_i + dE_dCN_j) * dCN_dr  # NOSONAR (S125) "math formula"
+                dE_dr_chain = (
+                    dE_dCN_i + dE_dCN_j
+                ) * dCN_dr  # NOSONAR (S125) "math formula"
                 F_chain = dE_dr_chain * r_hat  # NOSONAR (S125) "math formula"
                 F_chain_acc_x += wp.float64(F_chain[0])  # NOSONAR (S117) "math formula"
                 F_chain_acc_y += wp.float64(F_chain[1])  # NOSONAR (S117) "math formula"
@@ -1853,7 +1927,9 @@ def _cn_forces_contrib_kernel_virial(
     sum_fy = wp.tile_sum(wp.tile(F_chain_acc_y))[0]  # NOSONAR (S117) "math formula"
     sum_fz = wp.tile_sum(wp.tile(F_chain_acc_z))[0]  # NOSONAR (S117) "math formula"
     if thread_in_block == 0:
-        forces[atom_i] = forces[atom_i] + wp.vec3f(wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz))
+        forces[atom_i] = forces[atom_i] + wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
 
     sum_v00 = wp.tile_sum(wp.tile(virial_chain_acc[0, 0]))[0]  # NOSONAR (S117)
     sum_v01 = wp.tile_sum(wp.tile(virial_chain_acc[0, 1]))[0]
@@ -1865,11 +1941,18 @@ def _cn_forces_contrib_kernel_virial(
     sum_v21 = wp.tile_sum(wp.tile(virial_chain_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_chain_acc[2, 2]))[0]
     if thread_in_block == 0:
-        wp.atomic_add(virial, batch_idx[atom_i], wp.float32(-0.5) * wp.mat33f(wp.matrix_from_rows(
-            wp.vec3d(sum_v00, sum_v01, sum_v02),
-            wp.vec3d(sum_v10, sum_v11, sum_v12),
-            wp.vec3d(sum_v20, sum_v21, sum_v22),
-        )))
+        wp.atomic_add(
+            virial,
+            batch_idx[atom_i],
+            wp.float32(-0.5)
+            * wp.mat33f(
+                wp.matrix_from_rows(
+                    wp.vec3d(sum_v00, sum_v01, sum_v02),
+                    wp.vec3d(sum_v10, sum_v11, sum_v12),
+                    wp.vec3d(sum_v20, sum_v21, sum_v22),
+                )
+            ),
+        )
 
 
 # ==============================================================================
@@ -1922,7 +2005,7 @@ for t, v, m in zip(T, V, M):
             wp.array(dtype=wp.float32),
             wp.float32,
             wp.int32,
-            wp.int32,          # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.float32),
         ],
@@ -1947,7 +2030,7 @@ for t, v, m in zip(T, V, M):
             wp.float32,
             wp.float32,
             wp.int32,
-            wp.int32,    # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
             wp.array(dtype=wp.float32),
@@ -1975,7 +2058,7 @@ for t, v, m in zip(T, V, M):
             wp.float32,
             wp.float32,
             wp.int32,
-            wp.int32,    # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
             wp.array(dtype=wp.float32),
@@ -1995,7 +2078,7 @@ for t, v, m in zip(T, V, M):
             wp.array(dtype=wp.float32),
             wp.float32,
             wp.int32,
-            wp.int32,          # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.vec3f),
         ],
@@ -2011,7 +2094,7 @@ for t, v, m in zip(T, V, M):
             wp.array(dtype=wp.float32),
             wp.float32,
             wp.int32,
-            wp.int32,          # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
             wp.array(dtype=wp.vec3f),
@@ -2039,7 +2122,7 @@ for t, v, m in zip(T, V, M):
             wp.array(dtype=v),
             wp.array(dtype=wp.float32),
             wp.float32,
-            wp.int32,              # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.float32),
         ],
@@ -2064,7 +2147,7 @@ for t, v, m in zip(T, V, M):
             wp.float32,
             wp.float32,
             wp.float32,
-            wp.int32,              # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
             wp.array(dtype=wp.float32),
@@ -2092,7 +2175,7 @@ for t, v, m in zip(T, V, M):
             wp.float32,
             wp.float32,
             wp.float32,
-            wp.int32,              # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
             wp.array(dtype=wp.float32),
@@ -2112,7 +2195,7 @@ for t, v, m in zip(T, V, M):
             wp.array(dtype=wp.float32),
             wp.array(dtype=wp.float32),
             wp.float32,
-            wp.int32,              # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.vec3f),
         ],
@@ -2128,7 +2211,7 @@ for t, v, m in zip(T, V, M):
             wp.array(dtype=wp.float32),
             wp.array(dtype=wp.float32),
             wp.float32,
-            wp.int32,              # block_stride
+            wp.int32,  # block_stride
             wp.bool,
             wp.array(dtype=wp.int32),
             wp.array(dtype=wp.vec3f),
