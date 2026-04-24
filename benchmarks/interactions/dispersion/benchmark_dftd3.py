@@ -672,7 +672,7 @@ def run_dftd3_nvalchemiops_benchmark(
         if return_neighbor_list:
             neighbor_list_data = system_data["neighbor_data"]  # (2, num_pairs)
             neighbor_ptr = system_data["num_neighbor_data"]  # (N+1,)
-            unit_shifts = system_data["unit_shifts"]
+            unit_shifts = system_data["unit_shifts"] if compute_virial else None
 
             def dftd3_call():
                 return torch_dftd3(
@@ -682,7 +682,7 @@ def run_dftd3_nvalchemiops_benchmark(
                     neighbor_list=neighbor_list_data,
                     neighbor_ptr=neighbor_ptr,
                     unit_shifts=unit_shifts,
-                    cell=cell,
+                    cell=cell if compute_virial else None,
                     a1=dftd3_config["a1"],
                     a2=dftd3_config["a2"],
                     s6=dftd3_config["s6"],
@@ -697,7 +697,7 @@ def run_dftd3_nvalchemiops_benchmark(
                 )
         else:
             neighbor_matrix = system_data["neighbor_data"]
-            neighbor_matrix_shifts = system_data["unit_shifts"]
+            neighbor_matrix_shifts = system_data["unit_shifts"] if compute_virial else None
 
             def dftd3_call():
                 return torch_dftd3(
@@ -707,7 +707,7 @@ def run_dftd3_nvalchemiops_benchmark(
                     neighbor_matrix=neighbor_matrix,
                     neighbor_matrix_shifts=neighbor_matrix_shifts,
                     fill_value=total_atoms,
-                    cell=cell,
+                    cell=cell if compute_virial else None,
                     a1=dftd3_config["a1"],
                     a2=dftd3_config["a2"],
                     s6=dftd3_config["s6"],
