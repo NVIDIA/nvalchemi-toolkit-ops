@@ -1467,7 +1467,9 @@ def _compute_cartesian_shifts(
 
     edge_idx = j_range_start + thread_in_block
     while edge_idx < j_range_end:
-        cartesian_shifts[edge_idx] = _unit_shift_to_cartesian(unit_shifts[edge_idx], cell_mat)
+        cartesian_shifts[edge_idx] = _unit_shift_to_cartesian(
+            unit_shifts[edge_idx], cell_mat
+        )
         edge_idx += block_stride
 
 
@@ -2614,8 +2616,6 @@ def dftd3_matrix_pbc(
     """
     # Get number of atoms from positions array
     num_atoms = positions.shape[0]
-    max_neighbors = neighbor_matrix.shape[1] if num_atoms > 0 else 0
-
     # Set fill_value if not provided
     if fill_value is None:
         fill_value = num_atoms

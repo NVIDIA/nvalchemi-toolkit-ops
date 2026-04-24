@@ -697,7 +697,9 @@ def run_dftd3_nvalchemiops_benchmark(
                 )
         else:
             neighbor_matrix = system_data["neighbor_data"]
-            neighbor_matrix_shifts = system_data["unit_shifts"] if compute_virial else None
+            neighbor_matrix_shifts = (
+                system_data["unit_shifts"] if compute_virial else None
+            )
 
             def dftd3_call():
                 return torch_dftd3(
