@@ -258,8 +258,14 @@ DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE = 32
 # The CN kernel is register-light; launch_bounds=(64, 32) keeps registers ≤32/thread.
 DFTD3_MATRIX_CN_BLOCK_SIZE = 64
 
+# Threads per atom for tile-based _compute_cartesian_shifts_matrix.
+# Same occupancy rationale as _cn_kernel_matrix: 2 warps per atom, 32 blocks/SM → 100% warp occupancy.
+# The cartesian-shifts kernel is register-light (just a matrix-vector multiply per entry).
+DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE = 64
+
 # Threads per atom (CUDA block size) for tile-based NL (CSR) kernels.
 # Mirror the matrix kernel block sizes: same occupancy rationale applies.
+DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE = 64
 DFTD3_NL_DIRECT_FORCES_BLOCK_SIZE = 32
 DFTD3_NL_CN_BLOCK_SIZE = 64
 
@@ -680,13 +686,14 @@ def _unit_shift_to_cartesian(
 # ==============================================================================
 
 
-@wp.kernel(enable_backward=False)
+@wp.kernel(enable_backward=False, launch_bounds=(64, 32))
 def _compute_cartesian_shifts_matrix(
     cell: wp.array(dtype=Any),
     unit_shifts: wp.array2d(dtype=wp.vec3i),
     neighbor_matrix: wp.array2d(dtype=wp.int32),
     batch_idx: wp.array(dtype=wp.int32),
     fill_value: wp.int32,
+    block_stride: wp.int32,
     cartesian_shifts: wp.array2d(dtype=Any),
 ):
     """
@@ -727,7 +734,11 @@ def _compute_cartesian_shifts_matrix(
     and :math:`n_a, n_b, n_c` are integer shifts. The system ID is obtained
     from atom i's batch index.
 
-    Launch with dim=(num_atoms, max_neighbors) (one thread per atom-neighbor pair).
+    Launch with dim=(num_atoms, DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE),
+    block_dim=DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE. One block per atom;
+    all threads in the block share the same cell matrix (loaded once into L1)
+    and stride through the neighbor list with step=block_stride. Each thread
+    writes its own cartesian_shifts entries independently (no reduction needed).
 
     See Also
     --------
@@ -741,23 +752,20 @@ def _compute_cartesian_shifts_matrix(
     :func:`_cn_forces_contrib_kernel` : Pass 3 - Uses computed Cartesian shifts for PBC (neighbor list)
     :func:`dftd3` : High-level wrapper that orchestrates all passes
     """
-    atom_i, neighbor_idx = wp.tid()
+    atom_i, thread_in_block = wp.tid()
     max_neighbors = neighbor_matrix.shape[1]
 
-    if neighbor_idx >= max_neighbors:
-        return
-
-    atom_j = neighbor_matrix[atom_i, neighbor_idx]
-    if atom_j >= fill_value:
-        return
-
     system_id = batch_idx[atom_i]
-
     cell_mat = cell[system_id]
-    unit_shift = unit_shifts[atom_i, neighbor_idx]
-    cartesian_shifts[atom_i, neighbor_idx] = _unit_shift_to_cartesian(
-        unit_shift, cell_mat
-    )
+
+    neighbor_idx = thread_in_block
+    while neighbor_idx < max_neighbors:
+        atom_j = neighbor_matrix[atom_i, neighbor_idx]
+        if atom_j < fill_value:
+            cartesian_shifts[atom_i, neighbor_idx] = _unit_shift_to_cartesian(
+                unit_shifts[atom_i, neighbor_idx], cell_mat
+            )
+        neighbor_idx += block_stride
 
 
 @wp.kernel(enable_backward=False, launch_bounds=(64, 32))
@@ -1402,12 +1410,13 @@ def _cn_forces_contrib_kernel_matrix_virial(
 # ==============================================================================
 
 
-@wp.kernel(enable_backward=False)
+@wp.kernel(enable_backward=False, launch_bounds=(64, 32))
 def _compute_cartesian_shifts(
     cell: wp.array(dtype=Any),
     unit_shifts: wp.array(dtype=wp.vec3i),
     neighbor_ptr: wp.array(dtype=wp.int32),
     batch_idx: wp.array(dtype=wp.int32),
+    block_stride: wp.int32,
     cartesian_shifts: wp.array(dtype=Any),
 ):
     """
@@ -1433,8 +1442,11 @@ def _compute_cartesian_shifts(
 
     Notes
     -----
-    Launch with dim=num_atoms (one thread per atom). Each thread processes all edges
-    for that atom using the CSR pointers.
+    Launch with dim=(num_atoms, DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE),
+    block_dim=DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE. One block per atom; all threads
+    share the same cell matrix (loaded once into L1) and stride through the atom's
+    CSR edge range with step=block_stride. Each thread writes its own cartesian_shifts
+    entries independently (no reduction needed).
 
     See Also
     --------
@@ -1442,23 +1454,21 @@ def _compute_cartesian_shifts(
     :func:`_direct_forces_and_dE_dCN_kernel` : Uses computed Cartesian shifts for PBC
     :func:`_cn_forces_contrib_kernel` : Uses computed Cartesian shifts for PBC
     """
-    atom_i = wp.tid()
+    atom_i, thread_in_block = wp.tid()
 
-    # Get number of atoms from batch_idx size
     if atom_i >= batch_idx.shape[0]:
         return
 
     system_id = batch_idx[atom_i]
     cell_mat = cell[system_id]
 
-    # Get range of edges for this atom
     j_range_start = neighbor_ptr[atom_i]
     j_range_end = neighbor_ptr[atom_i + 1]
 
-    # Convert all unit shifts for this atom's neighbors to Cartesian
-    for edge_idx in range(j_range_start, j_range_end):
-        unit_shift = unit_shifts[edge_idx]
-        cartesian_shifts[edge_idx] = _unit_shift_to_cartesian(unit_shift, cell_mat)
+    edge_idx = j_range_start + thread_in_block
+    while edge_idx < j_range_end:
+        cartesian_shifts[edge_idx] = _unit_shift_to_cartesian(unit_shifts[edge_idx], cell_mat)
+        edge_idx += block_stride
 
 
 @wp.kernel(enable_backward=False, launch_bounds=(64, 32))
@@ -2009,6 +2019,7 @@ for t, v, m in zip(T, V, M):
             wp.array2d(dtype=wp.int32),
             wp.array(dtype=wp.int32),
             wp.int32,
+            wp.int32,
             wp.array2d(dtype=v),
         ],
     )
@@ -2126,6 +2137,7 @@ for t, v, m in zip(T, V, M):
             wp.array(dtype=wp.vec3i),
             wp.array(dtype=wp.int32),
             wp.array(dtype=wp.int32),
+            wp.int32,
             wp.array(dtype=v),
         ],
     )
@@ -2621,15 +2633,18 @@ def dftd3_matrix_pbc(
     # Pass 0: Compute cartesian shifts from unit cell shifts
     periodic = True
 
+    _cs_block_size = DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE if "cuda" in device else 1
     wp.launch(
         kernel=_compute_cartesian_shifts_matrix_overload[wp_dtype],
-        dim=(num_atoms, max_neighbors),
+        dim=(num_atoms, _cs_block_size),
+        block_dim=_cs_block_size,
         inputs=[
             cell,
             neighbor_matrix_shifts,
             neighbor_matrix,
             batch_idx,
             wp.int32(fill_value),
+            wp.int32(_cs_block_size),
         ],
         outputs=[cartesian_shifts],
         device=device,
@@ -3141,17 +3156,20 @@ def dftd3_pbc(
     # Pass 0: Compute cartesian shifts from unit cell shifts
     periodic = True
 
+    _cs_block_size = DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE if "cuda" in device else 1
     _block_size = DFTD3_NL_DIRECT_FORCES_BLOCK_SIZE if "cuda" in device else 1
     _cn_block_size = DFTD3_NL_CN_BLOCK_SIZE if "cuda" in device else 1
 
     wp.launch(
         kernel=_compute_cartesian_shifts_overload[wp_dtype],
-        dim=num_atoms,
+        dim=(num_atoms, _cs_block_size),
+        block_dim=_cs_block_size,
         inputs=[
             cell,
             unit_shifts,
             neighbor_ptr,
             batch_idx,
+            wp.int32(_cs_block_size),
         ],
         outputs=[cartesian_shifts],
         device=device,
