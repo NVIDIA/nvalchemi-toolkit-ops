@@ -249,22 +249,15 @@ __all__ = [
     "_cn_forces_contrib_kernel_overload",
 ]
 
-# Threads per atom (CUDA block size) for tile-based _direct_forces_and_dE_dCN_kernel_matrix.
-# One warp per atom: all reductions use warp shuffles with no shared memory.
+# Threads per atom for _direct_forces_and_dE_dCN_kernel_matrix (matrix and NL).
+# 1 warp/atom; reductions via warp shuffles (no shared memory).
 DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE = 32
 
-# Threads per atom for tile-based _cn_kernel_matrix.
-# Two warps per atom (64 threads): with H100 max 32 blocks/SM → 64 warps/SM = 100% warp occupancy.
-# The CN kernel is register-light; launch_bounds=(64, 32) keeps registers ≤32/thread.
+# Threads per atom for _cn_kernel_matrix and _compute_cartesian_shifts_matrix (matrix and NL).
+# 2 warps/atom; register-light kernels — launch_bounds=(64, 32) keeps registers ≤32/thread.
 DFTD3_MATRIX_CN_BLOCK_SIZE = 64
-
-# Threads per atom for tile-based _compute_cartesian_shifts_matrix.
-# Same occupancy rationale as _cn_kernel_matrix: 2 warps per atom, 32 blocks/SM → 100% warp occupancy.
-# The cartesian-shifts kernel is register-light (just a matrix-vector multiply per entry).
 DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE = 64
 
-# Threads per atom (CUDA block size) for tile-based NL (CSR) kernels.
-# Mirror the matrix kernel block sizes: same occupancy rationale applies.
 DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE = 64
 DFTD3_NL_DIRECT_FORCES_BLOCK_SIZE = 32
 DFTD3_NL_CN_BLOCK_SIZE = 64
@@ -736,9 +729,8 @@ def _compute_cartesian_shifts_matrix(
 
     Launch with dim=(num_atoms, DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE),
     block_dim=DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE. One block per atom;
-    all threads in the block share the same cell matrix (loaded once into L1)
-    and stride through the neighbor list with step=block_stride. Each thread
-    writes its own cartesian_shifts entries independently (no reduction needed).
+    all threads in the block stride through the neighbor list with step=block_stride. 
+    Each thread writes its own cartesian_shifts entries independently.
 
     See Also
     --------
@@ -1444,9 +1436,8 @@ def _compute_cartesian_shifts(
     -----
     Launch with dim=(num_atoms, DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE),
     block_dim=DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE. One block per atom; all threads
-    share the same cell matrix (loaded once into L1) and stride through the atom's
-    CSR edge range with step=block_stride. Each thread writes its own cartesian_shifts
-    entries independently (no reduction needed).
+    stride through the atom's CSR edge range with step=block_stride. Each thread 
+    writes its own cartesian_shifts entries independently..
 
     See Also
     --------
