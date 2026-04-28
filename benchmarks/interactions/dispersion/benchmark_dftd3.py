@@ -673,6 +673,11 @@ def run_dftd3_nvalchemiops_benchmark(
             neighbor_list_data = system_data["neighbor_data"]  # (2, num_pairs)
             neighbor_ptr = system_data["num_neighbor_data"]  # (N+1,)
             unit_shifts = system_data["unit_shifts"] if compute_virial else None
+            if unit_shifts is not None and unit_shifts.ndim != 2:
+                raise ValueError(
+                    "unit_shifts must be [num_pairs, 3] for the neighbor list path; "
+                    "got a 3-D tensor, which indicates return_neighbor_list=False data was used here"
+                )
 
             def dftd3_call():
                 return torch_dftd3(
@@ -700,6 +705,11 @@ def run_dftd3_nvalchemiops_benchmark(
             neighbor_matrix_shifts = (
                 system_data["unit_shifts"] if compute_virial else None
             )
+            if neighbor_matrix_shifts is not None and neighbor_matrix_shifts.ndim != 3:
+                raise ValueError(
+                    "unit_shifts must be [num_atoms, max_neighbors, 3] for the matrix path; "
+                    "got a 2-D tensor, which indicates return_neighbor_list=True data was used here"
+                )
 
             def dftd3_call():
                 return torch_dftd3(
