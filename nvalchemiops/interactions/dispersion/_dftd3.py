@@ -246,7 +246,9 @@ __all__ = [
     "_compute_cartesian_shifts_overload",
     "_cn_kernel_overload",
     "_direct_forces_and_dE_dCN_kernel_overload",
+    "_direct_forces_and_dE_dCN_kernel_virial_overload",
     "_cn_forces_contrib_kernel_overload",
+    "_cn_forces_contrib_kernel_virial_overload",
 ]
 
 # Threads per atom for _direct_forces_and_dE_dCN_kernel_matrix (matrix and NL).
@@ -729,7 +731,7 @@ def _compute_cartesian_shifts_matrix(
 
     Launch with dim=(num_atoms, DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE),
     block_dim=DFTD3_MATRIX_CARTESIAN_SHIFTS_BLOCK_SIZE. One block per atom;
-    all threads in the block stride through the neighbor list with step=block_stride. 
+    all threads in the block stride through the neighbor list with step=block_stride.
     Each thread writes its own cartesian_shifts entries independently.
 
     See Also
@@ -1159,16 +1161,6 @@ def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math for
     sum_fz = wp.tile_sum(wp.tile(F_acc_z))[0]
     sum_dEdCN = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
     sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
-
-    # Write final results once (atomic only for shared batch array)
-    if thread_in_block == 0:
-        # Convert from float64 accumulation to float32 output
-        forces[atom_i] = wp.vec3f(
-            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
-        )
-        dE_dCN[atom_i] = sum_dEdCN
-        wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
-
     sum_v00 = wp.tile_sum(wp.tile(virial_acc[0, 0]))[0]  # NOSONAR (S117)
     sum_v01 = wp.tile_sum(wp.tile(virial_acc[0, 1]))[0]
     sum_v02 = wp.tile_sum(wp.tile(virial_acc[0, 2]))[0]
@@ -1178,8 +1170,16 @@ def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math for
     sum_v20 = wp.tile_sum(wp.tile(virial_acc[2, 0]))[0]
     sum_v21 = wp.tile_sum(wp.tile(virial_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_acc[2, 2]))[0]
-    # Add virial contribution with -0.5 scaling for correct sign and double counting
+
+    # Write final results once (atomic only for shared batch array)
     if thread_in_block == 0:
+        # Convert from float64 accumulation to float32 output
+        forces[atom_i] = wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
+        dE_dCN[atom_i] = sum_dEdCN
+        wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
+        # Add virial contribution with -0.5 scaling for correct sign and double counting
         wp.atomic_add(
             virial,
             batch_idx[atom_i],
@@ -1367,11 +1367,6 @@ def _cn_forces_contrib_kernel_matrix_virial(
     sum_fx = wp.tile_sum(wp.tile(F_chain_acc_x))[0]  # NOSONAR (S117) "math formula"
     sum_fy = wp.tile_sum(wp.tile(F_chain_acc_y))[0]  # NOSONAR (S117) "math formula"
     sum_fz = wp.tile_sum(wp.tile(F_chain_acc_z))[0]  # NOSONAR (S117) "math formula"
-    if thread_in_block == 0:
-        forces[atom_i] = forces[atom_i] + wp.vec3f(
-            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
-        )
-
     sum_v00 = wp.tile_sum(wp.tile(virial_chain_acc[0, 0]))[0]  # NOSONAR (S117)
     sum_v01 = wp.tile_sum(wp.tile(virial_chain_acc[0, 1]))[0]
     sum_v02 = wp.tile_sum(wp.tile(virial_chain_acc[0, 2]))[0]
@@ -1381,8 +1376,12 @@ def _cn_forces_contrib_kernel_matrix_virial(
     sum_v20 = wp.tile_sum(wp.tile(virial_chain_acc[2, 0]))[0]
     sum_v21 = wp.tile_sum(wp.tile(virial_chain_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_chain_acc[2, 2]))[0]
-    # Add virial contribution with -0.5 scaling for correct sign and double counting
+
     if thread_in_block == 0:
+        forces[atom_i] = forces[atom_i] + wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
+        # Add virial contribution with -0.5 scaling for correct sign and double counting
         wp.atomic_add(
             virial,
             batch_idx[atom_i],
@@ -1436,7 +1435,7 @@ def _compute_cartesian_shifts(
     -----
     Launch with dim=(num_atoms, DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE),
     block_dim=DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE. One block per atom; all threads
-    stride through the atom's CSR edge range with step=block_stride. Each thread 
+    stride through the atom's CSR edge range with step=block_stride. Each thread
     writes its own cartesian_shifts entries independently..
 
     See Also
@@ -1770,16 +1769,6 @@ def _direct_forces_and_dE_dCN_kernel_virial(  # NOSONAR (S1542) "math formula"
     sum_fz = wp.tile_sum(wp.tile(F_acc_z))[0]
     sum_dEdCN = wp.tile_sum(wp.tile(dE_dCN_acc))[0]  # NOSONAR (S117) "math formula"
     sum_energy = wp.tile_sum(wp.tile(energy_acc))[0]
-
-    # Write final results once (atomic only for shared batch array)
-    if thread_in_block == 0:
-        # Convert from float64 accumulation to float32 output
-        forces[atom_i] = wp.vec3f(
-            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
-        )
-        dE_dCN[atom_i] = sum_dEdCN
-        wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
-
     sum_v00 = wp.tile_sum(wp.tile(virial_acc[0, 0]))[0]  # NOSONAR (S117)
     sum_v01 = wp.tile_sum(wp.tile(virial_acc[0, 1]))[0]
     sum_v02 = wp.tile_sum(wp.tile(virial_acc[0, 2]))[0]
@@ -1789,8 +1778,16 @@ def _direct_forces_and_dE_dCN_kernel_virial(  # NOSONAR (S1542) "math formula"
     sum_v20 = wp.tile_sum(wp.tile(virial_acc[2, 0]))[0]
     sum_v21 = wp.tile_sum(wp.tile(virial_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_acc[2, 2]))[0]
-    # Add virial contribution with -0.5 scaling for correct sign and double counting
+
+    # Write final results once (atomic only for shared batch array)
     if thread_in_block == 0:
+        # Convert from float64 accumulation to float32 output
+        forces[atom_i] = wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
+        dE_dCN[atom_i] = sum_dEdCN
+        wp.atomic_add(energy, batch_idx[atom_i], 0.5 * wp.float32(sum_energy))
+        # Add virial contribution with -0.5 scaling for correct sign and double counting
         wp.atomic_add(
             virial,
             batch_idx[atom_i],
@@ -1943,13 +1940,6 @@ def _cn_forces_contrib_kernel_virial(
     sum_fx = wp.tile_sum(wp.tile(F_chain_acc_x))[0]  # NOSONAR (S117) "math formula"
     sum_fy = wp.tile_sum(wp.tile(F_chain_acc_y))[0]  # NOSONAR (S117) "math formula"
     sum_fz = wp.tile_sum(wp.tile(F_chain_acc_z))[0]  # NOSONAR (S117) "math formula"
-    # Write final results once (atomic only for shared batch array)
-    if thread_in_block == 0:
-        # Convert from float64 accumulation to float32 output
-        forces[atom_i] = forces[atom_i] + wp.vec3f(
-            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
-        )
-
     sum_v00 = wp.tile_sum(wp.tile(virial_chain_acc[0, 0]))[0]  # NOSONAR (S117)
     sum_v01 = wp.tile_sum(wp.tile(virial_chain_acc[0, 1]))[0]
     sum_v02 = wp.tile_sum(wp.tile(virial_chain_acc[0, 2]))[0]
@@ -1959,8 +1949,14 @@ def _cn_forces_contrib_kernel_virial(
     sum_v20 = wp.tile_sum(wp.tile(virial_chain_acc[2, 0]))[0]
     sum_v21 = wp.tile_sum(wp.tile(virial_chain_acc[2, 1]))[0]
     sum_v22 = wp.tile_sum(wp.tile(virial_chain_acc[2, 2]))[0]
-    # Add virial contribution with -0.5 scaling for correct sign and double counting
+
+    # Write final results once (atomic only for shared batch array)
     if thread_in_block == 0:
+        # Convert from float64 accumulation to float32 output
+        forces[atom_i] = forces[atom_i] + wp.vec3f(
+            wp.float32(sum_fx), wp.float32(sum_fy), wp.float32(sum_fz)
+        )
+        # Add virial contribution with -0.5 scaling for correct sign and double counting
         wp.atomic_add(
             virial,
             batch_idx[atom_i],
