@@ -22,8 +22,7 @@ Compares FIRE1 and FIRE2 optimizers on Lennard-Jones systems, reporting both
 steps-to-convergence and wall-clock time.  Supports two optimization modes:
 
 - **Fixed cell** (coordinate-only): ``run_fire()`` vs ``run_fire2()``
-- **Variable cell** (extended arrays with cell DOFs):
-  ``run_fire_cell()`` vs ``run_fire2_cell()``
+- **Variable cell**: ``run_fire_cell()`` vs coupled coordinate/cell ``run_fire2_cell()``
 
 Configuration is loaded from ``benchmark_config.yaml`` (``fire_compare`` section).
 
@@ -57,8 +56,23 @@ _NEIGHBOR_REBUILD = 10
 _DEFAULT_SEED = 42
 
 
-def _make_bench(num_atoms, perturbation=0.1, batch_size=1, seed=_DEFAULT_SEED):
-    """Create a NvalchemiOpsBenchmark for a perturbed LJ system."""
+def _make_perturbed_system(
+    positions,
+    cell,
+    position_jitter=0.05,
+):
+    """Apply uniform Cartesian jitter to expanded positions."""
+    position_noise = (torch.rand_like(positions) * 2.0 - 1.0) * position_jitter
+    return positions + position_noise, cell
+
+
+def _make_bench(
+    num_atoms,
+    position_jitter=0.05,
+    batch_size=1,
+    seed=_DEFAULT_SEED,
+):
+    """Create a NvalchemiOpsBenchmark from jittered P1-expanded LJ systems."""
     torch.manual_seed(seed)
     num_cells = int((num_atoms // 4 + 1) ** (1 / 3))
     positions, cell = create_fcc_argon(
@@ -70,7 +84,11 @@ def _make_bench(num_atoms, perturbation=0.1, batch_size=1, seed=_DEFAULT_SEED):
     actual_atoms = positions.shape[0]
 
     if batch_size == 1:
-        positions = positions + torch.randn_like(positions) * perturbation
+        positions, cell = _make_perturbed_system(
+            positions,
+            cell,
+            position_jitter=position_jitter,
+        )
         pbc = torch.tensor([True, True, True], device=positions.device)
 
         return NvalchemiOpsBenchmark(
@@ -84,8 +102,13 @@ def _make_bench(num_atoms, perturbation=0.1, batch_size=1, seed=_DEFAULT_SEED):
     else:
         pos_list, cell_list = [], []
         for _ in range(batch_size):
-            pos_list.append(positions + torch.randn_like(positions) * perturbation)
-            cell_list.append(cell)
+            pos_i, cell_i = _make_perturbed_system(
+                positions,
+                cell,
+                position_jitter=position_jitter,
+            )
+            pos_list.append(pos_i)
+            cell_list.append(cell_i)
         batch_positions = torch.cat(pos_list, dim=0)
         batch_cells = torch.stack(cell_list, dim=0)
         batch_idx = torch.repeat_interleave(
@@ -117,7 +140,7 @@ def run_fixed_cell_comparison(
     check_interval,
     fire1_params,
     fire2_params,
-    perturbation,
+    position_jitter,
     seed=_DEFAULT_SEED,
 ):
     """Run fixed-cell (coordinate-only) FIRE vs FIRE2 comparison.
@@ -136,8 +159,8 @@ def run_fixed_cell_comparison(
         FIRE1 hyperparameters passed to ``run_fire()``.
     fire2_params : dict
         FIRE2 hyperparameters passed to ``run_fire2()``.
-    perturbation : float
-        Random perturbation magnitude (A) applied to initial positions.
+    position_jitter : float
+        Uniform Cartesian jitter bound (A) applied after P1 expansion.
     seed : int
         RNG seed for reproducible initial perturbations.
 
@@ -158,7 +181,11 @@ def run_fixed_cell_comparison(
 
     for num_atoms in system_sizes:
         # FIRE1
-        bench1, actual = _make_bench(num_atoms, perturbation=perturbation, seed=seed)
+        bench1, actual = _make_bench(
+            num_atoms,
+            position_jitter=position_jitter,
+            seed=seed,
+        )
         r1 = bench1.run_fire(
             max_steps=max_steps,
             force_tolerance=force_tol,
@@ -167,7 +194,11 @@ def run_fixed_cell_comparison(
         )
 
         # FIRE2 (fresh benchmark with same system)
-        bench2, _ = _make_bench(num_atoms, perturbation=perturbation, seed=seed)
+        bench2, _ = _make_bench(
+            num_atoms,
+            position_jitter=position_jitter,
+            seed=seed,
+        )
         r2 = bench2.run_fire2(
             max_steps=max_steps,
             force_tolerance=force_tol,
@@ -224,7 +255,7 @@ def run_variable_cell_comparison(
     check_interval,
     fire1_params,
     fire2_params,
-    perturbation,
+    position_jitter,
     seed=_DEFAULT_SEED,
 ):
     """Run variable-cell FIRE vs FIRE2 comparison.
@@ -245,8 +276,8 @@ def run_variable_cell_comparison(
         FIRE1 hyperparameters passed to ``run_fire_cell()``.
     fire2_params : dict
         FIRE2 hyperparameters passed to ``run_fire2_cell()``.
-    perturbation : float
-        Random perturbation magnitude (A) applied to initial positions.
+    position_jitter : float
+        Uniform Cartesian jitter bound (A) applied after P1 expansion.
     seed : int
         RNG seed for reproducible initial perturbations.
 
@@ -267,7 +298,11 @@ def run_variable_cell_comparison(
 
     for num_atoms in system_sizes:
         # FIRE1 variable-cell
-        bench1, actual = _make_bench(num_atoms, perturbation=perturbation, seed=seed)
+        bench1, actual = _make_bench(
+            num_atoms,
+            position_jitter=position_jitter,
+            seed=seed,
+        )
         r1 = bench1.run_fire_cell(
             max_steps=max_steps,
             force_tolerance=force_tol,
@@ -277,7 +312,11 @@ def run_variable_cell_comparison(
         )
 
         # FIRE2 variable-cell (fresh benchmark with same system)
-        bench2, _ = _make_bench(num_atoms, perturbation=perturbation, seed=seed)
+        bench2, _ = _make_bench(
+            num_atoms,
+            position_jitter=position_jitter,
+            seed=seed,
+        )
         r2 = bench2.run_fire2_cell(
             max_steps=max_steps,
             force_tolerance=force_tol,
@@ -354,12 +393,18 @@ def run_benchmarks(config: dict, output_dir: Path, seed: int = _DEFAULT_SEED) ->
     # Fixed-cell config
     fixed_cfg = cmp_config.get("fixed_cell", {})
     fixed_enabled = fixed_cfg.get("enabled", True)
-    fixed_perturbation = fixed_cfg.get("perturbation", 0.1)
+    fixed_position_jitter = fixed_cfg.get(
+        "position_jitter",
+        fixed_cfg.get("perturbation", 0.05),
+    )
 
     # Variable-cell config
     var_cfg = cmp_config.get("variable_cell", {})
     var_enabled = var_cfg.get("enabled", True)
-    var_perturbation = var_cfg.get("perturbation", 0.1)
+    var_position_jitter = var_cfg.get(
+        "position_jitter",
+        var_cfg.get("perturbation", 0.05),
+    )
 
     # FIRE1 hyperparameters
     f1_cfg = cmp_config.get("fire1", {})
@@ -388,6 +433,10 @@ def run_benchmarks(config: dict, output_dir: Path, seed: int = _DEFAULT_SEED) ->
         "alphashrink": f2_cfg.get("alphashrink", 0.985),
         "maxstep": f2_cfg.get("maxstep", 0.25),
     }
+    fire2_cell_params = {
+        **fire2_params,
+        "cell_force_scale": f2_cfg.get("cell_force_scale", 1.0),
+    }
 
     gpu_sku = get_gpu_sku()
     all_rows = []
@@ -408,7 +457,7 @@ def run_benchmarks(config: dict, output_dir: Path, seed: int = _DEFAULT_SEED) ->
             check_interval,
             fire1_params,
             fire2_params,
-            fixed_perturbation,
+            fixed_position_jitter,
             seed=seed,
         )
         all_rows.extend(rows)
@@ -422,8 +471,8 @@ def run_benchmarks(config: dict, output_dir: Path, seed: int = _DEFAULT_SEED) ->
             max_steps,
             check_interval,
             fire1_params,
-            fire2_params,
-            var_perturbation,
+            fire2_cell_params,
+            var_position_jitter,
             seed=seed,
         )
         all_rows.extend(rows)

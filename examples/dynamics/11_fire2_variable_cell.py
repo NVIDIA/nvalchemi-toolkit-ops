@@ -18,13 +18,12 @@ Variable-Cell FIRE2 Optimization with LJ Potential
 ===================================================
 
 This example demonstrates **joint optimization of atomic positions and cell
-parameters** using the FIRE2 optimizer (Guenole et al., 2020) with manual
-pack/unpack of extended arrays.
+parameters** using the coupled FIRE2 PyTorch adapter (Guenole et al., 2020).
 
 Compared to FIRE (``07_fire_variable_cell.py``), FIRE2:
 
 - Assumes unit mass (no ``masses`` / ``pack_masses_with_cell`` needed)
-- Requires ``batch_idx`` (all zeros for single system on extended arrays)
+- Requires ``batch_idx`` (all zeros for this single-system example)
 - Has simpler state: ``alpha``, ``dt``, ``nsteps_inc``
 - Hyperparameters are Python scalars
 
@@ -33,9 +32,7 @@ The workflow is otherwise the same:
 1. **align_cell()** - Transform cell to upper-triangular form
 2. **LJ energy/forces/virial** - Compute interatomic interactions
 3. **Virial -> Stress -> Cell Force** - Convert virial to cell driving force
-4. **pack_*_with_cell()** - Combine atomic + cell DOFs into extended arrays
-5. **fire2_step()** - FIRE2 optimization on extended arrays
-6. **unpack_positions_with_cell()** - Extract optimized geometry
+4. **fire2_step_coord_cell()** - Coupled coordinate/cell FIRE2 update
 
 We optimize an FCC argon crystal under external pressure.
 """
@@ -44,6 +41,7 @@ from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 import warp as wp
 from _dynamics_utils import (
     EPSILON_AR,
@@ -55,16 +53,13 @@ from _dynamics_utils import (
     virial_to_stress,
 )
 
-from nvalchemiops.dynamics.optimizers import fire2_step
 from nvalchemiops.dynamics.utils import (
     align_cell,
     compute_cell_volume,
-    pack_forces_with_cell,
-    pack_positions_with_cell,
     stress_to_cell_force,
-    unpack_positions_with_cell,
     wrap_positions_to_cell,
 )
+from nvalchemiops.torch import fire2_step_coord_cell
 
 # LJ cutoff for argon
 CUTOFF = 2.5 * SIGMA_AR  # ~8.5 Å
@@ -130,44 +125,37 @@ wp.synchronize()
 print(f"Aligned cell:\n{cell.numpy()[0]}")
 
 # %%
-# Step 2: Pack Extended Arrays
-# ----------------------------
+# Step 2: Create Optimizer Tensors
+# --------------------------------
 
-print("\n--- Step 2: Pack into extended arrays ---")
+print("\n--- Step 2: Create optimizer tensors ---")
 
-# Pack positions into extended arrays (atoms + 2 cell DOFs)
-# FIRE2 does NOT use masses, so no pack_masses_with_cell needed.
-N_ext = num_atoms + 2
-ext_positions = wp.empty(N_ext, dtype=wp.vec3d, device=device)
-pack_positions_with_cell(positions, cell, extended=ext_positions, device=device)
-ext_velocities = wp.zeros(N_ext, dtype=wp.vec3d, device=device)
-ext_forces = wp.empty(N_ext, dtype=wp.vec3d, device=device)
+torch_device = torch.device(device)
+positions_t = wp.to_torch(positions)
+cell_t = wp.to_torch(cell).reshape(1, 3, 3)
+velocities_t = torch.zeros_like(positions_t)
+cell_velocities_t = torch.zeros_like(cell_t)
+batch_idx_t = torch.zeros(num_atoms, dtype=torch.int32, device=torch_device)
 
-print(
-    f"Extended array size: {ext_positions.shape[0]} ({num_atoms} atoms + 2 cell DOFs)"
-)
+print(f"Optimizer state: {num_atoms} atoms + 1 cell")
 
 # %%
 # Step 3: FIRE2 Parameters
 # ------------------------
 
 # Per-system state arrays (shape (1,) for single system)
-alpha = wp.array([0.09], dtype=wp.float64, device=device)
-dt = wp.array([0.005], dtype=wp.float64, device=device)
-nsteps_inc = wp.zeros(1, dtype=wp.int32, device=device)
+alpha = torch.tensor([0.09], dtype=torch.float64, device=torch_device)
+dt = torch.tensor([0.005], dtype=torch.float64, device=torch_device)
+nsteps_inc = torch.zeros(1, dtype=torch.int32, device=torch_device)
+cell_force_scale = 1.0
 
 # Scratch buffers (shape (1,) for single system)
-vf = wp.zeros(1, dtype=wp.float64, device=device)
-v_sumsq = wp.zeros(1, dtype=wp.float64, device=device)
-f_sumsq = wp.zeros(1, dtype=wp.float64, device=device)
-max_norm_buf = wp.zeros(1, dtype=wp.float64, device=device)
-
-# batch_idx for extended arrays (all zeros = single system)
-ext_batch_idx = wp.zeros(N_ext, dtype=wp.int32, device=device)
+vf = torch.zeros(1, dtype=torch.float64, device=torch_device)
+v_sumsq = torch.zeros(1, dtype=torch.float64, device=torch_device)
+f_sumsq = torch.zeros(1, dtype=torch.float64, device=torch_device)
+max_norm_buf = torch.zeros(1, dtype=torch.float64, device=torch_device)
 
 # Scratch arrays for unpack/stress/volume
-pos_scratch = wp.empty(num_atoms, dtype=wp.vec3d, device=device)
-cell_scratch = wp.empty(1, dtype=wp.mat33d, device=device)
 cell_force_scratch = wp.empty(1, dtype=wp.mat33d, device=device)
 volume_scratch = wp.empty(1, dtype=wp.float64, device=device)
 
@@ -176,7 +164,8 @@ volume_scratch = wp.empty(1, dtype=wp.float64, device=device)
 # -------------------------
 
 max_steps = 1000
-force_tol = 1e-4  # Convergence: max force/stress component
+force_tol = 1e-4  # Convergence: max atomic force component
+pressure_tol_gpa = 0.03
 log_interval = 100
 check_interval = 50
 
@@ -189,28 +178,23 @@ lattice_const_hist = []
 
 print("\n--- Step 4: Variable-cell FIRE2 optimization ---")
 print(f"Force tolerance: {force_tol:.1e}")
-print("FIRE2 defaults: delaystep=60, dtgrow=1.05, alpha0=0.09, maxstep=0.1")
+print(f"Stress tolerance: {pressure_tol_gpa:.2e} GPa")
+print(
+    "FIRE2 defaults: delaystep=60, dtgrow=1.05, alpha0=0.09, "
+    "maxstep=0.1, cell_force_scale=1.0"
+)
 print("=" * 90)
 print(
     f"{'Step':>6} {'Energy':>12} {'max|F|':>10} {'Volume':>10} "
-    f"{'ΔP (GPa)':>10} {'a (Å)':>10}"
+    f"{'|stress|':>10} {'a (Å)':>10}"
 )
 print("=" * 90)
 
 converged = False
 for step in range(max_steps):
-    # Unpack current state
-    pos_current, cell_current = unpack_positions_with_cell(
-        ext_positions,
-        positions=pos_scratch,
-        cell=cell_scratch,
-        num_atoms=num_atoms,
-        device=device,
-    )
-
     # Update MD system with current geometry
-    wp.copy(md_system.wp_positions, pos_current)
-    md_system.update_cell(cell_current)
+    wp.copy(md_system.wp_positions, positions)
+    md_system.update_cell(cell)
 
     # Wrap positions into cell (important for PBC consistency)
     wrap_positions_to_cell(
@@ -219,6 +203,7 @@ for step in range(max_steps):
         cells_inv=md_system.wp_cell_inv,
         device=device,
     )
+    wp.copy(positions, md_system.wp_positions)
 
     # Compute LJ forces and virial
     energies, forces, virial = md_system.compute_forces_virial()
@@ -237,25 +222,15 @@ for step in range(max_steps):
         device=device,
     )
 
-    # Pack forces into extended array
-    pack_forces_with_cell(
-        forces, cell_force_scratch, extended=ext_forces, device=device
-    )
-
-    # Re-pack positions (after wrapping)
-    pack_positions_with_cell(
-        md_system.wp_positions,
-        md_system.wp_cell,
-        extended=ext_positions,
-        device=device,
-    )
-
-    # FIRE2 step on extended arrays
-    fire2_step(
-        positions=ext_positions,
-        velocities=ext_velocities,
-        forces=ext_forces,
-        batch_idx=ext_batch_idx,
+    # Coupled FIRE2 step on coordinates and cell.
+    fire2_step_coord_cell(
+        positions=positions_t,
+        velocities=velocities_t,
+        forces=wp.to_torch(forces),
+        cell=cell_t,
+        cell_velocities=cell_velocities_t,
+        cell_force=wp.to_torch(cell_force_scratch).reshape(1, 3, 3),
+        batch_idx=batch_idx_t,
         alpha=alpha,
         dt=dt,
         nsteps_inc=nsteps_inc,
@@ -263,22 +238,22 @@ for step in range(max_steps):
         v_sumsq=v_sumsq,
         f_sumsq=f_sumsq,
         max_norm=max_norm_buf,
+        cell_force_scale=cell_force_scale,
     )
 
     # Check convergence and log only at intervals
     if step % check_interval == 0 or step == max_steps - 1:
         wp.synchronize()
-        ext_forces_np = ext_forces.numpy()
-        max_force = np.max(np.abs(ext_forces_np))
+        force_max = np.max(np.abs(forces.numpy()))
+        max_force = force_max
 
         total_energy = float(energies.numpy().sum())
         compute_cell_volume(md_system.wp_cell, volumes=volume_scratch, device=device)
         volume = float(volume_scratch.numpy()[0])
 
-        # Compute deviation from target pressure (trace of stress / 3)
         stress_np = stress.numpy()[0]
-        stress_trace = (stress_np[0, 0] + stress_np[1, 1] + stress_np[2, 2]) / 3
-        pressure_deviation_gpa = -pressure_ev_per_a3_to_gpa(stress_trace)
+        stress_gpa = pressure_ev_per_a3_to_gpa(0.5 * (stress_np + stress_np.T))
+        stress_residual_gpa = np.linalg.svd(stress_gpa, compute_uv=False).max()
 
         # Effective lattice constant (cube root of volume per atom * 4 for FCC)
         lattice_const = (volume / num_atoms * 4) ** (1 / 3)
@@ -286,17 +261,20 @@ for step in range(max_steps):
         energy_hist.append(total_energy)
         max_force_hist.append(max_force)
         volume_hist.append(volume)
-        pressure_hist.append(pressure_deviation_gpa)
+        pressure_hist.append(stress_residual_gpa)
         lattice_const_hist.append(lattice_const)
 
         if step % log_interval == 0 or step == max_steps - 1:
             print(
                 f"{step:>6d} {total_energy:>12.6f} {max_force:>10.2e} {volume:>10.2f} "
-                f"{pressure_deviation_gpa:>10.4f} {lattice_const:>10.4f}"
+                f"{stress_residual_gpa:>10.4f} {lattice_const:>10.4f}"
             )
 
-        if max_force < force_tol:
-            print(f"\nConverged at step {step} (max|F| = {max_force:.2e})")
+        if max_force < force_tol and stress_residual_gpa < pressure_tol_gpa:
+            print(
+                f"\nConverged at step {step} "
+                f"(max|F| = {max_force:.2e}, |stress| = {stress_residual_gpa:.2e} GPa)"
+            )
             converged = True
             break
 
@@ -305,13 +283,8 @@ for step in range(max_steps):
 # -------------
 
 wp.synchronize()
-final_pos, final_cell = unpack_positions_with_cell(
-    ext_positions,
-    positions=pos_scratch,
-    cell=cell_scratch,
-    num_atoms=num_atoms,
-    device=device,
-)
+final_pos = positions
+final_cell = cell
 
 wp.synchronize()
 final_cell_np = final_cell.numpy()[0]

@@ -772,6 +772,181 @@ def _stress_to_cell_force_kernel(
         cell_force[sys] = Fc
 
 
+@wp.kernel(enable_backward=False)
+def _fire2_coord_cell_max_displacement_kernel(
+    positions: wp.array(dtype=Any),
+    velocities: wp.array(dtype=Any),
+    cells: wp.array(dtype=Any),
+    cell_velocities: wp.array(dtype=Any),
+    dt: wp.array(dtype=Any),
+    vf: wp.array(dtype=Any),
+    ext_batch_idx: wp.array(dtype=wp.int32),
+    ext_atom_ptr: wp.array(dtype=wp.int32),
+    max_norm: wp.array(dtype=Any),
+):
+    """Reduce the coupled FIRE2 variable-cell atomic displacement norm.
+
+    The raw trial update is:
+
+    ``cell_raw = H + factor * dt * Hdot``
+    ``r_raw = (cell_raw @ H^-1) @ r + factor * dt * v``
+
+    where ``factor`` is ``1`` downhill and ``-0.5`` uphill.  The per-system
+    maximum is computed from the actual Cartesian atomic displacement
+    ``r_raw - r``.
+
+    Thread launch
+    -------------
+    One thread per extended DOF. Atomic entries contribute to ``max_norm``;
+    cell DOF entries return without work.
+
+    Modifies
+    --------
+    max_norm
+        Per-system maximum raw atomic displacement norm.
+    """
+    ext_idx = wp.tid()
+    sys = ext_batch_idx[ext_idx]
+    cell_dof_start = ext_atom_ptr[sys + 1] - wp.int32(2)
+    if ext_idx >= cell_dof_start:
+        return
+
+    atom_idx = ext_idx - wp.int32(2) * sys
+    local_dt = dt[sys]
+    zero = type(local_dt)(0.0)
+    one = type(local_dt)(1.0)
+    uphill = vf[sys] <= zero
+    factor = type(local_dt)(-0.5) if uphill else one
+
+    cell_old = cells[sys]
+    cell_old_inv = wp.inverse(cell_old)
+    cell_step_raw = factor * local_dt * cell_velocities[sys]
+    cell_raw = cell_old + cell_step_raw
+    transform = cell_raw * cell_old_inv
+
+    position_old = positions[atom_idx]
+    raw_displacement = (
+        wp.mul(transform, position_old)
+        + factor * local_dt * velocities[atom_idx]
+        - position_old
+    )
+    wp.atomic_max(max_norm, sys, wp.length(raw_displacement))
+
+
+@wp.kernel(enable_backward=False)
+def _fire2_coord_cell_apply_positions_kernel(
+    positions: wp.array(dtype=Any),
+    velocities: wp.array(dtype=Any),
+    cells: wp.array(dtype=Any),
+    cell_velocities: wp.array(dtype=Any),
+    dt: wp.array(dtype=Any),
+    vf: wp.array(dtype=Any),
+    ext_batch_idx: wp.array(dtype=wp.int32),
+    ext_atom_ptr: wp.array(dtype=wp.int32),
+    max_norm: wp.array(dtype=Any),
+    maxstep: Any,
+):
+    """Apply coupled FIRE2 atomic coordinate updates.
+
+    Thread launch
+    -------------
+    One thread per extended DOF. Atomic entries update one atom; cell DOF
+    entries return without work.
+
+    Modifies
+    --------
+    positions
+        Atomic positions after affine cell remapping and coordinate motion.
+    velocities
+        Atomic velocities, zeroed for uphill systems.
+    """
+    ext_idx = wp.tid()
+    sys = ext_batch_idx[ext_idx]
+    cell_dof_start = ext_atom_ptr[sys + 1] - wp.int32(2)
+    if ext_idx >= cell_dof_start:
+        return
+
+    atom_idx = ext_idx - wp.int32(2) * sys
+    local_dt = dt[sys]
+    zero = type(local_dt)(0.0)
+    one = type(local_dt)(1.0)
+    uphill = vf[sys] <= zero
+    factor = type(local_dt)(-0.5) if uphill else one
+
+    cell_old = cells[sys]
+    cell_old_inv = wp.inverse(cell_old)
+    cell_step_raw = factor * local_dt * cell_velocities[sys]
+    cell_raw = cell_old + cell_step_raw
+    transform = cell_raw * cell_old_inv
+
+    inv = one
+    mn = max_norm[sys]
+    if mn > zero:
+        inv = wp.min(one, maxstep / mn)
+
+    position_old = positions[atom_idx]
+    raw_displacement = (
+        wp.mul(transform, position_old)
+        + factor * local_dt * velocities[atom_idx]
+        - position_old
+    )
+    positions[atom_idx] = position_old + inv * raw_displacement
+    if uphill:
+        velocities[atom_idx] = type(velocities[atom_idx])()
+
+
+@wp.kernel(enable_backward=False)
+def _fire2_coord_cell_apply_cell_kernel(
+    cells: wp.array(dtype=Any),
+    cell_velocities: wp.array(dtype=Any),
+    dt: wp.array(dtype=Any),
+    vf: wp.array(dtype=Any),
+    ext_batch_idx: wp.array(dtype=wp.int32),
+    ext_atom_ptr: wp.array(dtype=wp.int32),
+    max_norm: wp.array(dtype=Any),
+    maxstep: Any,
+):
+    """Apply coupled FIRE2 cell and timestep updates.
+
+    Thread launch
+    -------------
+    One thread per extended DOF. Only the first cell DOF entry for each system
+    updates that system's cell state.
+
+    Modifies
+    --------
+    cells
+        Cell matrices after the clamped FIRE2 cell step.
+    cell_velocities
+        Cell velocities, zeroed for uphill systems.
+    dt
+        Per-system timestep scaled by the same clamp factor as the coordinates.
+    """
+    ext_idx = wp.tid()
+    sys = ext_batch_idx[ext_idx]
+    cell_dof_start = ext_atom_ptr[sys + 1] - wp.int32(2)
+    if ext_idx != cell_dof_start:
+        return
+
+    local_dt = dt[sys]
+    zero = type(local_dt)(0.0)
+    one = type(local_dt)(1.0)
+    uphill = vf[sys] <= zero
+    factor = type(local_dt)(-0.5) if uphill else one
+
+    inv = one
+    mn = max_norm[sys]
+    if mn > zero:
+        inv = wp.min(one, maxstep / mn)
+
+    cell_old = cells[sys]
+    cell_step_raw = factor * local_dt * cell_velocities[sys]
+    cells[sys] = cell_old + inv * cell_step_raw
+    if uphill:
+        cell_velocities[sys] = type(cell_velocities[sys])()
+    dt[sys] = local_dt * inv
+
+
 # ==============================================================================
 # Kernel Overloads for Explicit Typing
 # ==============================================================================
@@ -801,6 +976,9 @@ _pack_masses_batched_kernel_overload = {}
 
 # Stress to cell force kernel overloads
 _stress_to_cell_force_kernel_overload = {}
+_fire2_coord_cell_max_displacement_kernel_overload = {}
+_fire2_coord_cell_apply_positions_kernel_overload = {}
+_fire2_coord_cell_apply_cell_kernel_overload = {}
 
 for t, v, m in zip(_T, _V, _M):
     # Cell alignment kernels
@@ -877,6 +1055,48 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=t),
             wp.array(dtype=m),
             wp.bool,
+        ],
+    )
+    _fire2_coord_cell_max_displacement_kernel_overload[v] = wp.overload(
+        _fire2_coord_cell_max_displacement_kernel,
+        [
+            wp.array(dtype=v),
+            wp.array(dtype=v),
+            wp.array(dtype=m),
+            wp.array(dtype=m),
+            wp.array(dtype=t),
+            wp.array(dtype=t),
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=t),
+        ],
+    )
+    _fire2_coord_cell_apply_positions_kernel_overload[v] = wp.overload(
+        _fire2_coord_cell_apply_positions_kernel,
+        [
+            wp.array(dtype=v),
+            wp.array(dtype=v),
+            wp.array(dtype=m),
+            wp.array(dtype=m),
+            wp.array(dtype=t),
+            wp.array(dtype=t),
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=t),
+            t,
+        ],
+    )
+    _fire2_coord_cell_apply_cell_kernel_overload[m] = wp.overload(
+        _fire2_coord_cell_apply_cell_kernel,
+        [
+            wp.array(dtype=m),
+            wp.array(dtype=m),
+            wp.array(dtype=t),
+            wp.array(dtype=t),
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=t),
+            t,
         ],
     )
 
@@ -1568,3 +1788,81 @@ def stress_to_cell_force(
     )
 
     return cell_force
+
+
+def _apply_fire2_coord_cell_step(
+    positions: wp.array,
+    velocities: wp.array,
+    cell: wp.array,
+    cell_velocities: wp.array,
+    dt: wp.array,
+    vf: wp.array,
+    ext_batch_idx: wp.array,
+    ext_atom_ptr: wp.array,
+    max_norm: wp.array,
+    maxstep: float,
+    device: str = None,
+) -> None:
+    """Apply the coupled variable-cell FIRE2 update after velocity mixing.
+
+    This helper is intended for the high-level FIRE2 variable-cell adapter,
+    which performs the FIRE2 reduction and velocity-mixing phase on packed
+    atomic + cell DOFs and then applies the physically coupled position/cell
+    update on the unpacked tensors.
+    """
+    if device is None:
+        device = positions.device
+
+    num_ext = ext_batch_idx.shape[0]
+    vec_dtype = positions.dtype
+    mat_dtype = cell.dtype
+
+    max_norm.zero_()
+    wp.launch(
+        _fire2_coord_cell_max_displacement_kernel_overload[vec_dtype],
+        dim=num_ext,
+        inputs=[
+            positions,
+            velocities,
+            cell,
+            cell_velocities,
+            dt,
+            vf,
+            ext_batch_idx,
+            ext_atom_ptr,
+            max_norm,
+        ],
+        device=device,
+    )
+    wp.launch(
+        _fire2_coord_cell_apply_positions_kernel_overload[vec_dtype],
+        dim=num_ext,
+        inputs=[
+            positions,
+            velocities,
+            cell,
+            cell_velocities,
+            dt,
+            vf,
+            ext_batch_idx,
+            ext_atom_ptr,
+            max_norm,
+            maxstep,
+        ],
+        device=device,
+    )
+    wp.launch(
+        _fire2_coord_cell_apply_cell_kernel_overload[mat_dtype],
+        dim=num_ext,
+        inputs=[
+            cell,
+            cell_velocities,
+            dt,
+            vf,
+            ext_batch_idx,
+            ext_atom_ptr,
+            max_norm,
+            maxstep,
+        ],
+        device=device,
+    )
