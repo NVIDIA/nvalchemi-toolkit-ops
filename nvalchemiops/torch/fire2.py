@@ -181,6 +181,9 @@ def fire2_step_coord(
     f_sumsq = _alloc_or_zero(f_sumsq, M, dtype, device)
     max_norm = _alloc_or_zero(max_norm, M, dtype, device)
 
+    if positions.shape[0] == 0:
+        return
+
     # Delegate to the Warp-level fire2_step
     fire2_step(
         wp.from_torch(positions.detach(), dtype=vec_type),
@@ -308,7 +311,9 @@ def fire2_step_coord_cell(
         See *Notes* for how to compute.
     vf, v_sumsq, f_sumsq, max_norm : Tensor, shape (M,), optional
         Scratch buffers for reductions.  Allocated and zeroed if ``None``;
-        zeroed in-place if provided.
+        zeroed in-place if provided. In this coupled cell adapter,
+        ``max_norm`` is the final physical Cartesian atomic displacement norm,
+        recomputed after cell motion is coupled back to the atoms.
     delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep
         FIRE2 hyperparameters.
     cell_force_scale : float, default=1.0
@@ -449,6 +454,12 @@ def fire2_step_coord_cell(
             stacklevel=2,
         )
 
+    if N == 0:
+        for buf in (vf, v_sumsq, f_sumsq, max_norm):
+            if buf is not None:
+                buf.zero_()
+        return
+
     # --- Allocate extended working arrays if not provided ---
     if ext_velocities is None:
         ext_velocities = torch.empty(N_ext, 3, dtype=dtype, device=device)
@@ -484,6 +495,8 @@ def fire2_step_coord_cell(
     wp_atom_ptr = wp.from_torch(atom_ptr, dtype=wp.int32)
 
     atom_counts = atom_ptr[1:] - atom_ptr[:-1]
+    if torch.any(atom_counts <= 0).item():
+        raise ValueError("fire2_step_coord_cell requires at least one atom per system")
     cell_force_divisor = atom_counts.to(dtype=dtype).reshape(M, 1, 1) * cell_force_scale
     cell_force_work = (cell_force.detach() / cell_force_divisor).contiguous()
     wp_cell_force = wp.from_torch(cell_force_work, dtype=mat_type)
@@ -559,6 +572,7 @@ def fire2_step_coord_cell(
         alpha0=alpha0,
         tmax=tmax,
         tmin=tmin,
+        compute_max_norm=False,
     )
 
     # --- Unpack mixed velocities back to atomic and cell tensors ---
@@ -670,6 +684,9 @@ def fire2_step_extended(
     v_sumsq = _alloc_or_zero(v_sumsq, M, dtype, device)
     f_sumsq = _alloc_or_zero(f_sumsq, M, dtype, device)
     max_norm = _alloc_or_zero(max_norm, M, dtype, device)
+
+    if ext_positions.shape[0] == 0:
+        return
 
     fire2_step(
         wp.from_torch(ext_positions.detach(), dtype=vec_type),

@@ -437,6 +437,7 @@ fire2_step_coord_cell(
 
 - Uses `batch_idx` for batched operations (required)
 - `fire2_update` performs FIRE2 reduction, adaptive parameter update, and velocity mixing without applying positions
+- `fire2_update(compute_max_norm=False)` skips extended-DOF max-norm reduction for custom final apply phases that recompute their own physical displacement norm
 - Applies coupled affine cell/coordinate updates for variable-cell optimization through `fire2_step_coord_cell`
 - Normalizes stress-derived cell forces by the number of atoms in each system; `cell_force_scale=1.0` is the default extra multiplier
 - Improved convergence compared to original FIRE

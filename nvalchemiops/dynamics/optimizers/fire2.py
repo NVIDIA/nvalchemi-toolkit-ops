@@ -257,6 +257,7 @@ def _fire2_fused_mix_maxnorm_kernel(
     alpha: wp.array(dtype=Any),
     nsteps_inc: wp.array(dtype=wp.int32),
     max_norm: wp.array(dtype=Any),
+    compute_max_norm: wp.bool,
     N: wp.int32,
     elems_per_thread: wp.int32,
     delaystep: wp.int32,
@@ -316,6 +317,9 @@ def _fire2_fused_mix_maxnorm_kernel(
         Consecutive positive-power step counter. Modified by first atom per segment.
     max_norm : wp.array, shape (M,), dtype float32/float64
         OUTPUT: Maximum step norm per segment. Zeroed internally before each use.
+    compute_max_norm : bool
+        If true, compute and write ``max_norm``. If false, skip the max-norm
+        reduction while still applying the FIRE2 velocity and state updates.
     N : int32
         Total number of atoms.
     elems_per_thread : int32
@@ -390,16 +394,19 @@ def _fire2_fused_mix_maxnorm_kernel(
     # --- Process first element: deferred halfstep + mix (algebraic combo) ---
     f_coeff = mix_a * dt_old + mix_b
     velocities[start] = mix_a * velocities[start] + f_coeff * forces[start]
-    if w_dec:
-        max_val = wp.length(type(_dt)(-0.5) * _dt * velocities[start])
-    else:
-        max_val = wp.length(_dt * velocities[start])
+    max_val = zero
+    if compute_max_norm:
+        if w_dec:
+            max_val = wp.length(type(_dt)(-0.5) * _dt * velocities[start])
+        else:
+            max_val = wp.length(_dt * velocities[start])
 
     for i in range(start + 1, end):
         s = batch_idx[i]
         if s != s_cur:
             # Flush max_norm for previous segment
-            wp.atomic_max(max_norm, s_cur, max_val)
+            if compute_max_norm:
+                wp.atomic_max(max_norm, s_cur, max_val)
             s_cur = s
 
             # --- Redundant param-update computation for new segment ---
@@ -438,13 +445,15 @@ def _fire2_fused_mix_maxnorm_kernel(
 
         # Deferred halfstep + mix (algebraic combo)
         velocities[i] = mix_a * velocities[i] + f_coeff * forces[i]
-        if w_dec:
-            norm = wp.length(type(_dt)(-0.5) * _dt * velocities[i])
-        else:
-            norm = wp.length(_dt * velocities[i])
-        max_val = wp.max(max_val, norm)
+        if compute_max_norm:
+            if w_dec:
+                norm = wp.length(type(_dt)(-0.5) * _dt * velocities[i])
+            else:
+                norm = wp.length(_dt * velocities[i])
+            max_val = wp.max(max_val, norm)
 
-    wp.atomic_max(max_norm, s_cur, max_val)
+    if compute_max_norm:
+        wp.atomic_max(max_norm, s_cur, max_val)
 
 
 # =============================================================================
@@ -590,6 +599,7 @@ for _t, _v in zip(_T, _V):
             wp.array(dtype=_t),  # alpha
             wp.array(dtype=wp.int32),  # nsteps_inc
             wp.array(dtype=_t),  # max_norm
+            wp.bool,  # compute_max_norm
             wp.int32,  # N
             wp.int32,  # elems_per_thread
             wp.int32,  # delaystep
@@ -659,7 +669,7 @@ def fire2_step(
     forces : wp.array, shape (N,), dtype vec3f/vec3d
         Forces on atoms (read-only).
     batch_idx : wp.array, shape (N,), dtype int32
-        Sorted system index per atom (required).
+        Sorted system index per atom. Required for non-empty inputs.
     alpha : wp.array, shape (M,), dtype float*
         FIRE2 mixing parameter.
     dt : wp.array, shape (M,), dtype float*
@@ -692,18 +702,25 @@ def fire2_step(
     ...            vf, v_sumsq, f_sumsq, max_norm)
     """
     N = positions.shape[0]
-    if batch_idx is None:
-        raise ValueError("batch_idx is required for fire2_step")
     if velocities.shape[0] != N:
         raise ValueError(
             f"velocities length {velocities.shape[0]} != positions length {N}"
         )
     if forces.shape[0] != N:
         raise ValueError(f"forces length {forces.shape[0]} != positions length {N}")
-    if batch_idx.shape[0] != N:
+    if batch_idx is not None and batch_idx.shape[0] != N:
         raise ValueError(
             f"batch_idx length {batch_idx.shape[0]} != positions length {N}"
         )
+    if N == 0:
+        vf.zero_()
+        v_sumsq.zero_()
+        f_sumsq.zero_()
+        max_norm.zero_()
+        return
+    if batch_idx is None:
+        raise ValueError("batch_idx is required for fire2_step")
+
     vec_dtype = positions.dtype
     device = positions.device
 
@@ -763,13 +780,14 @@ def fire2_update(
     alpha0: float = 0.09,
     tmax: float = 0.08,
     tmin: float = 0.005,
+    compute_max_norm: bool = True,
 ) -> None:
     """Run FIRE2 reduction, parameter update, and velocity mixing only.
 
     This low-level helper updates ``velocities``, ``alpha``, ``dt``, and
     ``nsteps_inc`` in-place, and refreshes ``vf``, ``v_sumsq``, ``f_sumsq``,
-    and ``max_norm``. It deliberately does not apply positions, clamp the final
-    displacement, or zero velocities on uphill systems.
+    and, by default, ``max_norm``. It deliberately does not apply positions,
+    clamp the final displacement, or zero velocities on uphill systems.
 
     Parameters
     ----------
@@ -778,7 +796,8 @@ def fire2_update(
     forces : wp.array, shape (N,), dtype vec3f/vec3d
         Generalized forces. Read-only.
     batch_idx : wp.array, shape (N,), dtype int32
-        Sorted system index for each generalized degree of freedom.
+        Sorted system index for each generalized degree of freedom. Required
+        for non-empty inputs.
     alpha : wp.array, shape (M,), dtype float32/float64
         FIRE2 mixing parameter, modified in-place.
     dt : wp.array, shape (M,), dtype float32/float64
@@ -794,8 +813,9 @@ def fire2_update(
     max_norm : wp.array, shape (M,), dtype float32/float64
         Scratch buffer for the maximum raw final-step norm after mixing, using
         ``dt * velocity`` downhill and ``-0.5 * dt * velocity`` uphill. Zeroed
-        internally. Custom final apply phases may recompute this buffer for
-        their own displacement definition.
+        internally when ``compute_max_norm`` is true. Custom final apply phases
+        may pass ``compute_max_norm=False`` and recompute this buffer for their
+        own displacement definition.
     delaystep : int
         Minimum positive-power steps before timestep growth.
     dtgrow, dtshrink : float
@@ -806,6 +826,10 @@ def fire2_update(
         Alpha reset value for uphill systems.
     tmax, tmin : float
         Timestep bounds.
+    compute_max_norm : bool, default True
+        Whether to compute the extended-DOF maximum raw final-step norm into
+        ``max_norm``. Set to false when a custom final apply phase will
+        overwrite ``max_norm`` with a different physical displacement norm.
 
     Notes
     -----
@@ -818,12 +842,9 @@ def fire2_update(
     """
     N = velocities.shape[0]
 
-    if batch_idx is None:
-        raise ValueError("batch_idx is required for FIRE2 updates")
-
     if forces.shape[0] != N:
         raise ValueError(f"forces length {forces.shape[0]} != velocities length {N}")
-    if batch_idx.shape[0] != N:
+    if batch_idx is not None and batch_idx.shape[0] != N:
         raise ValueError(
             f"batch_idx length {batch_idx.shape[0]} != velocities length {N}"
         )
@@ -840,7 +861,13 @@ def fire2_update(
     vf.zero_()
     v_sumsq.zero_()
     f_sumsq.zero_()
-    max_norm.zero_()
+    if compute_max_norm or N == 0:
+        max_norm.zero_()
+    if N == 0:
+        return
+    if batch_idx is None:
+        raise ValueError("batch_idx is required for FIRE2 updates")
+
     sm = max(device.sm_count, 1)
 
     ept1 = compute_ept(N, sm, True)
@@ -868,6 +895,7 @@ def fire2_update(
             alpha,
             nsteps_inc,
             max_norm,
+            compute_max_norm,
             N,
             ept2,
             delaystep,
