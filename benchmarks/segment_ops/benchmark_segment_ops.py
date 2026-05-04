@@ -50,6 +50,22 @@ from nvalchemiops.segment_ops import (
     segmented_mul,
     segmented_sum,
 )
+from nvalchemiops.segment_ops_backward import (
+    _launch_segmented_dot_backward,
+    _launch_segmented_dot_double_backward,
+    _launch_segmented_matvec_backward,
+    _launch_segmented_matvec_double_backward,
+    _launch_segmented_max_norm_backward,
+    _launch_segmented_max_norm_double_backward,
+    _launch_segmented_max_norm_forward_precompute,
+    _launch_segmented_mul_backward,
+    _launch_segmented_mul_double_backward,
+    _launch_segmented_rms_norm_backward,
+    _launch_segmented_rms_norm_double_backward,
+    _launch_segmented_rms_norm_forward_precompute,
+    _launch_segmented_sum_backward,
+    _launch_segmented_sum_double_backward,
+)
 
 # ---------------------------------------------------------------------------
 # Config helpers
@@ -452,6 +468,256 @@ def bench_segmented_matvec(N, M, device, torch_device, rng, warmup, runs, **_kwa
 
 
 # ---------------------------------------------------------------------------
+# Backward benchmark runners (PR 1)
+# ---------------------------------------------------------------------------
+
+
+def bench_segmented_sum_backward(N, M, device, torch_device, rng, warmup, runs, **_kwargs):
+    """segmented_sum: forward, 1st-order backward, double-backward timings."""
+    results = []
+    for dtype_key in ["float32", "vec3f"]:
+        wp_dt, torch_dt, np_dt, is_vec, label = _SUM_DOT_DTYPE_VARIANTS[dtype_key]
+        idx_np = _make_segments(N, M, rng)
+        idx = wp.array(idx_np, device=device)
+        if is_vec:
+            x_np = rng.standard_normal((N, 3)).astype(np_dt)
+            x = _wp_vec_array(x_np, wp_dt, device)
+            out = wp.zeros(M, dtype=wp_dt, device=device)
+            g_out = wp.zeros(M, dtype=wp_dt, device=device)
+            grad_x = wp.zeros(N, dtype=wp_dt, device=device)
+            gg_x = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_g_out = wp.zeros(M, dtype=wp_dt, device=device)
+        else:
+            x_np = rng.standard_normal(N).astype(np_dt)
+            x = wp.array(x_np, dtype=wp_dt, device=device)
+            out = wp.zeros(M, dtype=wp_dt, device=device)
+            g_out = wp.zeros(M, dtype=wp_dt, device=device)
+            grad_x = wp.zeros(N, dtype=wp_dt, device=device)
+            gg_x = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_g_out = wp.zeros(M, dtype=wp_dt, device=device)
+
+        ms_fwd = _bench_cuda(_noop, lambda: segmented_sum(x, idx, out), torch_device, warmup, runs)
+        ms_bwd = _bench_cuda(_noop, lambda: _launch_segmented_sum_backward(g_out, idx, grad_x), torch_device, warmup, runs)
+        ms_dbl = _bench_cuda(_noop, lambda: _launch_segmented_sum_double_backward(gg_x, idx, M, grad_g_out), torch_device, warmup, runs)
+
+        L = N / max(M, 1)
+        print(f"  {label:<10}  fwd={ms_fwd:.4f}ms  bwd={ms_bwd:.4f}ms  dbl={ms_dbl:.4f}ms")
+        results += [
+            ("segmented_sum_backward", label, N, M, ms_fwd, ms_bwd),
+            ("segmented_sum_double_backward", label, N, M, ms_fwd, ms_dbl),
+        ]
+    return results
+
+
+def bench_segmented_dot_backward(N, M, device, torch_device, rng, warmup, runs, **_kwargs):
+    """segmented_dot: forward, backward, double-backward timings."""
+    results = []
+    for dtype_key in ["float32", "vec3f"]:
+        wp_dt, torch_dt, np_dt, is_vec, label = _SUM_DOT_DTYPE_VARIANTS[dtype_key]
+        scalar_wp = wp.float32 if np_dt == np.float32 else wp.float64
+        idx_np = _make_segments(N, M, rng)
+        idx = wp.array(idx_np, device=device)
+        if is_vec:
+            x = _wp_vec_array(rng.standard_normal((N, 3)).astype(np_dt), wp_dt, device)
+            y = _wp_vec_array(rng.standard_normal((N, 3)).astype(np_dt), wp_dt, device)
+            g_out = wp.zeros(M, dtype=scalar_wp, device=device)
+            grad_x = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_y = wp.zeros(N, dtype=wp_dt, device=device)
+            gg_gx = wp.zeros(N, dtype=wp_dt, device=device)
+            gg_gy = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_g_out = wp.zeros(M, dtype=scalar_wp, device=device)
+            grad_x_ex = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_y_ex = wp.zeros(N, dtype=wp_dt, device=device)
+            out = wp.zeros(M, dtype=scalar_wp, device=device)
+        else:
+            x = wp.array(rng.standard_normal(N).astype(np_dt), dtype=wp_dt, device=device)
+            y = wp.array(rng.standard_normal(N).astype(np_dt), dtype=wp_dt, device=device)
+            g_out = wp.zeros(M, dtype=wp_dt, device=device)
+            grad_x = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_y = wp.zeros(N, dtype=wp_dt, device=device)
+            gg_gx = wp.zeros(N, dtype=wp_dt, device=device)
+            gg_gy = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_g_out = wp.zeros(M, dtype=wp_dt, device=device)
+            grad_x_ex = wp.zeros(N, dtype=wp_dt, device=device)
+            grad_y_ex = wp.zeros(N, dtype=wp_dt, device=device)
+            out = wp.zeros(M, dtype=wp_dt, device=device)
+
+        ms_fwd = _bench_cuda(_noop, lambda: segmented_dot(x, y, idx, out), torch_device, warmup, runs)
+        ms_bwd = _bench_cuda(_noop,
+            lambda: _launch_segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y),
+            torch_device, warmup, runs)
+        ms_dbl = _bench_cuda(_noop,
+            lambda: _launch_segmented_dot_double_backward(gg_gx, gg_gy, g_out, x, y, idx, M, grad_g_out, grad_x_ex, grad_y_ex),
+            torch_device, warmup, runs)
+
+        print(f"  {label:<10}  fwd={ms_fwd:.4f}ms  bwd={ms_bwd:.4f}ms  dbl={ms_dbl:.4f}ms")
+        results += [
+            ("segmented_dot_backward", label, N, M, ms_fwd, ms_bwd),
+            ("segmented_dot_double_backward", label, N, M, ms_fwd, ms_dbl),
+        ]
+    return results
+
+
+def bench_segmented_mul_backward(N, M, device, torch_device, rng, warmup, runs, **_kwargs):
+    """segmented_mul (f32, vec3f*scalar): forward, backward, double-backward."""
+    results = []
+    for label, wp_xt, wp_yt, np_dt, is_vec in [
+        ("f32", wp.float32, wp.float32, np.float32, False),
+        ("vec3f_scalar", wp.vec3f, wp.float32, np.float32, True),
+    ]:
+        idx_np = _make_segments(N, M, rng)
+        idx = wp.array(idx_np, device=device)
+        if is_vec:
+            x = _wp_vec_array(rng.standard_normal((N, 3)).astype(np_dt), wp_xt, device)
+            y = wp.array(rng.standard_normal(M).astype(np_dt), dtype=wp_yt, device=device)
+            out = wp.zeros(N, dtype=wp_xt, device=device)
+            g_out = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_x = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_y = wp.zeros(M, dtype=wp_yt, device=device)
+            gg_gx = wp.zeros(N, dtype=wp_xt, device=device)
+            gg_gy = wp.zeros(M, dtype=wp_yt, device=device)
+            grad_g_out = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_x_ex = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_y_ex = wp.zeros(M, dtype=wp_yt, device=device)
+        else:
+            x = wp.array(rng.standard_normal(N).astype(np_dt), dtype=wp_xt, device=device)
+            y = wp.array(rng.standard_normal(M).astype(np_dt), dtype=wp_yt, device=device)
+            out = wp.zeros(N, dtype=wp_xt, device=device)
+            g_out = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_x = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_y = wp.zeros(M, dtype=wp_yt, device=device)
+            gg_gx = wp.zeros(N, dtype=wp_xt, device=device)
+            gg_gy = wp.zeros(M, dtype=wp_yt, device=device)
+            grad_g_out = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_x_ex = wp.zeros(N, dtype=wp_xt, device=device)
+            grad_y_ex = wp.zeros(M, dtype=wp_yt, device=device)
+
+        ms_fwd = _bench_cuda(_noop, lambda: segmented_mul(x, y, idx, out), torch_device, warmup, runs)
+        ms_bwd = _bench_cuda(_noop,
+            lambda: _launch_segmented_mul_backward(g_out, x, y, idx, M, grad_x, grad_y),
+            torch_device, warmup, runs)
+        ms_dbl = _bench_cuda(_noop,
+            lambda: _launch_segmented_mul_double_backward(gg_gx, gg_gy, g_out, x, y, idx, grad_g_out, grad_x_ex, grad_y_ex),
+            torch_device, warmup, runs)
+
+        print(f"  {label:<16}  fwd={ms_fwd:.4f}ms  bwd={ms_bwd:.4f}ms  dbl={ms_dbl:.4f}ms")
+        results += [
+            ("segmented_mul_backward", label, N, M, ms_fwd, ms_bwd),
+            ("segmented_mul_double_backward", label, N, M, ms_fwd, ms_dbl),
+        ]
+    return results
+
+
+def bench_segmented_matvec_backward(N, M, device, torch_device, rng, warmup, runs, **_kwargs):
+    """segmented_matvec: forward, backward, double-backward + precompute ablation."""
+    idx_np = _make_segments(N, M, rng)
+    v_np = rng.standard_normal((N, 3)).astype(np.float32)
+    m_np = rng.standard_normal((M, 3, 3)).astype(np.float32)
+
+    v = _wp_vec_array(v_np, wp.vec3f, device)
+    m = wp.array([tuple(tuple(r) for r in mat) for mat in m_np], dtype=wp.mat33f, device=device)
+    idx = wp.array(idx_np, device=device)
+    out = wp.zeros(N, dtype=wp.vec3f, device=device)
+    g_out = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_v = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_M = wp.zeros(M, dtype=wp.mat33f, device=device)
+    gg_gv = wp.zeros(N, dtype=wp.vec3f, device=device)
+    gg_gM = wp.zeros(M, dtype=wp.mat33f, device=device)
+    grad_g_out = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_v_ex = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_M_ex = wp.zeros(M, dtype=wp.mat33f, device=device)
+
+    ms_fwd = _bench_cuda(_noop, lambda: segmented_matvec(v, m, idx, out), torch_device, warmup, runs)
+    ms_bwd = _bench_cuda(_noop,
+        lambda: _launch_segmented_matvec_backward(g_out, v, m, idx, grad_v, grad_M),
+        torch_device, warmup, runs)
+    ms_dbl = _bench_cuda(_noop,
+        lambda: _launch_segmented_matvec_double_backward(gg_gv, gg_gM, g_out, v, m, idx, grad_g_out, grad_v_ex, grad_M_ex),
+        torch_device, warmup, runs)
+
+    print(f"  mat33f      fwd={ms_fwd:.4f}ms  bwd={ms_bwd:.4f}ms  dbl={ms_dbl:.4f}ms")
+    return [
+        ("segmented_matvec_backward", "mat33f", N, M, ms_fwd, ms_bwd),
+        ("segmented_matvec_double_backward", "mat33f", N, M, ms_fwd, ms_dbl),
+    ]
+
+
+def bench_segmented_max_norm_backward(N, M, device, torch_device, rng, warmup, runs, **_kwargs):
+    """segmented_max_norm: forward, precompute forward, backward, double-backward."""
+    x_np = rng.standard_normal((N, 3)).astype(np.float32)
+    idx_np = _make_segments(N, M, rng)
+
+    x = _wp_vec_array(x_np, wp.vec3f, device)
+    idx = wp.array(idx_np, device=device)
+    out = wp.zeros(M, dtype=wp.float32, device=device)
+    argmax_idx = wp.zeros(M, dtype=wp.int32, device=device)
+    g_out = wp.zeros(M, dtype=wp.float32, device=device)
+    grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
+    gg_gx = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_x_ex = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_g_out = wp.zeros(M, dtype=wp.float32, device=device)
+
+    ms_fwd = _bench_cuda(_noop, lambda: segmented_max_norm(x, idx, out), torch_device, warmup, runs)
+    ms_precompute = _bench_cuda(_noop,
+        lambda: _launch_segmented_max_norm_forward_precompute(x, idx, out, argmax_idx),
+        torch_device, warmup, runs)
+    # ensure argmax_idx is populated before timing backward
+    _launch_segmented_max_norm_forward_precompute(x, idx, out, argmax_idx)
+    ms_bwd = _bench_cuda(_noop,
+        lambda: _launch_segmented_max_norm_backward(g_out, x, argmax_idx, idx, grad_x),
+        torch_device, warmup, runs)
+    ms_dbl = _bench_cuda(_noop,
+        lambda: _launch_segmented_max_norm_double_backward(gg_gx, g_out, x, argmax_idx, idx, grad_x_ex, grad_g_out),
+        torch_device, warmup, runs)
+
+    print(f"  vec3f       fwd={ms_fwd:.4f}ms  precompute={ms_precompute:.4f}ms  bwd={ms_bwd:.4f}ms  dbl={ms_dbl:.4f}ms")
+    return [
+        ("segmented_max_norm_fwd_precompute", "vec3f", N, M, ms_fwd, ms_precompute),
+        ("segmented_max_norm_backward", "vec3f", N, M, ms_fwd, ms_bwd),
+        ("segmented_max_norm_double_backward", "vec3f", N, M, ms_fwd, ms_dbl),
+    ]
+
+
+def bench_segmented_rms_norm_backward(N, M, device, torch_device, rng, warmup, runs, **_kwargs):
+    """segmented_rms_norm: precompute forward, backward, double-backward + ablation."""
+    from nvalchemiops.segment_ops import segmented_count, segmented_rms_norm
+    x_np = rng.standard_normal((N, 3)).astype(np.float32)
+    idx_np = _make_segments(N, M, rng)
+    x = _wp_vec_array(x_np, wp.vec3f, device)
+    idx = wp.array(idx_np, device=device)
+    out = wp.zeros(M, dtype=wp.float32, device=device)
+    sum_sq = wp.zeros(M, dtype=wp.float32, device=device)
+    counts = wp.zeros(M, dtype=wp.int32, device=device)
+    inv_norm = wp.zeros(M, dtype=wp.float32, device=device)
+    g_out = wp.zeros(M, dtype=wp.float32, device=device)
+    grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
+    gg_x = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_x_ex = wp.zeros(N, dtype=wp.vec3f, device=device)
+    grad_g_out_ex = wp.zeros(M, dtype=wp.float32, device=device)
+
+    ms_fwd = _bench_cuda(_noop,
+        lambda: segmented_rms_norm(x, idx, sum_sq, counts, out),
+        torch_device, warmup, runs)
+    ms_precompute = _bench_cuda(_noop,
+        lambda: _launch_segmented_rms_norm_forward_precompute(x, idx, sum_sq, counts, out, inv_norm),
+        torch_device, warmup, runs)
+    _launch_segmented_rms_norm_forward_precompute(x, idx, sum_sq, counts, out, inv_norm)
+    ms_bwd = _bench_cuda(_noop,
+        lambda: _launch_segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x),
+        torch_device, warmup, runs)
+    ms_dbl = _bench_cuda(_noop,
+        lambda: _launch_segmented_rms_norm_double_backward(gg_x, x, g_out, inv_norm, counts, idx, M, grad_x_ex, grad_g_out_ex),
+        torch_device, warmup, runs)
+
+    print(f"  vec3f       fwd={ms_fwd:.4f}ms  precompute={ms_precompute:.4f}ms  bwd={ms_bwd:.4f}ms  dbl={ms_dbl:.4f}ms")
+    return [
+        ("segmented_rms_norm_fwd_precompute", "vec3f", N, M, ms_fwd, ms_precompute),
+        ("segmented_rms_norm_backward", "vec3f", N, M, ms_fwd, ms_bwd),
+        ("segmented_rms_norm_double_backward", "vec3f", N, M, ms_fwd, ms_dbl),
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -469,6 +735,13 @@ _BENCHMARKS = [
     ("segmented_mul", "segmented_mul", bench_segmented_mul, False),
     ("segmented_add", "segmented_add", bench_segmented_add, False),
     ("segmented_matvec", "segmented_matvec", bench_segmented_matvec, False),
+    # PR 1 backward benchmarks
+    ("segmented_sum_bwd", "segmented_sum backward", bench_segmented_sum_backward, False),
+    ("segmented_dot_bwd", "segmented_dot backward", bench_segmented_dot_backward, False),
+    ("segmented_mul_bwd", "segmented_mul backward", bench_segmented_mul_backward, False),
+    ("segmented_matvec_bwd", "segmented_matvec backward", bench_segmented_matvec_backward, False),
+    ("segmented_max_norm_bwd", "segmented_max_norm backward", bench_segmented_max_norm_backward, False),
+    ("segmented_rms_norm_bwd", "segmented_rms_norm backward", bench_segmented_rms_norm_backward, False),
 ]
 
 
