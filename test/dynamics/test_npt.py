@@ -1524,7 +1524,6 @@ class TestAnisotropicBarostat:
             system["cell_masses"],
             system["kinetic_energy"],
             system["num_atoms_per_system"],
-            system["eta_dot"],
             dt=system["dt"],
             device=device,
         )
@@ -1568,7 +1567,6 @@ class TestAnisotropicBarostat:
             system["cell_masses"],
             system["kinetic_energy"],
             system["num_atoms_per_system"],
-            system["eta_dot"],
             dt=system["dt"],
             device=device,
         )
@@ -2263,7 +2261,6 @@ class TestExplicitBarostatFunctions:
         num_atoms_per_system = wp.array(
             [num_atoms, num_atoms], dtype=wp.int32, device=device
         )
-        eta_dots = wp.zeros((num_systems, 3), dtype=scalar_dtype, device=device)
 
         dt = wp.array([0.001, 0.001], dtype=scalar_dtype, device=device)
         npt_barostat_half_step_aniso(
@@ -2274,7 +2271,6 @@ class TestExplicitBarostatFunctions:
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            eta_dots,
             dt=dt,
             device=device,
         )
@@ -2311,7 +2307,6 @@ class TestExplicitBarostatFunctions:
         num_atoms_per_system = wp.array(
             [num_atoms, num_atoms], dtype=wp.int32, device=device
         )
-        eta_dots = wp.zeros((num_systems, 3), dtype=scalar_dtype, device=device)
 
         dt = wp.array([0.001, 0.001], dtype=scalar_dtype, device=device)
         npt_barostat_half_step_triclinic(
@@ -2322,7 +2317,6 @@ class TestExplicitBarostatFunctions:
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            eta_dots,
             dt=dt,
             device=device,
         )
@@ -2751,7 +2745,6 @@ class TestNPTCoverageExtras:
     def test_npt_barostat_half_step_device_inference(self, device):
         """Test npt_barostat_half_step with device inference."""
         num_systems = 1
-        chain_length = 3
 
         cell_velocities = wp.zeros(num_systems, dtype=wp.mat33f, device=device)
         pressure_tensors = wp.empty(num_systems, dtype=vec9f, device=device)
@@ -2760,10 +2753,6 @@ class TestNPTCoverageExtras:
         cell_masses = wp.array([100.0], dtype=wp.float32, device=device)
         kinetic_energy = wp.array([10.0], dtype=wp.float32, device=device)
         num_atoms_per_system = wp.array([100], dtype=wp.int32, device=device)
-        # eta_dots must be 2D: (B, chain_length)
-        eta_dots = wp.zeros(
-            (num_systems, chain_length), dtype=wp.float32, device=device
-        )
 
         dt = wp.array([0.001], dtype=wp.float32, device=device)
         # Don't pass device
@@ -2775,7 +2764,6 @@ class TestNPTCoverageExtras:
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            eta_dots,
             dt=dt,
         )
 
@@ -2884,7 +2872,6 @@ class TestNPTCoverageExtras:
         )
 
         num_systems = 1
-        chain_length = 3
 
         cell_velocities = wp.zeros(num_systems, dtype=wp.mat33f, device=device)
         pressure_tensors = wp.empty(num_systems, dtype=vec9f, device=device)
@@ -2892,10 +2879,6 @@ class TestNPTCoverageExtras:
         cell_masses = wp.array([100.0], dtype=wp.float32, device=device)
         kinetic_energy = wp.array([10.0], dtype=wp.float32, device=device)
         num_atoms_per_system = wp.array([100], dtype=wp.int32, device=device)
-        # eta_dots must be 2D: (B, chain_length)
-        eta_dots = wp.zeros(
-            (num_systems, chain_length), dtype=wp.float32, device=device
-        )
 
         dt = wp.array([0.001], dtype=wp.float32, device=device)
         # Test NPT aniso
@@ -2910,7 +2893,6 @@ class TestNPTCoverageExtras:
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            eta_dots,
             dt=dt,
             device=device,
         )
@@ -2925,7 +2907,6 @@ class TestNPTCoverageExtras:
             cell_masses,
             kinetic_energy,
             num_atoms_per_system,
-            eta_dots,
             dt=dt,
             device=device,
         )
@@ -3824,3 +3805,60 @@ class TestStrainRateDrag:
         drag = (eps_dot_np @ v_np[0]) + trace_corr * v_np[0]
         expected = v_np + (dt_val / 2.0) * (0.0 - drag[None, :])
         np.testing.assert_allclose(vel_out.numpy(), expected, rtol=1e-10)
+
+
+class TestBarostatHalfStepNoThermostatDrag:
+    """npt_barostat_half_step applies only the MTK pressure/kinetic term."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_isotropic_canonical_form(self, device):
+        """ε̇ += (dt/2) · (V/W) · (P_inst − P_ext)."""
+        np_dtype = np.float64
+        scalar_dtype = wp.float64
+        mat_dtype = wp.mat33d
+
+        num_atoms = 8
+        dt_val = 1.0
+        V = 1000.0
+        W = 100.0
+        KE = 12.0
+        P_inst_diag = 0.05
+        P_ext = 0.02
+        eps_dot_init = 0.03
+
+        eps_dot_np = np.diag([eps_dot_init] * 3).astype(np_dtype)
+        cell_velocities = wp.array(
+            [mat_dtype(*eps_dot_np.flatten())], dtype=mat_dtype, device=device
+        )
+        P_full = np.diag([P_inst_diag] * 3).astype(np_dtype).flatten()
+        pressure_tensors = wp.array([vec9d(*P_full)], dtype=vec9d, device=device)
+        target_pressures = wp.array([P_ext], dtype=scalar_dtype, device=device)
+        volumes = wp.array([V], dtype=scalar_dtype, device=device)
+        cell_masses = wp.array([W], dtype=scalar_dtype, device=device)
+        kinetic_energy = wp.array([KE], dtype=scalar_dtype, device=device)
+        num_atoms_per_system = wp.array([num_atoms], dtype=wp.int32, device=device)
+        dt = wp.array([dt_val], dtype=scalar_dtype, device=device)
+
+        npt_barostat_half_step(
+            cell_velocities,
+            pressure_tensors,
+            target_pressures,
+            volumes,
+            cell_masses,
+            kinetic_energy,
+            num_atoms_per_system,
+            dt,
+            device=device,
+        )
+        wp.synchronize_device(device)
+
+        # Canonical: ε̇_new = ε̇ + (dt/2) · (V/W) · (P + 2·KE/(3N·V) − P_ext).
+        dof_term = 2.0 * KE / (3.0 * num_atoms)
+        P_diff = P_inst_diag + dof_term / V - P_ext
+        accel = V * P_diff / W
+        expected_diag = eps_dot_init + (dt_val / 2.0) * accel
+        expected = np.diag([expected_diag] * 3)
+
+        np.testing.assert_allclose(
+            cell_velocities.numpy()[0], expected, rtol=1e-12, atol=1e-12
+        )

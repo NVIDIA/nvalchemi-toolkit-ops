@@ -15,11 +15,17 @@
   Anisotropic and triclinic kernels used `(1 + 1/N_atoms)·ε̇`,
   which only matches ASE `MTKNPT._integrate_p` for uniform strain;
   replaced with `ε̇ + Tr(ε̇)/(3·N)·I` (canonical trace correction).
+- **MTK barostat half-step thermostat coupling**: NPT
+  cell-velocity-update kernels applied `−η̇₁·ε̇` inline, mixing the
+  pressure/kinetic driving operator with NHC drag. Removed; callers
+  apply barostat-NHC coupling separately, matching ASE and TorchSim.
 
 ### Breaking Changes
 
 - `cell_velocities` now stores the strain rate `ε̇ = p_g/W`, not
   `ḣ = dh/dt`. Kernel signatures unchanged.
+- `npt_barostat_half_step{,_aniso,_triclinic}` drop the `eta_dots`
+  argument; thermostat coupling is now a separate Trotter operator.
 
 ## 0.3.0 - 2026-XX-XX
 
