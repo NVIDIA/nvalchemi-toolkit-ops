@@ -1890,7 +1890,6 @@ def run_nph_mtk(
     nph_pressure_tensors = wp.zeros(1, dtype=tensor_dtype, device=system.device)
     nph_volumes = wp.zeros(1, dtype=system.wp_dtype, device=system.device)
     nph_kinetic_energy = wp.zeros(1, dtype=system.wp_dtype, device=system.device)
-    nph_cells_inv = wp.empty(1, dtype=system.wp_mat_dtype, device=system.device)
     nph_kinetic_tensors = wp.zeros((1, 9), dtype=system.wp_dtype, device=system.device)
     nph_num_atoms_per_system = wp.array(
         [system.num_atoms], dtype=wp.int32, device=system.device
@@ -1944,7 +1943,6 @@ def run_nph_mtk(
             pressure_tensors=nph_pressure_tensors,
             volumes=nph_volumes,
             kinetic_energy=nph_kinetic_energy,
-            cells_inv=nph_cells_inv,
             kinetic_tensors=nph_kinetic_tensors,
             num_atoms_per_system=nph_num_atoms_per_system,
             compute_forces_fn=_compute_forces_cb,
@@ -2068,7 +2066,6 @@ def run_npt_mtk(
     npt_pressure_tensors = wp.zeros(1, dtype=tensor_dtype, device=system.device)
     npt_volumes = wp.zeros(1, dtype=system.wp_dtype, device=system.device)
     npt_kinetic_energy = wp.zeros(1, dtype=system.wp_dtype, device=system.device)
-    npt_cells_inv = wp.empty(1, dtype=system.wp_mat_dtype, device=system.device)
     npt_kinetic_tensors = wp.zeros((1, 9), dtype=system.wp_dtype, device=system.device)
     npt_num_atoms_per_system = wp.array(
         [system.num_atoms], dtype=wp.int32, device=system.device
@@ -2129,7 +2126,6 @@ def run_npt_mtk(
             pressure_tensors=npt_pressure_tensors,
             volumes=npt_volumes,
             kinetic_energy=npt_kinetic_energy,
-            cells_inv=npt_cells_inv,
             kinetic_tensors=npt_kinetic_tensors,
             num_atoms_per_system=npt_num_atoms_per_system,
             compute_forces_fn=_compute_forces_cb,

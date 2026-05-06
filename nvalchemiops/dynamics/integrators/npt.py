@@ -161,6 +161,18 @@ def _warn_cells_inv_deprecated(stacklevel: int = 2) -> None:
     )
 
 
+def _warn_volumes_deprecated(stacklevel: int = 2) -> None:
+    """Emit a DeprecationWarning when callers still pass ``volumes``."""
+    warnings.warn(
+        "'volumes' is deprecated and ignored on this entry point; "
+        "kernels consume 'cell_velocities' as the strain rate ε̇ = p_g/W "
+        "and no longer need a volume fallback. "
+        "Will be removed in a future release.",
+        DeprecationWarning,
+        stacklevel=stacklevel,
+    )
+
+
 # =============================================================================
 # Shared @wp.func for NPT/NPH physics
 # =============================================================================
@@ -1937,7 +1949,8 @@ def compute_cell_kinetic_energy(
         .. deprecated:: 0.3.1
             Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
     volumes : wp.array, optional
-        Retained for backwards compatibility; ignored.
+        .. deprecated:: 0.3.1
+            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
     device : str, optional
         Warp device.
 
@@ -1948,6 +1961,9 @@ def compute_cell_kinetic_energy(
     """
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
+    if volumes is not None:
+        _warn_volumes_deprecated()
+        volumes = None
     if device is None:
         device = cell_velocities.device
 
@@ -2211,10 +2227,15 @@ def npt_velocity_half_step(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    volumes: wp.array,
-    eta_dots: wp.array,
-    num_atoms: wp.array,
-    dt: wp.array,
+    # NOTE: ``volumes``, ``eta_dots``, ``num_atoms``, and ``dt`` default to
+    # ``None`` only so legacy callers that still pass ``volumes`` positionally
+    # keep working while the deprecation is staged. Once ``volumes`` is
+    # removed (next minor cycle) these can become required positional
+    # arguments again.
+    volumes: wp.array = None,
+    eta_dots: wp.array = None,
+    num_atoms: wp.array = None,
+    dt: wp.array = None,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
     cells_inv: wp.array = None,
@@ -2249,8 +2270,9 @@ def npt_velocity_half_step(
         Forces on particles. Shape (N,).
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Strain-rate matrices ε̇ = p_g/W. Shape (B,).
-    volumes : wp.array(dtype=scalar)
-        Cell volumes. Shape (B,).
+    volumes : wp.array, optional
+        .. deprecated:: 0.3.1
+            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
     eta_dots : wp.array2d(dtype=scalar)
         Thermostat chain velocities. Shape (B, chain_length).
     num_atoms : wp.array(dtype=wp.int32)
@@ -2280,8 +2302,8 @@ def npt_velocity_half_step(
     Single system (isotropic):
 
     >>> npt_velocity_half_step(
-    ...     velocities, masses, forces, cell_velocities, volumes,
-    ...     eta_dots, num_atoms=100, dt=0.001
+    ...     velocities, masses, forces, cell_velocities,
+    ...     eta_dots=eta_dots, num_atoms=num_atoms, dt=dt,
     ... )
 
     See Also
@@ -2292,6 +2314,13 @@ def npt_velocity_half_step(
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
         cells_inv = None
+    if volumes is not None:
+        _warn_volumes_deprecated()
+        volumes = None
+    if eta_dots is None or num_atoms is None or dt is None:
+        raise ValueError(
+            "npt_velocity_half_step requires 'eta_dots', 'num_atoms', and 'dt'."
+        )
     # In-place: delegate to _out with velocities as both input and output
     npt_velocity_half_step_out(
         velocities,
@@ -2317,11 +2346,15 @@ def npt_velocity_half_step_out(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    volumes: wp.array,
-    eta_dots: wp.array,
-    num_atoms: wp.array,
-    dt: wp.array,
-    velocities_out: wp.array,
+    # NOTE: ``volumes``, ``eta_dots``, ``num_atoms``, ``dt``, and
+    # ``velocities_out`` default to ``None`` only to keep legacy positional
+    # callers working while ``volumes`` is being deprecated. Once ``volumes``
+    # is removed they can become required positional arguments again.
+    volumes: wp.array = None,
+    eta_dots: wp.array = None,
+    num_atoms: wp.array = None,
+    dt: wp.array = None,
+    velocities_out: wp.array = None,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
     cells_inv: wp.array = None,
@@ -2341,8 +2374,9 @@ def npt_velocity_half_step_out(
         Input velocities (not modified when velocities_out differs).
     masses, forces, cell_velocities : wp.array
         System state arrays.
-    volumes : wp.array
-        Cell volumes. Shape (B,).
+    volumes : wp.array, optional
+        .. deprecated:: 0.3.1
+            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
     eta_dots : wp.array
         Thermostat chain velocities.
     num_atoms : wp.array(dtype=wp.int32)
@@ -2372,6 +2406,14 @@ def npt_velocity_half_step_out(
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
         cells_inv = None
+    if volumes is not None:
+        _warn_volumes_deprecated()
+        volumes = None
+    if eta_dots is None or num_atoms is None or dt is None or velocities_out is None:
+        raise ValueError(
+            "npt_velocity_half_step_out requires 'eta_dots', 'num_atoms', "
+            "'dt', and 'velocities_out'."
+        )
     if device is None:
         device = velocities.device
 
@@ -2625,6 +2667,11 @@ def run_npt_step(
     pressure_tensors: wp.array,
     volumes: wp.array,
     kinetic_energy: wp.array,
+    # NOTE: ``cells_inv`` is at its pre-deprecation positional slot;
+    # ``kinetic_tensors`` and ``num_atoms_per_system`` default to ``None``
+    # only so old positional callers (which passed ``cells_inv`` here) keep
+    # working. Once ``cells_inv`` is removed the latter two can become
+    # required positional arguments again.
     cells_inv: wp.array = None,
     kinetic_tensors: wp.array = None,
     num_atoms_per_system: wp.array = None,
@@ -2745,18 +2792,18 @@ def run_npt_step(
     # 3. Velocity half-step.  Refresh caller-provided cells_inv for symmetry.
     if cells_inv is not None:
         compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
+    # Pass deprecated args (volumes / cells_inv) by keyword and omit them so
+    # the orchestrator does not surface DeprecationWarnings the user never asked for.
     npt_velocity_half_step(
         velocities,
         masses,
         forces,
         cell_velocities,
-        volumes,
-        eta_dot,
-        num_atoms,
-        dt,
+        eta_dots=eta_dot,
+        num_atoms=num_atoms,
+        dt=dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
-        cells_inv=cells_inv,
         device=device,
     )
 
@@ -2767,7 +2814,6 @@ def run_npt_step(
         cells,
         cell_velocities,
         dt,
-        cells_inv=cells_inv,
         batch_idx=batch_idx,
         device=device,
     )
@@ -2808,13 +2854,11 @@ def run_npt_step(
         masses,
         forces,
         cell_velocities,
-        volumes,
-        eta_dot,
-        num_atoms,
-        dt,
+        eta_dots=eta_dot,
+        num_atoms=num_atoms,
+        dt=dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
-        cells_inv=cells_inv,
         device=device,
     )
 
@@ -3050,9 +3094,13 @@ def nph_velocity_half_step(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    volumes: wp.array,
-    num_atoms: wp.array,
-    dt: wp.array,
+    # NOTE: ``volumes``, ``num_atoms``, and ``dt`` default to ``None`` only
+    # so legacy callers that still pass ``volumes`` positionally keep working
+    # while the deprecation is staged. Once ``volumes`` is removed (next
+    # minor cycle) these can become required positional arguments again.
+    volumes: wp.array = None,
+    num_atoms: wp.array = None,
+    dt: wp.array = None,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
     cells_inv: wp.array = None,
@@ -3086,8 +3134,9 @@ def nph_velocity_half_step(
         Forces on particles.
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Strain-rate matrices ε̇ = p_g/W.
-    volumes : wp.array(dtype=scalar)
-        Cell volumes. Shape (B,).
+    volumes : wp.array, optional
+        .. deprecated:: 0.3.1
+            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3118,6 +3167,11 @@ def nph_velocity_half_step(
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
         cells_inv = None
+    if volumes is not None:
+        _warn_volumes_deprecated()
+        volumes = None
+    if num_atoms is None or dt is None:
+        raise ValueError("nph_velocity_half_step requires 'num_atoms' and 'dt'.")
     # In-place: delegate to _out with velocities as both input and output
     nph_velocity_half_step_out(
         velocities,
@@ -3145,10 +3199,14 @@ def nph_velocity_half_step_out(
     masses: wp.array,
     forces: wp.array,
     cell_velocities: wp.array,
-    volumes: wp.array,
-    num_atoms: wp.array,
-    dt: wp.array,
-    velocities_out: wp.array,
+    # NOTE: ``volumes``, ``num_atoms``, ``dt``, and ``velocities_out`` default
+    # to ``None`` only to keep legacy positional callers working while
+    # ``volumes`` is being deprecated. Once ``volumes`` is removed they can
+    # become required positional arguments again.
+    volumes: wp.array = None,
+    num_atoms: wp.array = None,
+    dt: wp.array = None,
+    velocities_out: wp.array = None,
     batch_idx: wp.array = None,
     num_atoms_per_system: wp.array = None,
     cells_inv: wp.array = None,
@@ -3167,8 +3225,9 @@ def nph_velocity_half_step_out(
         Input velocities (not modified when velocities_out differs).
     masses, forces, cell_velocities : wp.array
         System state arrays.
-    volumes : wp.array
-        Cell volumes. Shape (B,).
+    volumes : wp.array, optional
+        .. deprecated:: 0.3.1
+            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3194,6 +3253,14 @@ def nph_velocity_half_step_out(
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
         cells_inv = None
+    if volumes is not None:
+        _warn_volumes_deprecated()
+        volumes = None
+    if num_atoms is None or dt is None or velocities_out is None:
+        raise ValueError(
+            "nph_velocity_half_step_out requires 'num_atoms', 'dt', "
+            "and 'velocities_out'."
+        )
     if device is None:
         device = velocities.device
 
@@ -3348,6 +3415,11 @@ def run_nph_step(
     pressure_tensors: wp.array,
     volumes: wp.array,
     kinetic_energy: wp.array,
+    # NOTE: ``cells_inv`` is at its pre-deprecation positional slot;
+    # ``kinetic_tensors`` and ``num_atoms_per_system`` default to ``None``
+    # only so old positional callers (which passed ``cells_inv`` here) keep
+    # working. Once ``cells_inv`` is removed the latter two can become
+    # required positional arguments again.
     cells_inv: wp.array = None,
     kinetic_tensors: wp.array = None,
     num_atoms_per_system: wp.array = None,
@@ -3447,28 +3519,27 @@ def run_nph_step(
     # 2. Velocity half-step
     if cells_inv is not None:
         compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
+    # Pass deprecated args (volumes / cells_inv) by keyword and omit them so
+    # the orchestrator does not surface DeprecationWarnings the user never asked for.
     nph_velocity_half_step(
         velocities,
         masses,
         forces,
         cell_velocities,
-        volumes,
-        num_atoms,
-        dt,
+        num_atoms=num_atoms,
+        dt=dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
-        cells_inv=cells_inv,
         device=device,
     )
 
-    # 3. Position update (reuses cells_inv from step 2)
+    # 3. Position update
     nph_position_update(
         positions,
         velocities,
         cells,
         cell_velocities,
         dt,
-        cells_inv=cells_inv,
         batch_idx=batch_idx,
         device=device,
     )
@@ -3509,12 +3580,10 @@ def run_nph_step(
         masses,
         forces,
         cell_velocities,
-        volumes,
-        num_atoms,
-        dt,
+        num_atoms=num_atoms,
+        dt=dt,
         batch_idx=batch_idx,
         num_atoms_per_system=num_atoms_per_system,
-        cells_inv=cells_inv,
         device=device,
     )
 
