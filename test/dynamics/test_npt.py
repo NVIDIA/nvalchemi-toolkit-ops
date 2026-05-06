@@ -445,7 +445,7 @@ class TestBarostatUtilitiesAPI:
         wp.synchronize_device(device)
 
         assert ke.shape[0] == 1
-        # KE = 0.5 * W * ||ε̇||²_F where ε̇ = ḣ h⁻¹
+        # KE = 0.5 * W * ||ε̇||²_F where ε̇ = cell_velocities
         # With h⁻¹ = I: ε̇ = ḣ, so ||ε̇||²_F = 3 * 0.1² = 0.03
         expected = 0.5 * 100.0 * 0.03
         np.testing.assert_allclose(ke.numpy()[0], expected, rtol=1e-5)
@@ -3139,7 +3139,7 @@ class TestAdditionalCoverage:
 
         wp.synchronize_device(device)
         assert result is kinetic_energy
-        # KE = 0.5 * W * ||ε̇||²_F where ε̇ = ḣ h⁻¹
+        # KE = 0.5 * W * ||ε̇||²_F where ε̇ = cell_velocities
         # With h⁻¹ = I: ε̇ = ḣ, so ||ε̇||²_F = 3 * 0.1² = 0.03
         np.testing.assert_allclose(result.numpy()[0], 1.5, rtol=1e-4)
 

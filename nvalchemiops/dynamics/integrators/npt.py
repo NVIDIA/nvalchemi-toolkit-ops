@@ -128,34 +128,8 @@ vec3d = wp.vec3d
 
 
 # =============================================================================
-# Helper: compute h_inv from volumes when cells_inv is not provided
+# Helper: cells_inv compatibility shim
 # =============================================================================
-
-
-@wp.kernel
-def _build_identity_h_inv_kernel(
-    volumes: wp.array(dtype=Any),
-    h_inv_out: wp.array(dtype=Any),
-):
-    """Build h_inv = V^{-1/3} * I, valid for cubic cells.
-
-    Launch Grid: dim = [num_systems]
-    """
-    sys = wp.tid()
-    inv_L = wp.cbrt(type(volumes[sys])(1.0) / volumes[sys])
-    z = type(volumes[sys])(0.0)
-    h_inv_out[sys] = type(h_inv_out[sys])(inv_L, z, z, z, inv_L, z, z, z, inv_L)
-
-
-_build_identity_h_inv_kernel_overload = {}
-for _t, _m in zip(
-    [wp.float32, wp.float64],
-    [wp.mat33f, wp.mat33d],
-):
-    _build_identity_h_inv_kernel_overload[_t] = wp.overload(
-        _build_identity_h_inv_kernel,
-        [wp.array(dtype=_t), wp.array(dtype=_m)],
-    )
 
 
 def _ensure_cells_inv(
@@ -164,28 +138,20 @@ def _ensure_cells_inv(
     cell_velocities: wp.array,
     device: str | None,
 ) -> wp.array:
-    """Return ``cells_inv`` if provided; else build from ``volumes`` or zeros.
+    """Return ``cells_inv`` if provided, else a zero placeholder.
 
     Kernels no longer dereference ``h_inv``; this helper is kept for
-    backward compatibility.
+    backward compatibility with callers that still pass ``cells_inv`` /
+    ``volumes``.  The returned array's only purpose is to satisfy
+    unchanged kernel signatures.
     """
     if cells_inv is not None:
         return cells_inv
-    num_systems = cell_velocities.shape[0]
-    mat_dtype = cell_velocities.dtype
     if device is None:
         device = cell_velocities.device
-    if volumes is not None:
-        scalar_dtype = volumes.dtype
-        h_inv = wp.empty(num_systems, dtype=mat_dtype, device=device)
-        wp.launch(
-            _build_identity_h_inv_kernel_overload[scalar_dtype],
-            dim=num_systems,
-            inputs=[volumes, h_inv],
-            device=device,
-        )
-        return h_inv
-    return wp.zeros(num_systems, dtype=mat_dtype, device=device)
+    return wp.zeros(
+        cell_velocities.shape[0], dtype=cell_velocities.dtype, device=device
+    )
 
 
 # =============================================================================
@@ -560,7 +526,7 @@ def _npt_velocity_half_step_single_kernel(
 ):
     """NPT isotropic velocity half-step, single system (out-only).
 
-    v_new = v + dt/2 * (F/m - (1 + 1/N_f) * ε̇ * v - η̇₁ * v)
+    v_new = v + dt/2 * (F/m - (1 + d/N_f) * ε̇ * v - η̇₁ * v)
 
     where ε̇ is the isotropic strain rate.
 
@@ -639,7 +605,7 @@ def _nph_velocity_half_step_single_kernel(
 ):
     """NPH isotropic velocity half-step, single system (out-only).
 
-    v_new = v + dt/2 * (F/m - (1 + 1/N_f) * ε̇ * v)
+    v_new = v + dt/2 * (F/m - (1 + d/N_f) * ε̇ * v)
 
     where ε̇ is the isotropic strain rate.
 
@@ -2034,13 +2000,10 @@ def compute_cell_kinetic_energy(
         Barostat masses. Shape (B,).
     kinetic_energy : wp.array(dtype=scalar)
         Output cell kinetic energy. Shape (B,).
-    cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
-        Inverse cell matrices h⁻¹. Shape (B,). Required for non-cubic
-        cells. Retained for backward compat; ignored by kernels.
-    volumes : wp.array(dtype=scalar), optional
-        Cell volumes. Shape (B,). Used as fallback when ``cells_inv`` is not
-        provided: computes h⁻¹ = V^{-1/3} I, which is only valid for cubic
-        cells. For non-cubic cells the caller must provide ``cells_inv``.
+    cells_inv : wp.array, optional
+        Retained for backward compat; ignored by kernels.
+    volumes : wp.array, optional
+        Retained for backward compat; ignored by kernels.
     device : str, optional
         Warp device.
 
@@ -2048,11 +2011,6 @@ def compute_cell_kinetic_energy(
     -------
     wp.array
         Cell kinetic energy. Shape (B,).
-
-    Notes
-    -----
-    At least one of ``cells_inv`` or ``volumes`` must be provided.
-    If both are given, ``cells_inv`` takes precedence.
     """
     if device is None:
         device = cell_velocities.device
@@ -2468,8 +2426,7 @@ def npt_velocity_half_step(
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Strain-rate matrices ε̇ = p_g/W. Shape (B,).
     volumes : wp.array(dtype=scalar)
-        Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when
-        ``cells_inv`` is not provided (only valid for cubic cells).
+        Cell volumes. Shape (B,).
     eta_dots : wp.array2d(dtype=scalar)
         Thermostat chain velocities. Shape (B, chain_length).
     num_atoms : wp.array(dtype=wp.int32)
@@ -2482,7 +2439,6 @@ def npt_velocity_half_step(
     num_atoms_per_system : wp.array(dtype=wp.int32), optional
         Number of atoms per system. Required for batched simulations.
     cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         Retained for backward compat; ignored by kernels.
     mode : str, optional
         Pressure control mode. One of:
@@ -2582,7 +2538,6 @@ def npt_velocity_half_step_out(
     num_atoms_per_system : wp.array, optional
         Atom counts per system.
     cells_inv : wp.array, optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         Retained for backward compat; ignored by kernels.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
@@ -2651,7 +2606,7 @@ def npt_position_update(
     cells: wp.array,
     cell_velocities: wp.array,
     dt: wp.array,
-    cells_inv: wp.array,
+    cells_inv: wp.array = None,
     batch_idx: wp.array = None,
     device: str = None,
 ) -> None:
@@ -2667,12 +2622,11 @@ def npt_position_update(
     cells : wp.array
         Cell matrices.
     cell_velocities : wp.array
-        Cell velocity matrices.
+        Strain-rate matrices ε̇.
     dt : wp.array(dtype=scalar)
         Full time step per system. Shape (B,).
-    cells_inv : wp.array
-        Pre-computed cell inverses. Caller must pre-compute via
-        ``compute_cell_inverse``.
+    cells_inv : wp.array, optional
+        Retained for backward compat; ignored by kernels.
     batch_idx : wp.array, optional
         System index for each atom.
     device : str, optional
@@ -2686,7 +2640,7 @@ def npt_position_update(
         cell_velocities,
         dt,
         positions,
-        cells_inv,
+        cells_inv=cells_inv,
         batch_idx=batch_idx,
         device=device,
         _skip_validation=True,
@@ -2700,7 +2654,7 @@ def npt_position_update_out(
     cell_velocities: wp.array,
     dt: wp.array,
     positions_out: wp.array,
-    cells_inv: wp.array,
+    cells_inv: wp.array = None,
     batch_idx: wp.array = None,
     device: str = None,
     _skip_validation: bool = False,
@@ -2710,9 +2664,8 @@ def npt_position_update_out(
 
     Parameters
     ----------
-    cells_inv : wp.array
-        Pre-computed cell inverses. Caller must pre-compute via
-        ``compute_cell_inverse``.
+    cells_inv : wp.array, optional
+        Retained for backward compat; ignored by kernels.
 
     Returns
     -------
@@ -2724,6 +2677,8 @@ def npt_position_update_out(
 
     if not _skip_validation:
         validate_out_array(positions_out, positions, "positions_out")
+
+    cells_inv = _ensure_cells_inv(cells_inv, None, cell_velocities, device)
 
     exec_mode = resolve_execution_mode(batch_idx, None)
     num_atoms = positions.shape[0]
@@ -2840,9 +2795,9 @@ def run_npt_step(
     pressure_tensors: wp.array,
     volumes: wp.array,
     kinetic_energy: wp.array,
-    cells_inv: wp.array,
     kinetic_tensors: wp.array,
     num_atoms_per_system: wp.array,
+    cells_inv: wp.array = None,
     compute_forces_fn=None,
     batch_idx: wp.array = None,
     device: str = None,
@@ -2950,8 +2905,11 @@ def run_npt_step(
         device=device,
     )
 
-    # 3. Velocity half-step
-    compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
+    # 3. Velocity half-step (cells_inv is no longer load-bearing; if a
+    # caller-provided buffer is given, we still populate it for symmetry
+    # with prior versions).
+    if cells_inv is not None:
+        compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
     npt_velocity_half_step(
         velocities,
         masses,
@@ -2967,7 +2925,7 @@ def run_npt_step(
         device=device,
     )
 
-    # 4. Position update (reuses cells_inv from step 3)
+    # 4. Position update
     npt_position_update(
         positions,
         velocities,
@@ -2988,7 +2946,8 @@ def run_npt_step(
 
     # Recompute pressure, volumes, and cell inverses after cell update
     compute_cell_volume(cells, volumes=volumes, device=device)
-    compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
+    if cells_inv is not None:
+        compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
     compute_kinetic_energy(
         velocities,
         masses,
@@ -3303,8 +3262,7 @@ def nph_velocity_half_step(
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
         Strain-rate matrices ε̇ = p_g/W.
     volumes : wp.array(dtype=scalar)
-        Cell volumes. Shape (B,). Used to build h⁻¹ = V^{-1/3}·I when
-        ``cells_inv`` is not provided (only valid for cubic cells).
+        Cell volumes. Shape (B,).
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3315,7 +3273,6 @@ def nph_velocity_half_step(
     num_atoms_per_system : wp.array, optional
         Number of atoms per system.
     cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         Retained for backward compat; ignored by kernels.
     mode : str, optional
         Pressure control mode:
@@ -3394,7 +3351,6 @@ def nph_velocity_half_step_out(
     batch_idx, num_atoms_per_system : wp.array, optional
         For batched simulations.
     cells_inv : wp.array, optional
-        Inverse cell matrices h⁻¹. Shape (B,). When provided, the
         Retained for backward compat; ignored by kernels.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
@@ -3461,7 +3417,7 @@ def nph_position_update(
     cells: wp.array,
     cell_velocities: wp.array,
     dt: wp.array,
-    cells_inv: wp.array,
+    cells_inv: wp.array = None,
     batch_idx: wp.array = None,
     device: str = None,
 ) -> None:
@@ -3476,7 +3432,7 @@ def nph_position_update(
         cells,
         cell_velocities,
         dt,
-        cells_inv,
+        cells_inv=cells_inv,
         batch_idx=batch_idx,
         device=device,
     )
@@ -3489,7 +3445,7 @@ def nph_position_update_out(
     cell_velocities: wp.array,
     dt: wp.array,
     positions_out: wp.array,
-    cells_inv: wp.array,
+    cells_inv: wp.array = None,
     batch_idx: wp.array = None,
     device: str = None,
 ) -> wp.array:
@@ -3508,7 +3464,7 @@ def nph_position_update_out(
         cell_velocities,
         dt,
         positions_out,
-        cells_inv,
+        cells_inv=cells_inv,
         batch_idx=batch_idx,
         device=device,
     )
@@ -3543,9 +3499,9 @@ def run_nph_step(
     pressure_tensors: wp.array,
     volumes: wp.array,
     kinetic_energy: wp.array,
-    cells_inv: wp.array,
     kinetic_tensors: wp.array,
     num_atoms_per_system: wp.array,
+    cells_inv: wp.array = None,
     compute_forces_fn=None,
     batch_idx: wp.array = None,
     device: str = None,
@@ -3632,7 +3588,8 @@ def run_nph_step(
     )
 
     # 2. Velocity half-step
-    compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
+    if cells_inv is not None:
+        compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
     nph_velocity_half_step(
         velocities,
         masses,
@@ -3668,7 +3625,8 @@ def run_nph_step(
 
     # Recompute pressure, volumes, and cell inverses after cell update
     compute_cell_volume(cells, volumes=volumes, device=device)
-    compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
+    if cells_inv is not None:
+        compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
     compute_kinetic_energy(
         velocities,
         masses,
