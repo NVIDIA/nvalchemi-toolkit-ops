@@ -20,6 +20,16 @@
   pressure/kinetic driving operator with NHC drag. Removed; callers
   apply barostat-NHC coupling separately, matching ASE and TorchSim.
 
+### Deprecated
+
+- `cells_inv` argument on `compute_cell_kinetic_energy`,
+  `npt_velocity_half_step{,_out}`, `npt_position_update{,_out}`,
+  `nph_velocity_half_step{,_out}`, `nph_position_update{,_out}`,
+  `run_npt_step`, and `run_nph_step`. Kernels consume
+  `cell_velocities` directly as the strain rate `ε̇ = p_g/W`. Passing
+  `cells_inv` emits a `DeprecationWarning`; the argument will be
+  removed in a future release.
+
 ### Breaking Changes
 
 - `cell_velocities` now stores the strain rate `ε̇ = p_g/W`, not
