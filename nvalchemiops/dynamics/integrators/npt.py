@@ -138,13 +138,8 @@ def _ensure_cells_inv(
     cell_velocities: wp.array,
     device: str | None,
 ) -> wp.array:
-    """Return ``cells_inv`` if provided, else a zero placeholder.
-
-    Kernels no longer dereference ``h_inv``; this helper is kept for
-    backward compatibility with callers that still pass ``cells_inv`` /
-    ``volumes``.  The returned array's only purpose is to satisfy
-    unchanged kernel signatures.
-    """
+    """Return ``cells_inv`` if provided, else a zero placeholder for
+    callers that still pass it; kernels no longer consume it."""
     if cells_inv is not None:
         return cells_inv
     if device is None:
@@ -175,29 +170,39 @@ def _drag_isotropic(eps_dot: Any, coupling: Any, eta_dot_1: Any, v: Any) -> Any:
 
 
 @wp.func
-def _drag_anisotropic(eps_dot: Any, coupling: Any, eta_dot_1: Any, v: Any) -> Any:
-    """Anisotropic (diagonal) drag using ε̇ from cell_velocities."""
+def _drag_anisotropic(eps_dot: Any, inv_three_n: Any, eta_dot_1: Any, v: Any) -> Any:
+    """Anisotropic drag: (ε̇_ii + Tr(ε̇)·inv_three_n + eta_dot_1) * v_i."""
+    trace_eps = eps_dot[0, 0] + eps_dot[1, 1] + eps_dot[2, 2]
+    trace_corr = trace_eps * inv_three_n
     return type(v)(
-        (coupling * eps_dot[0, 0] + eta_dot_1) * v[0],
-        (coupling * eps_dot[1, 1] + eta_dot_1) * v[1],
-        (coupling * eps_dot[2, 2] + eta_dot_1) * v[2],
+        (eps_dot[0, 0] + trace_corr + eta_dot_1) * v[0],
+        (eps_dot[1, 1] + trace_corr + eta_dot_1) * v[1],
+        (eps_dot[2, 2] + trace_corr + eta_dot_1) * v[2],
     )
 
 
 @wp.func
-def _drag_triclinic(eps_dot: Any, coupling: Any, eta_dot_1: Any, v: Any) -> Any:
-    """Triclinic (full tensor) drag: (coupling * ε̇ + eta_dot_1 * I) @ v."""
+def _drag_triclinic(eps_dot: Any, inv_three_n: Any, eta_dot_1: Any, v: Any) -> Any:
+    """Triclinic drag: (ε̇ + (Tr(ε̇)·inv_three_n + eta_dot_1)·I) @ v."""
+    trace_eps = eps_dot[0, 0] + eps_dot[1, 1] + eps_dot[2, 2]
+    diag_corr = trace_eps * inv_three_n + eta_dot_1
     drag_x = (
-        coupling * (eps_dot[0, 0] * v[0] + eps_dot[0, 1] * v[1] + eps_dot[0, 2] * v[2])
-        + eta_dot_1 * v[0]
+        eps_dot[0, 0] * v[0]
+        + eps_dot[0, 1] * v[1]
+        + eps_dot[0, 2] * v[2]
+        + diag_corr * v[0]
     )
     drag_y = (
-        coupling * (eps_dot[1, 0] * v[0] + eps_dot[1, 1] * v[1] + eps_dot[1, 2] * v[2])
-        + eta_dot_1 * v[1]
+        eps_dot[1, 0] * v[0]
+        + eps_dot[1, 1] * v[1]
+        + eps_dot[1, 2] * v[2]
+        + diag_corr * v[1]
     )
     drag_z = (
-        coupling * (eps_dot[2, 0] * v[0] + eps_dot[2, 1] * v[1] + eps_dot[2, 2] * v[2])
-        + eta_dot_1 * v[2]
+        eps_dot[2, 0] * v[0]
+        + eps_dot[2, 1] * v[1]
+        + eps_dot[2, 2] * v[2]
+        + diag_corr * v[2]
     )
     return type(v)(drag_x, drag_y, drag_z)
 
@@ -1220,10 +1225,10 @@ def _npt_velocity_half_step_aniso_single_kernel(
     eta_dot_1 = eta_dot[0, 0]
 
     N_f = type(m)(3 * num_atoms[0])
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_anisotropic(h_dot, coupling, eta_dot_1, v)
+    drag = _drag_anisotropic(h_dot, inv_three_n, eta_dot_1, v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -1257,10 +1262,10 @@ def _npt_velocity_half_step_aniso_kernel(
     N = num_atoms_per_system[sys_id]
 
     N_f = type(m)(3 * N)
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_anisotropic(h_dot, coupling, eta_dot_1, v)
+    drag = _drag_anisotropic(h_dot, inv_three_n, eta_dot_1, v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -1296,10 +1301,10 @@ def _npt_velocity_half_step_triclinic_single_kernel(
     eta_dot_1 = eta_dot[0, 0]
 
     N_f = type(m)(3 * num_atoms[0])
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_triclinic(h_dot, coupling, eta_dot_1, v)
+    drag = _drag_triclinic(h_dot, inv_three_n, eta_dot_1, v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -1333,10 +1338,10 @@ def _npt_velocity_half_step_triclinic_kernel(
     N = num_atoms_per_system[sys_id]
 
     N_f = type(m)(3 * N)
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_triclinic(h_dot, coupling, eta_dot_1, v)
+    drag = _drag_triclinic(h_dot, inv_three_n, eta_dot_1, v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -1370,10 +1375,10 @@ def _nph_velocity_half_step_triclinic_single_kernel(
     h_dot = cell_velocity[0]
 
     N_f = type(m)(3 * num_atoms[0])
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_triclinic(h_dot, coupling, type(m)(0.0), v)
+    drag = _drag_triclinic(h_dot, inv_three_n, type(m)(0.0), v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -1405,10 +1410,10 @@ def _nph_velocity_half_step_triclinic_kernel(
     N = num_atoms_per_system[sys_id]
 
     N_f = type(m)(3 * N)
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_triclinic(h_dot, coupling, type(m)(0.0), v)
+    drag = _drag_triclinic(h_dot, inv_three_n, type(m)(0.0), v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -1437,10 +1442,10 @@ def _nph_velocity_half_step_aniso_single_kernel(
     h_dot = cell_velocity[0]
 
     N_f = type(m)(3 * num_atoms[0])
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[0] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_anisotropic(h_dot, coupling, type(m)(0.0), v)
+    drag = _drag_anisotropic(h_dot, inv_three_n, type(m)(0.0), v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -1472,10 +1477,10 @@ def _nph_velocity_half_step_aniso_kernel(
     N = num_atoms_per_system[sys_id]
 
     N_f = type(m)(3 * N)
-    coupling = type(m)(1.0) + type(m)(3.0) / N_f
+    inv_three_n = type(m)(1.0) / N_f
     dt_half = dt[sys_id] * type(m)(0.5)
     accel = _npt_accel(f, m)
-    drag = _drag_anisotropic(h_dot, coupling, type(m)(0.0), v)
+    drag = _drag_anisotropic(h_dot, inv_three_n, type(m)(0.0), v)
 
     velocities_out[atom_idx] = v + dt_half * (accel - drag)
 
@@ -2905,9 +2910,7 @@ def run_npt_step(
         device=device,
     )
 
-    # 3. Velocity half-step (cells_inv is no longer load-bearing; if a
-    # caller-provided buffer is given, we still populate it for symmetry
-    # with prior versions).
+    # 3. Velocity half-step.  Refresh caller-provided cells_inv for symmetry.
     if cells_inv is not None:
         compute_cell_inverse(cells, cells_inv=cells_inv, device=device)
     npt_velocity_half_step(

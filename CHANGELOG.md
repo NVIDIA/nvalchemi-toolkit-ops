@@ -4,28 +4,22 @@
 
 ### Fixed
 
-- **MTK NPT/NPH cell-propagation state-variable mismatch**: the
-  cell-velocity-update kernel wrote a strain-rate-units acceleration
-  (`V·(P − P_ext)/W`) into `cell_velocity` while drag, position, and
-  cell-KE helpers consumed it as `ḣ = dh/dt` and the cell update did
-  `h_new = h + dt·h_dot` (treating it as `dh/dt`). The mismatch cost a
-  factor of cell length in the cell response and suppressed volume
-  fluctuations by ~40× vs ASE `MTKNPT` / TorchSim
-  `npt_nose_hoover_isotropic` in `nvalchemi-toolkit` PR #90's empirical
-  octane comparison. Treats `cell_velocity` as the strain rate
-  `ε̇ = p_g/W` consistently and updates the cell as
-  `h_new = h + dt · ε̇ · h`.
-- **MTK velocity-half-step modular-invariance coupling factor**: the
-  12 NPT/NPH velocity-half-step kernels used `α = 1 + 1/(3N_atoms)`
-  instead of the canonical `α = 1 + d/N_f = 1 + 1/N_atoms`
-  (ASE `IsotropicMTKNPT._integrate_p`, TorchSim
-  `_npt_nose_hoover_isotropic_inner_step`).
+- **MTK NPT/NPH cell propagation**: kernels wrote `V·(P − P_ext)/W`
+  (strain-rate units) into `cell_velocity` while consumers read it as
+  `ḣ = dh/dt`, costing a factor of cell length in the cell response.
+  `cell_velocity` is now the strain rate `ε̇ = p_g/W` everywhere and
+  the cell update is `h_new = h + dt · ε̇ · h`.
+- **MTK velocity-half-step coupling**: isotropic kernels used
+  `α = 1 + 1/(3N_atoms)` instead of the canonical
+  `α = 1 + 1/N_atoms` (ASE `IsotropicMTKNPT._integrate_p`).
+  Anisotropic and triclinic kernels used `(1 + 1/N_atoms)·ε̇`,
+  which only matches ASE `MTKNPT._integrate_p` for uniform strain;
+  replaced with `ε̇ + Tr(ε̇)/(3·N)·I` (canonical trace correction).
 
 ### Breaking Changes
 
-- `cell_velocities` semantics: callers must now store the strain rate
-  `ε̇ = p_g/W`, not the absolute derivative `ḣ = dh/dt`. Kernel
-  signatures are unchanged.
+- `cell_velocities` now stores the strain rate `ε̇ = p_g/W`, not
+  `ḣ = dh/dt`. Kernel signatures unchanged.
 
 ## 0.3.0 - 2026-XX-XX
 

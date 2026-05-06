@@ -3654,7 +3654,7 @@ class TestVirialSignConvention:
 
 
 class TestStrainRateDrag:
-    """Velocity half-step drag uses ε̇ directly with α = 1 + d/N_f, d=3."""
+    """Velocity half-step drag matches ASE MTKNPT/IsotropicMTKNPT."""
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_isotropic_drag_non_uniform_strain(self, device):
@@ -3667,9 +3667,7 @@ class TestStrainRateDrag:
         num_atoms = 1
         dt_val = 1.0
 
-        # Strain rate tensor (passed directly as cell_velocities under the
-        # canonical MTK convention).  Non-uniform diagonals to exercise the
-        # Tr(ε̇)/3 averaging in the isotropic drag.
+        # Non-uniform diagonals exercise the Tr(ε̇)/3 averaging.
         eps_dot_np = np.diag([0.012, 0.008, 0.010]).astype(np_dtype)
         cell_velocities = wp.array(
             [mat_dtype(*eps_dot_np.flatten())], dtype=mat_dtype, device=device
@@ -3680,8 +3678,7 @@ class TestStrainRateDrag:
         masses = wp.array([1.0], dtype=scalar_dtype, device=device)
         forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
 
-        # Cell side info kept only to satisfy the kernel signature; the
-        # kernels no longer consume them under the strain-rate convention.
+        # Cell side info satisfies the kernel signature; not consumed.
         h_np = np.diag([10.0, 12.0, 8.0]).astype(np_dtype)
         V = float(np.linalg.det(h_np))
         volumes = wp.array([V], dtype=scalar_dtype, device=device)
@@ -3717,7 +3714,7 @@ class TestStrainRateDrag:
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_anisotropic_drag_per_axis_strain(self, device):
-        """Anisotropic: drag_i = α · ε̇_ii · v_i."""
+        """Anisotropic: drag_i = (ε̇_ii + Tr(ε̇)/(3·N)) · v_i."""
         np_dtype = np.float64
         scalar_dtype = wp.float64
         mat_dtype = wp.mat33d
@@ -3726,8 +3723,7 @@ class TestStrainRateDrag:
         num_atoms = 1
         dt_val = 1.0
 
-        # Strain rate diagonals chosen distinct so we can detect any axis-
-        # mixing regression.
+        # Distinct diagonals so a scalar (1+1/N)·ε̇ coupling cannot match.
         eps_dot_np = np.diag([0.020, 0.010, 0.015]).astype(np_dtype)
         cell_velocities = wp.array(
             [mat_dtype(*eps_dot_np.flatten())], dtype=mat_dtype, device=device
@@ -3762,15 +3758,69 @@ class TestStrainRateDrag:
         wp.synchronize_device(device)
 
         N_atoms = float(num_atoms)
-        coupling = 1.0 + 1.0 / N_atoms
+        trace_corr = np.trace(eps_dot_np) / (3.0 * N_atoms)
         drag = np.array(
             [
                 [
-                    coupling * eps_dot_np[0, 0] * v_np[0, 0],
-                    coupling * eps_dot_np[1, 1] * v_np[0, 1],
-                    coupling * eps_dot_np[2, 2] * v_np[0, 2],
+                    (eps_dot_np[0, 0] + trace_corr) * v_np[0, 0],
+                    (eps_dot_np[1, 1] + trace_corr) * v_np[0, 1],
+                    (eps_dot_np[2, 2] + trace_corr) * v_np[0, 2],
                 ]
             ]
         )
         expected = v_np + (dt_val / 2.0) * (0.0 - drag)
+        np.testing.assert_allclose(vel_out.numpy(), expected, rtol=1e-10)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_triclinic_drag_with_off_diagonal_strain(self, device):
+        """Triclinic: drag = ε̇ @ v + Tr(ε̇)/(3·N) · v."""
+        np_dtype = np.float64
+        scalar_dtype = wp.float64
+        mat_dtype = wp.mat33d
+        vec_dtype = wp.vec3d
+
+        num_atoms = 1
+        dt_val = 1.0
+
+        # Off-diagonals so a (1+1/N)·ε̇ kernel cannot silently match.
+        eps_dot_np = np.array(
+            [[0.020, 0.005, 0.0], [0.005, 0.010, 0.003], [0.0, 0.003, 0.015]],
+            dtype=np_dtype,
+        )
+        cell_velocities = wp.array(
+            [mat_dtype(*eps_dot_np.flatten())], dtype=mat_dtype, device=device
+        )
+
+        v_np = np.array([[1.0, 2.0, 3.0]], dtype=np_dtype)
+        velocities = wp.array(v_np, dtype=vec_dtype, device=device)
+        masses = wp.array([1.0], dtype=scalar_dtype, device=device)
+        forces = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+
+        h_np = np.diag([10.0, 12.0, 8.0]).astype(np_dtype)
+        V = float(np.linalg.det(h_np))
+        volumes = wp.array([V], dtype=scalar_dtype, device=device)
+        eta_dot = wp.zeros((1, 1), dtype=scalar_dtype, device=device)
+        num_atoms_arr = wp.array([num_atoms], dtype=wp.int32, device=device)
+        dt = wp.array([dt_val], dtype=scalar_dtype, device=device)
+
+        vel_out = wp.empty(num_atoms, dtype=vec_dtype, device=device)
+        npt_velocity_half_step_out(
+            velocities,
+            masses,
+            forces,
+            cell_velocities,
+            volumes,
+            eta_dot,
+            num_atoms_arr,
+            dt,
+            vel_out,
+            mode="triclinic",
+            device=device,
+        )
+        wp.synchronize_device(device)
+
+        N_atoms = float(num_atoms)
+        trace_corr = np.trace(eps_dot_np) / (3.0 * N_atoms)
+        drag = (eps_dot_np @ v_np[0]) + trace_corr * v_np[0]
+        expected = v_np + (dt_val / 2.0) * (0.0 - drag[None, :])
         np.testing.assert_allclose(vel_out.numpy(), expected, rtol=1e-10)
