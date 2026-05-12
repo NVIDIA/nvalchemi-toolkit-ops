@@ -26,6 +26,9 @@ Submodules
 fire2
     PyTorch adapter for the FIRE2 optimizer
     (coordinate-only and variable-cell).
+segment_ops
+    Differentiable PyTorch wrappers for segmented reductions and broadcasts
+    with explicit first- and second-order backward support.
 """
 
 import importlib
@@ -41,6 +44,14 @@ from nvalchemiops.torch.fire2 import (
     fire2_step_coord_cell,
     fire2_step_extended,
 )
+from nvalchemiops.torch.segment_ops import (
+    segmented_dot,
+    segmented_matvec,
+    segmented_mean,
+    segmented_mul,
+    segmented_rms_norm,
+    segmented_sum,
+)
 from nvalchemiops.torch.types import (
     get_wp_dtype,
     get_wp_mat_dtype,
@@ -54,4 +65,10 @@ __all__ = [
     "fire2_step_coord",
     "fire2_step_coord_cell",
     "fire2_step_extended",
+    "segmented_dot",
+    "segmented_matvec",
+    "segmented_mean",
+    "segmented_mul",
+    "segmented_rms_norm",
+    "segmented_sum",
 ]
