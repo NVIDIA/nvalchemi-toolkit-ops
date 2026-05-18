@@ -246,7 +246,11 @@ class TestSegmentedAddBackward:
         grad_x = wp.zeros(N, dtype=wp.float32, device=device)
         grad_y = wp.zeros(M, dtype=wp.float32, device=device)
         _launch_segmented_add_backward(
-            _wpa(g_out, wp.float32, device), _wpa(idx, wp.int32, device), M, grad_x, grad_y
+            _wpa(g_out, wp.float32, device),
+            _wpa(idx, wp.int32, device),
+            M,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), g_out, rtol=1e-5)
         np.testing.assert_allclose(_np(grad_y), _seg_sum(g_out, idx, M), rtol=1e-5)
@@ -259,7 +263,11 @@ class TestSegmentedAddBackward:
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_y = wp.zeros(M, dtype=wp.vec3f, device=device)
         _launch_segmented_add_backward(
-            _wpv(g_out, wp.vec3f, device), _wpa(idx, wp.int32, device), M, grad_x, grad_y
+            _wpv(g_out, wp.vec3f, device),
+            _wpa(idx, wp.int32, device),
+            M,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), g_out, rtol=1e-5)
         np.testing.assert_allclose(_np(grad_y), _seg_sum(g_out, idx, M), rtol=1e-4)
@@ -308,7 +316,9 @@ class TestSegmentedMulBackward:
             _wpa(x, wp_type, device),
             _wpa(y, wp_type, device),
             _wpa(idx, wp.int32, device),
-            M, grad_x, grad_y,
+            M,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), ref_grad_x, rtol=rtol)
         np.testing.assert_allclose(_np(grad_y), ref_grad_y, rtol=rtol)
@@ -330,7 +340,9 @@ class TestSegmentedMulBackward:
             _wpv(x, wp.vec3f, device),
             _wpa(y, wp.float32, device),
             _wpa(idx, wp.int32, device),
-            M, grad_x, grad_y,
+            M,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), ref_grad_x, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_y), ref_grad_y, rtol=1e-4)
@@ -358,7 +370,9 @@ class TestSegmentedMulBackward:
             _wpa(x, wp.float32, device),
             _wpa(y, wp.float32, device),
             _wpa(idx, wp.int32, device),
-            grad_g_out, grad_x_extra, grad_y_extra,
+            grad_g_out,
+            grad_x_extra,
+            grad_y_extra,
         )
         np.testing.assert_allclose(_np(grad_g_out), ref_grad_g_out, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-4)
@@ -385,7 +399,8 @@ class TestSegmentedDotBackward:
             _wpv(x, wp.vec3f, device),
             _wpv(y, wp.vec3f, device),
             _wpa(idx, wp.int32, device),
-            grad_x, grad_y,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), y * g_out[idx, None], rtol=1e-4)
         np.testing.assert_allclose(_np(grad_y), x * g_out[idx, None], rtol=1e-4)
@@ -404,7 +419,8 @@ class TestSegmentedDotBackward:
             _wpa(x, wp.float32, device),
             _wpa(y, wp.float32, device),
             _wpa(idx, wp.int32, device),
-            grad_x, grad_y,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), y * g_out[idx], rtol=1e-4)
         np.testing.assert_allclose(_np(grad_y), x * g_out[idx], rtol=1e-4)
@@ -432,7 +448,10 @@ class TestSegmentedDotBackward:
             _wpa(x, wp.float32, device),
             _wpa(y, wp.float32, device),
             _wpa(idx, wp.int32, device),
-            M, grad_g_out, grad_x_extra, grad_y_extra,
+            M,
+            grad_g_out,
+            grad_x_extra,
+            grad_y_extra,
         )
         np.testing.assert_allclose(_np(grad_g_out), ref_g_out, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_x_extra), ref_x_extra, rtol=1e-4)
@@ -466,7 +485,8 @@ class TestSegmentedInnerProductsBackward:
             _wpa(g_xy, wp.float32, device),
             _wpa(g_xx, wp.float32, device),
             _wpa(g_yy, wp.float32, device),
-            grad_x, grad_y,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), ref_grad_x, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_y), ref_grad_y, rtol=1e-4)
@@ -492,7 +512,8 @@ class TestSegmentedInnerProductsBackward:
             _wpa(g_xy, wp.float32, device),
             _wpa(g_xx, wp.float32, device),
             _wpa(g_yy, wp.float32, device),
-            grad_x, grad_y,
+            grad_x,
+            grad_y,
         )
         np.testing.assert_allclose(_np(grad_x), ref_grad_x, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_y), ref_grad_y, rtol=1e-4)
@@ -584,8 +605,12 @@ class TestSegmentedRmsNormBackward:
         out = wp.zeros(M, dtype=wp.float32, device=device)
         inv_norm = wp.zeros(M, dtype=wp.float32, device=device)
         _launch_segmented_rms_norm_forward_precompute(
-            _wpv(x, wp.vec3f, device), _wpa(idx, wp.int32, device),
-            sum_sq, counts, out, inv_norm,
+            _wpv(x, wp.vec3f, device),
+            _wpa(idx, wp.int32, device),
+            sum_sq,
+            counts,
+            out,
+            inv_norm,
         )
         np.testing.assert_allclose(_np(out), out_ref, rtol=1e-4)
         np.testing.assert_allclose(_np(inv_norm), inv_norm_ref, rtol=1e-4)
@@ -640,10 +665,14 @@ class TestSegmentedRmsNormBackward:
             _wpa(inv_norm, wp.float32, device),
             _wpa(counts, wp.int32, device),
             _wpa(idx, wp.int32, device),
-            M, grad_x_extra, grad_g_out_extra,
+            M,
+            grad_x_extra,
+            grad_g_out_extra,
         )
         np.testing.assert_allclose(_np(grad_g_out_extra), ref_grad_g_out, rtol=1e-4)
-        np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-3, atol=1e-6)
+        np.testing.assert_allclose(
+            _np(grad_x_extra), ref_grad_x_extra, rtol=1e-3, atol=1e-6
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -734,7 +763,8 @@ class TestSegmentedMaxNormBackward:
             _wpv(x, wp.vec3f, device),
             _wpa(argmax_ref, wp.int32, device),
             _wpa(idx, wp.int32, device),
-            grad_x_extra, grad_g_out,
+            grad_x_extra,
+            grad_g_out,
         )
         np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_g_out), ref_grad_g_out, rtol=1e-4)
@@ -756,7 +786,9 @@ class TestSegmentedMatvecBackward:
         # Forward: out[i] = M[s]^T @ v[i]
         # grad_v[i] = M[s] @ g_out[i]   (non-transposed)
         # grad_M[s][j][k] = sum_i v[i][j] * g_out[i][k]
-        ref_grad_v = np.array([m[idx[i]] @ g_out[i] for i in range(N)], dtype=np.float32)
+        ref_grad_v = np.array(
+            [m[idx[i]] @ g_out[i] for i in range(N)], dtype=np.float32
+        )
         ref_grad_M = np.zeros((M, 3, 3), dtype=np.float32)
         for i in range(N):
             ref_grad_M[idx[i]] += np.outer(v[i], g_out[i])
@@ -768,7 +800,8 @@ class TestSegmentedMatvecBackward:
             _wpv(v, wp.vec3f, device),
             _wpm(m, wp.mat33f, device),
             _wpa(idx, wp.int32, device),
-            grad_v, grad_M,
+            grad_v,
+            grad_M,
         )
         np.testing.assert_allclose(_np(grad_v), ref_grad_v, rtol=1e-4, atol=1e-6)
         np.testing.assert_allclose(_np(grad_M), ref_grad_M, rtol=1e-4, atol=1e-6)
@@ -782,30 +815,33 @@ class TestSegmentedMatvecBackward:
 class TestSegmentDivBackward:
     def test_backward(self, device):
         rng = np.random.default_rng(30)
-        num = rng.standard_normal(N).astype(np.float32)
-        den = rng.uniform(0.5, 2.0, N).astype(np.float32)
+        den = rng.integers(1, 5, N).astype(np.int32)
         g_result = rng.standard_normal(N).astype(np.float32)
 
         grad_num = wp.zeros(N, dtype=wp.float32, device=device)
         _launch_segment_div_backward(
             _wpa(g_result, wp.float32, device),
-            _wpa(den, wp.float32, device),
+            _wpa(den, wp.int32, device),
             grad_num,
         )
-        np.testing.assert_allclose(_np(grad_num), g_result / den, rtol=1e-5)
+        np.testing.assert_allclose(
+            _np(grad_num), g_result / den.astype(np.float32), rtol=1e-5
+        )
 
     def test_double_backward(self, device):
         rng = np.random.default_rng(31)
         gg_num = rng.standard_normal(N).astype(np.float32)
-        den = rng.uniform(0.5, 2.0, N).astype(np.float32)
+        den = rng.integers(1, 5, N).astype(np.int32)
 
         grad_g_result = wp.zeros(N, dtype=wp.float32, device=device)
         _launch_segment_div_double_backward(
             _wpa(gg_num, wp.float32, device),
-            _wpa(den, wp.float32, device),
+            _wpa(den, wp.int32, device),
             grad_g_result,
         )
-        np.testing.assert_allclose(_np(grad_g_result), gg_num / den, rtol=1e-5)
+        np.testing.assert_allclose(
+            _np(grad_g_result), gg_num / den.astype(np.float32), rtol=1e-5
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -829,7 +865,10 @@ class TestSegmentedAxpyBackward:
             _wpa(x, wp.float32, device),
             _wpa(a, wp.float32, device),
             _wpa(idx, wp.int32, device),
-            M, grad_y_in, grad_x, grad_a,
+            M,
+            grad_y_in,
+            grad_x,
+            grad_a,
         )
         np.testing.assert_allclose(_np(grad_y_in), g_out, rtol=1e-5)
         np.testing.assert_allclose(_np(grad_x), a[idx] * g_out, rtol=1e-4)
@@ -852,7 +891,10 @@ class TestSegmentedAxpyBackward:
             _wpv(x, wp.vec3f, device),
             _wpa(a, wp.float32, device),
             _wpa(idx, wp.int32, device),
-            M, grad_y_in, grad_x, grad_a,
+            M,
+            grad_y_in,
+            grad_x,
+            grad_a,
         )
         np.testing.assert_allclose(_np(grad_y_in), g_out, rtol=1e-5)
         np.testing.assert_allclose(_np(grad_x), g_out * a[idx, None], rtol=1e-4)
@@ -885,7 +927,11 @@ class TestSegmentedAxpbyBackward:
             _wpa(b, wp.float32, device),
             _wpa(y, wp.float32, device),
             _wpa(idx, wp.int32, device),
-            M, grad_x, grad_y, grad_a, grad_b,
+            M,
+            grad_x,
+            grad_y,
+            grad_a,
+            grad_b,
         )
         np.testing.assert_allclose(_np(grad_x), a[idx] * g_out, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_y), b[idx] * g_out, rtol=1e-4)
