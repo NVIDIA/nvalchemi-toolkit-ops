@@ -584,6 +584,12 @@ def precision(request):
 # PyTorch binding tests should import D3Parameters from nvalchemiops.torch.interactions.dispersion
 
 
+@pytest.fixture(params=[wp.float32, wp.float64], ids=["float32", "float64"])
+def wp_dtype(request):
+    """Parameterized fixture for Warp scalar dtypes (float32 and float64)."""
+    return request.param
+
+
 # ==============================================================================
 # Reference Output Fixtures
 # ==============================================================================
