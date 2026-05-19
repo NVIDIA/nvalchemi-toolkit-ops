@@ -907,7 +907,7 @@ def naive_neighbor_list(
     Basic usage without periodic boundary conditions:
 
     >>> import jax.numpy as jnp
-    >>> from nvalchemiops.jax.neighbors import naive_neighbor_list
+    >>> from nvalchemiops.jax.neighbors import compute_naive_num_shifts, naive_neighbor_list
     >>> positions = jnp.zeros((100, 3), dtype=jnp.float32)
     >>> cutoff = 2.5
     >>> max_neighbors = 50
@@ -942,6 +942,9 @@ def naive_neighbor_list(
     >>> inv_cell = jnp.linalg.inv(cell)
     >>> positions_wrapped = jnp.zeros_like(positions)
     >>> per_atom_cell_offsets = jnp.zeros((positions.shape[0], 3), dtype=jnp.int32)
+    >>> shift_range, num_shifts_per_system, max_shifts_per_system = (
+    ...     compute_naive_num_shifts(cell, cutoff, pbc)
+    ... )
     >>> @functools.partial(jax.jit, donate_argnums=(1, 2, 3))
     ... def md_step(positions, neighbor_matrix, num_neighbors, shifts):
     ...     return naive_neighbor_list(
@@ -955,6 +958,9 @@ def naive_neighbor_list(
     ...         inv_cell=inv_cell,
     ...         positions_wrapped=positions_wrapped,
     ...         per_atom_cell_offsets=per_atom_cell_offsets,
+    ...         shift_range_per_dimension=shift_range,
+    ...         num_shifts_per_system=num_shifts_per_system,
+    ...         max_shifts_per_system=max_shifts_per_system,
     ...         graph_mode="warp",
     ...     )
 
