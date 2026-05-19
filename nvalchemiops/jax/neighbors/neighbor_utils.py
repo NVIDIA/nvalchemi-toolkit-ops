@@ -20,6 +20,8 @@ This module contains JAX-specific helper functions for neighbor list operations.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 import warp as wp
@@ -39,6 +41,30 @@ __all__ = [
     "estimate_max_neighbors",
     "NeighborOverflowError",
 ]
+
+
+def _validate_graph_mode(graph_mode: str) -> Literal["none", "warp"]:
+    """Validate the public ``graph_mode`` argument used by neighbor-list APIs.
+
+    Parameters
+    ----------
+    graph_mode : str
+        User-supplied mode string. Must be one of ``{"none", "warp"}``.
+
+    Returns
+    -------
+    Literal["none", "warp"]
+        The validated mode.
+
+    Raises
+    ------
+    ValueError
+        If ``graph_mode`` is not a recognized mode.
+    """
+    if graph_mode not in {"none", "warp"}:
+        raise ValueError("graph_mode must be one of {'none', 'warp'}")
+    return graph_mode
+
 
 # ==============================================================================
 # JAX Kernel Wrappers

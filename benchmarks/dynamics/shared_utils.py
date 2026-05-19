@@ -69,7 +69,6 @@ from nvalchemiops.neighbors.cell_list import build_cell_list, query_cell_list
 from nvalchemiops.neighbors.neighbor_utils import (
     selective_zero_num_neighbors,
     selective_zero_num_neighbors_single,
-    zero_array,
 )
 from nvalchemiops.neighbors.rebuild_detection import (
     check_batch_neighbor_list_rebuild,
@@ -900,7 +899,7 @@ class NeighborListManager:
             rebuild check uses minimum-image convention (MIC).
         """
         # 1. Zero rebuild flag — kernel only sets True, never clears
-        zero_array(self.wp_rebuild_flag, self.device)
+        self.wp_rebuild_flag.zero_()
 
         # 2. GPU-side displacement check — writes True if any atom moved > skin/2
         check_neighbor_list_rebuild(
@@ -917,7 +916,7 @@ class NeighborListManager:
         )
 
         # 3. Always rebuild cell structure (cheap O(N) spatial binning)
-        zero_array(self.wp_atoms_per_cell_count, self.device)
+        self.wp_atoms_per_cell_count.zero_()
         build_cell_list(
             positions_wp,
             cell_wp,
@@ -1110,7 +1109,7 @@ class BatchedNeighborListManager:
             the rebuild check uses minimum-image convention (MIC).
         """
         # 1. Zero per-system flags — kernel only sets True, never clears
-        zero_array(self.wp_rebuild_flags, self.device)
+        self.wp_rebuild_flags.zero_()
 
         # 2. GPU-side per-system displacement check — no CPU sync
         check_batch_neighbor_list_rebuild(
@@ -1128,7 +1127,7 @@ class BatchedNeighborListManager:
         )
 
         # 3. Always rebuild cell structure (cheap O(N) spatial binning)
-        zero_array(self.wp_atoms_per_cell_count, self.device)
+        self.wp_atoms_per_cell_count.zero_()
         batch_build_cell_list(
             positions_wp,
             cells_wp,
