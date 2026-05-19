@@ -19,4 +19,5 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("jax", reason="No JAX installed.")
+jax = pytest.importorskip("jax", reason="No JAX installed.")
+jax.config.update("jax_enable_x64", True)

@@ -409,6 +409,91 @@ class TestDFT_D3Dtypes:
         assert energy.dtype == jnp.float32
         assert coord_num.dtype == jnp.float32
 
+    def test_float64_positions_preserve_large_origin_displacement(
+        self, h2_system, functional_params, d3_params, device
+    ):
+        """Test float64 positions preserve small separations far from the origin."""
+        positions = jnp.array(
+            [[1.0e8, 0.0, 0.0], [1.0e8 + 1.4, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+
+        expected_energy, expected_forces, expected_coord_num = dftd3(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            d3_params=d3_params,
+        )
+        energy, forces, coord_num = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            d3_params=d3_params,
+        )
+
+        assert positions.dtype == jnp.float64
+        assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
+
+    def test_float64_cell_preserves_large_shift_cancellation(
+        self, h2_system, functional_params, d3_params, device
+    ):
+        """Test float64 cells preserve PBC shifts that cancel large coordinates."""
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+
+        expected_energy, expected_forces, expected_coord_num = dftd3(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            d3_params=d3_params,
+        )
+
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0e8 + 2.1, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        cell = jnp.array(
+            [[[1.0e8 + 0.7, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        neighbor_matrix_shifts = jnp.array(
+            [
+                [[-1, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]],
+                [[1, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]],
+            ],
+            dtype=jnp.int32,
+        )
+
+        energy, forces, coord_num = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            cell=cell,
+            d3_params=d3_params,
+        )
+
+        assert cell.dtype == jnp.float64
+        assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
+
     def test_float32_float64_consistency(
         self, h2_system, functional_params, d3_params, device
     ):
