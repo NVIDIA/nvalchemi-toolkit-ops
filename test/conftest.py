@@ -66,12 +66,20 @@ def _release_gpu_memory():
 
 def _release_framework_gpu_memory() -> None:
     """Drop Python references and framework caches between tests."""
-    _synchronize_jax_devices()
-    _synchronize_torch_cuda()
+    _call_cleanup(_synchronize_jax_devices)
+    _call_cleanup(_synchronize_torch_cuda)
     gc.collect()
-    _clear_jax_caches()
-    _clear_torch_cuda_cache()
+    _call_cleanup(_clear_jax_caches)
+    _call_cleanup(_clear_torch_cuda_cache)
     gc.collect()
+
+
+def _call_cleanup(cleanup):
+    """Run cleanup best-effort so teardown does not mask test failures."""
+    try:
+        cleanup()
+    except Exception:
+        return
 
 
 def _synchronize_jax_devices() -> None:
