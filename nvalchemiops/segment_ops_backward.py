@@ -1762,10 +1762,13 @@ def _launch_segmented_matvec_double_backward(
         device=device,
     )
     # grad_M_extra[s] = sum outer(gg_gv[i], g_out[i])
+    # Kernel signature is (g_out, v, ...) and computes outer(v, g_out), so we
+    # pass g_out in the first slot and gg_gv in the second to get the documented
+    # outer(gg_gv, g_out).
     wp.launch(
         _segmented_matvec_backward_M_overloads[(v.dtype, m.dtype)],
         dim=dim_rle,
-        inputs=[gg_gv, g_out, idx, grad_M_extra, N, ept],
+        inputs=[g_out, gg_gv, idx, grad_M_extra, N, ept],
         device=device,
     )
 

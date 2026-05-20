@@ -27,7 +27,9 @@ from nvalchemiops.segment_ops_backward import (
     _launch_segmented_add_backward,
     _launch_segmented_add_double_backward,
     _launch_segmented_axpby_backward,
+    _launch_segmented_axpby_double_backward,
     _launch_segmented_axpy_backward,
+    _launch_segmented_axpy_double_backward,
     _launch_segmented_broadcast_backward,
     _launch_segmented_broadcast_double_backward,
     _launch_segmented_component_sum_backward,
@@ -35,7 +37,9 @@ from nvalchemiops.segment_ops_backward import (
     _launch_segmented_dot_backward,
     _launch_segmented_dot_double_backward,
     _launch_segmented_inner_products_backward,
+    _launch_segmented_inner_products_double_backward,
     _launch_segmented_matvec_backward,
+    _launch_segmented_matvec_double_backward,
     _launch_segmented_max_norm_backward,
     _launch_segmented_max_norm_double_backward,
     _launch_segmented_max_norm_forward_precompute,
@@ -518,6 +522,96 @@ class TestSegmentedInnerProductsBackward:
         np.testing.assert_allclose(_np(grad_x), ref_grad_x, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_y), ref_grad_y, rtol=1e-4)
 
+    def test_double_backward_scalar(self, device):
+        rng = np.random.default_rng(40)
+        idx = _make_idx(N, M, rng)
+        x = rng.standard_normal(N).astype(np.float32)
+        y = rng.standard_normal(N).astype(np.float32)
+        g_xy = rng.standard_normal(M).astype(np.float32)
+        g_xx = rng.standard_normal(M).astype(np.float32)
+        g_yy = rng.standard_normal(M).astype(np.float32)
+        gg_gx = rng.standard_normal(N).astype(np.float32)
+        gg_gy = rng.standard_normal(N).astype(np.float32)
+
+        ref_grad_x_extra = 2.0 * g_xx[idx] * gg_gx + g_xy[idx] * gg_gy
+        ref_grad_y_extra = g_xy[idx] * gg_gx + 2.0 * g_yy[idx] * gg_gy
+        ref_grad_g_xy = _seg_sum(gg_gx * y + gg_gy * x, idx, M)
+        ref_grad_g_xx = 2.0 * _seg_sum(gg_gx * x, idx, M)
+        ref_grad_g_yy = 2.0 * _seg_sum(gg_gy * y, idx, M)
+
+        grad_x_extra = wp.zeros(N, dtype=wp.float32, device=device)
+        grad_y_extra = wp.zeros(N, dtype=wp.float32, device=device)
+        grad_g_xy = wp.zeros(M, dtype=wp.float32, device=device)
+        grad_g_xx = wp.zeros(M, dtype=wp.float32, device=device)
+        grad_g_yy = wp.zeros(M, dtype=wp.float32, device=device)
+        _launch_segmented_inner_products_double_backward(
+            _wpa(gg_gx, wp.float32, device),
+            _wpa(gg_gy, wp.float32, device),
+            _wpa(x, wp.float32, device),
+            _wpa(y, wp.float32, device),
+            _wpa(g_xy, wp.float32, device),
+            _wpa(g_xx, wp.float32, device),
+            _wpa(g_yy, wp.float32, device),
+            _wpa(idx, wp.int32, device),
+            M,
+            grad_x_extra,
+            grad_y_extra,
+            grad_g_xy,
+            grad_g_xx,
+            grad_g_yy,
+        )
+        np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_y_extra), ref_grad_y_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_g_xy), ref_grad_g_xy, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_g_xx), ref_grad_g_xx, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_g_yy), ref_grad_g_yy, rtol=1e-4)
+
+    def test_double_backward_vec3(self, device):
+        rng = np.random.default_rng(41)
+        idx = _make_idx(N, M, rng)
+        x = rng.standard_normal((N, 3)).astype(np.float32)
+        y = rng.standard_normal((N, 3)).astype(np.float32)
+        g_xy = rng.standard_normal(M).astype(np.float32)
+        g_xx = rng.standard_normal(M).astype(np.float32)
+        g_yy = rng.standard_normal(M).astype(np.float32)
+        gg_gx = rng.standard_normal((N, 3)).astype(np.float32)
+        gg_gy = rng.standard_normal((N, 3)).astype(np.float32)
+
+        ref_grad_x_extra = 2.0 * g_xx[idx, None] * gg_gx + g_xy[idx, None] * gg_gy
+        ref_grad_y_extra = g_xy[idx, None] * gg_gx + 2.0 * g_yy[idx, None] * gg_gy
+        ref_grad_g_xy = _seg_sum(
+            (gg_gx * y).sum(axis=1) + (gg_gy * x).sum(axis=1), idx, M
+        )
+        ref_grad_g_xx = 2.0 * _seg_sum((gg_gx * x).sum(axis=1), idx, M)
+        ref_grad_g_yy = 2.0 * _seg_sum((gg_gy * y).sum(axis=1), idx, M)
+
+        grad_x_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_y_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_g_xy = wp.zeros(M, dtype=wp.float32, device=device)
+        grad_g_xx = wp.zeros(M, dtype=wp.float32, device=device)
+        grad_g_yy = wp.zeros(M, dtype=wp.float32, device=device)
+        _launch_segmented_inner_products_double_backward(
+            _wpv(gg_gx, wp.vec3f, device),
+            _wpv(gg_gy, wp.vec3f, device),
+            _wpv(x, wp.vec3f, device),
+            _wpv(y, wp.vec3f, device),
+            _wpa(g_xy, wp.float32, device),
+            _wpa(g_xx, wp.float32, device),
+            _wpa(g_yy, wp.float32, device),
+            _wpa(idx, wp.int32, device),
+            M,
+            grad_x_extra,
+            grad_y_extra,
+            grad_g_xy,
+            grad_g_xx,
+            grad_g_yy,
+        )
+        np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_y_extra), ref_grad_y_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_g_xy), ref_grad_g_xy, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_g_xx), ref_grad_g_xx, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_g_yy), ref_grad_g_yy, rtol=1e-4)
+
 
 # ---------------------------------------------------------------------------
 # segmented_mean backward
@@ -806,6 +900,53 @@ class TestSegmentedMatvecBackward:
         np.testing.assert_allclose(_np(grad_v), ref_grad_v, rtol=1e-4, atol=1e-6)
         np.testing.assert_allclose(_np(grad_M), ref_grad_M, rtol=1e-4, atol=1e-6)
 
+    def test_double_backward(self, device):
+        rng = np.random.default_rng(42)
+        idx = _make_idx(N, M, rng)
+        v = rng.standard_normal((N, 3)).astype(np.float32)
+        m = rng.standard_normal((M, 3, 3)).astype(np.float32)
+        g_out = rng.standard_normal((N, 3)).astype(np.float32)
+        gg_gv = rng.standard_normal((N, 3)).astype(np.float32)
+        gg_gM = rng.standard_normal((M, 3, 3)).astype(np.float32)
+
+        # grad_g_out[i] = M[s]^T @ gg_gv[i] + gg_gM[s]^T @ v[i]
+        ref_grad_g_out = np.zeros((N, 3), dtype=np.float32)
+        for i in range(N):
+            s = idx[i]
+            ref_grad_g_out[i] = m[s].T @ gg_gv[i] + gg_gM[s].T @ v[i]
+        # grad_v_extra[i] = gg_gM[s] @ g_out[i]
+        ref_grad_v_extra = np.array(
+            [gg_gM[idx[i]] @ g_out[i] for i in range(N)], dtype=np.float32
+        )
+        # grad_M_extra[s] = sum_i outer(gg_gv[i], g_out[i])
+        ref_grad_M_extra = np.zeros((M, 3, 3), dtype=np.float32)
+        for i in range(N):
+            ref_grad_M_extra[idx[i]] += np.outer(gg_gv[i], g_out[i])
+
+        grad_g_out = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_v_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_M_extra = wp.zeros(M, dtype=wp.mat33f, device=device)
+        _launch_segmented_matvec_double_backward(
+            _wpv(gg_gv, wp.vec3f, device),
+            _wpm(gg_gM, wp.mat33f, device),
+            _wpv(g_out, wp.vec3f, device),
+            _wpv(v, wp.vec3f, device),
+            _wpm(m, wp.mat33f, device),
+            _wpa(idx, wp.int32, device),
+            grad_g_out,
+            grad_v_extra,
+            grad_M_extra,
+        )
+        np.testing.assert_allclose(
+            _np(grad_g_out), ref_grad_g_out, rtol=1e-4, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            _np(grad_v_extra), ref_grad_v_extra, rtol=1e-4, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            _np(grad_M_extra), ref_grad_M_extra, rtol=1e-4, atol=1e-6
+        )
+
 
 # ---------------------------------------------------------------------------
 # segment_div backward
@@ -900,6 +1041,72 @@ class TestSegmentedAxpyBackward:
         np.testing.assert_allclose(_np(grad_x), g_out * a[idx, None], rtol=1e-4)
         np.testing.assert_allclose(_np(grad_a), ref_grad_a, rtol=1e-4)
 
+    def test_double_backward_scalar(self, device):
+        rng = np.random.default_rng(43)
+        idx = _make_idx(N, M, rng)
+        x = rng.standard_normal(N).astype(np.float32)
+        a = rng.standard_normal(M).astype(np.float32)
+        g_out = rng.standard_normal(N).astype(np.float32)
+        gg_gy_in = rng.standard_normal(N).astype(np.float32)
+        gg_gx = rng.standard_normal(N).astype(np.float32)
+        gg_ga = rng.standard_normal(M).astype(np.float32)
+
+        ref_grad_g_out = gg_gy_in + gg_gx * a[idx] + gg_ga[idx] * x
+        ref_grad_x_extra = gg_ga[idx] * g_out
+        ref_grad_a_extra = _seg_sum(gg_gx * g_out, idx, M)
+
+        grad_g_out = wp.zeros(N, dtype=wp.float32, device=device)
+        grad_x_extra = wp.zeros(N, dtype=wp.float32, device=device)
+        grad_a_extra = wp.zeros(M, dtype=wp.float32, device=device)
+        _launch_segmented_axpy_double_backward(
+            _wpa(gg_gy_in, wp.float32, device),
+            _wpa(gg_gx, wp.float32, device),
+            _wpa(gg_ga, wp.float32, device),
+            _wpa(g_out, wp.float32, device),
+            _wpa(x, wp.float32, device),
+            _wpa(a, wp.float32, device),
+            _wpa(idx, wp.int32, device),
+            grad_g_out,
+            grad_x_extra,
+            grad_a_extra,
+        )
+        np.testing.assert_allclose(_np(grad_g_out), ref_grad_g_out, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_a_extra), ref_grad_a_extra, rtol=1e-4)
+
+    def test_double_backward_vec3(self, device):
+        rng = np.random.default_rng(44)
+        idx = _make_idx(N, M, rng)
+        x = rng.standard_normal((N, 3)).astype(np.float32)
+        a = rng.standard_normal(M).astype(np.float32)
+        g_out = rng.standard_normal((N, 3)).astype(np.float32)
+        gg_gy_in = rng.standard_normal((N, 3)).astype(np.float32)
+        gg_gx = rng.standard_normal((N, 3)).astype(np.float32)
+        gg_ga = rng.standard_normal(M).astype(np.float32)
+
+        ref_grad_g_out = gg_gy_in + gg_gx * a[idx, None] + gg_ga[idx, None] * x
+        ref_grad_x_extra = gg_ga[idx, None] * g_out
+        ref_grad_a_extra = _seg_sum((gg_gx * g_out).sum(axis=1), idx, M)
+
+        grad_g_out = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_x_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_a_extra = wp.zeros(M, dtype=wp.float32, device=device)
+        _launch_segmented_axpy_double_backward(
+            _wpv(gg_gy_in, wp.vec3f, device),
+            _wpv(gg_gx, wp.vec3f, device),
+            _wpa(gg_ga, wp.float32, device),
+            _wpv(g_out, wp.vec3f, device),
+            _wpv(x, wp.vec3f, device),
+            _wpa(a, wp.float32, device),
+            _wpa(idx, wp.int32, device),
+            grad_g_out,
+            grad_x_extra,
+            grad_a_extra,
+        )
+        np.testing.assert_allclose(_np(grad_g_out), ref_grad_g_out, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_a_extra), ref_grad_a_extra, rtol=1e-4)
+
 
 # ---------------------------------------------------------------------------
 # segmented_axpby backward
@@ -937,6 +1144,91 @@ class TestSegmentedAxpbyBackward:
         np.testing.assert_allclose(_np(grad_y), b[idx] * g_out, rtol=1e-4)
         np.testing.assert_allclose(_np(grad_a), _seg_sum(x * g_out, idx, M), rtol=1e-4)
         np.testing.assert_allclose(_np(grad_b), _seg_sum(y * g_out, idx, M), rtol=1e-4)
+
+    def test_backward_vec3(self, device):
+        rng = np.random.default_rng(45)
+        idx = _make_idx(N, M, rng)
+        x = rng.standard_normal((N, 3)).astype(np.float32)
+        y = rng.standard_normal((N, 3)).astype(np.float32)
+        a = rng.standard_normal(M).astype(np.float32)
+        b = rng.standard_normal(M).astype(np.float32)
+        g_out = rng.standard_normal((N, 3)).astype(np.float32)
+
+        ref_grad_x = a[idx, None] * g_out
+        ref_grad_y = b[idx, None] * g_out
+        ref_grad_a = _seg_sum((x * g_out).sum(axis=1), idx, M)
+        ref_grad_b = _seg_sum((y * g_out).sum(axis=1), idx, M)
+
+        grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_y = wp.zeros(N, dtype=wp.vec3f, device=device)
+        grad_a = wp.zeros(M, dtype=wp.float32, device=device)
+        grad_b = wp.zeros(M, dtype=wp.float32, device=device)
+        _launch_segmented_axpby_backward(
+            _wpv(g_out, wp.vec3f, device),
+            _wpa(a, wp.float32, device),
+            _wpv(x, wp.vec3f, device),
+            _wpa(b, wp.float32, device),
+            _wpv(y, wp.vec3f, device),
+            _wpa(idx, wp.int32, device),
+            M,
+            grad_x,
+            grad_y,
+            grad_a,
+            grad_b,
+        )
+        np.testing.assert_allclose(_np(grad_x), ref_grad_x, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_y), ref_grad_y, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_a), ref_grad_a, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_b), ref_grad_b, rtol=1e-4)
+
+    def test_double_backward_scalar(self, device):
+        rng = np.random.default_rng(46)
+        idx = _make_idx(N, M, rng)
+        x = rng.standard_normal(N).astype(np.float32)
+        y = rng.standard_normal(N).astype(np.float32)
+        a = rng.standard_normal(M).astype(np.float32)
+        b = rng.standard_normal(M).astype(np.float32)
+        g_out = rng.standard_normal(N).astype(np.float32)
+        gg_gx = rng.standard_normal(N).astype(np.float32)
+        gg_gy = rng.standard_normal(N).astype(np.float32)
+        gg_ga = rng.standard_normal(M).astype(np.float32)
+        gg_gb = rng.standard_normal(M).astype(np.float32)
+
+        ref_grad_g_out = (
+            gg_gx * a[idx] + gg_gy * b[idx] + gg_ga[idx] * x + gg_gb[idx] * y
+        )
+        ref_grad_x_extra = gg_ga[idx] * g_out
+        ref_grad_y_extra = gg_gb[idx] * g_out
+        ref_grad_a_extra = _seg_sum(gg_gx * g_out, idx, M)
+        ref_grad_b_extra = _seg_sum(gg_gy * g_out, idx, M)
+
+        grad_g_out = wp.zeros(N, dtype=wp.float32, device=device)
+        grad_x_extra = wp.zeros(N, dtype=wp.float32, device=device)
+        grad_y_extra = wp.zeros(N, dtype=wp.float32, device=device)
+        grad_a_extra = wp.zeros(M, dtype=wp.float32, device=device)
+        grad_b_extra = wp.zeros(M, dtype=wp.float32, device=device)
+        _launch_segmented_axpby_double_backward(
+            _wpa(gg_gx, wp.float32, device),
+            _wpa(gg_gy, wp.float32, device),
+            _wpa(gg_ga, wp.float32, device),
+            _wpa(gg_gb, wp.float32, device),
+            _wpa(g_out, wp.float32, device),
+            _wpa(a, wp.float32, device),
+            _wpa(x, wp.float32, device),
+            _wpa(b, wp.float32, device),
+            _wpa(y, wp.float32, device),
+            _wpa(idx, wp.int32, device),
+            grad_g_out,
+            grad_x_extra,
+            grad_y_extra,
+            grad_a_extra,
+            grad_b_extra,
+        )
+        np.testing.assert_allclose(_np(grad_g_out), ref_grad_g_out, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_x_extra), ref_grad_x_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_y_extra), ref_grad_y_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_a_extra), ref_grad_a_extra, rtol=1e-4)
+        np.testing.assert_allclose(_np(grad_b_extra), ref_grad_b_extra, rtol=1e-4)
 
 
 # ---------------------------------------------------------------------------
