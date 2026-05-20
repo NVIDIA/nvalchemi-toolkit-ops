@@ -26,24 +26,35 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
 def _framework_sort_key(item: pytest.Item) -> tuple[int, str, str]:
-    """Sort framework binding suites so JAX runs before Torch."""
+    """Sort framework suites so JAX runs before Warp and Torch CUDA tests."""
     item_path = str(getattr(item, "path", None) or getattr(item, "fspath", ""))
     item_path = item_path.replace(os.sep, "/")
 
     if "/bindings/jax/" in item_path:
-        framework_rank = 1
+        framework_rank = 0
     elif "/bindings/torch/" in item_path:
         framework_rank = 2
     else:
-        framework_rank = 0
+        framework_rank = 1
 
     return framework_rank, item_path, item.name
 
 
+def _sort_items_by_framework(items: list[pytest.Item]) -> None:
+    """Sort pytest items in place by framework execution order."""
+    items.sort(key=_framework_sort_key)
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
-    """Group JAX binding tests before Torch binding tests within each run."""
-    items.sort(key=_framework_sort_key)
+    """Group JAX binding tests before Torch binding tests during collection."""
+    _sort_items_by_framework(items)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_finish(session):
+    """Re-apply framework ordering after collection plugins finish deselection."""
+    _sort_items_by_framework(session.items)
 
 
 @pytest.fixture(autouse=True)
@@ -55,10 +66,28 @@ def _release_gpu_memory():
 
 def _release_framework_gpu_memory() -> None:
     """Drop Python references and framework caches between tests."""
+    _synchronize_jax_devices()
+    _synchronize_torch_cuda()
     gc.collect()
     _clear_jax_caches()
     _clear_torch_cuda_cache()
     gc.collect()
+
+
+def _synchronize_jax_devices() -> None:
+    """Wait for pending JAX work before clearing JAX caches."""
+    jax = sys.modules.get("jax")
+    if jax is None:
+        return
+
+    effects_barrier = getattr(jax, "effects_barrier", None)
+    if effects_barrier is not None:
+        effects_barrier()
+
+    for device in jax.devices():
+        synchronize = getattr(device, "synchronize_all_activity", None)
+        if synchronize is not None:
+            synchronize()
 
 
 def _clear_jax_caches() -> None:
@@ -70,6 +99,16 @@ def _clear_jax_caches() -> None:
     clear_caches = getattr(jax, "clear_caches", None)
     if clear_caches is not None:
         clear_caches()
+
+
+def _synchronize_torch_cuda() -> None:
+    """Wait for pending PyTorch CUDA work before releasing allocator caches."""
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
 
 
 def _clear_torch_cuda_cache() -> None:
