@@ -162,7 +162,7 @@ jobs:
       - get-pr-labels
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

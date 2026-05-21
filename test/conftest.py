@@ -25,14 +25,32 @@ os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
 os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 
+def _item_path(item: pytest.Item) -> str:
+    """Return a normalized path for a pytest item."""
+    item_path = str(getattr(item, "path", None) or getattr(item, "fspath", ""))
+    return item_path.replace(os.sep, "/")
+
+
+def _item_framework(item: pytest.Item | None) -> str | None:
+    """Classify framework binding tests by path."""
+    if item is None:
+        return None
+
+    item_path = _item_path(item)
+    if "/bindings/jax/" in item_path:
+        return "jax"
+    if "/bindings/torch/" in item_path:
+        return "torch"
+    return None
+
+
 def _framework_sort_key(item: pytest.Item) -> tuple[int, str, str]:
     """Sort framework suites so JAX runs before Warp and Torch CUDA tests."""
-    item_path = str(getattr(item, "path", None) or getattr(item, "fspath", ""))
-    item_path = item_path.replace(os.sep, "/")
-
-    if "/bindings/jax/" in item_path:
+    item_path = _item_path(item)
+    framework = _item_framework(item)
+    if framework == "jax":
         framework_rank = 0
-    elif "/bindings/torch/" in item_path:
+    elif framework == "torch":
         framework_rank = 2
     else:
         framework_rank = 1
@@ -57,29 +75,64 @@ def pytest_collection_finish(session):
     _sort_items_by_framework(session.items)
 
 
-@pytest.fixture(autouse=True)
-def _release_gpu_memory():
-    """Release framework-owned GPU caches after each test."""
-    yield
-    _release_framework_gpu_memory()
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Release framework GPU memory only after leaving framework blocks."""
+    framework = _item_framework(item)
+    if framework is None:
+        return
+
+    next_framework = _item_framework(nextitem)
+    if framework == next_framework:
+        return
+
+    _write_cleanup_log(
+        item.config,
+        f"GPU cleanup: leaving {framework} before {_cleanup_destination(nextitem)}",
+    )
+    _release_framework_gpu_memory(framework, item.config)
 
 
-def _release_framework_gpu_memory() -> None:
-    """Drop Python references and framework caches between tests."""
-    _call_cleanup(_synchronize_jax_devices)
-    _call_cleanup(_synchronize_torch_cuda)
+def _cleanup_destination(nextitem: pytest.Item | None) -> str:
+    """Describe where execution is headed after a cleanup boundary."""
+    if nextitem is None:
+        return "end of pytest run"
+
+    next_framework = _item_framework(nextitem)
+    if next_framework is None:
+        return "base tests"
+    return f"{next_framework} tests"
+
+
+def _release_framework_gpu_memory(framework: str, config: pytest.Config) -> None:
+    """Drop caches for the framework block that just finished."""
+    if framework == "jax":
+        _call_cleanup(_synchronize_jax_devices, framework, config)
+        _call_cleanup(_clear_jax_caches, framework, config)
+    elif framework == "torch":
+        _call_cleanup(_synchronize_torch_cuda, framework, config)
+        _call_cleanup(_clear_torch_cuda_cache, framework, config)
     gc.collect()
-    _call_cleanup(_clear_jax_caches)
-    _call_cleanup(_clear_torch_cuda_cache)
-    gc.collect()
 
 
-def _call_cleanup(cleanup):
+def _call_cleanup(cleanup, framework: str, config: pytest.Config) -> None:
     """Run cleanup best-effort so teardown does not mask test failures."""
     try:
         cleanup()
-    except Exception:
-        return
+    except Exception as exc:
+        message = str(exc).splitlines()[0]
+        _write_cleanup_log(
+            config,
+            f"GPU cleanup: {framework} {cleanup.__name__} failed: "
+            f"{type(exc).__name__}: {message}",
+        )
+
+
+def _write_cleanup_log(config: pytest.Config, message: str) -> None:
+    """Write a concise cleanup message to pytest terminal output."""
+    terminal_reporter = config.pluginmanager.get_plugin("terminalreporter")
+    if terminal_reporter is not None:
+        terminal_reporter.write_line(message)
 
 
 def _synchronize_jax_devices() -> None:
@@ -127,4 +180,3 @@ def _clear_torch_cuda_cache() -> None:
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
