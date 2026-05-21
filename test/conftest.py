@@ -12,17 +12,72 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Top-level pytest coordination for CI GPU memory stability.
+
+This file owns test-session behavior that must apply to every pytest process.
+CI runs pytest once per top-level test module group via ``make testmon-coverage``,
+so each process imports this file before collecting one of ``test/test_types.py``,
+``test/math``, ``test/neighbors``, or ``test/interactions``.
+
+The hooks here do three things:
+
+* configure JAX's allocator before any test imports JAX,
+* order framework binding tests as JAX -> framework-neutral Warp -> Torch, and
+* release framework-owned GPU caches when leaving a JAX or Torch test block.
+
+Framework detection is intentionally path based. Collection ordering and teardown
+must not import JAX or Torch just to decide where a test belongs. Cleanup is also
+best effort: a cache-release failure should be visible in the log, but should not
+mask the original test result.
+
+Keep broad pytest/session plumbing here. Put domain-specific fixtures near their
+tests unless they truly need to affect every pytest invocation.
+"""
+
 import gc
 import os
 import sys
+from collections.abc import Callable
+from typing import Literal
 
 import pytest
 
-# These must be set before any test module imports JAX. The previous autouse
-# fixture set them after collection-time imports, which is too late for XLA's
-# allocator configuration.
-os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
-os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+FrameworkName = Literal["jax", "torch"]
+
+_JAX_ALLOCATOR_ENVIRONMENT = {
+    "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
+    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+}
+
+_FRAMEWORK_PATH_MARKERS: tuple[tuple[str, FrameworkName], ...] = (
+    ("/bindings/jax/", "jax"),
+    ("/bindings/torch/", "torch"),
+)
+
+_FRAMEWORK_SORT_RANK: dict[FrameworkName | None, int] = {
+    "jax": 0,
+    None: 1,
+    "torch": 2,
+}
+
+
+# ==============================================================================
+# Import-Time Environment
+# ==============================================================================
+
+
+def _configure_jax_allocator_environment() -> None:
+    """Set XLA allocator variables before collection-time imports can load JAX."""
+    for name, value in _JAX_ALLOCATOR_ENVIRONMENT.items():
+        os.environ[name] = value
+
+
+_configure_jax_allocator_environment()
+
+
+# ==============================================================================
+# Framework Classification
+# ==============================================================================
 
 
 def _item_path(item: pytest.Item) -> str:
@@ -31,31 +86,27 @@ def _item_path(item: pytest.Item) -> str:
     return item_path.replace(os.sep, "/")
 
 
-def _item_framework(item: pytest.Item | None) -> str | None:
-    """Classify framework binding tests by path."""
+def _item_framework(item: pytest.Item | None) -> FrameworkName | None:
+    """Classify framework binding tests by path; None means framework-neutral."""
     if item is None:
         return None
 
     item_path = _item_path(item)
-    if "/bindings/jax/" in item_path:
-        return "jax"
-    if "/bindings/torch/" in item_path:
-        return "torch"
+    for path_marker, framework in _FRAMEWORK_PATH_MARKERS:
+        if path_marker in item_path:
+            return framework
     return None
 
 
-def _framework_sort_key(item: pytest.Item) -> tuple[int, str, str]:
-    """Sort framework suites so JAX runs before Warp and Torch CUDA tests."""
-    item_path = _item_path(item)
-    framework = _item_framework(item)
-    if framework == "jax":
-        framework_rank = 0
-    elif framework == "torch":
-        framework_rank = 2
-    else:
-        framework_rank = 1
+# ==============================================================================
+# Collection Ordering
+# ==============================================================================
 
-    return framework_rank, item_path, item.name
+
+def _framework_sort_key(item: pytest.Item) -> tuple[int, str, str]:
+    """Return a stable JAX -> neutral -> Torch ordering key."""
+    item_path = _item_path(item)
+    return _FRAMEWORK_SORT_RANK[_item_framework(item)], item_path, item.name
 
 
 def _sort_items_by_framework(items: list[pytest.Item]) -> None:
@@ -75,8 +126,13 @@ def pytest_collection_finish(session):
     _sort_items_by_framework(session.items)
 
 
+# ==============================================================================
+# Framework Boundary Cleanup
+# ==============================================================================
+
+
 @pytest.hookimpl(trylast=True)
-def pytest_runtest_teardown(item, nextitem):
+def pytest_runtest_teardown(item: pytest.Item, nextitem: pytest.Item | None) -> None:
     """Release framework GPU memory only after leaving framework blocks."""
     framework = _item_framework(item)
     if framework is None:
@@ -104,8 +160,11 @@ def _cleanup_destination(nextitem: pytest.Item | None) -> str:
     return f"{next_framework} tests"
 
 
-def _release_framework_gpu_memory(framework: str, config: pytest.Config) -> None:
-    """Drop caches for the framework block that just finished."""
+def _release_framework_gpu_memory(
+    framework: FrameworkName,
+    config: pytest.Config,
+) -> None:
+    """Synchronize and drop caches for the framework block that just finished."""
     if framework == "jax":
         _call_cleanup(_synchronize_jax_devices, framework, config)
         _call_cleanup(_clear_jax_caches, framework, config)
@@ -115,7 +174,11 @@ def _release_framework_gpu_memory(framework: str, config: pytest.Config) -> None
     gc.collect()
 
 
-def _call_cleanup(cleanup, framework: str, config: pytest.Config) -> None:
+def _call_cleanup(
+    cleanup: Callable[[], None],
+    framework: FrameworkName,
+    config: pytest.Config,
+) -> None:
     """Run cleanup best-effort so teardown does not mask test failures."""
     try:
         cleanup()
@@ -133,6 +196,11 @@ def _write_cleanup_log(config: pytest.Config, message: str) -> None:
     terminal_reporter = config.pluginmanager.get_plugin("terminalreporter")
     if terminal_reporter is not None:
         terminal_reporter.write_line(message)
+
+
+# ==============================================================================
+# Framework-Specific Cleanup Helpers
+# ==============================================================================
 
 
 def _synchronize_jax_devices() -> None:
