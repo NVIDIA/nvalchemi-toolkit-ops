@@ -86,9 +86,9 @@ systems:
 # Methods to benchmark. Honored when --method is NOT passed on the CLI;
 # CLI takes precedence when given. Valid entries: ewald, pme, dsf.
 methods:
-  # - ewald
+  - ewald
   - pme
-  # - dsf
+  - dsf
 
 # Components to benchmark (DSF always uses "full" regardless of this setting)
 components:
