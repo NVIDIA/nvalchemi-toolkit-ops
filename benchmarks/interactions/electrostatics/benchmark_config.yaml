@@ -3,10 +3,19 @@
 # This file defines benchmark parameters for Ewald summation and PME.
 
 parameters:
-  warmup_iterations: 3
+  warmup_iterations: 5
   timing_iterations: 10
   dtype: float32 # float32 or float64
   device: cuda # cuda or cpu
+  # Target relative force accuracy passed to the Ewald/PME parameter
+  # estimator. Drives alpha, real-space cutoff (when not pinned), and mesh
+  # dimensions. CLI: --accuracy overrides this value.
+  accuracy: 1.0e-4
+  # Optional: pin the PME real-space cutoff (Angstrom). When unset (or null),
+  # the cost model picks the cutoff that minimizes real + reciprocal time.
+  # When set, alpha and the mesh dimensions are derived from this rc.
+  # CLI: --real-space-cutoff overrides this value.
+  real_space_cutoff: 12.0
 
 # System configurations to test
 systems:
@@ -74,11 +83,12 @@ systems:
     base_supercell_size: 20 # 2*20^3 = 16,000 atoms per system
     batch_sizes: [1, 4]
 
-# Methods to benchmark
+# Methods to benchmark. Honored when --method is NOT passed on the CLI;
+# CLI takes precedence when given. Valid entries: ewald, pme, dsf.
 methods:
-  - ewald
+  # - ewald
   - pme
-  - dsf
+  # - dsf
 
 # Components to benchmark (DSF always uses "full" regardless of this setting)
 components:

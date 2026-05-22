@@ -31,6 +31,7 @@ Supported crystal structures:
 
 from __future__ import annotations
 
+import gc
 from typing import NamedTuple
 
 import numpy as np
@@ -79,6 +80,33 @@ def setup_warp():
         wp.set_device("cuda:0")
 
     yield
+
+
+@pytest.fixture(autouse=True)
+def _release_gpu_memory_between_tests():
+    """Force GC + torch caching-allocator release after each test.
+
+    Several warp-backed custom ops register per-call backward state in
+    module-level dicts keyed by the output tensor's token id. The state
+    holds Warp arrays (GPU memory) and is removed via
+    ``weakref.finalize`` when the token tensor is GC'd. Because torch
+    autograd graphs contain reference cycles, the token tensor is not
+    released by refcount alone — it requires a Python GC pass.
+
+    Without explicit cleanup between tests, those registries plus
+    torch's caching allocator grow monotonically across the session.
+    On unified-memory hosts (GB10 / Grace) this is reported as GPU
+    memory exhaustion and slows down every subsequent test.
+    """
+    yield
+    gc.collect()
+    try:  # torch is optional — JAX-only test environments don't need it
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
 
 
 @pytest.fixture(params=["cpu", "cuda:0"], ids=["cpu", "gpu"])
