@@ -3723,15 +3723,8 @@ class TestPMETorchCompile:
         torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-3, atol=1e-3)
         torch.testing.assert_close(dq_compiled, dq_eager, rtol=1e-3, atol=1e-3)
 
-    # NOTE: ``test_pme_green_structure_factor_stream_ordering`` was removed
-    # when the standalone ``pme_green_structure_factor`` torch wrapper was
-    # retired — its role in ``pme_reciprocal_space`` is now covered by the
-    # fused ``_PMEFusedConvolve`` convolve kernel, leaving the wrapper as
-    # dead code with no internal callers. The framework-agnostic Warp
-    # launcher
-    # ``nvalchemiops.interactions.electrostatics.pme_kernels.pme_green_structure_factor``
-    # is retained for direct kernel use and standalone correctness testing
-    # in ``test/interactions/electrostatics/test_pme_kernels.py``.
+    # The standalone pme_green_structure_factor torch wrapper was retired;
+    # direct kernel coverage now lives in test/.../test_pme_kernels.py.
 
 
 ###########################################################################################

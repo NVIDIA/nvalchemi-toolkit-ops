@@ -1182,25 +1182,10 @@ def _bspline_gather_with_force_kernel(
 ####### Per-order specialized fused gather — per-atom + register accumulation #############
 ###########################################################################################
 #
-# For each supported spline order, a Python factory builds a kernel that:
-#   * captures ORDER as a Python int (so Warp's codegen treats it as
-#     compile-time and fully unrolls the order^3 stencil loop),
-#   * uses dim=[num_atoms] (one thread per atom),
-#   * pre-computes the 1D weights + derivatives into a length-ORDER vec,
-#   * accumulates the potential and Cartesian-frame force gradient into
-#     registers, then writes ONCE per channel — no atomics on the output.
-#
-# This pattern requires ORDER to be a Python int literal so Warp can unroll
-# the per-thread loop at codegen time. Microbenched at single_8k mesh=64^3
-# order=6: 9.26x speedup over the runtime-order kernel
-# (0.627 ms → 0.068 ms) with bit-identical output.
-#
-# Each (order, dtype) pair is assigned to its OWN named warp module via
-# ``@wp.kernel(module=wp.get_module(...))`` so that warp compiles only the
-# orders the user actually launches. Otherwise all 5 orders × both dtypes
-# would compile eagerly on the first launch, ballooning cold-cache compile
-# time. Module options (``enable_backward=False``) are set per-module
-# inside the factory.
+# Per-order specialized kernels: ORDER is captured as a Python int literal
+# so Warp unrolls the order^3 stencil at codegen time. Each (order, dtype)
+# lives in its own named warp module so warp NVRTC-compiles only the
+# orders actually launched. enable_backward=False is set per-module.
 
 _PER_ORDER_VEC = {
     (2, wp.float32): wp.types.vector(length=2, dtype=wp.float32),
@@ -1484,12 +1469,8 @@ for _order in _SUPPORTED_PER_ORDER:
 ########################### Per-order spread kernels #######################################
 ###########################################################################################
 #
-# Switches the order=2..6 spread path from (atom × order^3)-thread atomic
-# scatter to one-thread-per-atom + fully unrolled order^3 stencil. Mirrors
-# ``_make_bspline_gather_with_force_kernel`` (same 1D weight precompute +
-# register reuse), but writes the (value × weight) products into ``mesh``
-# via ``atomic_add`` (still needed because multiple atoms can share a
-# mesh cell). Up to ~34× faster than the generic kernel at order=6.
+# One-thread-per-atom spread with fully unrolled order^3 stencil. Atomic
+# adds into ``mesh`` are still required (atoms can share cells).
 
 
 def _make_bspline_spread_kernel(

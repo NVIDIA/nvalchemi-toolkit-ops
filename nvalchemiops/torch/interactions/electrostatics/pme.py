@@ -555,14 +555,10 @@ def _pme_convolve_backward(
     return grad_mesh_fft, grad_alpha, grad_volume, grad_k_squared
 
 
-# Fused PME convolve. Backward op signature is ``(mesh_fft, grad_convolved,
-# ...)`` — UNLIKE every other backward op (cotangents-first). Reason:
-# placing a complex-typed cotangent in argument position 0 silently
-# produces ~1% wrong backward grads under torch.compile fullgraph=True
-# (AOT autograd / inductor complex codegen bug). The ``backward_args``
-# callback below tells the factory to assemble the backward call as
-# ``(mesh_fft=fwd[0], grad_convolved=g[0], *fwd[1:])`` to work around it.
-# Re-test signature standardization after upstream torch fixes.
+# Backward signature is ``(mesh_fft, grad_convolved, ...)`` (mesh_fft first,
+# not cotangents-first) to work around an AOT-autograd/inductor complex
+# codegen bug that produces ~1% wrong grads when a complex cotangent is in
+# arg-0 under torch.compile fullgraph=True.
 
 
 def _convolve_backward_fake(
@@ -582,12 +578,8 @@ def _convolve_backward_fake(
 
 
 def _convolve_forward_fake(mesh_fft, *_):
-    # The launcher always returns a natural-contiguous tensor (it allocates
-    # via view_as_complex(empty_like(view_as_real(...).contiguous())), so
-    # strides are (Nx*Ny*Nz_r, Ny*Nz_r, Nz_r, 1) regardless of input layout).
-    # The caller is responsible for passing a contiguous mesh_fft (we
-    # ``.contiguous()`` the rfftn output in _reciprocal_space_impl) so the
-    # fake's stride matches what the real call produces.
+    # Launcher returns natural-contiguous; caller is responsible for passing
+    # a contiguous mesh_fft so the fake stride matches the real call.
     return torch.empty(
         mesh_fft.shape, dtype=mesh_fft.dtype, device=mesh_fft.device,
     )
@@ -610,46 +602,21 @@ register_warp_op_chain(
 )
 
 
-# Second-order autograd: convolve is LINEAR in mesh_fft (forward = G·mesh_fft
-# with G real), so the first-order backward is linear in grad_convolved and
-# its Jacobian w.r.t. grad_convolved is the SAME forward op applied to the
-# cotangent of grad_mesh_fft. We wire this via attach_simple_backward by
-# treating ``pme_fused_convolve`` itself as the "second-order op" — the
-# ``backward_args`` callback drops the saved mesh_fft / grad_convolved
-# arguments and constructs the forward call. The other partials (∂grad_*/
-# ∂{mesh_fft, alpha, volume, k_squared}) involve complex chain-rule terms;
-# they're only exercised by tests demanding analytical gradients on
-# cell/alpha/volume in double-backward. If exact analytical second-order
-# becomes required, add a dedicated double-backward warp kernel.
+# Second-order autograd: convolve is LINEAR in mesh_fft, so the Jacobian of
+# the first-order backward w.r.t. grad_convolved is the same forward op
+# applied to the cotangent. Other partials (∂grad_*/∂{mesh_fft, alpha, volume,
+# k_squared}) need a dedicated double-backward kernel if ever required.
 attach_simple_backward(
     "nvalchemiops::pme_fused_convolve_backward",
     torch.ops.nvalchemiops.pme_fused_convolve,
     diff_input_positions=(1,),      # only grad_convolved (input pos 1)
     n_forward_inputs=9,
     propagate_outputs=(0,),         # only h_grad_mesh_fft flows
-    # Build the forward call: (h_grad_mesh_fft, k_squared, mod_x, mod_y,
-    # mod_z, alpha, volume, is_batch). f[0]=mesh_fft and f[1]=grad_convolved
-    # from the backward-op inputs are skipped.
     backward_args=lambda g, f: (g[0], f[2], f[3], f[4], f[5], f[6], f[7], f[8]),
 )
 
 
-# Convenience alias for orchestration code that wants a Python-level name
-# (e.g. for tracing). Routes through the registered op so it appears as a
-# single node in torch.compile graphs.
 _pme_fused_convolve = torch.ops.nvalchemiops.pme_fused_convolve
-
-
-# NOTE: ``_pme_fft_pipeline`` (a ``@torch.compiler.disable``'d wrapper that
-# combined rfftn → fused convolve → irfftn) was removed once the convolve
-# became a registered ``torch.library.custom_op`` (fullgraph-traceable).
-# The reciprocal-space block now inlines those three lines directly, and
-# the ``if torch.compiler.is_compiling()`` branch in ``_reciprocal_space_impl``
-# collapses to a single path.
-#
-# Likewise ``_scale_force_field`` (``2.0 * field``, ``@torch.compiler.disable``'d
-# for no good reason) was dropped — the multiply is a single aten op that
-# torch.compile handles natively.
 
 
 
@@ -1385,12 +1352,8 @@ def pme_energy_corrections_with_charge_grad(
 ###########################################################################################
 ########################### Virial Background Correction ##################################
 ###########################################################################################
-# Functional warp-backed op that returns ``virial_in - E_bg(s)·I`` (no
-# in-place mutation). Backward is analytic: ``grad_virial`` flows into
-# ``grad_charges``, ``grad_cell``, ``grad_alpha`` via the chain
-#   dL/dE_bg(s) = -(g[s,0,0] + g[s,1,1] + g[s,2,2])
-#   dE_bg/dQ = π Q / (α² V); dE_bg/dα = -π Q² / (α³ V);
-#   dE_bg/dV = -π Q² / (2 α² V²); d|det C|/dC = sign(det C) · cofactor(C).
+# Functional warp-backed op returning ``virial_in - E_bg(s)·I`` with
+# analytic backward through charges / cell / alpha.
 
 
 def _virial_bg_correction_forward_launch(
@@ -1601,16 +1564,9 @@ def _compute_pme_reciprocal_virial(
     # Zero out k=0 contribution (no virial from k=0)
     k_mask = k_sq_acc > 1e-10
 
-    # Vectorized virial computation: replace the einsum with six per-component
-    # weighted reductions, which avoid the cuBLAS sgemm_largek_lds64 path that
-    # ``torch.einsum("...i,...j,...->ij", k, k, m)`` triggers. That sgemm has
-    # M=N=3, K=~mesh_size which is exactly the (small MN / large K) corner case
-    # cuBLAS handles poorly — it was the single largest cost in the timed
-    # window (~2.75 ms/iter at 128^3 mesh). Six fp32 sum-of-products kernels
-    # are bandwidth-bound and serialize to <100 us at the same shape.
-    #
-    # virial_ab = sum_k weighted_energy * (delta_ab - k_factor * k_a * k_b) * k_mask
-    # = delta_ab * sum_k masked_energy - sum_k (masked_energy * k_factor) * k_a * k_b
+    # Six per-component weighted reductions instead of an einsum: the
+    # einsum's (M=N=3, K=mesh_size) shape hits a slow cuBLAS sgemm corner.
+    # virial_ab = sum_k masked_energy * (delta_ab - k_factor * k_a * k_b)
     k_vecs_acc = k_vectors.to(acc_dtype)  # (..., nx, ny, nz//2+1, 3)
     if is_batch and k_vecs_acc.dim() == 4:
         k_vecs_acc = k_vecs_acc.unsqueeze(0)
@@ -1760,15 +1716,9 @@ def _pme_reciprocal_space_impl(
 
     alpha_gsf = alpha.detach() if hybrid_forces else alpha
 
-    # Fused Green's compute + deconvolution + multiply in a single Warp
-    # kernel. The explicit alpha/volume backward in ``_PMEFusedConvolve``
-    # covers ALL autograd cases (positions, charges, cell-via-volume,
-    # alpha).
-    # Precomputed 1D B-spline modulus LUTs. The convolve kernel multiplies
-    # these three rank-1 tensors instead of recomputing sinc(m/N)^spline_order
-    # per (i, j, k) thread. Caller can supply moduli_x/y/z to skip the
-    # fftfreq + sinc^p rebuild every call (they only depend on mesh +
-    # spline_order).
+    # Precomputed 1D B-spline modulus LUTs feed the fused convolve. Caller
+    # can supply moduli_x/y/z to skip the fftfreq + sinc^p rebuild every
+    # call (depends only on mesh + spline_order).
     if moduli_x is None or moduli_y is None or moduli_z is None:
         miller_x = torch.fft.fftfreq(
             mesh_nx, d=1.0 / mesh_nx, device=device, dtype=input_dtype
@@ -1794,12 +1744,8 @@ def _pme_reciprocal_space_impl(
     # the ``pme_fused_convolve`` custom op are fullgraph-traceable, so
     # there's no compile-vs-eager split anymore.
     #
-    # ``.contiguous()`` after rfftn: cuFFT emits a non-contiguous output
-    # (e.g. strides (Ny*Nz_r, 1, Nx*Ny) for a 3D rfft) whereas our convolve
-    # launcher always returns a natural-contiguous tensor. The COMPILED graph
-    # assumes the rfftn-output stride pattern flows through, so the copy is
-    # required under torch.compile. In eager we can skip it (saves ~45us/iter
-    # at 128^3, 18% of FFT cost) since the warp launcher reads strided input.
+    # cuFFT emits non-contiguous output; under torch.compile we must copy
+    # to match the convolve launcher's stride contract, in eager we don't.
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
     if torch.compiler.is_compiling():
         mesh_fft = mesh_fft.contiguous()
@@ -1813,12 +1759,8 @@ def _pme_reciprocal_space_impl(
     ).to(input_dtype)
     electric_field_mesh = None
 
-    # Step 6: Interpolate potential to atomic positions. When forces are also
-    # requested we use the FUSED kernel that walks the stencil once per atom
-    # and writes both the raw potential AND the spline-derivative force —
-    # halving the mesh DRAM traffic for the with-forces path. (Batched
-    # inputs fall back to the two-kernel sequence inside
-    # spline_gather_with_force until the batch-fused kernel lands.)
+    # When forces are requested, the fused gather-with-force kernel
+    # writes potential + spline-derivative force in one stencil walk.
     if compute_forces:
         raw_energies, gathered_force = spline_gather_with_force(
             pos_spline,

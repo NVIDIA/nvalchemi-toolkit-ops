@@ -106,16 +106,11 @@ __all__ = [
 # Helper Function for JAX Kernel Creation
 # ==============================================================================
 
-# ``_make_jax_kernels`` is imported from ``_lazy_jax_kernels``: each entry is a
-# :func:`warp.jax_experimental.jax_kernel` binding for the matching warp
-# overload, built lazily on first ``__getitem__`` access. Single-kernel
-# ``jax_kernel`` wraps are preferred here because they outperform
-# single-launch ``jax_callable`` wraps -- profiling showed converting 1:1 to
-# ``jax_callable`` added ~15% per-iter overhead vs ``jax_kernel`` (the
-# additional bookkeeping ``FfiCallable`` does isn't amortized when there's
-# only one wp.launch). Use ``jax_callable`` only when you have multiple
-# wp.launch calls to fuse into one FFI thunk (see
-# :func:`_make_jax_pme_virial_bg_fused` for an example).
+# ``_make_jax_kernels`` returns a lazy dict (see _lazy_jax_kernels) that
+# materializes its ``jax_kernel`` entries on first __getitem__. Prefer
+# ``jax_kernel`` for single-launch ops; use ``jax_callable`` only when
+# fusing multiple wp.launch calls into one FFI thunk
+# (see :func:`_make_jax_pme_virial_bg_fused`).
 
 
 def _normalize_dtype(dtype):
@@ -214,14 +209,9 @@ _jax_pme_virial_bg_apply = _make_jax_kernels(
 )
 
 
-# Fused two-pass virial bg correction via warp.jax_experimental.jax_callable.
-# Wraps both the scatter-add reduce and the per-system E_bg apply as a SINGLE
-# XLA FFI call. With GraphMode.JAX (default) plus the
-# ``--xla_gpu_graph_min_graph_size=1`` flag set in ``nvalchemiops/jax/__init__.py``,
-# JAX can capture this together with the surrounding warp ops + FFTs into one
-# CUDA graph, eliminating per-launch dispatch gaps that dominated iter time at
-# large mesh sizes. The fallback to the two ``jax_kernel`` thunks above is
-# kept intact for tests that exercise the per-pass kernels directly.
+# Fuse the two-pass virial bg correction (reduce + apply) into one XLA FFI
+# call via jax_callable so JAX can CUDA-graph it with the surrounding warp
+# ops + FFTs. Per-pass jax_kernel thunks above remain for direct test use.
 def _make_jax_pme_virial_bg_fused(wp_dtype):
     reduce_overload = _pme_virial_bg_reduce_kernel_overload[wp_dtype]
     apply_overload = _pme_virial_bg_apply_kernel_overload[wp_dtype]
@@ -922,12 +912,8 @@ def _compute_pme_reciprocal_virial(
     # Zero out k=0 contribution (no virial from k=0)
     k_mask = k_sq_acc > 1e-10
 
-    # Replace einsum with six explicit weighted reductions — mirrors the torch
-    # path. XLA lowers ``einsum("...i,...j,...->ij", k, k, m)`` to a batched
-    # GEMM with M=N=3, K=mesh-size, which hits cuBLAS's small-MN / large-K
-    # weak spot (single largest kernel cost in the profiled timed window).
-    # Six per-component sum-of-products avoid the GEMM and are bandwidth-
-    # bound.
+    # Six per-component weighted reductions instead of einsum: XLA lowers
+    # einsum(k,k,m) to a slow small-MN / large-K cuBLAS GEMM.
     k_vecs_acc = k_vectors.astype(acc_dtype)  # (..., nx, ny, nz//2+1, 3)
     if is_batch and k_vecs_acc.ndim == 4:
         k_vecs_acc = jnp.expand_dims(k_vecs_acc, axis=0)
@@ -972,12 +958,9 @@ def _compute_pme_reciprocal_virial(
     return virial.astype(acc_dtype)
 
 
-# Custom-VJP straight-through injector for hybrid-forces mode.
-# Forward returns ``energy`` unchanged. Backward routes ``grad_energy`` to
-# ``charges`` via the precomputed analytical ``charge_grad`` (∂E/∂q from the
-# kernel-side ``pme_energy_corrections_with_charge_grad``), while never
-# propagating into the spline/FFT chain. ``has_batch_idx`` is non-diff so
-# we can branch on Python ``None`` without breaking tracing.
+# Hybrid-forces straight-through: forward is identity; backward routes
+# grad_energy to charges via the precomputed analytical charge_grad,
+# never into the spline/FFT chain.
 @functools.partial(jax.custom_vjp, nondiff_argnums=(3,))
 def _inject_charge_grad(energy, charges, charge_grad, has_batch_idx, batch_idx):
     # ``charges`` is referenced only to carry an autograd edge; the forward

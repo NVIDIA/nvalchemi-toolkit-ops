@@ -329,12 +329,8 @@ def _batch_pme_green_structure_factor_kernel(
     clamp_threshold = type(k_sq)(1e-10)
     twopi = type(k_sq)(TWOPI)
 
-    # Structure factor sf^2. Folded into the per-system Green's function below
-    # so the FFT pipeline can drop the explicit mesh_fft / structure_factor_sq
-    # step. The (cheap) sinc product is recomputed on every (B, i, j, k) thread
-    # rather than only at batch_idx=0; the per-system green output requires it
-    # anyway, and the structure_factor_sq array is still written once at
-    # batch_idx=0 for any external consumers that may still read it.
+    # Structure factor sf^2 folded into the per-system Green's function
+    # below. Written once at batch_idx=0 for external consumers.
     sinc_x = compute_sinc(mi_x / type(mi_x)(mesh_nx))
     sinc_y = compute_sinc(mi_y / type(mi_y)(mesh_ny))
     sinc_z = compute_sinc(mi_z / type(mi_z)(mesh_nz))
@@ -369,17 +365,9 @@ def _batch_pme_green_structure_factor_kernel(
 ########################### PME Fused Convolution #########################################
 ###########################################################################################
 #
-# Single Warp kernel that reads ``mesh_fft`` (post-rFFT, complex as vec2),
-# computes the per-(k_x, k_y, k_z) Coulomb-PME Green's factor + B-spline
-# structure-factor deconvolution inline, multiplies, and writes
-# ``convolved_mesh`` directly. Replaces the previous two-step path
-# (``_pme_green_structure_factor_kernel`` → ``aten::mul``), avoiding a
-# full-mesh write + read of the intermediate ``effective_green`` array.
-#
-# The Coulomb-PME Green's formula is hardcoded here. A follow-up will
-# factor this kernel out behind a Python factory that accepts a user-
-# supplied ``@wp.func`` Green's evaluator so callers can plug in
-# alternative kernels (dispersion, 1/r^p, anisotropic).
+# Fused Green's factor + B-spline deconvolution + multiply in one warp
+# kernel, replacing the two-step Green-then-multiply path. Coulomb-PME
+# Green's formula is hardcoded — pluggable via @wp.func is a follow-up.
 
 
 @wp.kernel
@@ -487,19 +475,8 @@ def _batch_pme_convolve_kernel(
 ########################### PME Fused Convolve Backward ###################################
 ###########################################################################################
 #
-# Closes the fast-path autograd gap: ``_pme_convolve_kernel``'s mathematical
-# inverse w.r.t. mesh_fft is just G applied to the cotangent (Green's is real)
-# — that's what _PMEFusedConvolve.backward used pre-7b.0. To also support
-# gradients through alpha and volume, we add an explicit reduction kernel
-# below. Math:
-#     G(k) = 2π / V · exp(-k²/(4α²)) / (k² · B²(k))
-#     dG/dα = G(k) · k² / (2α³)
-#     dG/dV = -G(k) / V
-# Pytorch's complex-autograd Wirtinger convention sums to 2·Re(g·conj(m̂)) for
-# real-valued parameters, so per-(i,j,k) contribution to grad_alpha is
-#     2 · (g.re · m.re + g.im · m.im) · G(k) · k²/(2α³)
-# accumulated via atomic_add into a single-element output array. Same shape
-# for grad_volume with the -G/V factor.
+# Backward kernel reduces grad_alpha and grad_volume via atomic_add over (i,j,k).
+# Per-grid contribution: 2·Re(g·conj(m̂)) · {G·k²/(2α³), -G/V}.
 
 
 @wp.kernel
@@ -981,15 +958,8 @@ def _batch_pme_energy_corrections_with_charge_grad_kernel(
 #
 # Per-atom energy correction:
 #   E_i = q_i · raw_i - (α/√π) · q_i² - (π/(2α²V)) · q_i · Q_total
-#
-# Backward (cotangent g_i = dL/dE_i):
-#   grad_raw[i] = g_i · q_i
-#   grad_q[i]   = g_i · (raw_i - 2·(α/√π)·q_i - (π/(2α²V))·Q_total)
-#   grad_alpha  = Σ_i g_i · (-q_i²/√π + π·q_i·Q_total/(α³ V))
-#   grad_V      = Σ_i g_i · (π·q_i·Q_total / (2 α² V²))
-#   grad_Qtot   = Σ_i g_i · (-π·q_i / (2 α² V))
-#
-# The three scalar (or per-system) reductions use atomic_add per atom.
+# Backward computes the partials w.r.t. raw_i, q_i, alpha, V, Q_total;
+# the three scalars are reduced via atomic_add per atom.
 
 
 @wp.kernel
@@ -1098,17 +1068,9 @@ def _batch_pme_energy_corrections_backward_kernel(
 ########################### Energy-Corrections Double-Backward #############################
 ###########################################################################################
 #
-# Forward:   E_i = q_i·r_i - C1·q_i² - C2·q_i·Qtot       (C1=α/√π, C2=π/(2α²V))
-# 1st bwd:   g_raw[i] = g_i·q_i
-#            g_chg[i] = g_i·(r_i - 2·C1·q_i - C2·Qtot)
-#            g_α      = Σ g_i·(-q_i²/√π + π·q_i·Qtot/(α³·V))
-#            g_V      = Σ g_i·(π·q_i·Qtot/(2·α²·V²))
-#            g_Qtot   = Σ g_i·(-π·q_i/(2·α²·V))
-# 2nd bwd:   given upstream cotangents (h_raw, h_chg, h_vol, h_alpha, h_qtot),
-#            produce ``grad_grad_E[i]``, ``grad_raw[i]``, ``grad_q[i]`` per atom,
-#            plus scalar (or per-system) ``grad_vol``, ``grad_alpha``,
-#            ``grad_qtot`` reductions.  Derivation follows from linear and
-#            quadratic terms of the forward formula.
+# Forward:  E_i = q_i·r_i - C1·q_i² - C2·q_i·Qtot   (C1=α/√π, C2=π/(2α²V))
+# 1st bwd:  partials in q, α, V, Qtot of E_i; 2nd bwd follows from the
+# linear + quadratic terms of the forward formula.
 
 
 @wp.kernel
@@ -1314,15 +1276,9 @@ def _batch_pme_energy_corrections_double_backward_kernel(
 #     W_bg = -d E_bg / dε = -(E_bg) · I    (where ε is the strain tensor)
 # We subtract ``E_bg · I`` from the virial diagonal to apply that correction.
 #
-# Pipeline:
-#  Pass 1 (per atom): atomic_add ``q_i`` into the per-system ``total_charges``
-#                     accumulator (one thread per atom; ``batch_idx`` routes
-#                     each atom to its system; for single-system, batch_idx
-#                     is all zeros).
-#  Pass 2 (per system): one thread per system reads ``total_charges[s]`` and
-#                       ``cell[s]``, computes ``V = |det(cell[s])|`` and
-#                       ``E_bg = π Q² / (2 α² V)``, and subtracts ``E_bg``
-#                       from the three diagonal entries of ``virial[s]``.
+# Pipeline: pass 1 scatter-adds per-atom q into total_charges[batch_idx];
+# pass 2 (per system) computes E_bg = π Q² / (2 α² V) and subtracts from
+# the virial diagonal.
 
 
 @wp.kernel(enable_backward=False)

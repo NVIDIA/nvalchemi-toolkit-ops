@@ -467,13 +467,9 @@ register_warp_op_chain(
 )
 
 
-# Single-system spline gather_gradient: forward kernel returns Cartesian
-# "force" per atom. Backward composes a position-Hessian launch (raw),
-# a recursive call to the same op (for grad_charges, q=1 path), and the
-# spread-gradient-weights launch (raw, for grad_mesh). grad_cell_inv_t is
-# deferred (None — the cell.grad chain reaches cell through the explicit
-# cell_inv_t args of spread/gather, both of which ARE double-diff'd).
-# grad_positions uses the position-Hessian launch.
+# Single-system gather_gradient: forward returns Cartesian "force" per atom.
+# Backward chains position-Hessian + spread-gradient-weights launches;
+# grad_cell_inv_t deferred since the cell chain flows through spread/gather.
 register_warp_op_chain(
     name="nvalchemiops::spline_gather_gradient",
     forward=_gather_gradient_forward_launch,

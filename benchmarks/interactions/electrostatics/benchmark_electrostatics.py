@@ -2243,12 +2243,9 @@ def run_benchmark(
                 bench_fn()
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
                 warp_compile_ms = (_time.perf_counter() - _t0) * 1000.0
-                # 2) Wrap with torch.compile and time the FIRST call.
-                # Use the default mode: ``reduce-overhead`` captures CUDA
-                # graphs internally, which clashes with warp's stream
-                # binding (``cudaErrorStreamCaptureInvalidated``). The
-                # default mode runs Dynamo + Inductor codegen but lets
-                # the warp ops execute against the caller's stream.
+                # Use the default torch.compile mode — ``reduce-overhead``
+                # captures CUDA graphs internally and clashes with warp's
+                # stream binding.
                 compiled_fn = torch.compile(bench_fn, fullgraph=True)
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
                 _t0 = _time.perf_counter()
@@ -2261,12 +2258,8 @@ def run_benchmark(
                 framework = f"torch.compile-FAILED:{type(_e).__name__}"
                 framework_compile_ms = None
         elif backend == "jax":
-            # JAX path is already JIT-ed inside ``prepare_jax_pme``. Pre-call
-            # the underlying warp kernel once via the timer's first warmup
-            # iteration; but we can isolate XLA trace cost the same way by
-            # forcing one untraced launch first. The JIT call doesn't expose
-            # an untraced path, so the cleanest proxy is to time the first
-            # call separately here.
+            # JAX path is already JIT-ed inside prepare_jax_pme; time the
+            # first call separately as a proxy for XLA trace cost.
             try:
                 import time as _time
                 # First call: XLA trace + warp NVRTC + GPU kernel

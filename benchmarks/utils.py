@@ -434,11 +434,8 @@ class BenchmarkTimer:
                         }
             compile_ms = (time.perf_counter() - warmup_start) * 1000.0
 
-            # Reset peak memory stats before timing runs. We deliberately do
-            # NOT call empty_cache() here — that would release the torch
-            # caching-allocator pool back to the driver and force iter_0 to
-            # re-allocate every workspace via cudaMallocAsync (the warmup
-            # iterations already paid the allocs, so we want to keep them).
+            # Reset peak stats but keep the caching allocator warm so iter_0
+            # doesn't re-allocate every workspace the warmups already paid.
             self.reset_peak_stats()
 
             # Timing runs
@@ -450,12 +447,8 @@ class BenchmarkTimer:
                 start_event = self._torch.cuda.Event(enable_timing=True)
                 end_event = self._torch.cuda.Event(enable_timing=True)
 
-            # Start profiler. The cudaProfilerStart/Stop calls bracket only
-            # the timing iterations so nsys --capture-range=cudaProfilerApi
-            # drops startup noise (cuFFT plan creation, NVRTC, XLA trace).
-            # Both backends use the driver's profiler API; for JAX we still
-            # need to drive it manually since jax.profiler is a separate
-            # system.
+            # Bracket only the timing iterations so nsys
+            # --capture-range=cudaProfilerApi drops startup noise.
             if self._cudart is not None:
                 self._cudart().cudaProfilerStart()
 

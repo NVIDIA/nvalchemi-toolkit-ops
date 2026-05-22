@@ -695,12 +695,8 @@ def _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled(
                     )
         k += block_size
 
-    # ---- block-wide reduction via tile primitives ----
-    # Lift each per-thread accumulator to a length-block_dim tile (this is
-    # the per-thread -> shared-memory transition), then tile_sum reduces
-    # across the block in a single cooperative pass. ``preserve_type=True``
-    # keeps the dtype of the per-thread value (vec3 / mat33) intact through
-    # the reduction.
+    # Lift per-thread accumulators to block-wide tiles, then cooperative
+    # tile_sum reduces. ``preserve_type=True`` keeps vec3 / mat33 intact.
     energy_tile = wp.tile(energy_acc)
     energy_sum_tile = wp.tile_sum(energy_tile)
 
