@@ -72,12 +72,16 @@ import warp as wp
 
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
+    REAL_SPACE_TILED_BLOCK_DIM,
     _batch_ewald_real_space_energy_forces_charge_grad_kernel_overload,
     _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload,
+    _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload,
     _batch_ewald_real_space_energy_forces_kernel_overload,
     _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload,
+    _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload,
     _batch_ewald_real_space_energy_kernel_overload,
     _batch_ewald_real_space_energy_neighbor_matrix_kernel_overload,
+    _batch_ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload,
     _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload,
     _batch_ewald_reciprocal_space_energy_forces_kernel_overload,
     _batch_ewald_reciprocal_space_energy_kernel_compute_energy_overload,
@@ -86,10 +90,13 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     _batch_ewald_subtract_self_energy_kernel_overload,
     _ewald_real_space_energy_forces_charge_grad_kernel_overload,
     _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload,
+    _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload,
     _ewald_real_space_energy_forces_kernel_overload,
     _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload,
+    _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload,
     _ewald_real_space_energy_kernel_overload,
     _ewald_real_space_energy_neighbor_matrix_kernel_overload,
+    _ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload,
     _ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload,
     _ewald_reciprocal_space_energy_forces_kernel_overload,
     _ewald_reciprocal_space_energy_kernel_compute_energy_overload,
@@ -202,8 +209,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
 # Output dtype convention:
 #   - Energies: always wp.float64 for numerical stability during accumulation.
 #   - Forces: match input precision via get_wp_vec_dtype(pos.dtype) -- vec3f for
-#     float32 inputs, vec3d for float64.  This was changed from the previous
-#     hardcoded wp.vec3d to fix a dtype mismatch when positions are float32.
+#     float32 inputs, vec3d for float64.
 #   - Virial: match input precision via get_wp_mat_dtype(pos.dtype) -- mat33f for
 #     float32 inputs, mat33d for float64.
 
@@ -417,8 +423,10 @@ def _ewald_real_space_energy_matrix(
 
     with WarpAutogradContextManager(needs_grad_flag) as tape:
         if not empty_nm:
-            wp.launch(
-                _ewald_real_space_energy_neighbor_matrix_kernel_overload[wp_scalar],
+            wp.launch_tiled(
+                _ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload[
+                    wp_scalar
+                ],
                 dim=[neighbor_matrix.shape[0]],
                 inputs=[
                     wp_positions,
@@ -430,6 +438,7 @@ def _ewald_real_space_energy_matrix(
                     wp_alpha,
                     wp_energies,
                 ],
+                block_dim=REAL_SPACE_TILED_BLOCK_DIM,
                 device=device,
             )
 
@@ -510,8 +519,8 @@ def _ewald_real_space_energy_forces_matrix(
 
     with WarpAutogradContextManager(needs_grad_flag) as tape:
         if not empty_nm:
-            wp.launch(
-                _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[
+            wp.launch_tiled(
+                _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload[
                     wp_scalar
                 ],
                 dim=[neighbor_matrix.shape[0]],
@@ -528,6 +537,7 @@ def _ewald_real_space_energy_forces_matrix(
                     wp_forces,
                     wp_virial,
                 ],
+                block_dim=REAL_SPACE_TILED_BLOCK_DIM,
                 device=device,
             )
 
@@ -729,8 +739,8 @@ def _ewald_real_space_energy_forces_charge_grad_matrix(
 
     with WarpAutogradContextManager(needs_grad_flag) as tape:
         if not empty_nm:
-            wp.launch(
-                _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
+            wp.launch_tiled(
+                _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload[
                     wp_scalar
                 ],
                 dim=[neighbor_matrix.shape[0]],
@@ -748,6 +758,7 @@ def _ewald_real_space_energy_forces_charge_grad_matrix(
                     wp_charge_grads,
                     wp_virial,
                 ],
+                block_dim=REAL_SPACE_TILED_BLOCK_DIM,
                 device=device,
             )
 
@@ -988,8 +999,8 @@ def _batch_ewald_real_space_energy_matrix(
 
     with WarpAutogradContextManager(needs_grad_flag) as tape:
         if not empty_nm:
-            wp.launch(
-                _batch_ewald_real_space_energy_neighbor_matrix_kernel_overload[
+            wp.launch_tiled(
+                _batch_ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload[
                     wp_scalar
                 ],
                 dim=[neighbor_matrix.shape[0]],
@@ -1004,6 +1015,7 @@ def _batch_ewald_real_space_energy_matrix(
                     wp_alpha,
                     wp_energies,
                 ],
+                block_dim=REAL_SPACE_TILED_BLOCK_DIM,
                 device=device,
             )
 
@@ -1087,8 +1099,8 @@ def _batch_ewald_real_space_energy_forces_matrix(
 
     with WarpAutogradContextManager(needs_grad_flag) as tape:
         if not empty_nm:
-            wp.launch(
-                _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[
+            wp.launch_tiled(
+                _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload[
                     wp_scalar
                 ],
                 dim=[neighbor_matrix.shape[0]],
@@ -1106,6 +1118,7 @@ def _batch_ewald_real_space_energy_forces_matrix(
                     wp_forces,
                     wp_virial,
                 ],
+                block_dim=REAL_SPACE_TILED_BLOCK_DIM,
                 device=device,
             )
 
@@ -1316,8 +1329,8 @@ def _batch_ewald_real_space_energy_forces_charge_grad_matrix(
 
     with WarpAutogradContextManager(needs_grad_flag) as tape:
         if not empty_nm:
-            wp.launch(
-                _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
+            wp.launch_tiled(
+                _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload[
                     wp_scalar
                 ],
                 dim=[neighbor_matrix.shape[0]],
@@ -1336,6 +1349,7 @@ def _batch_ewald_real_space_energy_forces_charge_grad_matrix(
                     wp_charge_grads,
                     wp_virial,
                 ],
+                block_dim=REAL_SPACE_TILED_BLOCK_DIM,
                 device=device,
             )
 

@@ -145,6 +145,13 @@ EIGHTPI = 8.0 * PI  # Used for half-space k-vector optimization (2x FOURPI)
 BATCH_BLOCK_SIZE = int(os.environ.get("ALCH_EWALD_BATCH_BLOCK_SIZE", 16))
 BATCH_BLOCK_SIZE = BATCH_BLOCK_SIZE if BATCH_BLOCK_SIZE > 0 else 16
 
+# Block size for block-per-atom tiled real-space neighbor-matrix kernels.
+# Each atom is handled by REAL_SPACE_TILED_BLOCK_DIM cooperating threads; the
+# per-thread accumulators are reduced via wp.tile_sum to a single block-local
+# result. On CPU warp clamps block_dim to 1 and the tile primitives degrade to
+# scalar passthrough.
+REAL_SPACE_TILED_BLOCK_DIM = 64
+
 
 ###########################################################################################
 ########################### Helper Functions (always float64) #############################
@@ -579,6 +586,142 @@ def _ewald_real_space_energy_forces_kernel(
     # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
     if compute_virial:
         wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
+
+
+@wp.kernel
+def _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
+    mask_value: wp.int32,
+    alpha: wp.array(dtype=Any),
+    compute_virial: bool,
+    pair_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    virial: wp.array(dtype=Any),
+):
+    """Block-per-atom tiled neighbor-matrix energy+forces kernel.
+
+    Same semantics as the non-tiled variant, but each atom-i is handled by
+    one CTA of ``block_dim`` cooperating threads instead of a single thread.
+    The ``block_dim`` threads stride through atom-i's neighbor row at
+    stride ``block_dim``, each accumulating partial energy / force / virial
+    contributions in registers. After the loop, the partial values are
+    lifted to a block-wide tile via ``wp.tile(..., preserve_type=True)``,
+    cooperatively summed via ``wp.tile_sum`` (one __syncthreads + warp
+    shuffle reduction), and the single block-local result is written by
+    thread 0 via one ``wp.atomic_add`` per output slot -- matching the
+    baseline's atomic count while exposing ``block_dim``x more parallelism.
+
+    Launch
+    ------
+    ``wp.launch_tiled(kernel, dim=[N_atoms], block_dim=BLOCK, inputs=[...])``
+
+    CPU compatibility
+    -----------------
+    On CPU the warp runtime forces ``block_dim=1``. The strided loop then
+    visits every neighbor sequentially in one thread; the tile primitives
+    degrade to scalar passthrough (``wp.tile(x)`` becomes a shape-(1,)
+    tile, ``wp.tile_sum`` is a no-op, ``wp.tile_extract(t, 0)`` returns the
+    stored scalar). Net behavior matches the non-tiled kernel.
+    """
+    i, j = wp.tid()  # i = atom index (block id), j = thread within block
+    block_size = wp.block_dim()
+    max_neighbors = neighbor_matrix.shape[1]
+
+    qi = wp.float64(charges[i])
+    pos_i = positions[i]
+    alpha_ = wp.float64(alpha[0])
+    cell_t = wp.transpose(cell[0])
+
+    # Per-thread accumulators (each thread strides through its subset of
+    # atom-i's neighbor row at stride block_dim).
+    energy_acc = wp.float64(0.0)
+    force_i_acc = type(pos_i)(
+        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
+    )
+    virial_acc = wp.mat33d()  # declared unconditionally so the tile-sum
+    # below sees the same liveness on every thread regardless of the
+    # runtime compute_virial flag.
+
+    k = j
+    while k < max_neighbors:
+        neighbor_idx = neighbor_matrix[i, k]
+        if neighbor_idx != mask_value:
+            qj = wp.float64(charges[neighbor_idx])
+            pos_j = positions[neighbor_idx]
+
+            shift_vec = unit_shifts_matrix[i, k]
+            periodic_shift = cell_t * type(pos_j)(
+                type(pos_j[0])(shift_vec[0]),
+                type(pos_j[0])(shift_vec[1]),
+                type(pos_j[0])(shift_vec[2]),
+            )
+            separation_vector = pos_j - pos_i + periodic_shift
+            distance = wp.float64(wp.length(separation_vector))
+
+            if distance > wp.float64(1e-8):
+                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
+                    qi, qj, distance, alpha_
+                )
+
+                force_mag = _ewald_real_space_force_magnitude(
+                    qi, qj, distance, alpha_
+                )
+                force = type(pos_i)(
+                    type(pos_i[0])(force_mag) * separation_vector[0],
+                    type(pos_i[0])(force_mag) * separation_vector[1],
+                    type(pos_i[0])(force_mag) * separation_vector[2],
+                )
+                force_i_acc -= force
+                wp.atomic_add(atomic_forces, neighbor_idx, force)
+
+                if compute_virial:
+                    virial_acc += wp.mat33d(
+                        wp.outer(
+                            wp.vec3d(
+                                wp.float64(separation_vector[0]),
+                                wp.float64(separation_vector[1]),
+                                wp.float64(separation_vector[2]),
+                            ),
+                            wp.vec3d(
+                                wp.float64(force[0]),
+                                wp.float64(force[1]),
+                                wp.float64(force[2]),
+                            ),
+                        )
+                    )
+        k += block_size
+
+    # ---- block-wide reduction via tile primitives ----
+    # Lift each per-thread accumulator to a length-block_dim tile (this is
+    # the per-thread -> shared-memory transition), then tile_sum reduces
+    # across the block in a single cooperative pass. ``preserve_type=True``
+    # keeps the dtype of the per-thread value (vec3 / mat33) intact through
+    # the reduction.
+    energy_tile = wp.tile(energy_acc)
+    energy_sum_tile = wp.tile_sum(energy_tile)
+
+    force_i_tile = wp.tile(force_i_acc, preserve_type=True)
+    force_i_sum_tile = wp.tile_sum(force_i_tile)
+
+    virial_tile = wp.tile(virial_acc, preserve_type=True)
+    virial_sum_tile = wp.tile_sum(virial_tile)
+
+    # ``wp.tile_atomic_add`` is the cooperative per-block atomic_add; using
+    # it instead of the divergent ``if j == 0: wp.atomic_add(...)`` pattern
+    # is necessary because the adjoint of the divergent form deadlocks
+    # Warp's tile codegen (only thread 0 reads the gradient, the broadcast
+    # back to the other 63 threads' tile entries never completes).
+    if j == 0:
+        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset=(i,))
+        wp.tile_atomic_add(atomic_forces, force_i_sum_tile, offset=(i,))
+        if compute_virial:
+            wp.atomic_add(
+                virial, 0, type(cell_t)(wp.tile_extract(virial_sum_tile, 0))
+            )
 
 
 @wp.kernel
@@ -1745,6 +1888,611 @@ def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
     # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
     if compute_virial:
         wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
+
+
+###########################################################################################
+########################### Block-per-atom tiled NM variants ##############################
+###########################################################################################
+
+
+@wp.kernel
+def _ewald_real_space_energy_neighbor_matrix_kernel_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
+    mask_value: wp.int32,
+    alpha: wp.array(dtype=Any),
+    pair_energies: wp.array(dtype=wp.float64),
+):
+    """Compute real-space Ewald energies (neighbor matrix, block-per-atom tiled).
+
+    Block-per-atom tiled variant of ``_ewald_real_space_energy_neighbor_matrix_kernel``.
+    See ``_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled`` for the
+    full tile-reduction design discussion (strided per-thread loop, ``wp.tile``
+    + ``wp.tile_sum`` reduction, CPU passthrough semantics).
+
+    Launch Grid
+    -----------
+    ``wp.launch_tiled(kernel, dim=[N_atoms], block_dim=REAL_SPACE_TILED_BLOCK_DIM)``
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges.
+    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrix.
+    neighbor_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.int32
+        Neighbor indices. Invalid entries contain mask_value.
+    unit_shifts_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.vec3i
+        Periodic image shifts for each neighbor pair.
+    mask_value : wp.int32
+        Value indicating invalid/padded neighbor entries.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    pair_energies : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: Accumulated real-space energy per atom.
+    """
+    i, j = wp.tid()
+    block_size = wp.block_dim()
+    max_neighbors = neighbor_matrix.shape[1]
+
+    qi = wp.float64(charges[i])
+    pos_i = positions[i]
+    alpha_ = wp.float64(alpha[0])
+    cell_t = wp.transpose(cell[0])
+
+    energy_acc = wp.float64(0.0)
+
+    k = j
+    while k < max_neighbors:
+        neighbor_idx = neighbor_matrix[i, k]
+        if neighbor_idx != mask_value:
+            qj = wp.float64(charges[neighbor_idx])
+            pos_j = positions[neighbor_idx]
+
+            shift_vec = unit_shifts_matrix[i, k]
+            periodic_shift = cell_t * type(pos_j)(
+                type(pos_j[0])(shift_vec[0]),
+                type(pos_j[0])(shift_vec[1]),
+                type(pos_j[0])(shift_vec[2]),
+            )
+            separation_vector = pos_j - pos_i + periodic_shift
+            distance = wp.float64(wp.length(separation_vector))
+
+            if distance > wp.float64(1e-8):
+                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
+                    qi, qj, distance, alpha_
+                )
+        k += block_size
+
+    energy_tile = wp.tile(energy_acc)
+    energy_sum_tile = wp.tile_sum(energy_tile)
+
+    if j == 0:
+        # wp.atomic_add(pair_energies, i, wp.tile_extract(energy_sum_tile, 0))
+        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset=(i,))
+
+
+@wp.kernel
+def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
+    mask_value: wp.int32,
+    alpha: wp.array(dtype=Any),
+    compute_virial: bool,
+    pair_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
+):
+    """Compute real-space Ewald energy, forces, and charge gradients (neighbor matrix, block-per-atom tiled).
+
+    Block-per-atom tiled variant of
+    ``_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel``.
+    See ``_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled`` for the
+    full tile-reduction design discussion.
+
+    Launch Grid
+    -----------
+    ``wp.launch_tiled(kernel, dim=[N_atoms], block_dim=REAL_SPACE_TILED_BLOCK_DIM)``
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges.
+    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrix.
+    neighbor_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.int32
+        Neighbor indices. Invalid entries contain mask_value.
+    unit_shifts_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.vec3i
+        Periodic image shifts for each neighbor pair.
+    mask_value : wp.int32
+        Value indicating invalid/padded neighbor entries.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
+    pair_energies : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: Accumulated real-space energy per atom.
+    atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: Accumulated forces per atom (matches positions dtype).
+    charge_gradients : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: Accumulated charge gradients dE/dq per atom.
+    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
+    """
+    i, j = wp.tid()
+    block_size = wp.block_dim()
+    max_neighbors = neighbor_matrix.shape[1]
+
+    qi = wp.float64(charges[i])
+    pos_i = positions[i]
+    alpha_ = wp.float64(alpha[0])
+    cell_t = wp.transpose(cell[0])
+
+    energy_acc = wp.float64(0.0)
+    force_i_acc = type(pos_i)(
+        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
+    )
+    cg_i_acc = wp.float64(0.0)
+    virial_acc = wp.mat33d()  # declared unconditionally so the tile-sum below
+    # sees the same liveness on every thread regardless of compute_virial.
+
+    k = j
+    while k < max_neighbors:
+        neighbor_idx = neighbor_matrix[i, k]
+        if neighbor_idx != mask_value:
+            qj = wp.float64(charges[neighbor_idx])
+            pos_j = positions[neighbor_idx]
+
+            shift_vec = unit_shifts_matrix[i, k]
+            periodic_shift = cell_t * type(pos_j)(
+                type(pos_j[0])(shift_vec[0]),
+                type(pos_j[0])(shift_vec[1]),
+                type(pos_j[0])(shift_vec[2]),
+            )
+            separation_vector = pos_j - pos_i + periodic_shift
+            distance = wp.float64(wp.length(separation_vector))
+
+            if distance > wp.float64(1e-8):
+                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
+                    qi, qj, distance, alpha_
+                )
+
+                force_mag = _ewald_real_space_force_magnitude(
+                    qi, qj, distance, alpha_
+                )
+                force = type(pos_i)(
+                    type(pos_i[0])(force_mag) * separation_vector[0],
+                    type(pos_i[0])(force_mag) * separation_vector[1],
+                    type(pos_i[0])(force_mag) * separation_vector[2],
+                )
+                force_i_acc -= force
+                wp.atomic_add(atomic_forces, neighbor_idx, force)
+
+                potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
+                cg_i_acc += qj * potential
+                cg_j = qi * potential
+                wp.atomic_add(charge_gradients, neighbor_idx, cg_j)
+
+                if compute_virial:
+                    virial_acc += wp.mat33d(
+                        wp.outer(
+                            wp.vec3d(
+                                wp.float64(separation_vector[0]),
+                                wp.float64(separation_vector[1]),
+                                wp.float64(separation_vector[2]),
+                            ),
+                            wp.vec3d(
+                                wp.float64(force[0]),
+                                wp.float64(force[1]),
+                                wp.float64(force[2]),
+                            ),
+                        )
+                    )
+        k += block_size
+
+    energy_tile = wp.tile(energy_acc)
+    energy_sum_tile = wp.tile_sum(energy_tile)
+    force_i_tile = wp.tile(force_i_acc, preserve_type=True)
+    force_i_sum_tile = wp.tile_sum(force_i_tile)
+    cg_i_tile = wp.tile(cg_i_acc)
+    cg_i_sum_tile = wp.tile_sum(cg_i_tile)
+    virial_tile = wp.tile(virial_acc, preserve_type=True)
+    virial_sum_tile = wp.tile_sum(virial_tile)
+
+    if j == 0:
+        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset=(i,))
+        wp.tile_atomic_add(atomic_forces, force_i_sum_tile, offset=(i,))
+        wp.tile_atomic_add(charge_gradients, cg_i_sum_tile, offset=(i,))
+        if compute_virial:
+            wp.atomic_add(
+                virial, 0, type(cell_t)(wp.tile_extract(virial_sum_tile, 0))
+            )
+
+
+@wp.kernel
+def _batch_ewald_real_space_energy_neighbor_matrix_kernel_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    batch_id: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
+    mask_value: wp.int32,
+    alpha: wp.array(dtype=Any),
+    pair_energies: wp.array(dtype=wp.float64),
+):
+    """Compute real-space Ewald energies for batched systems (neighbor matrix, block-per-atom tiled).
+
+    Block-per-atom tiled variant of
+    ``_batch_ewald_real_space_energy_neighbor_matrix_kernel``. See
+    ``_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled`` for the
+    full tile-reduction design discussion. Per-system cell and alpha are looked
+    up via ``batch_id``; all threads in a block process the same atom-i so they
+    share the same system_id.
+
+    Launch Grid
+    -----------
+    ``wp.launch_tiled(kernel, dim=[N_total], block_dim=REAL_SPACE_TILED_BLOCK_DIM)``
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates for all systems concatenated.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated.
+    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrices for each system.
+    batch_id : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    neighbor_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.int32
+        Neighbor indices. Invalid entries contain mask_value.
+    unit_shifts_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.vec3i
+        Periodic image shifts for each neighbor pair.
+    mask_value : wp.int32
+        Value indicating invalid/padded neighbor entries.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: Accumulated real-space energy per atom.
+    """
+    i, j = wp.tid()
+    block_size = wp.block_dim()
+    max_neighbors = neighbor_matrix.shape[1]
+
+    qi = wp.float64(charges[i])
+    pos_i = positions[i]
+    system_id = batch_id[i]
+    system_cell = cell[system_id]
+    system_alpha = wp.float64(alpha[system_id])
+    cell_t = wp.transpose(system_cell)
+
+    energy_acc = wp.float64(0.0)
+
+    k = j
+    while k < max_neighbors:
+        neighbor_idx = neighbor_matrix[i, k]
+        if neighbor_idx != mask_value:
+            qj = wp.float64(charges[neighbor_idx])
+            pos_j = positions[neighbor_idx]
+
+            shift_vec = unit_shifts_matrix[i, k]
+            periodic_shift = cell_t * type(pos_j)(
+                type(pos_j[0])(shift_vec[0]),
+                type(pos_j[0])(shift_vec[1]),
+                type(pos_j[0])(shift_vec[2]),
+            )
+            separation_vector = pos_j - pos_i + periodic_shift
+            distance = wp.float64(wp.length(separation_vector))
+
+            if distance > wp.float64(1e-8):
+                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
+                    qi, qj, distance, system_alpha
+                )
+        k += block_size
+
+    energy_tile = wp.tile(energy_acc)
+    energy_sum_tile = wp.tile_sum(energy_tile)
+
+    if j == 0:
+        # wp.atomic_add(pair_energies, i, wp.tile_extract(energy_sum_tile, 0))
+        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset = (i,))
+
+
+@wp.kernel
+def _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    batch_id: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
+    mask_value: wp.int32,
+    alpha: wp.array(dtype=Any),
+    compute_virial: bool,
+    pair_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    virial: wp.array(dtype=Any),
+):
+    """Compute real-space Ewald energy and forces for batched systems (neighbor matrix, block-per-atom tiled).
+
+    Block-per-atom tiled variant of
+    ``_batch_ewald_real_space_energy_forces_neighbor_matrix_kernel``. See
+    ``_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled`` for the
+    full tile-reduction design discussion. Per-system cell and alpha are looked
+    up via ``batch_id``; virial is accumulated into ``virial[system_id]``.
+
+    Launch Grid
+    -----------
+    ``wp.launch_tiled(kernel, dim=[N_total], block_dim=REAL_SPACE_TILED_BLOCK_DIM)``
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates for all systems concatenated.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated.
+    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrices for each system.
+    batch_id : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    neighbor_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.int32
+        Neighbor indices. Invalid entries contain mask_value.
+    unit_shifts_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.vec3i
+        Periodic image shifts for each neighbor pair.
+    mask_value : wp.int32
+        Value indicating invalid/padded neighbor entries.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
+    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: Accumulated real-space energy per atom.
+    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: Accumulated forces per atom.
+    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
+    """
+    i, j = wp.tid()
+    block_size = wp.block_dim()
+    max_neighbors = neighbor_matrix.shape[1]
+
+    qi = wp.float64(charges[i])
+    pos_i = positions[i]
+    system_id = batch_id[i]
+    system_cell = cell[system_id]
+    system_alpha = wp.float64(alpha[system_id])
+    cell_t = wp.transpose(system_cell)
+
+    energy_acc = wp.float64(0.0)
+    force_i_acc = type(pos_i)(
+        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
+    )
+    virial_acc = wp.mat33d()  # declared unconditionally so the tile-sum below
+    # sees the same liveness on every thread regardless of compute_virial.
+
+    k = j
+    while k < max_neighbors:
+        neighbor_idx = neighbor_matrix[i, k]
+        if neighbor_idx != mask_value:
+            qj = wp.float64(charges[neighbor_idx])
+            pos_j = positions[neighbor_idx]
+
+            shift_vec = unit_shifts_matrix[i, k]
+            periodic_shift = cell_t * type(pos_j)(
+                type(pos_j[0])(shift_vec[0]),
+                type(pos_j[0])(shift_vec[1]),
+                type(pos_j[0])(shift_vec[2]),
+            )
+            separation_vector = pos_j - pos_i + periodic_shift
+            distance = wp.float64(wp.length(separation_vector))
+
+            if distance > wp.float64(1e-8):
+                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
+                    qi, qj, distance, system_alpha
+                )
+
+                force_mag = _ewald_real_space_force_magnitude(
+                    qi, qj, distance, system_alpha
+                )
+                force = type(pos_i)(
+                    type(pos_i[0])(force_mag) * separation_vector[0],
+                    type(pos_i[0])(force_mag) * separation_vector[1],
+                    type(pos_i[0])(force_mag) * separation_vector[2],
+                )
+                force_i_acc -= force
+                wp.atomic_add(atomic_forces, neighbor_idx, force)
+
+                if compute_virial:
+                    virial_acc += wp.mat33d(
+                        wp.outer(
+                            wp.vec3d(
+                                wp.float64(separation_vector[0]),
+                                wp.float64(separation_vector[1]),
+                                wp.float64(separation_vector[2]),
+                            ),
+                            wp.vec3d(
+                                wp.float64(force[0]),
+                                wp.float64(force[1]),
+                                wp.float64(force[2]),
+                            ),
+                        )
+                    )
+        k += block_size
+
+    energy_tile = wp.tile(energy_acc)
+    energy_sum_tile = wp.tile_sum(energy_tile)
+    force_i_tile = wp.tile(force_i_acc, preserve_type=True)
+    force_i_sum_tile = wp.tile_sum(force_i_tile)
+    virial_tile = wp.tile(virial_acc, preserve_type=True)
+    virial_sum_tile = wp.tile_sum(virial_tile)
+
+    if j == 0:
+        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset=(i,))
+        wp.tile_atomic_add(atomic_forces, force_i_sum_tile, offset=(i,))
+        if compute_virial:
+            wp.atomic_add(
+                virial, system_id, type(cell_t)(wp.tile_extract(virial_sum_tile, 0))
+            )
+
+
+@wp.kernel
+def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    batch_id: wp.array(dtype=wp.int32),
+    neighbor_matrix: wp.array2d(dtype=wp.int32),
+    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
+    mask_value: wp.int32,
+    alpha: wp.array(dtype=Any),
+    compute_virial: bool,
+    pair_energies: wp.array(dtype=wp.float64),
+    atomic_forces: wp.array(dtype=Any),
+    charge_gradients: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
+):
+    """Compute real-space Ewald energy, forces, and charge gradients for batched systems (neighbor matrix, block-per-atom tiled).
+
+    Block-per-atom tiled variant of
+    ``_batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel``.
+    See ``_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled`` for the
+    full tile-reduction design discussion. Per-system cell and alpha are looked
+    up via ``batch_id``; virial is accumulated into ``virial[system_id]``.
+
+    Launch Grid
+    -----------
+    ``wp.launch_tiled(kernel, dim=[N_total], block_dim=REAL_SPACE_TILED_BLOCK_DIM)``
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates for all systems concatenated.
+    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
+        Atomic charges for all systems concatenated.
+    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
+        Unit cell matrices for each system.
+    batch_id : wp.array, shape (N_total,), dtype=wp.int32
+        System index for each atom (0 to B-1).
+    neighbor_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.int32
+        Neighbor indices. Invalid entries contain mask_value.
+    unit_shifts_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.vec3i
+        Periodic image shifts for each neighbor pair.
+    mask_value : wp.int32
+        Value indicating invalid/padded neighbor entries.
+    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
+        Per-system Ewald splitting parameter.
+    compute_virial : bool
+        Whether to compute the virial tensor.
+    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: Accumulated real-space energy per atom.
+    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: Accumulated forces per atom.
+    charge_gradients : wp.array, shape (N_total,), dtype=wp.float64
+        OUTPUT: Accumulated charge gradients dE/dq per atom.
+    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
+    """
+    i, j = wp.tid()
+    block_size = wp.block_dim()
+    max_neighbors = neighbor_matrix.shape[1]
+
+    qi = wp.float64(charges[i])
+    pos_i = positions[i]
+    system_id = batch_id[i]
+    system_cell = cell[system_id]
+    system_alpha = wp.float64(alpha[system_id])
+    cell_t = wp.transpose(system_cell)
+
+    energy_acc = wp.float64(0.0)
+    force_i_acc = type(pos_i)(
+        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
+    )
+    cg_i_acc = wp.float64(0.0)
+    virial_acc = wp.mat33d()  # declared unconditionally so the tile-sum below
+    # sees the same liveness on every thread regardless of compute_virial.
+
+    k = j
+    while k < max_neighbors:
+        neighbor_idx = neighbor_matrix[i, k]
+        if neighbor_idx != mask_value:
+            qj = wp.float64(charges[neighbor_idx])
+            pos_j = positions[neighbor_idx]
+
+            shift_vec = unit_shifts_matrix[i, k]
+            periodic_shift = cell_t * type(pos_j)(
+                type(pos_j[0])(shift_vec[0]),
+                type(pos_j[0])(shift_vec[1]),
+                type(pos_j[0])(shift_vec[2]),
+            )
+            separation_vector = pos_j - pos_i + periodic_shift
+            distance = wp.float64(wp.length(separation_vector))
+
+            if distance > wp.float64(1e-8):
+                energy_acc += _ewald_real_space_energy_kernel_compute_energy(
+                    qi, qj, distance, system_alpha
+                )
+
+                force_mag = _ewald_real_space_force_magnitude(
+                    qi, qj, distance, system_alpha
+                )
+                force = type(pos_i)(
+                    type(pos_i[0])(force_mag) * separation_vector[0],
+                    type(pos_i[0])(force_mag) * separation_vector[1],
+                    type(pos_i[0])(force_mag) * separation_vector[2],
+                )
+                force_i_acc -= force
+                wp.atomic_add(atomic_forces, neighbor_idx, force)
+
+                potential = _ewald_real_space_charge_grad_potential(distance, system_alpha)
+                cg_i_acc += qj * potential
+                cg_j = qi * potential
+                wp.atomic_add(charge_gradients, neighbor_idx, cg_j)
+
+                if compute_virial:
+                    virial_acc += wp.mat33d(
+                        wp.outer(
+                            wp.vec3d(
+                                wp.float64(separation_vector[0]),
+                                wp.float64(separation_vector[1]),
+                                wp.float64(separation_vector[2]),
+                            ),
+                            wp.vec3d(
+                                wp.float64(force[0]),
+                                wp.float64(force[1]),
+                                wp.float64(force[2]),
+                            ),
+                        )
+                    )
+        k += block_size
+
+    energy_tile = wp.tile(energy_acc)
+    energy_sum_tile = wp.tile_sum(energy_tile)
+    force_i_tile = wp.tile(force_i_acc, preserve_type=True)
+    force_i_sum_tile = wp.tile_sum(force_i_tile)
+    cg_i_tile = wp.tile(cg_i_acc)
+    cg_i_sum_tile = wp.tile_sum(cg_i_tile)
+    virial_tile = wp.tile(virial_acc, preserve_type=True)
+    virial_sum_tile = wp.tile_sum(virial_tile)
+
+    if j == 0:
+        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset=(i,))
+        wp.tile_atomic_add(atomic_forces, force_i_sum_tile, offset=(i,))
+        wp.tile_atomic_add(charge_gradients, cg_i_sum_tile, offset=(i,))
+        if compute_virial:
+            wp.atomic_add(
+                virial, system_id, type(cell_t)(wp.tile_extract(virial_sum_tile, 0))
+            )
 
 
 ###########################################################################################
@@ -4397,21 +5145,27 @@ _M = [wp.mat33f, wp.mat33d]
 _ewald_real_space_energy_kernel_overload = {}
 _ewald_real_space_energy_forces_kernel_overload = {}
 _ewald_real_space_energy_neighbor_matrix_kernel_overload = {}
+_ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload = {}
 _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload = {}
+_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload = {}
 
 # Real-space single-system kernels with charge gradients
 _ewald_real_space_energy_forces_charge_grad_kernel_overload = {}
 _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload = {}
+_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload = {}
 
 # Real-space batch kernels
 _batch_ewald_real_space_energy_kernel_overload = {}
 _batch_ewald_real_space_energy_forces_kernel_overload = {}
 _batch_ewald_real_space_energy_neighbor_matrix_kernel_overload = {}
+_batch_ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload = {}
 _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload = {}
+_batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload = {}
 
 # Real-space batch kernels with charge gradients
 _batch_ewald_real_space_energy_forces_charge_grad_kernel_overload = {}
 _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload = {}
+_batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload = {}
 
 # Reciprocal-space single-system kernels
 _ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload = {}
@@ -4477,6 +5231,20 @@ for t, v, m in zip(_T, _V, _M):
         ],
     )
 
+    _ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload[t] = wp.overload(
+        _ewald_real_space_energy_neighbor_matrix_kernel_tiled,
+        [
+            wp.array(dtype=v),  # positions
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=m),  # cell
+            wp.array2d(dtype=wp.int32),  # neighbor_matrix
+            wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
+            wp.int32,  # mask_value
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=wp.float64),  # pair_energies
+        ],
+    )
+
     _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[t] = wp.overload(
         _ewald_real_space_energy_forces_neighbor_matrix_kernel,
         [
@@ -4492,6 +5260,25 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=v),  # atomic_forces
             wp.array(dtype=m),  # virial
         ],
+    )
+
+    _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload[t] = (
+        wp.overload(
+            _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled,
+            [
+                wp.array(dtype=v),  # positions
+                wp.array(dtype=t),  # charges
+                wp.array(dtype=m),  # cell
+                wp.array2d(dtype=wp.int32),  # neighbor_matrix
+                wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
+                wp.int32,  # mask_value
+                wp.array(dtype=t),  # alpha
+                wp.bool,  # compute_virial
+                wp.array(dtype=wp.float64),  # pair_energies
+                wp.array(dtype=v),  # atomic_forces
+                wp.array(dtype=m),  # virial
+            ],
+        )
     )
 
     # ==================== Real-space single-system kernels with charge gradients ====================
@@ -4532,6 +5319,26 @@ for t, v, m in zip(_T, _V, _M):
                 wp.array(dtype=m),  # virial
             ],
         )
+    )
+
+    _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload[
+        t
+    ] = wp.overload(
+        _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled,
+        [
+            wp.array(dtype=v),  # positions
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=m),  # cell
+            wp.array2d(dtype=wp.int32),  # neighbor_matrix
+            wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
+            wp.int32,  # mask_value
+            wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
+            wp.array(dtype=wp.float64),  # pair_energies
+            wp.array(dtype=v),  # atomic_forces
+            wp.array(dtype=wp.float64),  # charge_gradients
+            wp.array(dtype=m),  # virial
+        ],
     )
 
     # ==================== Real-space batch kernels ====================
@@ -4584,9 +5391,46 @@ for t, v, m in zip(_T, _V, _M):
         ],
     )
 
+    _batch_ewald_real_space_energy_neighbor_matrix_kernel_tiled_overload[t] = (
+        wp.overload(
+            _batch_ewald_real_space_energy_neighbor_matrix_kernel_tiled,
+            [
+                wp.array(dtype=v),  # positions
+                wp.array(dtype=t),  # charges
+                wp.array(dtype=m),  # cell
+                wp.array(dtype=wp.int32),  # batch_id
+                wp.array2d(dtype=wp.int32),  # neighbor_matrix
+                wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
+                wp.int32,  # mask_value
+                wp.array(dtype=t),  # alpha
+                wp.array(dtype=wp.float64),  # pair_energies
+            ],
+        )
+    )
+
     _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[t] = (
         wp.overload(
             _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel,
+            [
+                wp.array(dtype=v),  # positions
+                wp.array(dtype=t),  # charges
+                wp.array(dtype=m),  # cell
+                wp.array(dtype=wp.int32),  # batch_id
+                wp.array2d(dtype=wp.int32),  # neighbor_matrix
+                wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
+                wp.int32,  # mask_value
+                wp.array(dtype=t),  # alpha
+                wp.bool,  # compute_virial
+                wp.array(dtype=wp.float64),  # pair_energies
+                wp.array(dtype=v),  # atomic_forces
+                wp.array(dtype=m),  # virial
+            ],
+        )
+    )
+
+    _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled_overload[t] = (
+        wp.overload(
+            _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled,
             [
                 wp.array(dtype=v),  # positions
                 wp.array(dtype=t),  # charges
@@ -4629,6 +5473,27 @@ for t, v, m in zip(_T, _V, _M):
         t
     ] = wp.overload(
         _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel,
+        [
+            wp.array(dtype=v),  # positions
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=m),  # cell
+            wp.array(dtype=wp.int32),  # batch_id
+            wp.array2d(dtype=wp.int32),  # neighbor_matrix
+            wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
+            wp.int32,  # mask_value
+            wp.array(dtype=t),  # alpha
+            wp.bool,  # compute_virial
+            wp.array(dtype=wp.float64),  # pair_energies
+            wp.array(dtype=v),  # atomic_forces
+            wp.array(dtype=wp.float64),  # charge_gradients
+            wp.array(dtype=m),  # virial
+        ],
+    )
+
+    _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled_overload[
+        t
+    ] = wp.overload(
+        _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled,
         [
             wp.array(dtype=v),  # positions
             wp.array(dtype=t),  # charges
