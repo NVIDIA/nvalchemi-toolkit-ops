@@ -465,25 +465,18 @@ class TestEstimatePMEParameters:
             assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
-    def test_pme_alpha_differs_from_ewald(self, device):
-        """PME and Ewald cost models differ — alpha must too.
-
-        Ewald balances ``rc^3 · N`` vs ``K^3`` (k-sum). PME balances
-        ``rc^3 · N`` vs ``K^3 · log(K)`` (FFT), which makes the FFT
-        side much cheaper at scale and drives the optimal rc *down*
-        (and α correspondingly *up*) compared to Ewald. The previous
-        consistency assertion was an artifact of the old PME estimator
-        reusing the Ewald formula — see the proposal for the math.
-        """
+    def test_pme_alpha_matches_ewald_closed_form(self, device):
+        """Default PME estimator uses the same Essmann/Kolafa-Perram
+        closed-form as the Ewald estimator (both derive rc and α from
+        a single length scale η)."""
         positions = torch.randn(100, 3, device=device)
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
 
         pme_params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
         ewald_params = estimate_ewald_parameters(positions, cell, accuracy=1e-6)
 
-        # PME rc should be ≤ Ewald rc; PME alpha should be ≥ Ewald alpha.
-        assert torch.all(pme_params.real_space_cutoff <= ewald_params.real_space_cutoff)
-        assert torch.all(pme_params.alpha >= ewald_params.alpha)
+        assert torch.allclose(pme_params.real_space_cutoff, ewald_params.real_space_cutoff)
+        assert torch.allclose(pme_params.alpha, ewald_params.alpha)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
     def test_pme_cutoff_in_sane_range(self, device):
@@ -508,9 +501,8 @@ class TestEstimatePMEParameters:
             params.real_space_cutoff,
             torch.tensor([7.5], dtype=positions.dtype, device=device),
         )
-        # Alpha derived from the user-supplied rc:
-        # α = √(-log(2·1e-6)) / 7.5
-        expected_alpha = math.sqrt(-math.log(2.0 * 1e-6)) / 7.5
+        # Alpha derived from the user-supplied rc: α = √(-log ε) / rc.
+        expected_alpha = math.sqrt(-math.log(1e-6)) / 7.5
         assert torch.allclose(
             params.alpha,
             torch.tensor([expected_alpha], dtype=positions.dtype, device=device),

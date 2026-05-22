@@ -427,22 +427,18 @@ class TestEstimatePMEParameters:
         for d in params.mesh_dimensions:
             assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
 
-    def test_pme_alpha_differs_from_ewald(self):
-        """PME and Ewald cost models differ — alpha must too.
-
-        Ewald balances ``rc^3 · N`` vs ``K^3`` (k-sum). PME balances
-        ``rc^3 · N`` vs ``K^3 · log(K)`` (FFT), which makes the FFT
-        side much cheaper at scale and drives the optimal rc *down*
-        (and α correspondingly *up*) compared to Ewald.
-        """
+    def test_pme_alpha_matches_ewald_closed_form(self):
+        """Default PME estimator uses the same Essmann/Kolafa-Perram
+        closed-form as the Ewald estimator (both derive rc and α from
+        a single length scale η)."""
         positions = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         cell = jnp.eye(3)[None, ...] * 20.0
 
         pme_params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
         ewald_params = estimate_ewald_parameters(positions, cell, accuracy=1e-6)
 
-        assert jnp.all(pme_params.real_space_cutoff <= ewald_params.real_space_cutoff)
-        assert jnp.all(pme_params.alpha >= ewald_params.alpha)
+        assert jnp.allclose(pme_params.real_space_cutoff, ewald_params.real_space_cutoff)
+        assert jnp.allclose(pme_params.alpha, ewald_params.alpha)
 
     def test_pme_cutoff_in_sane_range(self):
         """Cost-optimal PME rc should land in the 4–20 Å band for typical systems."""
@@ -462,7 +458,7 @@ class TestEstimatePMEParameters:
             positions, cell, accuracy=1e-6, real_space_cutoff=7.5,
         )
         assert jnp.allclose(params.real_space_cutoff, jnp.array([7.5]))
-        expected_alpha = math.sqrt(-math.log(2.0 * 1e-6)) / 7.5
+        expected_alpha = math.sqrt(-math.log(1e-6)) / 7.5
         assert jnp.allclose(params.alpha, jnp.array([expected_alpha]), rtol=1e-5)
 
     def test_mesh_spacing_varies_per_system(self):

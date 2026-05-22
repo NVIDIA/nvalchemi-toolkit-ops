@@ -26,10 +26,6 @@ from dataclasses import dataclass
 
 import torch
 
-from nvalchemiops.interactions.electrostatics.parameter_estimation import (
-    alpha_from_cutoff,
-    find_optimal_pme_cutoff,
-)
 
 
 @dataclass
@@ -228,19 +224,14 @@ def estimate_pme_parameters(
     batch_idx: torch.Tensor | None = None,
     accuracy: float = 1e-6,
     real_space_cutoff: float | None = None,
-    cost_ratio_pair_to_fft: float = 1.0,
     mesh_safety_factor: float = 1.0,
 ) -> PMEParameters:
-    """Estimate optimal PME parameters for a given accuracy.
+    """Estimate PME parameters for a given accuracy.
 
-    Unlike pure Ewald, PME's reciprocal-space cost is FFT-dominated
-    (``K^3 log(K)``) rather than k-sum-dominated (``K^3``). The
-    cost-optimal real-space cutoff is therefore decoupled from the
-    Kolafa-Perram balance used in ``estimate_ewald_parameters`` — it is
-    found by a 1D minimization of the PME cost model (see
-    ``nvalchemiops.interactions.electrostatics.parameter_estimation``).
-    Callers who already know their preferred cutoff (e.g. tied to neighbor-
-    list update frequency in MD) should pass it via ``real_space_cutoff``.
+    Uses the closed-form Essmann/Kolafa-Perram derivation: a single
+    length scale ``η = (V² / N)^{1/6} / √(2π)`` determines both ``rc``
+    and ``α``. Callers who want to pin a specific cutoff (e.g. tied to
+    neighbor-list update frequency in MD) should pass ``real_space_cutoff``.
 
     Parameters
     ----------
@@ -253,64 +244,42 @@ def estimate_pme_parameters(
     accuracy : float, default=1e-6
         Target accuracy.
     real_space_cutoff : float, optional
-        If provided, used as-is; ``α`` and mesh dimensions are then
-        derived from it. If ``None`` (default), the cost-optimal cutoff
-        is found via golden-section minimization on the PME cost model.
-    cost_ratio_pair_to_fft : float, default=1.0
-        Hardware-dependent weighting of FFT vs pair-operation cost in
-        the cost model. The default ``1.0`` is a generic mid-ground.
-        Empirical fits on real GPUs may motivate values in
-        ``[0.001, 1.0]``. Ignored when ``real_space_cutoff`` is given.
+        Caller-supplied cutoff. When given, ``α`` is derived from it via
+        ``α = √(-log ε) / rc``; otherwise rc and α come from η.
     mesh_safety_factor : float, default=1.0
         Multiplier on the standard mesh-size heuristic
-        ``K = 2 α L / (3 ε^{1/5})``. ``1.0`` matches the default
-        behavior of established production PME implementations.
-        Raise for extra safety at tight ε. Lower with care: values
-        below 1.0 can fail the accuracy guarantee on low-α systems.
+        ``K = 2 α L / (3 ε^{1/5})``. Raise for extra safety at tight ε.
 
     Returns
     -------
     PMEParameters
         Dataclass containing alpha, mesh dimensions, spacing, and cutoffs.
-        Tensor fields are ``torch.Tensor`` objects.
     """
     if cell.ndim == 2:
         cell = cell.unsqueeze(0)
 
     num_systems = cell.shape[0]
-    # torch.linalg.det of (B, 3, 3) returns shape (B,); no further squeeze.
     volume = torch.abs(torch.linalg.det(cell))
     num_atoms = _count_atoms_per_system(positions, num_systems, batch_idx).to(
         positions.dtype
     )
     cell_lengths = torch.norm(cell, dim=2)  # (B, 3)
 
-    # Choose real-space cutoff: caller-supplied, or cost-optimal from the
-    # PME cost model. For batched inputs, optimize using the median system
-    # properties — the resulting cutoff is shared across the batch (a single
-    # ``rc`` is required so all systems share the same neighbor cutoff).
+    # For batched inputs we share a single rc / α across the batch (one
+    # neighbor cutoff for all systems). Use median-system properties.
     if real_space_cutoff is None:
         if num_systems == 1:
             n_repr = float(num_atoms[0].item())
             v_repr = float(volume[0].item())
-            l_repr = tuple(cell_lengths[0].tolist())
         else:
             n_repr = float(num_atoms.median().item())
             v_repr = float(volume.median().item())
-            l_repr = tuple(cell_lengths.median(dim=0).values.tolist())
-        rc_value = find_optimal_pme_cutoff(
-            num_atoms=n_repr,
-            volume=v_repr,
-            cell_lengths=l_repr,
-            accuracy=accuracy,
-            cost_ratio_pair_to_fft=cost_ratio_pair_to_fft,
-            mesh_safety_factor=mesh_safety_factor,
-        )
+        eta = (v_repr ** 2 / n_repr) ** (1.0 / 6.0) / math.sqrt(2.0 * math.pi)
+        rc_value = math.sqrt(-2.0 * math.log(accuracy)) * eta
+        alpha_value = 1.0 / (math.sqrt(2.0) * eta)
     else:
         rc_value = float(real_space_cutoff)
-
-    # Derive alpha from the real-space accuracy constraint at the chosen rc.
-    alpha_value = alpha_from_cutoff(rc_value, accuracy)
+        alpha_value = math.sqrt(-math.log(accuracy)) / rc_value
 
     alpha = torch.full(
         (num_systems,),
@@ -325,12 +294,9 @@ def estimate_pme_parameters(
         device=positions.device,
     )
 
-    # Estimate mesh dimensions at the chosen alpha.
     mesh_dims = estimate_pme_mesh_dimensions(
         cell, alpha, accuracy, mesh_safety_factor=mesh_safety_factor,
     )
-
-    # Compute actual mesh spacing
     mesh_dims_tensor = torch.tensor(
         mesh_dims, dtype=cell_lengths.dtype, device=cell_lengths.device
     )
