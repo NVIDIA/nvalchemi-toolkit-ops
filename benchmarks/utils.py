@@ -486,18 +486,14 @@ class BenchmarkTimer:
                             case "jax":
                                 # nvtx range so nsys can attribute kernels per
                                 # iteration (mirrors torch path).
-                                if self._cudart is not None and hasattr(
-                                    self, "_nvtx"
-                                ):
+                                if self._cudart is not None and hasattr(self, "_nvtx"):
                                     self._nvtx.range_push(f"timed_iter_{i}")
                                 start_time = time.perf_counter()
                                 result = func(*args, **kwargs)
                                 # Block until computation is complete
                                 self._jax.block_until_ready(result)
                                 end_time = time.perf_counter()
-                                if self._cudart is not None and hasattr(
-                                    self, "_nvtx"
-                                ):
+                                if self._cudart is not None and hasattr(self, "_nvtx"):
                                     self._nvtx.range_pop()
                                 last_result = result
                                 times.append(

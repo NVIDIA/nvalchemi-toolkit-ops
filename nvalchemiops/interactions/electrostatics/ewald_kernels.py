@@ -667,9 +667,7 @@ def _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled(
                     qi, qj, distance, alpha_
                 )
 
-                force_mag = _ewald_real_space_force_magnitude(
-                    qi, qj, distance, alpha_
-                )
+                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
                 force = type(pos_i)(
                     type(pos_i[0])(force_mag) * separation_vector[0],
                     type(pos_i[0])(force_mag) * separation_vector[1],
@@ -715,9 +713,7 @@ def _ewald_real_space_energy_forces_neighbor_matrix_kernel_tiled(
         wp.tile_atomic_add(pair_energies, energy_sum_tile, offset=(i,))
         wp.tile_atomic_add(atomic_forces, force_i_sum_tile, offset=(i,))
         if compute_virial:
-            wp.atomic_add(
-                virial, 0, type(cell_t)(wp.tile_extract(virial_sum_tile, 0))
-            )
+            wp.atomic_add(virial, 0, type(cell_t)(wp.tile_extract(virial_sum_tile, 0)))
 
 
 @wp.kernel
@@ -2064,9 +2060,7 @@ def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled(
                     qi, qj, distance, alpha_
                 )
 
-                force_mag = _ewald_real_space_force_magnitude(
-                    qi, qj, distance, alpha_
-                )
+                force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
                 force = type(pos_i)(
                     type(pos_i[0])(force_mag) * separation_vector[0],
                     type(pos_i[0])(force_mag) * separation_vector[1],
@@ -2111,9 +2105,7 @@ def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_tiled(
         wp.tile_atomic_add(atomic_forces, force_i_sum_tile, offset=(i,))
         wp.tile_atomic_add(charge_gradients, cg_i_sum_tile, offset=(i,))
         if compute_virial:
-            wp.atomic_add(
-                virial, 0, type(cell_t)(wp.tile_extract(virial_sum_tile, 0))
-            )
+            wp.atomic_add(virial, 0, type(cell_t)(wp.tile_extract(virial_sum_tile, 0)))
 
 
 @wp.kernel
@@ -2202,7 +2194,7 @@ def _batch_ewald_real_space_energy_neighbor_matrix_kernel_tiled(
 
     if j == 0:
         # wp.atomic_add(pair_energies, i, wp.tile_extract(energy_sum_tile, 0))
-        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset = (i,))
+        wp.tile_atomic_add(pair_energies, energy_sum_tile, offset=(i,))
 
 
 @wp.kernel
@@ -2450,7 +2442,9 @@ def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_til
                 force_i_acc -= force
                 wp.atomic_add(atomic_forces, neighbor_idx, force)
 
-                potential = _ewald_real_space_charge_grad_potential(distance, system_alpha)
+                potential = _ewald_real_space_charge_grad_potential(
+                    distance, system_alpha
+                )
                 cg_i_acc += qj * potential
                 cg_j = qi * potential
                 wp.atomic_add(charge_gradients, neighbor_idx, cg_j)

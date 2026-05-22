@@ -475,7 +475,9 @@ class TestEstimatePMEParameters:
         pme_params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
         ewald_params = estimate_ewald_parameters(positions, cell, accuracy=1e-6)
 
-        assert torch.allclose(pme_params.real_space_cutoff, ewald_params.real_space_cutoff)
+        assert torch.allclose(
+            pme_params.real_space_cutoff, ewald_params.real_space_cutoff
+        )
         assert torch.allclose(pme_params.alpha, ewald_params.alpha)
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
@@ -495,7 +497,10 @@ class TestEstimatePMEParameters:
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
 
         params = estimate_pme_parameters(
-            positions, cell, accuracy=1e-6, real_space_cutoff=7.5,
+            positions,
+            cell,
+            accuracy=1e-6,
+            real_space_cutoff=7.5,
         )
         assert torch.allclose(
             params.real_space_cutoff,

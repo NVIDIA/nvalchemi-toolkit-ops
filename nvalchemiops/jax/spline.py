@@ -78,6 +78,10 @@ import warp as wp
 from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.math.spline import (
+    _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,
+    _PER_ORDER_GATHER_WITH_FORCE_KERNELS,
+)
+from nvalchemiops.math.spline import (
     _batch_bspline_gather_channels_kernel_overload as wp_batch_gather_channels,
 )
 from nvalchemiops.math.spline import (
@@ -107,10 +111,6 @@ from nvalchemiops.math.spline import (
 )
 from nvalchemiops.math.spline import (
     _bspline_gather_with_force_kernel_overload as wp_gather_with_force,
-)
-from nvalchemiops.math.spline import (
-    _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,
-    _PER_ORDER_GATHER_WITH_FORCE_KERNELS,
 )
 from nvalchemiops.math.spline import (
     _bspline_spread_channels_kernel_overload as wp_spread_channels,
@@ -794,15 +794,23 @@ def spline_gather_with_force(
         )
         if per_order is not None:
             output_out, forces_out = per_order(
-                positions, charges_work, cell_inv_t, mesh_work,
-                output, forces,
+                positions,
+                charges_work,
+                cell_inv_t,
+                mesh_work,
+                output,
+                forces,
                 launch_dims=(num_atoms,),
             )
         else:
             output_out, forces_out = _gather_with_force_kernels[working_dtype](
-                positions, charges_work, cell_inv_t,
-                int(spline_order), mesh_work,
-                output, forces,
+                positions,
+                charges_work,
+                cell_inv_t,
+                int(spline_order),
+                mesh_work,
+                output,
+                forces,
                 launch_dims=(num_atoms, spline_order**3),
             )
         return output_out, forces_out
@@ -813,20 +821,32 @@ def spline_gather_with_force(
     )
     if per_order is not None:
         output_out, forces_out = per_order(
-            positions, charges_work, batch_idx_i32, cell_inv_t, mesh_work,
-            output, forces,
+            positions,
+            charges_work,
+            batch_idx_i32,
+            cell_inv_t,
+            mesh_work,
+            output,
+            forces,
             launch_dims=(num_atoms,),
         )
         return output_out, forces_out
 
     # Fallback for unsupported orders in the batched path.
     output_out = spline_gather(
-        positions, mesh_work, cell_work,
-        spline_order=spline_order, batch_idx=batch_idx,
+        positions,
+        mesh_work,
+        cell_work,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
     )
     forces_out = spline_gather_gradient(
-        positions, charges_work, mesh_work, cell_work,
-        spline_order=spline_order, batch_idx=batch_idx,
+        positions,
+        charges_work,
+        mesh_work,
+        cell_work,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
     )
     return output_out, forces_out
 

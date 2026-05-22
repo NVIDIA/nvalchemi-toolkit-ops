@@ -67,7 +67,7 @@ import warp as wp
 # Disable warp's automatic adjoint (backward) codegen for every kernel in
 # this module. All callers route through hand-written backward chains:
 # torch via register_warp_op_chain + register_autograd, JAX via
-# warp.jax_experimental.jax_kernel(..., enable_backward=False). 
+# warp.jax_experimental.jax_kernel(..., enable_backward=False).
 wp.set_module_options({"enable_backward": False})
 
 
@@ -486,23 +486,17 @@ def bspline_second_derivative(u: Any, order: wp.int32) -> Any:
         elif u >= one and u < two:
             u2 = u * u
             return (
-                type(u)(-60.0)
-                + type(u)(120.0) * u
-                - type(u)(48.0) * u2
+                type(u)(-60.0) + type(u)(120.0) * u - type(u)(48.0) * u2
             ) / twenty_four
         elif u >= two and u < three:
             u2 = u * u
             return (
-                type(u)(420.0)
-                - type(u)(360.0) * u
-                + type(u)(72.0) * u2
+                type(u)(420.0) - type(u)(360.0) * u + type(u)(72.0) * u2
             ) / twenty_four
         elif u >= three and u < four:
             u2 = u * u
             return (
-                type(u)(-660.0)
-                + type(u)(360.0) * u
-                - type(u)(48.0) * u2
+                type(u)(-660.0) + type(u)(360.0) * u - type(u)(48.0) * u2
             ) / twenty_four
         elif u >= four and u < five:
             # M_5 = (5-u)^4 / 24 → M_5'' = 12(5-u)^2 / 24 = (5-u)^2 / 2
@@ -573,9 +567,12 @@ def bspline_weight_hessian_dot_vec3(
     u_z = half_order + theta[2] - type(t0)(offset[2])
 
     if (
-        u_x < zero or u_x >= order_f
-        or u_y < zero or u_y >= order_f
-        or u_z < zero or u_z >= order_f
+        u_x < zero
+        or u_x >= order_f
+        or u_y < zero
+        or u_y >= order_f
+        or u_z < zero
+        or u_z >= order_f
     ):
         return type(v)(zero, zero, zero)
 
@@ -1201,7 +1198,7 @@ _PER_ORDER_VEC = {
 }
 
 
-def _per_order_module(kind: str, order: int, scalar_dtype) -> "wp.Module":
+def _per_order_module(kind: str, order: int, scalar_dtype) -> wp.Module:
     """Return a named warp module for a (kind, order, dtype) per-order kernel.
 
     Using a distinct warp module per tuple means warp compiles ONLY the
@@ -1299,7 +1296,9 @@ def _make_bspline_gather_with_force_kernel(
                 dwxij_x = dwxi * wy[j]
                 dwxij_y = wxi * dwy[j]
                 for k in range(ORDER):
-                    gz = wrap_grid_index(base_grid[2] + offset_start_z + k, mesh_dims[2])
+                    gz = wrap_grid_index(
+                        base_grid[2] + offset_start_z + k, mesh_dims[2]
+                    )
                     val = mesh[gx, gy, gz]
                     wzk = wz[k]
                     phi_acc = phi_acc + val * (wij * wzk)
@@ -1336,12 +1335,12 @@ for _order in _SUPPORTED_PER_ORDER:
         _PER_ORDER_GATHER_WITH_FORCE_KERNELS[_scalar][_order] = wp.overload(
             _k,
             [
-                wp.array(dtype=_vec),       # positions
-                wp.array(dtype=_scalar),    # charges
-                wp.array(dtype=_mat),       # cell_inv_t
+                wp.array(dtype=_vec),  # positions
+                wp.array(dtype=_scalar),  # charges
+                wp.array(dtype=_mat),  # cell_inv_t
                 wp.array3d(dtype=_scalar),  # mesh
-                wp.array(dtype=_scalar),    # output
-                wp.array(dtype=_vec),       # forces
+                wp.array(dtype=_scalar),  # output
+                wp.array(dtype=_vec),  # forces
             ],
         )
 
@@ -1365,9 +1364,13 @@ def _make_batch_bspline_gather_with_force_kernel(
     HALF_ORDER_PY = float(ORDER) * 0.5
     HALF_N_MINUS_2_PY = float(ORDER - 2) * 0.5
 
-    @wp.kernel(module=_per_order_module(
-        "batch_gather_with_force", ORDER, scalar_dtype,
-    ))
+    @wp.kernel(
+        module=_per_order_module(
+            "batch_gather_with_force",
+            ORDER,
+            scalar_dtype,
+        )
+    )
     def kernel(
         positions: wp.array(dtype=Any),
         charges: wp.array(dtype=Any),
@@ -1396,8 +1399,12 @@ def _make_batch_bspline_gather_with_force_kernel(
         offset_start_y = wp.int32(wp.floor(theta[1] - half_n_minus_2))
         offset_start_z = wp.int32(wp.floor(theta[2] - half_n_minus_2))
 
-        wx = vec_ord(); wy = vec_ord(); wz = vec_ord()
-        dwx = vec_ord(); dwy = vec_ord(); dwz = vec_ord()
+        wx = vec_ord()
+        wy = vec_ord()
+        wz = vec_ord()  # noqa: E702
+        dwx = vec_ord()
+        dwy = vec_ord()
+        dwz = vec_ord()  # noqa: E702
         for k in range(ORDER):
             u_x = half_order + theta[0] - type(t0)(offset_start_x + k)
             u_y = half_order + theta[1] - type(t0)(offset_start_y + k)
@@ -1416,14 +1423,17 @@ def _make_batch_bspline_gather_with_force_kernel(
 
         for i in range(ORDER):
             gx = wrap_grid_index(base_grid[0] + offset_start_x + i, mesh_dims[0])
-            wxi = wx[i]; dwxi = dwx[i]
+            wxi = wx[i]
+            dwxi = dwx[i]
             for j in range(ORDER):
                 gy = wrap_grid_index(base_grid[1] + offset_start_y + j, mesh_dims[1])
                 wij = wxi * wy[j]
                 dwxij_x = dwxi * wy[j]
                 dwxij_y = wxi * dwy[j]
                 for k in range(ORDER):
-                    gz = wrap_grid_index(base_grid[2] + offset_start_z + k, mesh_dims[2])
+                    gz = wrap_grid_index(
+                        base_grid[2] + offset_start_z + k, mesh_dims[2]
+                    )
                     val = mesh[sys_idx, gx, gy, gz]
                     wzk = wz[k]
                     phi_acc = phi_acc + val * (wij * wzk)
@@ -1454,13 +1464,13 @@ for _order in _SUPPORTED_PER_ORDER:
         _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS[_scalar][_order] = wp.overload(
             _k,
             [
-                wp.array(dtype=_vec),         # positions
-                wp.array(dtype=_scalar),      # charges
-                wp.array(dtype=wp.int32),     # batch_idx
-                wp.array(dtype=_mat),         # cell_inv_t (B, 3, 3)
+                wp.array(dtype=_vec),  # positions
+                wp.array(dtype=_scalar),  # charges
+                wp.array(dtype=wp.int32),  # batch_idx
+                wp.array(dtype=_mat),  # cell_inv_t (B, 3, 3)
                 wp.array(dtype=_scalar, ndim=4),  # mesh (B, nx, ny, nz)
-                wp.array(dtype=_scalar),      # output
-                wp.array(dtype=_vec),         # forces
+                wp.array(dtype=_scalar),  # output
+                wp.array(dtype=_vec),  # forces
             ],
         )
 
@@ -1496,16 +1506,14 @@ def _make_bspline_spread_kernel(
         positions: wp.array(dtype=Any),
         values: wp.array(dtype=Any),
         cell_inv_t: wp.array(dtype=Any),  # (1, 3, 3)
-        mesh: wp.array3d(dtype=Any),       # (nx, ny, nz) — atomic-add target
+        mesh: wp.array3d(dtype=Any),  # (nx, ny, nz) — atomic-add target
     ):
         atom_idx = wp.tid()
         mesh_dims = wp.vec3i(mesh.shape[0], mesh.shape[1], mesh.shape[2])
         position = positions[atom_idx]
         value = values[atom_idx]
 
-        base_grid, theta = compute_fractional_coords(
-            position, cell_inv_t[0], mesh_dims
-        )
+        base_grid, theta = compute_fractional_coords(position, cell_inv_t[0], mesh_dims)
 
         t0 = theta[0]
         half_order = type(t0)(HALF_ORDER_PY)
@@ -1562,8 +1570,8 @@ def _make_batch_bspline_spread_kernel(
         positions: wp.array(dtype=Any),
         values: wp.array(dtype=Any),
         batch_idx: wp.array(dtype=wp.int32),
-        cell_inv_t: wp.array(dtype=Any),     # (B, 3, 3)
-        mesh: wp.array(dtype=Any, ndim=4),   # (B, nx, ny, nz)
+        cell_inv_t: wp.array(dtype=Any),  # (B, 3, 3)
+        mesh: wp.array(dtype=Any, ndim=4),  # (B, nx, ny, nz)
     ):
         atom_idx = wp.tid()
         sys_idx = batch_idx[atom_idx]
@@ -1622,9 +1630,9 @@ for _order in _SUPPORTED_PER_ORDER:
         _PER_ORDER_SPREAD_KERNELS[_scalar][_order] = wp.overload(
             _k,
             [
-                wp.array(dtype=_vec),       # positions
-                wp.array(dtype=_scalar),    # values
-                wp.array(dtype=_mat),       # cell_inv_t  (1, 3, 3)
+                wp.array(dtype=_vec),  # positions
+                wp.array(dtype=_scalar),  # values
+                wp.array(dtype=_mat),  # cell_inv_t  (1, 3, 3)
                 wp.array3d(dtype=_scalar),  # mesh
             ],
         )
@@ -1632,10 +1640,10 @@ for _order in _SUPPORTED_PER_ORDER:
         _PER_ORDER_BATCH_SPREAD_KERNELS[_scalar][_order] = wp.overload(
             _kb,
             [
-                wp.array(dtype=_vec),          # positions
-                wp.array(dtype=_scalar),       # values
-                wp.array(dtype=wp.int32),      # batch_idx
-                wp.array(dtype=_mat),          # cell_inv_t (B, 3, 3)
+                wp.array(dtype=_vec),  # positions
+                wp.array(dtype=_scalar),  # values
+                wp.array(dtype=wp.int32),  # batch_idx
+                wp.array(dtype=_mat),  # cell_inv_t (B, 3, 3)
                 wp.array(dtype=_scalar, ndim=4),  # mesh (B, nx, ny, nz)
             ],
         )
@@ -1739,9 +1747,9 @@ def _bspline_gather_gradient_kernel(
 
 @wp.kernel
 def _spline_cell_inv_t_grad_kernel(
-    forces: wp.array(dtype=Any),        # (N,) vec3
-    positions: wp.array(dtype=Any),     # (N,) vec3
-    cell: wp.array(dtype=Any),          # (1,) mat33 — inv(cell_inv_t.T)
+    forces: wp.array(dtype=Any),  # (N,) vec3
+    positions: wp.array(dtype=Any),  # (N,) vec3
+    cell: wp.array(dtype=Any),  # (1,) mat33 — inv(cell_inv_t.T)
     grad_cell_inv_t: wp.array(dtype=Any),  # (1,) mat33 — must be zero-initialized
 ):
     """Accumulate per-atom contributions to ``grad_cell_inv_t`` (single system).
@@ -1766,11 +1774,11 @@ def _spline_cell_inv_t_grad_kernel(
 
 @wp.kernel
 def _batch_spline_cell_inv_t_grad_kernel(
-    forces: wp.array(dtype=Any),                  # (N_total,) vec3
-    positions: wp.array(dtype=Any),               # (N_total,) vec3
-    batch_idx: wp.array(dtype=wp.int32),          # (N_total,)
-    cell: wp.array(dtype=Any),                    # (B,) mat33
-    grad_cell_inv_t: wp.array(dtype=Any),         # (B,) mat33 — zero-initialized
+    forces: wp.array(dtype=Any),  # (N_total,) vec3
+    positions: wp.array(dtype=Any),  # (N_total,) vec3
+    batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
+    cell: wp.array(dtype=Any),  # (B,) mat33
+    grad_cell_inv_t: wp.array(dtype=Any),  # (B,) mat33 — zero-initialized
 ):
     """Batched version of ``_spline_cell_inv_t_grad_kernel``.
 
@@ -1805,11 +1813,11 @@ def _batch_spline_cell_inv_t_grad_kernel(
 
 @wp.kernel
 def _bspline_spread_gradient_weights_kernel(
-    positions: wp.array(dtype=Any),          # (N,) vec3
-    per_atom_vec: wp.array(dtype=Any),       # (N,) vec3
-    cell_inv_t: wp.array(dtype=Any),         # (1,) mat33
+    positions: wp.array(dtype=Any),  # (N,) vec3
+    per_atom_vec: wp.array(dtype=Any),  # (N,) vec3
+    cell_inv_t: wp.array(dtype=Any),  # (1,) mat33
     order: wp.int32,
-    mesh: wp.array3d(dtype=Any),             # (nx, ny, nz) output (zero-initialized)
+    mesh: wp.array3d(dtype=Any),  # (nx, ny, nz) output (zero-initialized)
 ):
     """Single-system "spread-with-gradient-weights" kernel.
 
@@ -1831,22 +1839,18 @@ def _bspline_spread_gradient_weights_kernel(
         gx = wrap_grid_index(base_grid[0] + offset[0], mesh_dims[0])
         gy = wrap_grid_index(base_grid[1] + offset[1], mesh_dims[1])
         gz = wrap_grid_index(base_grid[2] + offset[2], mesh_dims[2])
-        contrib = (
-            vec[0] * grad_frac[0]
-            + vec[1] * grad_frac[1]
-            + vec[2] * grad_frac[2]
-        )
+        contrib = vec[0] * grad_frac[0] + vec[1] * grad_frac[1] + vec[2] * grad_frac[2]
         wp.atomic_add(mesh, gx, gy, gz, contrib)
 
 
 @wp.kernel
 def _batch_bspline_spread_gradient_weights_kernel(
-    positions: wp.array(dtype=Any),              # (N_total,) vec3
-    per_atom_vec: wp.array(dtype=Any),           # (N_total,) vec3
-    batch_idx: wp.array(dtype=wp.int32),         # (N_total,)
-    cell_inv_t: wp.array(dtype=Any),             # (B,) mat33
+    positions: wp.array(dtype=Any),  # (N_total,) vec3
+    per_atom_vec: wp.array(dtype=Any),  # (N_total,) vec3
+    batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
+    cell_inv_t: wp.array(dtype=Any),  # (B,) mat33
     order: wp.int32,
-    mesh: wp.array(dtype=Any, ndim=4),           # (B, nx, ny, nz) output
+    mesh: wp.array(dtype=Any, ndim=4),  # (B, nx, ny, nz) output
 ):
     """Batched spread-with-gradient-weights kernel."""
     atom_idx, point_idx = wp.tid()
@@ -1867,11 +1871,7 @@ def _batch_bspline_spread_gradient_weights_kernel(
         gx = wrap_grid_index(base_grid[0] + offset[0], mesh_dims[0])
         gy = wrap_grid_index(base_grid[1] + offset[1], mesh_dims[1])
         gz = wrap_grid_index(base_grid[2] + offset[2], mesh_dims[2])
-        contrib = (
-            vec[0] * grad_frac[0]
-            + vec[1] * grad_frac[1]
-            + vec[2] * grad_frac[2]
-        )
+        contrib = vec[0] * grad_frac[0] + vec[1] * grad_frac[1] + vec[2] * grad_frac[2]
         wp.atomic_add(mesh, system_id, gx, gy, gz, contrib)
 
 
@@ -1892,12 +1892,12 @@ def _batch_bspline_spread_gradient_weights_kernel(
 
 @wp.kernel
 def _bspline_gather_gradient_position_hessian_kernel(
-    positions: wp.array(dtype=Any),       # (N,) vec3
-    charges: wp.array(dtype=Any),         # (N,)
-    v_per_atom: wp.array(dtype=Any),      # (N,) vec3 — cell_inv_t @ grad_force
-    cell_inv_t: wp.array(dtype=Any),      # (1,) mat33
+    positions: wp.array(dtype=Any),  # (N,) vec3
+    charges: wp.array(dtype=Any),  # (N,)
+    v_per_atom: wp.array(dtype=Any),  # (N,) vec3 — cell_inv_t @ grad_force
+    cell_inv_t: wp.array(dtype=Any),  # (1,) mat33
     order: wp.int32,
-    mesh: wp.array3d(dtype=Any),          # original forward-input mesh
+    mesh: wp.array3d(dtype=Any),  # original forward-input mesh
     grad_positions: wp.array(dtype=Any),  # (N,) vec3 output — zero-initialized
 ):
     """Single-system position-Hessian backward of ``_bspline_gather_gradient_kernel``."""
@@ -1976,13 +1976,13 @@ def _batch_bspline_gather_gradient_position_hessian_kernel(
 
 @wp.kernel
 def _spline_cell_inv_t_grad_backward_kernel(
-    h: wp.array(dtype=Any),                   # (1,) mat33 — upstream cotangent
-    forces: wp.array(dtype=Any),              # (N,) vec3
-    positions: wp.array(dtype=Any),           # (N,) vec3
-    cell: wp.array(dtype=Any),                # (1,) mat33
-    grad_forces: wp.array(dtype=Any),         # (N,) vec3 — output
-    grad_positions: wp.array(dtype=Any),      # (N,) vec3 — output
-    grad_cell: wp.array(dtype=Any),           # (1,) mat33 — zero-initialized
+    h: wp.array(dtype=Any),  # (1,) mat33 — upstream cotangent
+    forces: wp.array(dtype=Any),  # (N,) vec3
+    positions: wp.array(dtype=Any),  # (N,) vec3
+    cell: wp.array(dtype=Any),  # (1,) mat33
+    grad_forces: wp.array(dtype=Any),  # (N,) vec3 — output
+    grad_positions: wp.array(dtype=Any),  # (N,) vec3 — output
+    grad_cell: wp.array(dtype=Any),  # (1,) mat33 — zero-initialized
 ):
     """Single-system backward of ``_spline_cell_inv_t_grad_kernel``.
 
@@ -1997,8 +1997,8 @@ def _spline_cell_inv_t_grad_backward_kernel(
     c_mat = cell[0]
 
     # 3-vec intermediates.
-    h_p = h_mat * p          # h @ positions[n]
-    c_f = c_mat * f          # cell @ forces[n]
+    h_p = h_mat * p  # h @ positions[n]
+    c_f = c_mat * f  # cell @ forces[n]
 
     # grad_forces[n,:] = -cell.T @ (h @ positions[n])
     grad_forces[n] = -(wp.transpose(c_mat) * h_p)
@@ -2010,14 +2010,14 @@ def _spline_cell_inv_t_grad_backward_kernel(
 
 @wp.kernel
 def _batch_spline_cell_inv_t_grad_backward_kernel(
-    h: wp.array(dtype=Any),                       # (B,) mat33
-    forces: wp.array(dtype=Any),                  # (N_total,) vec3
-    positions: wp.array(dtype=Any),               # (N_total,) vec3
-    batch_idx: wp.array(dtype=wp.int32),          # (N_total,)
-    cell: wp.array(dtype=Any),                    # (B,) mat33
-    grad_forces: wp.array(dtype=Any),             # (N_total,) vec3
-    grad_positions: wp.array(dtype=Any),          # (N_total,) vec3
-    grad_cell: wp.array(dtype=Any),               # (B,) mat33 — zero-initialized
+    h: wp.array(dtype=Any),  # (B,) mat33
+    forces: wp.array(dtype=Any),  # (N_total,) vec3
+    positions: wp.array(dtype=Any),  # (N_total,) vec3
+    batch_idx: wp.array(dtype=wp.int32),  # (N_total,)
+    cell: wp.array(dtype=Any),  # (B,) mat33
+    grad_forces: wp.array(dtype=Any),  # (N_total,) vec3
+    grad_positions: wp.array(dtype=Any),  # (N_total,) vec3
+    grad_cell: wp.array(dtype=Any),  # (B,) mat33 — zero-initialized
 ):
     """Batched backward of ``_batch_spline_cell_inv_t_grad_kernel``."""
     n = wp.tid()
@@ -3532,8 +3532,13 @@ def batch_spline_gather_gradient_position_hessian(
         kernel,
         dim=(positions.shape[0], order**3),
         inputs=[
-            positions, charges, v_per_atom, batch_idx, cell_inv_t,
-            wp.int32(order), mesh,
+            positions,
+            charges,
+            v_per_atom,
+            batch_idx,
+            cell_inv_t,
+            wp.int32(order),
+            mesh,
         ],
         outputs=[grad_positions],
         device=device,

@@ -112,32 +112,42 @@ import torch
 import warp as wp
 
 from nvalchemiops.math.spline import (
-    # Kernel overloads (needed for custom ops)
-    _batch_bspline_gather_channels_kernel_overload,
-    _batch_bspline_gather_gradient_kernel_overload,
-    _batch_bspline_gather_kernel_overload,
-    _batch_bspline_gather_vec3_kernel_overload,
-    _batch_bspline_spread_channels_kernel_overload,
-    _batch_bspline_spread_kernel_overload,
-    _bspline_gather_channels_kernel_overload,
-    _bspline_gather_gradient_kernel_overload,
-    _bspline_gather_kernel_overload,
-    _bspline_gather_vec3_kernel_overload,
-    _bspline_gather_with_force_kernel_overload,
     _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,
     _PER_ORDER_BATCH_SPREAD_KERNELS,
     _PER_ORDER_GATHER_WITH_FORCE_KERNELS,
     _PER_ORDER_SPREAD_KERNELS,
+    # Kernel overloads (needed for custom ops)
+    _batch_bspline_gather_channels_kernel_overload,
+    _batch_bspline_gather_vec3_kernel_overload,
+    _batch_bspline_spread_channels_kernel_overload,
+    _bspline_gather_channels_kernel_overload,
+    _bspline_gather_vec3_kernel_overload,
+    _bspline_gather_with_force_kernel_overload,
     _bspline_spread_channels_kernel_overload,
-    _bspline_spread_kernel_overload,
     _bspline_weight_kernel_overload,
+)
+from nvalchemiops.math.spline import (
     batch_spline_cell_inv_t_grad as _batch_spline_cell_inv_t_grad_launch,
+)
+from nvalchemiops.math.spline import (
     batch_spline_cell_inv_t_grad_backward as _batch_spline_cell_inv_t_grad_bwd_launch,
+)
+from nvalchemiops.math.spline import (
     batch_spline_gather_gradient_position_hessian as _batch_spline_pos_hessian_launch,
+)
+from nvalchemiops.math.spline import (
     batch_spline_spread_gradient_weights as _batch_spline_spread_grad_weights_launch,
+)
+from nvalchemiops.math.spline import (
     spline_cell_inv_t_grad as _spline_cell_inv_t_grad_launch,
+)
+from nvalchemiops.math.spline import (
     spline_cell_inv_t_grad_backward as _spline_cell_inv_t_grad_bwd_launch,
+)
+from nvalchemiops.math.spline import (
     spline_gather_gradient_position_hessian as _spline_pos_hessian_launch,
+)
+from nvalchemiops.math.spline import (
     spline_spread_gradient_weights as _spline_spread_grad_weights_launch,
 )
 from nvalchemiops.torch.autograd import (
@@ -239,6 +249,7 @@ def _scoped_warp_stream(device: torch.device):
     """
     if device.type != "cuda":
         from contextlib import nullcontext
+
         return nullcontext()
     torch_stream = torch.cuda.current_stream(device)
     return wp.ScopedStream(wp.stream_from_torch(torch_stream))
@@ -300,8 +311,13 @@ def _spread_forward_launch(
             )
         else:
             _spread_launch(
-                wp_positions, wp_values, wp_cell_inv_t, spline_order, wp_mesh,
-                wp_dtype=wp_dtype, device=device,
+                wp_positions,
+                wp_values,
+                wp_cell_inv_t,
+                spline_order,
+                wp_mesh,
+                wp_dtype=wp_dtype,
+                device=device,
             )
     return mesh
 
@@ -331,8 +347,13 @@ def _gather_forward_launch(
 
     with _scoped_warp_stream(positions.device):
         _gather_launch(
-            wp_positions, wp_cell_inv_t, spline_order, wp_mesh, wp_output,
-            wp_dtype=wp_dtype, device=device,
+            wp_positions,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_output,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return output
 
@@ -359,9 +380,7 @@ def _gather_gradient_forward_launch(
     wp_mat_dtype = get_wp_mat_dtype(input_dtype)
 
     num_atoms = positions.shape[0]
-    forces = torch.zeros(
-        (num_atoms, 3), device=positions.device, dtype=input_dtype
-    )
+    forces = torch.zeros((num_atoms, 3), device=positions.device, dtype=input_dtype)
 
     wp_positions = _wp_from_torch(positions.contiguous(), dtype=wp_vec_dtype)
     wp_charges = _wp_from_torch(charges.to(input_dtype).contiguous(), dtype=wp_dtype)
@@ -371,8 +390,14 @@ def _gather_gradient_forward_launch(
 
     with _scoped_warp_stream(positions.device):
         _grad_launch(
-            wp_positions, wp_charges, wp_cell_inv_t, spline_order, wp_mesh, wp_forces,
-            wp_dtype=wp_dtype, device=device,
+            wp_positions,
+            wp_charges,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_forces,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return forces
 
@@ -403,8 +428,13 @@ def _spread_gradient_weights_launch(
 
     with _scoped_warp_stream(positions.device):
         _spline_spread_grad_weights_launch(
-            wp_positions, wp_vec, wp_cell_inv_t, spline_order, wp_mesh,
-            wp_dtype=wp_dtype, device=device,
+            wp_positions,
+            wp_vec,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return mesh
 
@@ -438,8 +468,15 @@ def _pos_hessian_forward_launch(
 
     with _scoped_warp_stream(positions.device):
         _spline_pos_hessian_launch(
-            wp_pos, wp_chg, wp_v, wp_cit, spline_order, wp_mesh, wp_grad_pos,
-            wp_dtype=wp_dtype, device=device,
+            wp_pos,
+            wp_chg,
+            wp_v,
+            wp_cit,
+            spline_order,
+            wp_mesh,
+            wp_grad_pos,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return grad_positions
 
@@ -455,7 +492,8 @@ register_warp_op_chain(
     forward_fake=lambda positions, per_atom_vec, cell_inv_t, mesh_dims, spline_order: (
         torch.empty(
             (mesh_dims[0], mesh_dims[1], mesh_dims[2]),
-            dtype=positions.dtype, device=positions.device,
+            dtype=positions.dtype,
+            device=positions.device,
         )
     ),
 )
@@ -502,7 +540,12 @@ def _spline_gather_gradient_backward_chain(ctx, grad_force):
             grad_force_c.unsqueeze(-1),
         ).squeeze(-1)
         grad_positions = torch.ops.nvalchemiops.spline_pos_hessian(
-            positions, charges, v_per_atom, cell_inv_t, mesh, order,
+            positions,
+            charges,
+            v_per_atom,
+            cell_inv_t,
+            mesh,
+            order,
         )
     else:
         grad_positions = None
@@ -511,7 +554,11 @@ def _spline_gather_gradient_backward_chain(ctx, grad_force):
     if ctx.needs_chg:
         ones = torch.ones_like(charges, dtype=positions.dtype)
         force_per_unit_q = torch.ops.nvalchemiops.spline_gather_gradient(
-            positions, ones, mesh, cell_inv_t, order,
+            positions,
+            ones,
+            mesh,
+            cell_inv_t,
+            order,
         )
         grad_charges = (grad_force_c * force_per_unit_q).sum(dim=-1)
     else:
@@ -522,7 +569,11 @@ def _spline_gather_gradient_backward_chain(ctx, grad_force):
         v = grad_force_c @ cell_inv_t[0].transpose(-1, -2)
         per_atom_vec = -(charges.to(positions.dtype).unsqueeze(-1) * v)
         grad_mesh = torch.ops.nvalchemiops.spline_spread_gradient_weights(
-            positions, per_atom_vec, cell_inv_t, ctx.mesh_dims, order,
+            positions,
+            per_atom_vec,
+            cell_inv_t,
+            ctx.mesh_dims,
+            order,
         )
     else:
         grad_mesh = None
@@ -557,8 +608,12 @@ def _cell_inv_t_grad_forward_launch(
 
     with _scoped_warp_stream(positions.device):
         _spline_cell_inv_t_grad_launch(
-            wp_forces, wp_positions, wp_cell, wp_grad,
-            wp_dtype=wp_dtype, device=device,
+            wp_forces,
+            wp_positions,
+            wp_cell,
+            wp_grad,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return grad
 
@@ -590,9 +645,15 @@ def _cell_inv_t_grad_backward_launch(
 
     with _scoped_warp_stream(positions.device):
         _spline_cell_inv_t_grad_bwd_launch(
-            wp_h, wp_forces, wp_positions, wp_cell,
-            wp_g_forces, wp_g_positions, wp_g_cell,
-            wp_dtype=wp_dtype, device=device,
+            wp_h,
+            wp_forces,
+            wp_positions,
+            wp_cell,
+            wp_g_forces,
+            wp_g_positions,
+            wp_g_cell,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return grad_forces, grad_positions, grad_cell
 
@@ -635,7 +696,8 @@ register_warp_op_chain(
     forward_fake=lambda positions, values, cell_inv_t, mesh_dims, spline_order: (
         torch.empty(
             (mesh_dims[0], mesh_dims[1], mesh_dims[2]),
-            dtype=positions.dtype, device=positions.device,
+            dtype=positions.dtype,
+            device=positions.device,
         )
     ),
 )
@@ -658,18 +720,28 @@ def _spline_spread_backward_chain(ctx, grad_mesh):
 
     grad_values = (
         torch.ops.nvalchemiops.spline_gather(
-            positions, grad_mesh_c, cell_inv_t, order,
-        ) if ctx.needs_val else None
+            positions,
+            grad_mesh_c,
+            cell_inv_t,
+            order,
+        )
+        if ctx.needs_val
+        else None
     )
 
     if ctx.needs_pos or ctx.needs_cell:
         forces = torch.ops.nvalchemiops.spline_gather_gradient(
-            positions, values, grad_mesh_c, cell_inv_t, order,
+            positions,
+            values,
+            grad_mesh_c,
+            cell_inv_t,
+            order,
         )
         grad_positions = -forces if ctx.needs_pos else None
         grad_cell_inv_t = (
             _cell_inv_t_grad_from_force(forces, positions, cell_inv_t)
-            if ctx.needs_cell else None
+            if ctx.needs_cell
+            else None
         )
     else:
         grad_positions = None
@@ -689,7 +761,9 @@ register_warp_op_chain(
     name="nvalchemiops::spline_gather",
     forward=_gather_forward_launch,
     forward_fake=lambda positions, mesh, cell_inv_t, spline_order: torch.empty(
-        positions.shape[0], dtype=positions.dtype, device=positions.device,
+        positions.shape[0],
+        dtype=positions.dtype,
+        device=positions.device,
     ),
 )
 
@@ -711,18 +785,29 @@ def _spline_gather_backward_chain(ctx, grad_potentials):
 
     grad_mesh = (
         torch.ops.nvalchemiops.spline_spread(
-            positions, grad_pot_c, cell_inv_t, ctx.mesh_dims, order,
-        ) if ctx.needs_mesh else None
+            positions,
+            grad_pot_c,
+            cell_inv_t,
+            ctx.mesh_dims,
+            order,
+        )
+        if ctx.needs_mesh
+        else None
     )
 
     if ctx.needs_pos or ctx.needs_cell:
         forces = torch.ops.nvalchemiops.spline_gather_gradient(
-            positions, grad_pot_c, mesh, cell_inv_t, order,
+            positions,
+            grad_pot_c,
+            mesh,
+            cell_inv_t,
+            order,
         )
         grad_positions = -forces if ctx.needs_pos else None
         grad_cell_inv_t = (
             _cell_inv_t_grad_from_force(forces, positions, cell_inv_t)
-            if ctx.needs_cell else None
+            if ctx.needs_cell
+            else None
         )
     else:
         grad_positions = None
@@ -755,8 +840,11 @@ def _spline_spread(
         cell_inv = torch.linalg.inv_ex(cell)[0]
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.spline_spread(
-        positions, values.to(positions.dtype), cell_inv_t,
-        [mesh_nx, mesh_ny, mesh_nz], spline_order,
+        positions,
+        values.to(positions.dtype),
+        cell_inv_t,
+        [mesh_nx, mesh_ny, mesh_nz],
+        spline_order,
     )
 
 
@@ -774,7 +862,10 @@ def _spline_gather(
         cell_inv = torch.linalg.inv(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.spline_gather(
-        positions, mesh.to(positions.dtype), cell_inv_t, spline_order,
+        positions,
+        mesh.to(positions.dtype),
+        cell_inv_t,
+        spline_order,
     )
 
 
@@ -880,8 +971,11 @@ def _spline_gather_gradient(
         cell_inv = torch.linalg.inv(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.spline_gather_gradient(
-        positions, charges.to(positions.dtype), mesh.to(positions.dtype),
-        cell_inv_t, spline_order,
+        positions,
+        charges.to(positions.dtype),
+        mesh.to(positions.dtype),
+        cell_inv_t,
+        spline_order,
     )
 
 
@@ -979,7 +1073,11 @@ def _spline_gather_with_force_backward_chain(ctx, grad_potential, grad_forces):
         gp = grad_potential.contiguous()
         if ctx.needs_pos or ctx.needs_cell:
             forces_g = torch.ops.nvalchemiops.spline_gather_gradient(
-                positions, gp, mesh, cell_inv_t, order,
+                positions,
+                gp,
+                mesh,
+                cell_inv_t,
+                order,
             )
             if ctx.needs_pos:
                 grad_pos = _add(grad_pos, -forces_g)
@@ -992,7 +1090,11 @@ def _spline_gather_with_force_backward_chain(ctx, grad_potential, grad_forces):
             grad_mesh = _add(
                 grad_mesh,
                 torch.ops.nvalchemiops.spline_spread(
-                    positions, gp, cell_inv_t, ctx.mesh_dims, order,
+                    positions,
+                    gp,
+                    cell_inv_t,
+                    ctx.mesh_dims,
+                    order,
                 ),
             )
 
@@ -1003,7 +1105,11 @@ def _spline_gather_with_force_backward_chain(ctx, grad_potential, grad_forces):
         if ctx.needs_chg:
             ones = torch.ones_like(charges, dtype=positions.dtype)
             force_per_unit_q = torch.ops.nvalchemiops.spline_gather_gradient(
-                positions, ones, mesh, cell_inv_t, order,
+                positions,
+                ones,
+                mesh,
+                cell_inv_t,
+                order,
             )
             grad_chg = _add(grad_chg, (gf * force_per_unit_q).sum(dim=-1))
 
@@ -1013,7 +1119,11 @@ def _spline_gather_with_force_backward_chain(ctx, grad_potential, grad_forces):
             grad_mesh = _add(
                 grad_mesh,
                 torch.ops.nvalchemiops.spline_spread_gradient_weights(
-                    positions, per_atom_vec, cell_inv_t, ctx.mesh_dims, order,
+                    positions,
+                    per_atom_vec,
+                    cell_inv_t,
+                    ctx.mesh_dims,
+                    order,
                 ),
             )
 
@@ -1023,7 +1133,12 @@ def _spline_gather_with_force_backward_chain(ctx, grad_potential, grad_forces):
                 gf.unsqueeze(-1),
             ).squeeze(-1)
             pos_hess = torch.ops.nvalchemiops.spline_pos_hessian(
-                positions, charges, v_per_atom, cell_inv_t, mesh, order,
+                positions,
+                charges,
+                v_per_atom,
+                cell_inv_t,
+                mesh,
+                order,
             )
             grad_pos = _add(grad_pos, pos_hess)
 
@@ -1057,8 +1172,11 @@ def _spline_gather_with_force(
         cell_inv = torch.linalg.inv(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.spline_gather_with_force(
-        positions, charges.to(positions.dtype), mesh.to(positions.dtype),
-        cell_inv_t, spline_order,
+        positions,
+        charges.to(positions.dtype),
+        mesh.to(positions.dtype),
+        cell_inv_t,
+        spline_order,
     )
 
 
@@ -1120,9 +1238,14 @@ def _batch_spread_forward_launch(
             )
         else:
             _spread_launch(
-                wp_positions, wp_values, wp_batch_idx, wp_cell_inv_t,
-                spline_order, wp_mesh,
-                wp_dtype=wp_dtype, device=device,
+                wp_positions,
+                wp_values,
+                wp_batch_idx,
+                wp_cell_inv_t,
+                spline_order,
+                wp_mesh,
+                wp_dtype=wp_dtype,
+                device=device,
             )
     return mesh
 
@@ -1154,8 +1277,14 @@ def _batch_gather_forward_launch(
 
     with _scoped_warp_stream(positions.device):
         _gather_launch(
-            wp_positions, wp_batch_idx, wp_cell_inv_t, spline_order, wp_mesh, wp_output,
-            wp_dtype=wp_dtype, device=device,
+            wp_positions,
+            wp_batch_idx,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_output,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return output
 
@@ -1184,9 +1313,7 @@ def _batch_gather_gradient_forward_launch(
     wp_mat_dtype = get_wp_mat_dtype(input_dtype)
 
     num_atoms = positions.shape[0]
-    forces = torch.zeros(
-        (num_atoms, 3), device=positions.device, dtype=input_dtype
-    )
+    forces = torch.zeros((num_atoms, 3), device=positions.device, dtype=input_dtype)
 
     wp_positions = _wp_from_torch(positions.contiguous(), dtype=wp_vec_dtype)
     wp_charges = _wp_from_torch(charges.to(input_dtype).contiguous(), dtype=wp_dtype)
@@ -1197,8 +1324,15 @@ def _batch_gather_gradient_forward_launch(
 
     with _scoped_warp_stream(positions.device):
         _grad_launch(
-            wp_positions, wp_charges, wp_batch_idx, wp_cell_inv_t, spline_order,
-            wp_mesh, wp_forces, wp_dtype=wp_dtype, device=device,
+            wp_positions,
+            wp_charges,
+            wp_batch_idx,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_forces,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return forces
 
@@ -1222,7 +1356,8 @@ def _batch_spread_gradient_weights_launch(
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
     mesh = torch.zeros(
         (num_systems, mesh_nx, mesh_ny, mesh_nz),
-        device=positions.device, dtype=input_dtype,
+        device=positions.device,
+        dtype=input_dtype,
     )
 
     wp_positions = _wp_from_torch(positions.contiguous(), dtype=wp_vec_dtype)
@@ -1233,8 +1368,14 @@ def _batch_spread_gradient_weights_launch(
 
     with _scoped_warp_stream(positions.device):
         _batch_spline_spread_grad_weights_launch(
-            wp_positions, wp_vec, wp_batch_idx, wp_cell_inv_t, spline_order, wp_mesh,
-            wp_dtype=wp_dtype, device=device,
+            wp_positions,
+            wp_vec,
+            wp_batch_idx,
+            wp_cell_inv_t,
+            spline_order,
+            wp_mesh,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return mesh
 
@@ -1261,7 +1402,8 @@ def _batch_pos_hessian_forward_launch(
     wp_chg = _wp_from_torch(charges.to(input_dtype).contiguous(), dtype=wp_dtype)
     wp_v = _wp_from_torch(v_per_atom.contiguous(), dtype=wp_vec_dtype)
     wp_bidx = _wp_from_torch(
-        batch_idx.to(torch.int32).contiguous(), dtype=wp.int32,
+        batch_idx.to(torch.int32).contiguous(),
+        dtype=wp.int32,
     )
     wp_cit = _wp_from_torch(cell_inv_t.contiguous(), dtype=wp_mat_dtype)
     wp_mesh = _wp_from_torch(mesh.to(input_dtype).contiguous(), dtype=wp_dtype)
@@ -1269,9 +1411,16 @@ def _batch_pos_hessian_forward_launch(
 
     with _scoped_warp_stream(positions.device):
         _batch_spline_pos_hessian_launch(
-            wp_pos, wp_chg, wp_v, wp_bidx, wp_cit, spline_order,
-            wp_mesh, wp_grad_pos,
-            wp_dtype=wp_dtype, device=device,
+            wp_pos,
+            wp_chg,
+            wp_v,
+            wp_bidx,
+            wp_cit,
+            spline_order,
+            wp_mesh,
+            wp_grad_pos,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return grad_positions
 
@@ -1282,10 +1431,16 @@ def _batch_pos_hessian_forward_launch(
 register_warp_op_chain(
     name="nvalchemiops::batch_spline_spread_gradient_weights",
     forward=_batch_spread_gradient_weights_launch,
-    forward_fake=lambda positions, per_atom_vec, batch_idx, cell_inv_t,
-                       num_systems, mesh_dims, spline_order: torch.empty(
+    forward_fake=lambda positions,
+    per_atom_vec,
+    batch_idx,
+    cell_inv_t,
+    num_systems,
+    mesh_dims,
+    spline_order: torch.empty(
         (num_systems, mesh_dims[0], mesh_dims[1], mesh_dims[2]),
-        dtype=positions.dtype, device=positions.device,
+        dtype=positions.dtype,
+        device=positions.device,
     ),
 )
 register_warp_op_chain(
@@ -1324,12 +1479,19 @@ def _batch_spline_gather_gradient_backward_chain(ctx, grad_force):
 
     cell_inv_t_per_atom = cell_inv_t[batch_idx.to(torch.int64)]
     v_per_atom = torch.bmm(
-        cell_inv_t_per_atom, grad_force_c.unsqueeze(-1),
+        cell_inv_t_per_atom,
+        grad_force_c.unsqueeze(-1),
     ).squeeze(-1)
 
     if ctx.needs_pos:
         grad_positions = torch.ops.nvalchemiops.batch_spline_pos_hessian(
-            positions, charges, v_per_atom, batch_idx, cell_inv_t, mesh, order,
+            positions,
+            charges,
+            v_per_atom,
+            batch_idx,
+            cell_inv_t,
+            mesh,
+            order,
         )
     else:
         grad_positions = None
@@ -1337,7 +1499,12 @@ def _batch_spline_gather_gradient_backward_chain(ctx, grad_force):
     if ctx.needs_chg:
         ones = torch.ones_like(charges, dtype=positions.dtype)
         force_per_unit_q = torch.ops.nvalchemiops.batch_spline_gather_gradient(
-            positions, ones, mesh, batch_idx, cell_inv_t, order,
+            positions,
+            ones,
+            mesh,
+            batch_idx,
+            cell_inv_t,
+            order,
         )
         grad_charges = (grad_force_c * force_per_unit_q).sum(dim=-1)
     else:
@@ -1346,8 +1513,13 @@ def _batch_spline_gather_gradient_backward_chain(ctx, grad_force):
     if ctx.needs_mesh:
         per_atom_vec = -(charges.to(positions.dtype).unsqueeze(-1) * v_per_atom)
         grad_mesh = torch.ops.nvalchemiops.batch_spline_spread_gradient_weights(
-            positions, per_atom_vec, batch_idx, cell_inv_t,
-            ctx.num_systems, ctx.mesh_dims, order,
+            positions,
+            per_atom_vec,
+            batch_idx,
+            cell_inv_t,
+            ctx.num_systems,
+            ctx.mesh_dims,
+            order,
         )
     else:
         grad_mesh = None
@@ -1383,8 +1555,13 @@ def _batch_cell_inv_t_grad_forward_launch(
     wp_grad = _wp_from_torch(grad, dtype=wp_mat_dtype)
     with _scoped_warp_stream(positions.device):
         _batch_spline_cell_inv_t_grad_launch(
-            wp_forces, wp_positions, wp_batch_idx, wp_cell, wp_grad,
-            wp_dtype=wp_dtype, device=device,
+            wp_forces,
+            wp_positions,
+            wp_batch_idx,
+            wp_cell,
+            wp_grad,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return grad
 
@@ -1419,9 +1596,16 @@ def _batch_cell_inv_t_grad_backward_launch(
 
     with _scoped_warp_stream(positions.device):
         _batch_spline_cell_inv_t_grad_bwd_launch(
-            wp_h, wp_forces, wp_positions, wp_batch_idx, wp_cell,
-            wp_g_forces, wp_g_positions, wp_g_cell,
-            wp_dtype=wp_dtype, device=device,
+            wp_h,
+            wp_forces,
+            wp_positions,
+            wp_batch_idx,
+            wp_cell,
+            wp_g_forces,
+            wp_g_positions,
+            wp_g_cell,
+            wp_dtype=wp_dtype,
+            device=device,
         )
     return grad_forces, grad_positions, grad_cell
 
@@ -1447,7 +1631,10 @@ def _batch_cell_inv_t_grad_from_force(
     """Batched ``grad_cell_inv_t`` (registered custom op)."""
     cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2)).contiguous()  # (B, 3, 3)
     return torch.ops.nvalchemiops.batch_spline_cell_inv_t_grad(
-        forces, positions, batch_idx, cell,
+        forces,
+        positions,
+        batch_idx,
+        cell,
     )
 
 
@@ -1458,17 +1645,24 @@ def _batch_cell_inv_t_grad_from_force(
 register_warp_op_chain(
     name="nvalchemiops::batch_spline_spread",
     forward=_batch_spread_forward_launch,
-    forward_fake=lambda positions, values, batch_idx, cell_inv_t,
-                       num_systems, mesh_dims, spline_order: torch.empty(
+    forward_fake=lambda positions,
+    values,
+    batch_idx,
+    cell_inv_t,
+    num_systems,
+    mesh_dims,
+    spline_order: torch.empty(
         (num_systems, mesh_dims[0], mesh_dims[1], mesh_dims[2]),
-        dtype=positions.dtype, device=positions.device,
+        dtype=positions.dtype,
+        device=positions.device,
     ),
 )
 
 
 def _batch_spline_spread_setup_ctx(ctx, inputs, output):
-    (positions, values, batch_idx, cell_inv_t,
-     num_systems, mesh_dims, spline_order) = inputs
+    (positions, values, batch_idx, cell_inv_t, num_systems, mesh_dims, spline_order) = (
+        inputs
+    )
     ctx.save_for_backward(positions, values, batch_idx, cell_inv_t)
     ctx.spline_order = spline_order
     ctx.num_systems = num_systems
@@ -1485,19 +1679,35 @@ def _batch_spline_spread_backward_chain(ctx, grad_mesh):
 
     grad_values = (
         torch.ops.nvalchemiops.batch_spline_gather(
-            positions, grad_mesh_c, batch_idx, cell_inv_t, order,
-        ) if ctx.needs_val else None
+            positions,
+            grad_mesh_c,
+            batch_idx,
+            cell_inv_t,
+            order,
+        )
+        if ctx.needs_val
+        else None
     )
 
     if ctx.needs_pos or ctx.needs_cell:
         forces = torch.ops.nvalchemiops.batch_spline_gather_gradient(
-            positions, values, grad_mesh_c, batch_idx, cell_inv_t, order,
+            positions,
+            values,
+            grad_mesh_c,
+            batch_idx,
+            cell_inv_t,
+            order,
         )
         grad_positions = -forces if ctx.needs_pos else None
         grad_cell_inv_t = (
             _batch_cell_inv_t_grad_from_force(
-                forces, positions, batch_idx, cell_inv_t,
-            ) if ctx.needs_cell else None
+                forces,
+                positions,
+                batch_idx,
+                cell_inv_t,
+            )
+            if ctx.needs_cell
+            else None
         )
     else:
         grad_positions = None
@@ -1519,8 +1729,14 @@ torch.library.register_autograd(
 register_warp_op_chain(
     name="nvalchemiops::batch_spline_gather",
     forward=_batch_gather_forward_launch,
-    forward_fake=lambda positions, mesh, batch_idx, cell_inv_t, spline_order: torch.empty(
-        positions.shape[0], dtype=positions.dtype, device=positions.device,
+    forward_fake=lambda positions,
+    mesh,
+    batch_idx,
+    cell_inv_t,
+    spline_order: torch.empty(
+        positions.shape[0],
+        dtype=positions.dtype,
+        device=positions.device,
     ),
 )
 
@@ -1543,20 +1759,37 @@ def _batch_spline_gather_backward_chain(ctx, grad_potentials):
 
     grad_mesh = (
         torch.ops.nvalchemiops.batch_spline_spread(
-            positions, grad_pot_c, batch_idx, cell_inv_t,
-            ctx.num_systems, ctx.mesh_dims, order,
-        ) if ctx.needs_mesh else None
+            positions,
+            grad_pot_c,
+            batch_idx,
+            cell_inv_t,
+            ctx.num_systems,
+            ctx.mesh_dims,
+            order,
+        )
+        if ctx.needs_mesh
+        else None
     )
 
     if ctx.needs_pos or ctx.needs_cell:
         forces = torch.ops.nvalchemiops.batch_spline_gather_gradient(
-            positions, grad_pot_c, mesh, batch_idx, cell_inv_t, order,
+            positions,
+            grad_pot_c,
+            mesh,
+            batch_idx,
+            cell_inv_t,
+            order,
         )
         grad_positions = -forces if ctx.needs_pos else None
         grad_cell_inv_t = (
             _batch_cell_inv_t_grad_from_force(
-                forces, positions, batch_idx, cell_inv_t,
-            ) if ctx.needs_cell else None
+                forces,
+                positions,
+                batch_idx,
+                cell_inv_t,
+            )
+            if ctx.needs_cell
+            else None
         )
     else:
         grad_positions = None
@@ -1590,8 +1823,13 @@ def _batch_spline_spread(
         cell_inv = torch.linalg.inv(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.batch_spline_spread(
-        positions, values.to(positions.dtype), batch_idx, cell_inv_t,
-        num_systems, [mesh_nx, mesh_ny, mesh_nz], spline_order,
+        positions,
+        values.to(positions.dtype),
+        batch_idx,
+        cell_inv_t,
+        num_systems,
+        [mesh_nx, mesh_ny, mesh_nz],
+        spline_order,
     )
 
 
@@ -1608,7 +1846,11 @@ def _batch_spline_gather(
         cell_inv = torch.linalg.inv(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.batch_spline_gather(
-        positions, mesh.to(positions.dtype), batch_idx, cell_inv_t, spline_order,
+        positions,
+        mesh.to(positions.dtype),
+        batch_idx,
+        cell_inv_t,
+        spline_order,
     )
 
 
@@ -1713,8 +1955,12 @@ def _batch_spline_gather_gradient(
         cell_inv = torch.linalg.inv(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.batch_spline_gather_gradient(
-        positions, charges.to(positions.dtype), mesh.to(positions.dtype),
-        batch_idx, cell_inv_t, spline_order,
+        positions,
+        charges.to(positions.dtype),
+        mesh.to(positions.dtype),
+        batch_idx,
+        cell_inv_t,
+        spline_order,
     )
 
 
@@ -1737,8 +1983,8 @@ def _batch_gather_with_force_forward_launch(
     potential = torch.zeros(num_atoms, device=positions.device, dtype=input_dtype)
     forces = torch.zeros((num_atoms, 3), device=positions.device, dtype=input_dtype)
 
-    per_order_kernel = (
-        _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS[wp_dtype].get(spline_order)
+    per_order_kernel = _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS[wp_dtype].get(
+        spline_order
     )
     if per_order_kernel is None:
         raise NotImplementedError(
@@ -1807,7 +2053,12 @@ def _batch_spline_gather_with_force_backward_chain(ctx, grad_potential, grad_for
         gp = grad_potential.contiguous()
         if ctx.needs_pos or ctx.needs_cell:
             forces_g = torch.ops.nvalchemiops.batch_spline_gather_gradient(
-                positions, gp, mesh, batch_idx, cell_inv_t, order,
+                positions,
+                gp,
+                mesh,
+                batch_idx,
+                cell_inv_t,
+                order,
             )
             if ctx.needs_pos:
                 grad_pos = _add(grad_pos, -forces_g)
@@ -1815,15 +2066,23 @@ def _batch_spline_gather_with_force_backward_chain(ctx, grad_potential, grad_for
                 grad_cell_inv_t = _add(
                     grad_cell_inv_t,
                     _batch_cell_inv_t_grad_from_force(
-                        forces_g, positions, batch_idx, cell_inv_t,
+                        forces_g,
+                        positions,
+                        batch_idx,
+                        cell_inv_t,
                     ),
                 )
         if ctx.needs_mesh:
             grad_mesh = _add(
                 grad_mesh,
                 torch.ops.nvalchemiops.batch_spline_spread(
-                    positions, gp, batch_idx, cell_inv_t,
-                    ctx.num_systems, ctx.mesh_dims, order,
+                    positions,
+                    gp,
+                    batch_idx,
+                    cell_inv_t,
+                    ctx.num_systems,
+                    ctx.mesh_dims,
+                    order,
                 ),
             )
 
@@ -1832,13 +2091,19 @@ def _batch_spline_gather_with_force_backward_chain(ctx, grad_potential, grad_for
         gf = grad_forces.contiguous()
         cell_inv_t_per_atom = cell_inv_t[batch_idx.to(torch.int64)]
         v_per_atom = torch.bmm(
-            cell_inv_t_per_atom, gf.unsqueeze(-1),
+            cell_inv_t_per_atom,
+            gf.unsqueeze(-1),
         ).squeeze(-1)
 
         if ctx.needs_chg:
             ones = torch.ones_like(charges, dtype=positions.dtype)
             force_per_unit_q = torch.ops.nvalchemiops.batch_spline_gather_gradient(
-                positions, ones, mesh, batch_idx, cell_inv_t, order,
+                positions,
+                ones,
+                mesh,
+                batch_idx,
+                cell_inv_t,
+                order,
             )
             grad_chg = _add(grad_chg, (gf * force_per_unit_q).sum(dim=-1))
 
@@ -1847,14 +2112,25 @@ def _batch_spline_gather_with_force_backward_chain(ctx, grad_potential, grad_for
             grad_mesh = _add(
                 grad_mesh,
                 torch.ops.nvalchemiops.batch_spline_spread_gradient_weights(
-                    positions, per_atom_vec, batch_idx, cell_inv_t,
-                    ctx.num_systems, ctx.mesh_dims, order,
+                    positions,
+                    per_atom_vec,
+                    batch_idx,
+                    cell_inv_t,
+                    ctx.num_systems,
+                    ctx.mesh_dims,
+                    order,
                 ),
             )
 
         if ctx.needs_pos:
             pos_hess = torch.ops.nvalchemiops.batch_spline_pos_hessian(
-                positions, charges, v_per_atom, batch_idx, cell_inv_t, mesh, order,
+                positions,
+                charges,
+                v_per_atom,
+                batch_idx,
+                cell_inv_t,
+                mesh,
+                order,
             )
             grad_pos = _add(grad_pos, pos_hess)
 
@@ -1883,8 +2159,12 @@ def _batch_spline_gather_with_force(
         cell_inv = torch.linalg.inv(cell)
         cell_inv_t = cell_inv.transpose(-1, -2).contiguous()
     return torch.ops.nvalchemiops.batch_spline_gather_with_force(
-        positions, charges.to(positions.dtype), mesh.to(positions.dtype),
-        batch_idx, cell_inv_t, spline_order,
+        positions,
+        charges.to(positions.dtype),
+        mesh.to(positions.dtype),
+        batch_idx,
+        cell_inv_t,
+        spline_order,
     )
 
 
@@ -2549,12 +2829,21 @@ def spline_gather_with_force(
         )
 
     potential = spline_gather(
-        positions, mesh, cell, spline_order=spline_order,
-        batch_idx=batch_idx, cell_inv_t=cell_inv_t,
+        positions,
+        mesh,
+        cell,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t,
     )
     forces = spline_gather_gradient(
-        positions, charges, mesh, cell, spline_order=spline_order,
-        batch_idx=batch_idx, cell_inv_t=cell_inv_t,
+        positions,
+        charges,
+        mesh,
+        cell,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t,
     )
     return potential, forces
 

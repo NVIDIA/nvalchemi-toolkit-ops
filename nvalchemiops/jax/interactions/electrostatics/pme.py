@@ -287,7 +287,7 @@ def compute_bspline_moduli_1d(
     # the normalized convention sinc(pi*x)/(pi*x); matches torch.
     arg = miller_indices / float(mesh_N)
     s = jnp.sinc(arg)
-    return s ** spline_order
+    return s**spline_order
 
 
 def pme_fused_convolve(
@@ -327,9 +327,7 @@ def pme_fused_convolve(
     -------
     convolved_mesh : complex64 or complex128, same shape as mesh_fft.
     """
-    real_dtype = (
-        jnp.float32 if mesh_fft.dtype == jnp.complex64 else jnp.float64
-    )
+    real_dtype = jnp.float32 if mesh_fft.dtype == jnp.complex64 else jnp.float64
     complex_dtype = mesh_fft.dtype
     input_dtype = _normalize_dtype(real_dtype)
 
@@ -373,8 +371,14 @@ def pme_fused_convolve(
     # Launch dims match the spectrum shape (drop the trailing length-2 vec2 dim).
     launch_dims = mesh_fft.shape
     (convolved_real,) = kernel(
-        mesh_fft_real, k_squared, moduli_x, moduli_y, moduli_z,
-        alpha, volume, convolved_real,
+        mesh_fft_real,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        convolved_real,
         launch_dims=launch_dims,
     )
 
@@ -941,17 +945,17 @@ def _compute_pme_reciprocal_virial(
     eye = jnp.eye(3, dtype=acc_dtype)
     if is_batch:
         kk_term = jnp.stack(
-            [jnp.stack([xx, xy, xz], axis=-1),
-             jnp.stack([xy, yy, yz], axis=-1),
-             jnp.stack([xz, yz, zz], axis=-1)],
+            [
+                jnp.stack([xx, xy, xz], axis=-1),
+                jnp.stack([xy, yy, yz], axis=-1),
+                jnp.stack([xz, yz, zz], axis=-1),
+            ],
             axis=-2,
         )
         virial = eye * trace_term[:, jnp.newaxis, jnp.newaxis] - kk_term  # (B, 3, 3)
     else:
         kk_term = jnp.stack(
-            [jnp.stack([xx, xy, xz]),
-             jnp.stack([xy, yy, yz]),
-             jnp.stack([xz, yz, zz])],
+            [jnp.stack([xx, xy, xz]), jnp.stack([xy, yy, yz]), jnp.stack([xz, yz, zz])],
         )  # (3, 3)
         virial = (eye * trace_term - kk_term)[jnp.newaxis, :, :]  # (1, 3, 3)
 
@@ -987,7 +991,12 @@ def _inject_charge_grad_bwd(has_batch_idx, residuals, grad_energy):
     grad_charges = charge_grad * atom_grad
     # (energy, charges, charge_grad, batch_idx) — no grad for charge_grad,
     # batch_idx; has_batch_idx is non-diff so not returned here.
-    return grad_energy, grad_charges, jnp.zeros_like(charge_grad), jnp.zeros_like(batch_idx)
+    return (
+        grad_energy,
+        grad_charges,
+        jnp.zeros_like(charge_grad),
+        jnp.zeros_like(batch_idx),
+    )
 
 
 _inject_charge_grad.defvjp(_inject_charge_grad_fwd, _inject_charge_grad_bwd)
@@ -1184,7 +1193,9 @@ def pme_reciprocal_space(
     if k_vectors is None or k_squared is None:
         reciprocal_cell = (2.0 * jnp.pi) * cell_inv
         k_vectors, k_squared = generate_k_vectors_pme(
-            cell, mesh_dimensions, reciprocal_cell=reciprocal_cell,
+            cell,
+            mesh_dimensions,
+            reciprocal_cell=reciprocal_cell,
         )
 
     # Step 4: Fused Green's function + B-spline deconvolution + multiply in a
@@ -1213,9 +1224,14 @@ def pme_reciprocal_space(
     mesh_fft_raw = mesh_fft if compute_virial else None
 
     convolved_mesh = pme_fused_convolve(
-        mesh_fft, k_squared.astype(input_dtype),
-        moduli_x, moduli_y, moduli_z,
-        alpha, volume, is_batch,
+        mesh_fft,
+        k_squared.astype(input_dtype),
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume,
+        is_batch,
     )
 
     # Step 5: Compute virial before forces to allow early release of mesh_fft_raw
@@ -1300,7 +1316,10 @@ def pme_reciprocal_space(
             else jnp.zeros(num_atoms, dtype=jnp.int32)
         )
         energies = _inject_charge_grad(
-            energies, charges_orig, charge_grads, batch_idx is not None,
+            energies,
+            charges_orig,
+            charge_grads,
+            batch_idx is not None,
             bidx_for_inject,
         )
 

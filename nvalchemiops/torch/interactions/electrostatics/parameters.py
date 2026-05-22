@@ -27,7 +27,6 @@ from dataclasses import dataclass
 import torch
 
 
-
 @dataclass
 class EwaldParameters:
     """Container for Ewald summation parameters.
@@ -202,11 +201,7 @@ def estimate_pme_mesh_dimensions(
     # K = 2 α L / (3 ε^0.2), with optional safety multiplier + pow-2 snap.
     accuracy_factor = 3.0 * (accuracy**0.2)
     n = (
-        mesh_safety_factor
-        * 2.0
-        * alpha[:, None]
-        * cell_lengths
-        / accuracy_factor
+        mesh_safety_factor * 2.0 * alpha[:, None] * cell_lengths / accuracy_factor
     )  # (B, 3)
 
     max_n = torch.max(n, dim=0).values  # (3,)
@@ -274,7 +269,7 @@ def estimate_pme_parameters(
         else:
             n_repr = float(num_atoms.median().item())
             v_repr = float(volume.median().item())
-        eta = (v_repr ** 2 / n_repr) ** (1.0 / 6.0) / math.sqrt(2.0 * math.pi)
+        eta = (v_repr**2 / n_repr) ** (1.0 / 6.0) / math.sqrt(2.0 * math.pi)
         rc_value = math.sqrt(-2.0 * math.log(accuracy)) * eta
         alpha_value = 1.0 / (math.sqrt(2.0) * eta)
     else:
@@ -295,7 +290,10 @@ def estimate_pme_parameters(
     )
 
     mesh_dims = estimate_pme_mesh_dimensions(
-        cell, alpha, accuracy, mesh_safety_factor=mesh_safety_factor,
+        cell,
+        alpha,
+        accuracy,
+        mesh_safety_factor=mesh_safety_factor,
     )
     mesh_dims_tensor = torch.tensor(
         mesh_dims, dtype=cell_lengths.dtype, device=cell_lengths.device

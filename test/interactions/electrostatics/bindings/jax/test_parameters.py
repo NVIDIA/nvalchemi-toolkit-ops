@@ -437,7 +437,9 @@ class TestEstimatePMEParameters:
         pme_params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
         ewald_params = estimate_ewald_parameters(positions, cell, accuracy=1e-6)
 
-        assert jnp.allclose(pme_params.real_space_cutoff, ewald_params.real_space_cutoff)
+        assert jnp.allclose(
+            pme_params.real_space_cutoff, ewald_params.real_space_cutoff
+        )
         assert jnp.allclose(pme_params.alpha, ewald_params.alpha)
 
     def test_pme_cutoff_in_sane_range(self):
@@ -455,7 +457,10 @@ class TestEstimatePMEParameters:
         cell = jnp.eye(3)[None, ...] * 20.0
 
         params = estimate_pme_parameters(
-            positions, cell, accuracy=1e-6, real_space_cutoff=7.5,
+            positions,
+            cell,
+            accuracy=1e-6,
+            real_space_cutoff=7.5,
         )
         assert jnp.allclose(params.real_space_cutoff, jnp.array([7.5]))
         expected_alpha = math.sqrt(-math.log(1e-6)) / 7.5

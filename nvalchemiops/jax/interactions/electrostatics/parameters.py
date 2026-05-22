@@ -27,7 +27,6 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 
-
 __all__ = [
     "EwaldParameters",
     "PMEParameters",
@@ -210,11 +209,7 @@ def estimate_pme_mesh_dimensions(
     # K = 2 α L / (3 ε^0.2), with optional safety multiplier + pow-2 snap.
     accuracy_factor = 3.0 * (accuracy**0.2)
     n = (
-        mesh_safety_factor
-        * 2.0
-        * alpha[:, None]
-        * cell_lengths
-        / accuracy_factor
+        mesh_safety_factor * 2.0 * alpha[:, None] * cell_lengths / accuracy_factor
     )  # (B, 3)
 
     max_n = jnp.max(n, axis=0)  # (3,)
@@ -282,7 +277,7 @@ def estimate_pme_parameters(
         else:
             n_repr = float(jnp.median(num_atoms))
             v_repr = float(jnp.median(volume))
-        eta = (v_repr ** 2 / n_repr) ** (1.0 / 6.0) / math.sqrt(2.0 * math.pi)
+        eta = (v_repr**2 / n_repr) ** (1.0 / 6.0) / math.sqrt(2.0 * math.pi)
         rc_value = math.sqrt(-2.0 * math.log(accuracy)) * eta
         alpha_value = 1.0 / (math.sqrt(2.0) * eta)
     else:
@@ -293,7 +288,10 @@ def estimate_pme_parameters(
     rc_array = jnp.full((num_systems,), rc_value, dtype=positions.dtype)
 
     mesh_dims = estimate_pme_mesh_dimensions(
-        cell, alpha, accuracy, mesh_safety_factor=mesh_safety_factor,
+        cell,
+        alpha,
+        accuracy,
+        mesh_safety_factor=mesh_safety_factor,
     )
     mesh_dims_tensor = jnp.array(mesh_dims, dtype=cell_lengths.dtype)
     mesh_spacing = cell_lengths / mesh_dims_tensor  # (B, 3)

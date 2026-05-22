@@ -155,7 +155,6 @@ except ImportError:
     CoulombPotential = None
 
 
-
 # ==============================================================================
 # Utilities
 # ==============================================================================
@@ -453,7 +452,9 @@ def compute_electrostatics_params(
         cutoff = ewald_params.real_space_cutoff.item()
 
         pme_params = electrostatics_mod.estimate_pme_parameters(
-            positions, cell, accuracy=accuracy,
+            positions,
+            cell,
+            accuracy=accuracy,
             real_space_cutoff=real_space_cutoff,
         )
     else:
@@ -464,7 +465,10 @@ def compute_electrostatics_params(
         cutoff = ewald_params.real_space_cutoff[0].item()
 
         pme_params = electrostatics_mod.estimate_pme_parameters(
-            positions, cell, batch_idx, accuracy=accuracy,
+            positions,
+            cell,
+            batch_idx,
+            accuracy=accuracy,
             real_space_cutoff=real_space_cutoff,
         )
 
@@ -587,8 +591,10 @@ def prepare_single_system(
     )
 
     params = compute_electrostatics_params(
-        backend_data, "torch",
-        real_space_cutoff=real_space_cutoff, accuracy=accuracy,
+        backend_data,
+        "torch",
+        real_space_cutoff=real_space_cutoff,
+        accuracy=accuracy,
     )
 
     if build_neighbors:
@@ -617,9 +623,15 @@ def prepare_single_system(
 
     mx_dim, my_dim, mz_dim = params["mesh_dimensions"]
     device_t = cell_t.device
-    miller_xs = torch.fft.fftfreq(mx_dim, d=1.0 / mx_dim, device=device_t, dtype=cell_t.dtype)
-    miller_ys = torch.fft.fftfreq(my_dim, d=1.0 / my_dim, device=device_t, dtype=cell_t.dtype)
-    miller_zs = torch.fft.rfftfreq(mz_dim, d=1.0 / mz_dim, device=device_t, dtype=cell_t.dtype)
+    miller_xs = torch.fft.fftfreq(
+        mx_dim, d=1.0 / mx_dim, device=device_t, dtype=cell_t.dtype
+    )
+    miller_ys = torch.fft.fftfreq(
+        my_dim, d=1.0 / my_dim, device=device_t, dtype=cell_t.dtype
+    )
+    miller_zs = torch.fft.rfftfreq(
+        mz_dim, d=1.0 / mz_dim, device=device_t, dtype=cell_t.dtype
+    )
     moduli_x = _torch_electrostatics.compute_bspline_moduli_1d(miller_xs, mx_dim, 4)
     moduli_y = _torch_electrostatics.compute_bspline_moduli_1d(miller_ys, my_dim, 4)
     moduli_z = _torch_electrostatics.compute_bspline_moduli_1d(miller_zs, mz_dim, 4)
@@ -694,8 +706,10 @@ def prepare_batch_system(
     )
 
     params = compute_electrostatics_params(
-        backend_data, "torch",
-        real_space_cutoff=real_space_cutoff, accuracy=accuracy,
+        backend_data,
+        "torch",
+        real_space_cutoff=real_space_cutoff,
+        accuracy=accuracy,
     )
 
     pbc_slab = backend_data["pbc"].clone()
@@ -716,12 +730,24 @@ def prepare_batch_system(
 
     mx_dim_b, my_dim_b, mz_dim_b = params["mesh_dimensions"]
     device_b = cell_t_b.device
-    miller_xs_b = torch.fft.fftfreq(mx_dim_b, d=1.0 / mx_dim_b, device=device_b, dtype=cell_t_b.dtype)
-    miller_ys_b = torch.fft.fftfreq(my_dim_b, d=1.0 / my_dim_b, device=device_b, dtype=cell_t_b.dtype)
-    miller_zs_b = torch.fft.rfftfreq(mz_dim_b, d=1.0 / mz_dim_b, device=device_b, dtype=cell_t_b.dtype)
-    moduli_x_b = _torch_electrostatics.compute_bspline_moduli_1d(miller_xs_b, mx_dim_b, 4)
-    moduli_y_b = _torch_electrostatics.compute_bspline_moduli_1d(miller_ys_b, my_dim_b, 4)
-    moduli_z_b = _torch_electrostatics.compute_bspline_moduli_1d(miller_zs_b, mz_dim_b, 4)
+    miller_xs_b = torch.fft.fftfreq(
+        mx_dim_b, d=1.0 / mx_dim_b, device=device_b, dtype=cell_t_b.dtype
+    )
+    miller_ys_b = torch.fft.fftfreq(
+        my_dim_b, d=1.0 / my_dim_b, device=device_b, dtype=cell_t_b.dtype
+    )
+    miller_zs_b = torch.fft.rfftfreq(
+        mz_dim_b, d=1.0 / mz_dim_b, device=device_b, dtype=cell_t_b.dtype
+    )
+    moduli_x_b = _torch_electrostatics.compute_bspline_moduli_1d(
+        miller_xs_b, mx_dim_b, 4
+    )
+    moduli_y_b = _torch_electrostatics.compute_bspline_moduli_1d(
+        miller_ys_b, my_dim_b, 4
+    )
+    moduli_z_b = _torch_electrostatics.compute_bspline_moduli_1d(
+        miller_zs_b, mz_dim_b, 4
+    )
 
     return {
         "positions": backend_data["positions"],
@@ -2238,6 +2264,7 @@ def run_benchmark(
             try:
                 # 1) Raw pre-warm — pays warp NVRTC + any cuFFT plan creation.
                 import time as _time
+
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
                 _t0 = _time.perf_counter()
                 bench_fn()
@@ -2262,6 +2289,7 @@ def run_benchmark(
             # first call separately as a proxy for XLA trace cost.
             try:
                 import time as _time
+
                 # First call: XLA trace + warp NVRTC + GPU kernel
                 _t0 = _time.perf_counter()
                 _res = bench_fn()
@@ -2800,15 +2828,17 @@ def main():
                                         )
                                     )
                                 else:
-                                    system_data_cache[cache_key] = prepare_batch_system(
-                                        base_size,
-                                        batch_size,
-                                        device,
-                                        dtype,
-                                        np_data=np_data,
-                                        real_space_cutoff=real_space_cutoff,
-                                        accuracy=accuracy,
-                                        build_neighbors=build_neighbors,
+                                    system_data_cache[cache_key] = (
+                                        prepare_batch_system(
+                                            base_size,
+                                            batch_size,
+                                            device,
+                                            dtype,
+                                            np_data=np_data,
+                                            real_space_cutoff=real_space_cutoff,
+                                            accuracy=accuracy,
+                                            build_neighbors=build_neighbors,
+                                        )
                                     )
                             except Exception as e:
                                 print(f"    Failed to prepare system: {e}")

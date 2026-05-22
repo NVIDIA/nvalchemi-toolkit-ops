@@ -38,7 +38,6 @@ from typing import Any
 
 import torch
 
-
 # ===========================================================================
 # Grad-shape coercion helpers
 # ===========================================================================
@@ -96,6 +95,7 @@ def _build_setup_ctx_and_backward_chain(
     """
     match_fn = _match_shape_batch if batch_match else _match_shape
     if backward_args is None:
+
         def backward_args(grad_outputs_c, full_inputs):
             return tuple(grad_outputs_c) + tuple(full_inputs)
 
@@ -190,7 +190,9 @@ def attach_simple_backward(
         backward_args=backward_args,
     )
     torch.library.register_autograd(
-        forward_op_name, backward_chain, setup_context=setup_ctx,
+        forward_op_name,
+        backward_chain,
+        setup_context=setup_ctx,
     )
 
 
@@ -202,6 +204,7 @@ def attach_simple_backward(
 def _annotation_to_schema_type(ann: Any, fn_qualname: str, param_name: str) -> str:
     """Map a Python annotation to a ``torch.library`` schema type string."""
     import typing
+
     scalar_map = {
         torch.Tensor: "Tensor",
         bool: "bool",
@@ -246,6 +249,7 @@ def _schema_from_callable(fn: Callable, return_arity: int) -> str:
     ``return_arity`` entries.
     """
     import typing
+
     try:
         hints = typing.get_type_hints(fn)
     except Exception as e:
@@ -257,9 +261,7 @@ def _schema_from_callable(fn: Callable, return_arity: int) -> str:
     parts = []
     for name in sig.parameters:
         if name not in hints:
-            raise TypeError(
-                f"{fn.__qualname__}: parameter {name!r} has no annotation."
-            )
+            raise TypeError(f"{fn.__qualname__}: parameter {name!r} has no annotation.")
         schema_type = _annotation_to_schema_type(hints[name], fn.__qualname__, name)
         parts.append(f"{schema_type} {name}")
     args = ", ".join(parts)
@@ -272,6 +274,7 @@ def _schema_from_callable(fn: Callable, return_arity: int) -> str:
 
 def _default_forward_fake(launcher: Callable) -> Callable:
     """Default forward fake: ``empty_like`` of the first tensor input."""
+
     def forward_fake(*args):
         for a in args:
             if isinstance(a, torch.Tensor):
@@ -280,6 +283,7 @@ def _default_forward_fake(launcher: Callable) -> Callable:
             f"{launcher.__qualname__}: cannot derive default fake "
             "(no tensor inputs found)."
         )
+
     return forward_fake
 
 
@@ -294,6 +298,7 @@ def _default_backward_fake(
     receives args in the same order, so the forward inputs start at
     position ``cotangent_arity``.
     """
+
     def backward_fake(*args):
         forward_inputs = args[cotangent_arity:]
         out = []
@@ -307,6 +312,7 @@ def _default_backward_fake(
                 )
             out.append(torch.empty_like(inp))
         return tuple(out)
+
     return backward_fake
 
 
@@ -321,6 +327,7 @@ def _default_double_backward_fake(
     Double-bwd signature is ``(*bwd_cotangents, *bwd_inputs)``. The bwd
     inputs themselves are ``(*forward_cotangents, *forward_inputs)``.
     """
+
     def double_backward_fake(*args):
         backward_inputs = args[n_cotangents_of_backward:]
         out = []
@@ -335,6 +342,7 @@ def _default_double_backward_fake(
                 )
             out.append(torch.empty_like(inp))
         return tuple(out)
+
     return double_backward_fake
 
 
@@ -411,9 +419,7 @@ def register_warp_op_chain(
     # ---- Forward op + register_fake ------------------------------------
     if forward_schema is None:
         forward_schema = _schema_from_callable(forward, forward_return_arity)
-    fwd_op = torch.library.custom_op(
-        name, forward, mutates_args=mutates_args, schema=forward_schema,
-    )
+
     if forward_fake is None:
         forward_fake = _default_forward_fake(forward)
     torch.library.register_fake(name, forward_fake)
@@ -436,12 +442,16 @@ def register_warp_op_chain(
     if backward_schema is None:
         backward_schema = _schema_from_callable(backward, backward_return_arity)
     torch.library.custom_op(
-        bwd_name, backward, mutates_args=(), schema=backward_schema,
+        bwd_name,
+        backward,
+        mutates_args=(),
+        schema=backward_schema,
     )
     if backward_fake is None:
         # Cotangent arity = number of forward outputs = forward_return_arity.
         backward_fake = _default_backward_fake(
-            diff_input_positions, cotangent_arity=forward_return_arity,
+            diff_input_positions,
+            cotangent_arity=forward_return_arity,
         )
     torch.library.register_fake(bwd_name, backward_fake)
     bwd_callable = getattr(getattr(torch.ops, namespace), f"{base_name}_backward")
@@ -470,10 +480,14 @@ def register_warp_op_chain(
         double_backward_return_arity = len(second_order_diff_positions)
     if double_backward_schema is None:
         double_backward_schema = _schema_from_callable(
-            double_backward, double_backward_return_arity,
+            double_backward,
+            double_backward_return_arity,
         )
     torch.library.custom_op(
-        dbwd_name, double_backward, mutates_args=(), schema=double_backward_schema,
+        dbwd_name,
+        double_backward,
+        mutates_args=(),
+        schema=double_backward_schema,
     )
     if double_backward_fake is None:
         # n_cotangents_of_backward = backward_return_arity (1 grad per bwd output)
@@ -484,7 +498,8 @@ def register_warp_op_chain(
         )
     torch.library.register_fake(dbwd_name, double_backward_fake)
     dbwd_callable = getattr(
-        getattr(torch.ops, namespace), f"{base_name}_double_backward",
+        getattr(torch.ops, namespace),
+        f"{base_name}_double_backward",
     )
     out["double_backward"] = dbwd_callable
 
