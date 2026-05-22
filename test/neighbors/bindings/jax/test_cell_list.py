@@ -22,7 +22,12 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from nvalchemiops.jax.neighbors.cell_list import cell_list, estimate_cell_list_sizes
+from nvalchemiops.jax.neighbors.cell_list import (
+    build_cell_list,
+    cell_list,
+    estimate_cell_list_sizes,
+    query_cell_list,
+)
 
 from .conftest import requires_gpu, requires_vesin
 
@@ -589,3 +594,225 @@ class TestCellListSelectiveRebuildFlags:
         assert jnp.all(nn2 == nn_ref), (
             "num_neighbors should match full rebuild when flag=True"
         )
+
+
+def _assert_arrays_equal(lhs, rhs) -> None:
+    """Assert two tuples of JAX arrays are exactly equal."""
+    assert len(lhs) == len(rhs)
+    for left, right in zip(lhs, rhs, strict=True):
+        assert left.shape == right.shape
+        assert left.dtype == right.dtype
+        assert jnp.array_equal(left, right)
+
+
+def _make_cell_list_inputs(dtype):
+    """Create a small periodic system for cell-list graph-mode tests."""
+    positions = jnp.array(
+        [
+            [0.1, 0.0, 0.0],
+            [1.8, 0.0, 0.0],
+            [0.0, 1.7, 0.0],
+            [1.7, 1.7, 0.0],
+            [0.0, 0.0, 1.8],
+        ],
+        dtype=dtype,
+    )
+    cell = jnp.eye(3, dtype=dtype).reshape(1, 3, 3) * 4.0
+    pbc = jnp.array([[True, True, True]])
+    cutoff = 2.2
+    max_neighbors = 16
+    max_total_cells, _, neighbor_search_radius = estimate_cell_list_sizes(
+        positions,
+        cell,
+        cutoff,
+        pbc,
+    )
+    return (
+        positions,
+        cell,
+        pbc,
+        cutoff,
+        max_neighbors,
+        int(max_total_cells),
+        neighbor_search_radius,
+    )
+
+
+class TestCellListGraphMode:
+    """Graph-mode coverage for JAX cell-list bindings."""
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_build_matches_default(self, dtype):
+        """Cell-list build graph mode should match the default path."""
+        (
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            _max_neighbors,
+            max_total_cells,
+            neighbor_search_radius,
+        ) = _make_cell_list_inputs(dtype)
+
+        common = {
+            "cells_per_dimension": jnp.full((3,), -1, dtype=jnp.int32),
+            "neighbor_search_radius": neighbor_search_radius,
+            "atom_periodic_shifts": jnp.full(
+                (positions.shape[0], 3), -1, dtype=jnp.int32
+            ),
+            "atom_to_cell_mapping": jnp.full(
+                (positions.shape[0], 3), -1, dtype=jnp.int32
+            ),
+            "atoms_per_cell_count": jnp.full((max_total_cells,), 9, dtype=jnp.int32),
+            "cell_atom_start_indices": jnp.full(
+                (max_total_cells,), -1, dtype=jnp.int32
+            ),
+            "cell_atom_list": jnp.full((positions.shape[0],), -1, dtype=jnp.int32),
+            "max_total_cells": max_total_cells,
+        }
+
+        none_result = build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            graph_mode="none",
+            **common,
+        )
+        warp_result = build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            graph_mode="warp",
+            **common,
+        )
+
+        _assert_arrays_equal(none_result, warp_result)
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize("selective_flag", [None, False, True])
+    def test_query_matches_default(self, dtype, selective_flag):
+        """Cell-list query graph mode should match the default path."""
+        (
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            max_neighbors,
+            max_total_cells,
+            neighbor_search_radius,
+        ) = _make_cell_list_inputs(dtype)
+
+        build_result = build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            max_total_cells=max_total_cells,
+            neighbor_search_radius=neighbor_search_radius,
+            graph_mode="none",
+        )
+        rebuild_flags = (
+            None
+            if selective_flag is None
+            else jnp.array([selective_flag], dtype=jnp.bool_)
+        )
+
+        common = {
+            "positions": positions,
+            "cutoff": cutoff,
+            "cell": cell,
+            "pbc": pbc,
+            "cells_per_dimension": build_result[0],
+            "atom_periodic_shifts": build_result[1],
+            "atom_to_cell_mapping": build_result[2],
+            "atoms_per_cell_count": build_result[3],
+            "cell_atom_start_indices": build_result[4],
+            "cell_atom_list": build_result[5],
+            "neighbor_search_radius": build_result[6],
+            "max_neighbors": max_neighbors,
+            "neighbor_matrix": jnp.full(
+                (positions.shape[0], max_neighbors),
+                42,
+                dtype=jnp.int32,
+            ),
+            "neighbor_matrix_shifts": jnp.full(
+                (positions.shape[0], max_neighbors, 3),
+                -4,
+                dtype=jnp.int32,
+            ),
+            "num_neighbors": jnp.full((positions.shape[0],), 42, dtype=jnp.int32),
+            "rebuild_flags": rebuild_flags,
+        }
+
+        none_result = query_cell_list(graph_mode="none", **common)
+        warp_result = query_cell_list(graph_mode="warp", **common)
+        _assert_arrays_equal(none_result, warp_result)
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize("return_neighbor_list", [False, True])
+    def test_top_level_matches_default(self, dtype, return_neighbor_list: bool):
+        """Top-level cell_list graph mode should match the default path."""
+        (
+            positions,
+            cell,
+            pbc,
+            cutoff,
+            max_neighbors,
+            max_total_cells,
+            neighbor_search_radius,
+        ) = _make_cell_list_inputs(dtype)
+
+        common = {
+            "positions": positions,
+            "cutoff": cutoff,
+            "cell": cell,
+            "pbc": pbc,
+            "max_neighbors": max_neighbors,
+            "max_total_cells": max_total_cells,
+            "return_neighbor_list": return_neighbor_list,
+            "cells_per_dimension": jnp.full((3,), -1, dtype=jnp.int32),
+            "neighbor_search_radius": neighbor_search_radius,
+            "atom_periodic_shifts": jnp.full(
+                (positions.shape[0], 3), -1, dtype=jnp.int32
+            ),
+            "atom_to_cell_mapping": jnp.full(
+                (positions.shape[0], 3), -1, dtype=jnp.int32
+            ),
+            "atoms_per_cell_count": jnp.full((max_total_cells,), 7, dtype=jnp.int32),
+            "cell_atom_start_indices": jnp.full(
+                (max_total_cells,), -1, dtype=jnp.int32
+            ),
+            "cell_atom_list": jnp.full((positions.shape[0],), -1, dtype=jnp.int32),
+            "neighbor_matrix": jnp.full(
+                (positions.shape[0], max_neighbors),
+                88,
+                dtype=jnp.int32,
+            ),
+            "neighbor_matrix_shifts": jnp.full(
+                (positions.shape[0], max_neighbors, 3),
+                -8,
+                dtype=jnp.int32,
+            ),
+            "num_neighbors": jnp.full((positions.shape[0],), 88, dtype=jnp.int32),
+        }
+
+        none_result = cell_list(graph_mode="none", **common)
+        warp_result = cell_list(graph_mode="warp", **common)
+        _assert_arrays_equal(none_result, warp_result)
+
+    def test_invalid_value(self):
+        """Invalid graph_mode values should raise for cell-list APIs."""
+        positions = jnp.zeros((2, 3), dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+        with pytest.raises(ValueError, match="graph_mode"):
+            build_cell_list(
+                positions,
+                1.0,
+                cell,
+                pbc,
+                max_total_cells=8,
+                graph_mode="bad",
+            )

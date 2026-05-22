@@ -2258,7 +2258,11 @@ def npt_velocity_half_step(
         ``v ← v · exp(-Δt · (ε̇ + Tr(ε̇)/(3·N_atoms) · I + η̇₁ · I))``
 
     where ``ε̇ = cell_velocities = p_g/W`` and ``η̇₁`` is the first
-    thermostat-chain velocity.
+    thermostat-chain velocity.  This primitive already applies particle
+    thermostat drag through ``eta_dots[:, 0]``; callers that apply particle
+    NHC velocity scaling as a separate Trotter operator should use
+    :func:`nph_velocity_half_step` or another no-thermostat velocity primitive
+    instead.
 
     Parameters
     ----------
@@ -2366,7 +2370,9 @@ def npt_velocity_half_step_out(
     Perform half-step velocity update for NPT (non-mutating).
 
     Non-mutating version of :func:`npt_velocity_half_step` that returns
-    a new array instead of modifying in-place.
+    a new array instead of modifying in-place.  Like the in-place variant,
+    this includes particle thermostat drag through ``eta_dots[:, 0]`` and
+    should not be combined with separate particle NHC velocity scaling.
 
     Parameters
     ----------
@@ -2692,6 +2698,12 @@ def run_npt_step(
     7. Velocity half-step
     8. Barostat half-step
     9. Thermostat half-step
+
+    Particle thermostat friction is applied inside the two
+    :func:`npt_velocity_half_step` calls via ``eta_dot[:, 0]``.  The
+    :func:`npt_thermostat_half_step` calls update the chain state; callers
+    using a different split with explicit particle velocity scaling should
+    not also use ``npt_velocity_half_step`` for those particle half-steps.
 
     Parameters
     ----------

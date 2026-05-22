@@ -62,7 +62,7 @@ def simple_pair_system(device):
         device=device,
     )
     neighbor_list = torch.tensor([[0], [1]], dtype=torch.int32, device=device)
-    neighbor_ptr = torch.tensor([0, 1], dtype=torch.int32, device=device)
+    neighbor_ptr = torch.tensor([0, 1, 1], dtype=torch.int32, device=device)
     neighbor_shifts = torch.zeros((1, 3), dtype=torch.int32, device=device)
     return positions, charges, cell, neighbor_list, neighbor_ptr, neighbor_shifts
 
