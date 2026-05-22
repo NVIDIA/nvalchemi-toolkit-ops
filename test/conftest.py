@@ -37,6 +37,7 @@ tests unless they truly need to affect every pytest invocation.
 import gc
 import os
 import sys
+import tempfile
 from collections.abc import Callable
 from typing import Literal
 
@@ -59,6 +60,13 @@ _FRAMEWORK_SORT_RANK: dict[FrameworkName | None, int] = {
     None: 1,
     "torch": 2,
 }
+
+_WARP_CACHE_DEFAULT = os.path.join(
+    os.environ.get("TMPDIR", tempfile.gettempdir()),
+    "warp_test_cache",
+)
+os.environ.setdefault("WARP_CACHE_PATH", _WARP_CACHE_DEFAULT)
+os.makedirs(os.environ["WARP_CACHE_PATH"], exist_ok=True)
 
 
 # ==============================================================================

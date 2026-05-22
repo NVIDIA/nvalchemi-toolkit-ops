@@ -215,26 +215,21 @@ def _pme_green_structure_factor_kernel(
     clamp_threshold = type(k_sq)(1e-10)
     twopi = type(k_sq)(TWOPI)
 
-    # Green's function: G(k) = 2*pi * exp(-k^2/(4*alpha^2)) / (k^2 * V)
-    if k_sq < threshold:
-        green_function[i, j, k] = zero
-    else:
-        exp_factor = wp_exp_kernel(k_sq, one / (four * alpha_ * alpha_))
-        green_function[i, j, k] = twopi * exp_factor / volume_
-
-    if i == 0 and j == 0 and k == 0:
-        green_function[i, j, k] = zero
-
     # Structure factor: sinc(mi_x/Nx) * sinc(mi_y/Ny) * sinc(mi_z/Nz)
+    # We compute sf^2 here and fold it into Green's function below, so that
+    # the FFT pipeline's per-element complex/real "mesh_fft / structure_factor_sq"
+    # step (~18 ms over 10 iters at single_128k) goes away.
     sinc_x = compute_sinc(mi_x / type(mi_x)(mesh_nx))
     sinc_y = compute_sinc(mi_y / type(mi_y)(mesh_ny))
     sinc_z = compute_sinc(mi_z / type(mi_z)(mesh_nz))
 
     sinc_product = sinc_x * sinc_y * sinc_z
 
-    # Raise to spline_order power
+    # Raise to spline_order power. The loop runs up to 5 extra multiplies
+    # so we cover spline_order in [1, 6]. The inner `_ < spline_order` guard
+    # stops at the correct power for each supported order.
     sf = sinc_product
-    for _ in range(1, 4):  # Max order 4
+    for _ in range(1, 6):  # supports spline_order in [1, 6]
         if _ < spline_order:
             sf = sf * sinc_product
 
@@ -242,7 +237,19 @@ def _pme_green_structure_factor_kernel(
     if sf < clamp_threshold:
         sf = clamp_threshold
 
-    structure_factor_sq[i, j, k] = sf * sf
+    sf_sq = sf * sf
+    structure_factor_sq[i, j, k] = sf_sq
+
+    # Effective Green's function: G(k) / B^2(k). Folding the deconvolution
+    # into G saves one full-mesh complex/real elementwise op per PME call.
+    if k_sq < threshold:
+        green_function[i, j, k] = zero
+    else:
+        exp_factor = wp_exp_kernel(k_sq, one / (four * alpha_ * alpha_))
+        green_function[i, j, k] = twopi * exp_factor / (volume_ * sf_sq)
+
+    if i == 0 and j == 0 and k == 0:
+        green_function[i, j, k] = zero
 
 
 @wp.kernel
@@ -322,33 +329,324 @@ def _batch_pme_green_structure_factor_kernel(
     clamp_threshold = type(k_sq)(1e-10)
     twopi = type(k_sq)(TWOPI)
 
-    # Green's function: G(k) = 2*pi * exp(-k^2/(4*alpha^2)) / (k^2 * V)
+    # Structure factor sf^2. Folded into the per-system Green's function below
+    # so the FFT pipeline can drop the explicit mesh_fft / structure_factor_sq
+    # step. The (cheap) sinc product is recomputed on every (B, i, j, k) thread
+    # rather than only at batch_idx=0; the per-system green output requires it
+    # anyway, and the structure_factor_sq array is still written once at
+    # batch_idx=0 for any external consumers that may still read it.
+    sinc_x = compute_sinc(mi_x / type(mi_x)(mesh_nx))
+    sinc_y = compute_sinc(mi_y / type(mi_y)(mesh_ny))
+    sinc_z = compute_sinc(mi_z / type(mi_z)(mesh_nz))
+
+    sinc_product = sinc_x * sinc_y * sinc_z
+    sf = sinc_product
+    for _ in range(1, 6):
+        if _ < spline_order:
+            sf = sf * sinc_product
+
+    if sf < clamp_threshold:
+        sf = clamp_threshold
+
+    sf_sq = sf * sf
+    if batch_idx == wp.int32(0):
+        structure_factor_sq[i, j, k] = sf_sq
+
+    # Effective Green's function: G_s(k) / B^2(k).
     if k_sq < threshold:
         green_function[batch_idx, i, j, k] = zero
     else:
         exp_factor = wp_exp_kernel(k_sq, one / (four * system_alpha * system_alpha))
-        green_function[batch_idx, i, j, k] = twopi * exp_factor / system_volume
+        green_function[batch_idx, i, j, k] = (
+            twopi * exp_factor / (system_volume * sf_sq)
+        )
 
     if i == 0 and j == 0 and k == 0:
         green_function[batch_idx, i, j, k] = zero
 
-    # Structure factor (only compute once per k-point, at batch_idx=0)
-    if batch_idx == wp.int32(0):
-        sinc_x = compute_sinc(mi_x / type(mi_x)(mesh_nx))
-        sinc_y = compute_sinc(mi_y / type(mi_y)(mesh_ny))
-        sinc_z = compute_sinc(mi_z / type(mi_z)(mesh_nz))
 
-        sinc_product = sinc_x * sinc_y * sinc_z
+###########################################################################################
+########################### PME Fused Convolution #########################################
+###########################################################################################
+#
+# Single Warp kernel that reads ``mesh_fft`` (post-rFFT, complex as vec2),
+# computes the per-(k_x, k_y, k_z) Coulomb-PME Green's factor + B-spline
+# structure-factor deconvolution inline, multiplies, and writes
+# ``convolved_mesh`` directly. Replaces the previous two-step path
+# (``_pme_green_structure_factor_kernel`` → ``aten::mul``), avoiding a
+# full-mesh write + read of the intermediate ``effective_green`` array.
+#
+# The Coulomb-PME Green's formula is hardcoded here. A follow-up will
+# factor this kernel out behind a Python factory that accepts a user-
+# supplied ``@wp.func`` Green's evaluator so callers can plug in
+# alternative kernels (dispersion, 1/r^p, anisotropic).
 
-        sf = sinc_product
-        for _ in range(1, 4):
-            if _ < spline_order:
-                sf = sf * sinc_product
 
-        if sf < clamp_threshold:
-            sf = clamp_threshold
+@wp.kernel
+def _pme_convolve_kernel(
+    mesh_fft: wp.array3d(dtype=Any),  # input, complex as vec2 (nx, ny, nz_r)
+    k_squared: wp.array3d(dtype=Any),
+    moduli_x: wp.array(dtype=Any),  # 1D B-spline modulus LUT: sinc(m/N)^order
+    moduli_y: wp.array(dtype=Any),
+    moduli_z: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    volume: wp.array(dtype=Any),
+    convolved_mesh: wp.array3d(dtype=Any),  # output, complex as vec2
+):
+    """Fused Green's function compute + structure-factor deconvolution + multiply.
 
-        structure_factor_sq[i, j, k] = sf * sf
+    For each k-point (i, j, k), computes:
+        factor = (2π / V) * exp(-k² / (4α²)) / (k² * B²(k))
+        convolved_mesh[i,j,k] = mesh_fft[i,j,k] * factor    (complex × real)
+
+    B²(k) is the squared 3D B-spline structure factor. P-C precomputes the
+    1D moduli ``b_x[i] = sinc(mi/Nx)^order`` (etc.) on the torch side and
+    passes them in as LUTs so the kernel does three reads + two multiplies
+    instead of three sinc transcendentals + an order-dependent power loop
+    per (i, j, k) thread.
+
+    k=0 is explicitly zeroed (tin-foil boundary).
+    """
+    i, j, k = wp.tid()
+
+    k_sq = k_squared[i, j, k]
+    alpha_ = alpha[0]
+    volume_ = volume[0]
+
+    zero = type(k_sq)(0.0)
+    one = type(k_sq)(1.0)
+    four = type(k_sq)(4.0)
+    threshold = type(k_sq)(1e-10)
+    clamp_threshold = type(k_sq)(1e-10)
+    twopi = type(k_sq)(TWOPI)
+
+    sf = moduli_x[i] * moduli_y[j] * moduli_z[k]
+    if sf < clamp_threshold:
+        sf = clamp_threshold
+    sf_sq = sf * sf
+
+    # Effective Green's factor: G(k) / B²(k). Zero at k=0 (tin-foil BC).
+    if k_sq < threshold:
+        factor = zero
+    else:
+        exp_factor = wp_exp_kernel(k_sq, one / (four * alpha_ * alpha_))
+        factor = twopi * exp_factor / (volume_ * sf_sq)
+    if i == 0 and j == 0 and k == 0:
+        factor = zero
+
+    # Complex (vec2) × real multiply, written directly to the output mesh.
+    c = mesh_fft[i, j, k]
+    convolved_mesh[i, j, k] = type(c)(c[0] * factor, c[1] * factor)
+
+
+@wp.kernel
+def _batch_pme_convolve_kernel(
+    mesh_fft: wp.array4d(dtype=Any),  # (B, nx, ny, nz_r), complex as vec2
+    k_squared: wp.array4d(dtype=Any),
+    moduli_x: wp.array(dtype=Any),
+    moduli_y: wp.array(dtype=Any),
+    moduli_z: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),  # (B,)
+    volumes: wp.array(dtype=Any),  # (B,)
+    convolved_mesh: wp.array4d(dtype=Any),  # (B, nx, ny, nz_r), complex as vec2
+):
+    """Batched version of ``_pme_convolve_kernel``. Each thread handles one
+    ``(batch_idx, i, j, k)``; alpha and volume are per-system, B-spline
+    structure factor is shared across the batch (single LUT per axis)."""
+    batch_idx, i, j, k = wp.tid()
+
+    k_sq = k_squared[batch_idx, i, j, k]
+    system_alpha = alpha[batch_idx]
+    system_volume = volumes[batch_idx]
+
+    zero = type(k_sq)(0.0)
+    one = type(k_sq)(1.0)
+    four = type(k_sq)(4.0)
+    threshold = type(k_sq)(1e-10)
+    clamp_threshold = type(k_sq)(1e-10)
+    twopi = type(k_sq)(TWOPI)
+
+    sf = moduli_x[i] * moduli_y[j] * moduli_z[k]
+    if sf < clamp_threshold:
+        sf = clamp_threshold
+    sf_sq = sf * sf
+
+    if k_sq < threshold:
+        factor = zero
+    else:
+        exp_factor = wp_exp_kernel(k_sq, one / (four * system_alpha * system_alpha))
+        factor = twopi * exp_factor / (system_volume * sf_sq)
+    if i == 0 and j == 0 and k == 0:
+        factor = zero
+
+    c = mesh_fft[batch_idx, i, j, k]
+    convolved_mesh[batch_idx, i, j, k] = type(c)(c[0] * factor, c[1] * factor)
+
+
+###########################################################################################
+########################### PME Fused Convolve Backward ###################################
+###########################################################################################
+#
+# Closes the fast-path autograd gap: ``_pme_convolve_kernel``'s mathematical
+# inverse w.r.t. mesh_fft is just G applied to the cotangent (Green's is real)
+# — that's what _PMEFusedConvolve.backward used pre-7b.0. To also support
+# gradients through alpha and volume, we add an explicit reduction kernel
+# below. Math:
+#     G(k) = 2π / V · exp(-k²/(4α²)) / (k² · B²(k))
+#     dG/dα = G(k) · k² / (2α³)
+#     dG/dV = -G(k) / V
+# Pytorch's complex-autograd Wirtinger convention sums to 2·Re(g·conj(m̂)) for
+# real-valued parameters, so per-(i,j,k) contribution to grad_alpha is
+#     2 · (g.re · m.re + g.im · m.im) · G(k) · k²/(2α³)
+# accumulated via atomic_add into a single-element output array. Same shape
+# for grad_volume with the -G/V factor.
+
+
+@wp.kernel
+def _pme_convolve_backward_kernel(
+    mesh_fft: wp.array3d(dtype=Any),         # input (vec2): saved from forward
+    grad_convolved: wp.array3d(dtype=Any),   # input (vec2): cotangent
+    k_squared: wp.array3d(dtype=Any),
+    moduli_x: wp.array(dtype=Any),
+    moduli_y: wp.array(dtype=Any),
+    moduli_z: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    volume: wp.array(dtype=Any),
+    grad_mesh_fft: wp.array3d(dtype=Any),    # output (vec2)
+    grad_alpha: wp.array(dtype=Any),         # output scalar (shape (1,))
+    grad_volume: wp.array(dtype=Any),        # output scalar (shape (1,))
+    grad_k_squared: wp.array3d(dtype=Any),   # output (mesh_nx, mesh_ny, mesh_nz_r)
+):
+    """Single-system backward for the fused PME convolve.
+
+    Writes ``grad_mesh_fft[i,j,k] = G(k) * grad_convolved[i,j,k]`` and
+    ``grad_k_squared[i,j,k] = re_inner * dG/dk²`` elementwise; atomically
+    accumulates the scalar gradients ``grad_alpha`` and ``grad_volume``
+    per k-point. ``grad_k_squared`` chains back through the
+    ``generate_k_vectors_pme`` op to ``cell.grad`` and is required for
+    correct cell gradients (k² depends on cell via the reciprocal lattice).
+    """
+    i, j, k = wp.tid()
+
+    k_sq = k_squared[i, j, k]
+    alpha_ = alpha[0]
+    volume_ = volume[0]
+
+    zero = type(k_sq)(0.0)
+    one = type(k_sq)(1.0)
+    two = type(k_sq)(2.0)
+    four = type(k_sq)(4.0)
+    threshold = type(k_sq)(1e-10)
+    clamp_threshold = type(k_sq)(1e-10)
+    twopi = type(k_sq)(TWOPI)
+
+    sf = moduli_x[i] * moduli_y[j] * moduli_z[k]
+    if sf < clamp_threshold:
+        sf = clamp_threshold
+    sf_sq = sf * sf
+
+    if k_sq < threshold:
+        factor = zero
+    else:
+        exp_factor = wp_exp_kernel(k_sq, one / (four * alpha_ * alpha_))
+        factor = twopi * exp_factor / (volume_ * sf_sq)
+    if i == 0 and j == 0 and k == 0:
+        factor = zero
+
+    # Cotangent and saved mesh_fft.
+    g = grad_convolved[i, j, k]
+    m = mesh_fft[i, j, k]
+
+    # grad_mesh_fft = G * grad_convolved  (same kernel as forward — G is real).
+    grad_mesh_fft[i, j, k] = type(g)(g[0] * factor, g[1] * factor)
+
+    # Real inner product of (grad_conv) and conj(mesh_fft): g.re*m.re + g.im*m.im.
+    # NB: no Wirtinger factor of 2 here — torch.fft.rfftn's autograd already
+    # accumulates the conjugate-pair contribution into ``grad_convolved`` at
+    # rfftn-output indices, so a plain sum-over-rfftn-half gives the correct
+    # gradient (verified by FD against `volume.requires_grad_(True)`).
+    re_inner = g[0] * m[0] + g[1] * m[1]
+    contrib = re_inner * factor
+
+    if factor > zero:
+        # dG/dα = G(k) · k² / (2α³)
+        d_alpha = contrib * k_sq / (two * alpha_ * alpha_ * alpha_)
+        wp.atomic_add(grad_alpha, 0, d_alpha)
+        # dG/dV = -G / V
+        d_vol = -contrib / volume_
+        wp.atomic_add(grad_volume, 0, d_vol)
+        # dG/d(k²) = -G · (1/(4α²) + 1/k²)
+        grad_k_squared[i, j, k] = -contrib * (
+            one / (four * alpha_ * alpha_) + one / k_sq
+        )
+    else:
+        grad_k_squared[i, j, k] = zero
+
+
+@wp.kernel
+def _batch_pme_convolve_backward_kernel(
+    mesh_fft: wp.array4d(dtype=Any),         # (B, nx, ny, nz_r)
+    grad_convolved: wp.array4d(dtype=Any),   # (B, nx, ny, nz_r)
+    k_squared: wp.array4d(dtype=Any),
+    moduli_x: wp.array(dtype=Any),
+    moduli_y: wp.array(dtype=Any),
+    moduli_z: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),              # (B,)
+    volumes: wp.array(dtype=Any),            # (B,)
+    grad_mesh_fft: wp.array4d(dtype=Any),    # (B, nx, ny, nz_r)
+    grad_alpha: wp.array(dtype=Any),         # (B,)
+    grad_volume: wp.array(dtype=Any),        # (B,)
+    grad_k_squared: wp.array4d(dtype=Any),   # (B, nx, ny, nz_r)
+):
+    """Batched backward for ``_batch_pme_convolve_kernel``. Per-system
+    ``grad_alpha[batch_idx]`` and ``grad_volume[batch_idx]`` are
+    atomically accumulated across k-points; ``grad_mesh_fft`` and
+    ``grad_k_squared`` are written elementwise."""
+    batch_idx, i, j, k = wp.tid()
+
+    k_sq = k_squared[batch_idx, i, j, k]
+    system_alpha = alpha[batch_idx]
+    system_volume = volumes[batch_idx]
+
+    zero = type(k_sq)(0.0)
+    one = type(k_sq)(1.0)
+    two = type(k_sq)(2.0)
+    four = type(k_sq)(4.0)
+    threshold = type(k_sq)(1e-10)
+    clamp_threshold = type(k_sq)(1e-10)
+    twopi = type(k_sq)(TWOPI)
+
+    sf = moduli_x[i] * moduli_y[j] * moduli_z[k]
+    if sf < clamp_threshold:
+        sf = clamp_threshold
+    sf_sq = sf * sf
+
+    if k_sq < threshold:
+        factor = zero
+    else:
+        exp_factor = wp_exp_kernel(k_sq, one / (four * system_alpha * system_alpha))
+        factor = twopi * exp_factor / (system_volume * sf_sq)
+    if i == 0 and j == 0 and k == 0:
+        factor = zero
+
+    g = grad_convolved[batch_idx, i, j, k]
+    m = mesh_fft[batch_idx, i, j, k]
+    grad_mesh_fft[batch_idx, i, j, k] = type(g)(g[0] * factor, g[1] * factor)
+
+    # See note in single-system kernel: no Wirtinger 2x — rfftn autograd already
+    # accumulates conjugate-pair contribution into grad_convolved.
+    re_inner = g[0] * m[0] + g[1] * m[1]
+    contrib = re_inner * factor
+    if factor > zero:
+        d_alpha = contrib * k_sq / (two * system_alpha * system_alpha * system_alpha)
+        wp.atomic_add(grad_alpha, batch_idx, d_alpha)
+        d_vol = -contrib / system_volume
+        wp.atomic_add(grad_volume, batch_idx, d_vol)
+        grad_k_squared[batch_idx, i, j, k] = -contrib * (
+            one / (four * system_alpha * system_alpha) + one / k_sq
+        )
+    else:
+        grad_k_squared[batch_idx, i, j, k] = zero
 
 
 ###########################################################################################
@@ -678,20 +976,535 @@ def _batch_pme_energy_corrections_with_charge_grad_kernel(
 
 
 ###########################################################################################
+########################### Energy-Corrections Backward Kernels ############################
+###########################################################################################
+#
+# Per-atom energy correction:
+#   E_i = q_i · raw_i - (α/√π) · q_i² - (π/(2α²V)) · q_i · Q_total
+#
+# Backward (cotangent g_i = dL/dE_i):
+#   grad_raw[i] = g_i · q_i
+#   grad_q[i]   = g_i · (raw_i - 2·(α/√π)·q_i - (π/(2α²V))·Q_total)
+#   grad_alpha  = Σ_i g_i · (-q_i²/√π + π·q_i·Q_total/(α³ V))
+#   grad_V      = Σ_i g_i · (π·q_i·Q_total / (2 α² V²))
+#   grad_Qtot   = Σ_i g_i · (-π·q_i / (2 α² V))
+#
+# The three scalar (or per-system) reductions use atomic_add per atom.
+
+
+@wp.kernel
+def _pme_energy_corrections_backward_kernel(
+    grad_E: wp.array(dtype=Any),         # (N,) cotangent of corrected_energies
+    raw_energies: wp.array(dtype=Any),   # (N,) saved forward input
+    charges: wp.array(dtype=Any),        # (N,)
+    volume: wp.array(dtype=Any),         # (1,)
+    alpha: wp.array(dtype=Any),          # (1,)
+    total_charge: wp.array(dtype=Any),   # (1,)
+    grad_raw: wp.array(dtype=Any),       # (N,) output
+    grad_charges: wp.array(dtype=Any),   # (N,) output
+    grad_volume: wp.array(dtype=Any),    # (1,) output — atomic accumulation
+    grad_alpha: wp.array(dtype=Any),     # (1,) output — atomic accumulation
+    grad_total_charge: wp.array(dtype=Any),  # (1,) output — atomic accumulation
+):
+    """Single-system backward for the per-atom energy corrections kernel.
+
+    All three scalar gradients (volume, alpha, total_charge) must be
+    zero-initialized by the caller — they are accumulated atomically across
+    atoms.
+    """
+    i = wp.tid()
+    g = grad_E[i]
+    q = charges[i]
+    r = raw_energies[i]
+    a = alpha[0]
+    v = volume[0]
+    qtot = total_charge[0]
+
+    pi = type(g)(PI)
+    two = type(g)(2.0)
+    sqrt_pi = wp.sqrt(pi)
+    c1 = a / sqrt_pi
+    c2 = pi / (two * a * a * v)
+
+    # grad_raw[i] = g · q_i  (elementwise)
+    grad_raw[i] = g * q
+
+    # grad_q[i] = g · (r_i - 2·c1·q_i - c2·Q_total)  (elementwise)
+    grad_charges[i] = g * (r - two * c1 * q - c2 * qtot)
+
+    # Scalar grads — atomic_add into shape-(1,) arrays.
+    # dE_i/dα = -q²/√π + π·q·Q_total/(α³·V)
+    d_alpha = g * (-(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v))
+    wp.atomic_add(grad_alpha, 0, d_alpha)
+
+    # dE_i/dV = π·q·Q_total / (2·α²·V²)
+    d_volume = g * pi * q * qtot / (two * a * a * v * v)
+    wp.atomic_add(grad_volume, 0, d_volume)
+
+    # dE_i/dQ_total = -π·q / (2·α²·V) = -c2 · q
+    d_qtot = -g * c2 * q
+    wp.atomic_add(grad_total_charge, 0, d_qtot)
+
+
+@wp.kernel
+def _batch_pme_energy_corrections_backward_kernel(
+    grad_E: wp.array(dtype=Any),                  # (N_total,)
+    raw_energies: wp.array(dtype=Any),            # (N_total,)
+    charges: wp.array(dtype=Any),                 # (N_total,)
+    batch_idx: wp.array(dtype=wp.int32),          # (N_total,)
+    volumes: wp.array(dtype=Any),                 # (B,)
+    alpha: wp.array(dtype=Any),                   # (B,)
+    total_charges: wp.array(dtype=Any),           # (B,)
+    grad_raw: wp.array(dtype=Any),                # (N_total,)
+    grad_charges: wp.array(dtype=Any),            # (N_total,)
+    grad_volumes: wp.array(dtype=Any),            # (B,) — atomic per-system
+    grad_alpha: wp.array(dtype=Any),              # (B,) — atomic per-system
+    grad_total_charges: wp.array(dtype=Any),      # (B,) — atomic per-system
+):
+    """Batched backward for the per-atom energy corrections kernel.
+
+    Per-system scalar grads (volume, alpha, total_charge) accumulate
+    atomically into length-B arrays keyed by ``batch_idx``.
+    """
+    i = wp.tid()
+    s = batch_idx[i]
+    g = grad_E[i]
+    q = charges[i]
+    r = raw_energies[i]
+    a = alpha[s]
+    v = volumes[s]
+    qtot = total_charges[s]
+
+    pi = type(g)(PI)
+    two = type(g)(2.0)
+    sqrt_pi = wp.sqrt(pi)
+    c1 = a / sqrt_pi
+    c2 = pi / (two * a * a * v)
+
+    grad_raw[i] = g * q
+    grad_charges[i] = g * (r - two * c1 * q - c2 * qtot)
+
+    d_alpha = g * (-(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v))
+    wp.atomic_add(grad_alpha, s, d_alpha)
+
+    d_volume = g * pi * q * qtot / (two * a * a * v * v)
+    wp.atomic_add(grad_volumes, s, d_volume)
+
+    d_qtot = -g * c2 * q
+    wp.atomic_add(grad_total_charges, s, d_qtot)
+
+
+###########################################################################################
+########################### Energy-Corrections Double-Backward #############################
+###########################################################################################
+#
+# Forward:   E_i = q_i·r_i - C1·q_i² - C2·q_i·Qtot       (C1=α/√π, C2=π/(2α²V))
+# 1st bwd:   g_raw[i] = g_i·q_i
+#            g_chg[i] = g_i·(r_i - 2·C1·q_i - C2·Qtot)
+#            g_α      = Σ g_i·(-q_i²/√π + π·q_i·Qtot/(α³·V))
+#            g_V      = Σ g_i·(π·q_i·Qtot/(2·α²·V²))
+#            g_Qtot   = Σ g_i·(-π·q_i/(2·α²·V))
+# 2nd bwd:   given upstream cotangents (h_raw, h_chg, h_vol, h_alpha, h_qtot),
+#            produce ``grad_grad_E[i]``, ``grad_raw[i]``, ``grad_q[i]`` per atom,
+#            plus scalar (or per-system) ``grad_vol``, ``grad_alpha``,
+#            ``grad_qtot`` reductions.  Derivation follows from linear and
+#            quadratic terms of the forward formula.
+
+
+@wp.kernel
+def _pme_energy_corrections_double_backward_kernel(
+    # Upstream cotangents for outputs of the first backward:
+    h_raw: wp.array(dtype=Any),       # (N,) cotangent of g_raw
+    h_chg: wp.array(dtype=Any),       # (N,) cotangent of g_chg
+    h_vol: wp.array(dtype=Any),       # (1,) cotangent of g_V
+    h_alpha: wp.array(dtype=Any),     # (1,) cotangent of g_α
+    h_qtot: wp.array(dtype=Any),      # (1,) cotangent of g_Qtot
+    # Saved inputs from first backward:
+    grad_E: wp.array(dtype=Any),      # (N,) — g_i
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    volume: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charge: wp.array(dtype=Any),
+    # Outputs:
+    grad_grad_E: wp.array(dtype=Any),     # (N,)
+    grad_raw: wp.array(dtype=Any),        # (N,)
+    grad_charges: wp.array(dtype=Any),    # (N,)
+    grad_volume: wp.array(dtype=Any),     # (1,) — atomic_add
+    grad_alpha: wp.array(dtype=Any),      # (1,) — atomic_add
+    grad_total_charge: wp.array(dtype=Any),  # (1,) — atomic_add
+):
+    """Single-system double-backward for energy corrections.
+
+    All scalar grads must be zero-initialized by the caller.
+    """
+    i = wp.tid()
+    g_i = grad_E[i]
+    q = charges[i]
+    r = raw_energies[i]
+    a = alpha[0]
+    v = volume[0]
+    qtot = total_charge[0]
+    hr = h_raw[i]
+    hc = h_chg[i]
+    hv = h_vol[0]
+    ha = h_alpha[0]
+    hq = h_qtot[0]
+
+    pi = type(g_i)(PI)
+    two = type(g_i)(2.0)
+    three = type(g_i)(3.0)
+    sqrt_pi = wp.sqrt(pi)
+    c1 = a / sqrt_pi
+    c2 = pi / (two * a * a * v)
+    A_i = -(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v)
+    B_i = pi * q * qtot / (two * a * a * v * v)
+    D_i = -pi * q / (two * a * a * v)
+
+    # ∂L/∂(grad_E[i]) — per atom
+    grad_grad_E[i] = (
+        hr * q
+        + hc * (r - two * c1 * q - c2 * qtot)
+        + ha * A_i
+        + hv * B_i
+        + hq * D_i
+    )
+
+    # ∂L/∂(raw[i]) — per atom (only g_chg depends on r)
+    grad_raw[i] = hc * g_i
+
+    # ∂L/∂(q[i]) — per atom; collects all q[i]-dependent contributions
+    dq = g_i * (
+        hr
+        + hc * (-two * c1)
+        + ha * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + hv * (pi * qtot / (two * a * a * v * v))
+        + hq * (-pi / (two * a * a * v))
+    )
+    grad_charges[i] = dq
+
+    # Per-atom contributions to scalar grads (atomic_add).
+    g_q = g_i * q  # appears repeatedly in the scalar grad rows.
+
+    # ∂L/∂V
+    dV_atom = (
+        hc * g_i * qtot * pi / (two * a * a * v * v)
+        + ha * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hv * (-pi * qtot / (a * a * v * v * v)) * g_q
+        + hq * (pi / (two * a * a * v * v)) * g_q
+    )
+    wp.atomic_add(grad_volume, 0, dV_atom)
+
+    # ∂L/∂α
+    dA_atom = (
+        hc * g_i * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + ha * (-three * pi * qtot / (a * a * a * a * v)) * g_q
+        + hv * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hq * (pi / (a * a * a * v)) * g_q
+    )
+    wp.atomic_add(grad_alpha, 0, dA_atom)
+
+    # ∂L/∂Qtot
+    dQ_atom = (
+        hc * g_i * (-pi / (two * a * a * v))
+        + ha * (pi / (a * a * a * v)) * g_q
+        + hv * (pi / (two * a * a * v * v)) * g_q
+        # hq term is 0 since ∂D_i/∂Qtot = 0
+    )
+    wp.atomic_add(grad_total_charge, 0, dQ_atom)
+
+
+@wp.kernel
+def _batch_pme_energy_corrections_double_backward_kernel(
+    h_raw: wp.array(dtype=Any),
+    h_chg: wp.array(dtype=Any),
+    h_vol: wp.array(dtype=Any),
+    h_alpha: wp.array(dtype=Any),
+    h_qtot: wp.array(dtype=Any),
+    grad_E: wp.array(dtype=Any),
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    volumes: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charges: wp.array(dtype=Any),
+    grad_grad_E: wp.array(dtype=Any),
+    grad_raw: wp.array(dtype=Any),
+    grad_charges: wp.array(dtype=Any),
+    grad_volumes: wp.array(dtype=Any),
+    grad_alpha: wp.array(dtype=Any),
+    grad_total_charges: wp.array(dtype=Any),
+):
+    """Batched double-backward for energy corrections."""
+    i = wp.tid()
+    s = batch_idx[i]
+    g_i = grad_E[i]
+    q = charges[i]
+    r = raw_energies[i]
+    a = alpha[s]
+    v = volumes[s]
+    qtot = total_charges[s]
+    hr = h_raw[i]
+    hc = h_chg[i]
+    hv = h_vol[s]
+    ha = h_alpha[s]
+    hq = h_qtot[s]
+
+    pi = type(g_i)(PI)
+    two = type(g_i)(2.0)
+    three = type(g_i)(3.0)
+    sqrt_pi = wp.sqrt(pi)
+    c1 = a / sqrt_pi
+    c2 = pi / (two * a * a * v)
+    A_i = -(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v)
+    B_i = pi * q * qtot / (two * a * a * v * v)
+    D_i = -pi * q / (two * a * a * v)
+
+    grad_grad_E[i] = (
+        hr * q
+        + hc * (r - two * c1 * q - c2 * qtot)
+        + ha * A_i
+        + hv * B_i
+        + hq * D_i
+    )
+
+    grad_raw[i] = hc * g_i
+
+    dq = g_i * (
+        hr
+        + hc * (-two * c1)
+        + ha * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + hv * (pi * qtot / (two * a * a * v * v))
+        + hq * (-pi / (two * a * a * v))
+    )
+    grad_charges[i] = dq
+
+    g_q = g_i * q
+    dV_atom = (
+        hc * g_i * qtot * pi / (two * a * a * v * v)
+        + ha * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hv * (-pi * qtot / (a * a * v * v * v)) * g_q
+        + hq * (pi / (two * a * a * v * v)) * g_q
+    )
+    wp.atomic_add(grad_volumes, s, dV_atom)
+
+    dA_atom = (
+        hc * g_i * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + ha * (-three * pi * qtot / (a * a * a * a * v)) * g_q
+        + hv * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hq * (pi / (a * a * a * v)) * g_q
+    )
+    wp.atomic_add(grad_alpha, s, dA_atom)
+
+    dQ_atom = (
+        hc * g_i * (-pi / (two * a * a * v))
+        + ha * (pi / (a * a * a * v)) * g_q
+        + hv * (pi / (two * a * a * v * v)) * g_q
+    )
+    wp.atomic_add(grad_total_charges, s, dQ_atom)
+
+
+###########################################################################################
+########################### PME Virial Background Correction ##############################
+###########################################################################################
+#
+# Non-neutral PME systems have a background charge term in the energy:
+#     E_bg = (π · Q² ) / (2 α² V)
+# whose volume derivative gives a diagonal contribution to the virial:
+#     W_bg = -d E_bg / dε = -(E_bg) · I    (where ε is the strain tensor)
+# We subtract ``E_bg · I`` from the virial diagonal to apply that correction.
+#
+# Pipeline:
+#  Pass 1 (per atom): atomic_add ``q_i`` into the per-system ``total_charges``
+#                     accumulator (one thread per atom; ``batch_idx`` routes
+#                     each atom to its system; for single-system, batch_idx
+#                     is all zeros).
+#  Pass 2 (per system): one thread per system reads ``total_charges[s]`` and
+#                       ``cell[s]``, computes ``V = |det(cell[s])|`` and
+#                       ``E_bg = π Q² / (2 α² V)``, and subtracts ``E_bg``
+#                       from the three diagonal entries of ``virial[s]``.
+
+
+@wp.kernel(enable_backward=False)
+def _pme_virial_bg_reduce_kernel(
+    charges: wp.array(dtype=Any),         # (N,)
+    batch_idx: wp.array(dtype=wp.int32),  # (N,) — system index per atom
+    total_charges: wp.array(dtype=Any),   # (B,) — IN/OUT, zero-initialized by caller
+):
+    """Pass 1: scatter-add per-atom charges into ``total_charges[batch_idx]``."""
+    atom_idx = wp.tid()
+    s = batch_idx[atom_idx]
+    wp.atomic_add(total_charges, s, charges[atom_idx])
+
+
+@wp.kernel(enable_backward=False)
+def _pme_virial_bg_apply_kernel(
+    total_charges: wp.array(dtype=Any),   # (B,) computed in pass 1
+    cell: wp.array3d(dtype=Any),          # (B, 3, 3)
+    alpha: wp.array(dtype=Any),           # (B,) — per-system Ewald splitting
+    virial_in: wp.array3d(dtype=Any),     # (B, 3, 3) input
+    virial_out: wp.array3d(dtype=Any),    # (B, 3, 3) output = virial_in - E_bg·I
+):
+    """Pass 2: compute V = |det(cell[s])|, E_bg, subtract from virial diagonal."""
+    s = wp.tid()
+
+    q = total_charges[s]
+    a = alpha[s]
+    pi = type(q)(PI)
+    two = type(q)(2.0)
+
+    c00 = cell[s, 0, 0]
+    c01 = cell[s, 0, 1]
+    c02 = cell[s, 0, 2]
+    c10 = cell[s, 1, 0]
+    c11 = cell[s, 1, 1]
+    c12 = cell[s, 1, 2]
+    c20 = cell[s, 2, 0]
+    c21 = cell[s, 2, 1]
+    c22 = cell[s, 2, 2]
+    det = (
+        c00 * (c11 * c22 - c12 * c21)
+        - c01 * (c10 * c22 - c12 * c20)
+        + c02 * (c10 * c21 - c11 * c20)
+    )
+    volume = wp.abs(det)
+
+    e_bg = pi * q * q / (two * a * a * volume)
+
+    virial_out[s, 0, 0] = virial_in[s, 0, 0] - e_bg
+    virial_out[s, 0, 1] = virial_in[s, 0, 1]
+    virial_out[s, 0, 2] = virial_in[s, 0, 2]
+    virial_out[s, 1, 0] = virial_in[s, 1, 0]
+    virial_out[s, 1, 1] = virial_in[s, 1, 1] - e_bg
+    virial_out[s, 1, 2] = virial_in[s, 1, 2]
+    virial_out[s, 2, 0] = virial_in[s, 2, 0]
+    virial_out[s, 2, 1] = virial_in[s, 2, 1]
+    virial_out[s, 2, 2] = virial_in[s, 2, 2] - e_bg
+
+
+# Analytic backward kernel — see launcher for the math.
+@wp.kernel(enable_backward=False)
+def _pme_virial_bg_backward_per_system_kernel(
+    grad_virial: wp.array3d(dtype=Any),      # (B, 3, 3) cotangent of virial_out
+    total_charges: wp.array(dtype=Any),      # (B,) recomputed from charges
+    cell: wp.array3d(dtype=Any),             # (B, 3, 3)
+    alpha: wp.array(dtype=Any),              # (B,)
+    grad_total_charges: wp.array(dtype=Any), # (B,) OUT — dL/dQ per system
+    grad_alpha: wp.array(dtype=Any),         # (B,) OUT — dL/dα per system
+    grad_cell: wp.array3d(dtype=Any),        # (B, 3, 3) OUT — dL/dC
+):
+    """Per-system: turn the cotangent of virial_out into per-system dL/dQ, dL/dα, dL/dC.
+
+    From ``virial_out[s,i,j] = virial_in[s,i,j] - δ_ij · E_bg(s)`` (where
+    ``E_bg = π Q² / (2 α² V)`` and ``V = |det(C)|``):
+      dL/dE_bg(s) = -(g[s,0,0] + g[s,1,1] + g[s,2,2])
+      dE_bg/dQ    =  π Q / (α² V)
+      dE_bg/dα    = -π Q² / (α³ V)
+      dE_bg/dV    = -π Q² / (2 α² V²)
+      d|det C|/dC = sign(det C) · cofactor(C)   (Jacobi's formula)
+    """
+    s = wp.tid()
+
+    q = total_charges[s]
+    a = alpha[s]
+    pi = type(q)(PI)
+    two = type(q)(2.0)
+
+    c00 = cell[s, 0, 0]
+    c01 = cell[s, 0, 1]
+    c02 = cell[s, 0, 2]
+    c10 = cell[s, 1, 0]
+    c11 = cell[s, 1, 1]
+    c12 = cell[s, 1, 2]
+    c20 = cell[s, 2, 0]
+    c21 = cell[s, 2, 1]
+    c22 = cell[s, 2, 2]
+    det = (
+        c00 * (c11 * c22 - c12 * c21)
+        - c01 * (c10 * c22 - c12 * c20)
+        + c02 * (c10 * c21 - c11 * c20)
+    )
+    volume = wp.abs(det)
+    sgn = wp.sign(det)
+
+    g_diag_sum = grad_virial[s, 0, 0] + grad_virial[s, 1, 1] + grad_virial[s, 2, 2]
+    g_E_bg = -g_diag_sum  # dL/dE_bg
+
+    a2 = a * a
+    a3 = a2 * a
+    v2 = volume * volume
+
+    dE_dQ = pi * q / (a2 * volume)
+    dE_dA = -pi * q * q / (a3 * volume)
+    dE_dV = -pi * q * q / (two * a2 * v2)
+
+    grad_total_charges[s] = g_E_bg * dE_dQ
+    grad_alpha[s] = g_E_bg * dE_dA
+
+    dV_dC00 = sgn * (c11 * c22 - c12 * c21)
+    dV_dC01 = sgn * -(c10 * c22 - c12 * c20)
+    dV_dC02 = sgn * (c10 * c21 - c11 * c20)
+    dV_dC10 = sgn * -(c01 * c22 - c02 * c21)
+    dV_dC11 = sgn * (c00 * c22 - c02 * c20)
+    dV_dC12 = sgn * -(c00 * c21 - c01 * c20)
+    dV_dC20 = sgn * (c01 * c12 - c02 * c11)
+    dV_dC21 = sgn * -(c00 * c12 - c02 * c10)
+    dV_dC22 = sgn * (c00 * c11 - c01 * c10)
+
+    gV = g_E_bg * dE_dV
+    grad_cell[s, 0, 0] = gV * dV_dC00
+    grad_cell[s, 0, 1] = gV * dV_dC01
+    grad_cell[s, 0, 2] = gV * dV_dC02
+    grad_cell[s, 1, 0] = gV * dV_dC10
+    grad_cell[s, 1, 1] = gV * dV_dC11
+    grad_cell[s, 1, 2] = gV * dV_dC12
+    grad_cell[s, 2, 0] = gV * dV_dC20
+    grad_cell[s, 2, 1] = gV * dV_dC21
+    grad_cell[s, 2, 2] = gV * dV_dC22
+
+
+@wp.kernel(enable_backward=False)
+def _pme_virial_bg_backward_per_atom_kernel(
+    batch_idx: wp.array(dtype=wp.int32),     # (N,)
+    grad_total_charges: wp.array(dtype=Any), # (B,) per-system dL/dQ
+    grad_charges: wp.array(dtype=Any),       # (N,) OUT — dL/dq_j = dL/dQ(s(j))
+):
+    """Per-atom: dL/dq_j = dL/dQ(s(j))."""
+    j = wp.tid()
+    s = batch_idx[j]
+    grad_charges[j] = grad_total_charges[s]
+
+
+###########################################################################################
 ########################### Kernel Overloads for Dtype Flexibility ########################
 ###########################################################################################
 
 # Type lists for creating overloads
 _T = [wp.float32, wp.float64]
+# Complex-as-vec2 type per dtype (rfftn output is complex64 for float32 input,
+# complex128 for float64 input). We pass these to Warp via torch.view_as_real.
+_C = {wp.float32: wp.vec2f, wp.float64: wp.vec2d}
 
 # Single-system kernel overloads
 _pme_green_structure_factor_kernel_overload = {}
+_pme_convolve_kernel_overload = {}
+_pme_convolve_backward_kernel_overload = {}
 _pme_energy_corrections_kernel_overload = {}
+_pme_energy_corrections_backward_kernel_overload = {}
+_pme_energy_corrections_double_backward_kernel_overload = {}
 _pme_energy_corrections_with_charge_grad_kernel_overload = {}
+_pme_virial_bg_reduce_kernel_overload = {}
+_pme_virial_bg_apply_kernel_overload = {}
+_pme_virial_bg_backward_per_system_kernel_overload = {}
+_pme_virial_bg_backward_per_atom_kernel_overload = {}
 
 # Batch kernel overloads
 _batch_pme_green_structure_factor_kernel_overload = {}
+_batch_pme_convolve_kernel_overload = {}
+_batch_pme_convolve_backward_kernel_overload = {}
 _batch_pme_energy_corrections_kernel_overload = {}
+_batch_pme_energy_corrections_backward_kernel_overload = {}
+_batch_pme_energy_corrections_double_backward_kernel_overload = {}
 _batch_pme_energy_corrections_with_charge_grad_kernel_overload = {}
 
 for t in _T:
@@ -732,6 +1545,71 @@ for t in _T:
         ],
     )
 
+    # Fused convolution kernel (uses precomputed 1D B-spline moduli).
+    _pme_convolve_kernel_overload[t] = wp.overload(
+        _pme_convolve_kernel,
+        [
+            wp.array3d(dtype=_C[t]),  # mesh_fft (complex as vec2)
+            wp.array3d(dtype=t),  # k_squared
+            wp.array(dtype=t),  # moduli_x
+            wp.array(dtype=t),  # moduli_y
+            wp.array(dtype=t),  # moduli_z
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # volume
+            wp.array3d(dtype=_C[t]),  # convolved_mesh (complex as vec2)
+        ],
+    )
+
+    _batch_pme_convolve_kernel_overload[t] = wp.overload(
+        _batch_pme_convolve_kernel,
+        [
+            wp.array4d(dtype=_C[t]),  # mesh_fft
+            wp.array4d(dtype=t),  # k_squared
+            wp.array(dtype=t),  # moduli_x
+            wp.array(dtype=t),  # moduli_y
+            wp.array(dtype=t),  # moduli_z
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # volumes
+            wp.array4d(dtype=_C[t]),  # convolved_mesh
+        ],
+    )
+
+    # Fused convolve backward (uses precomputed 1D B-spline moduli).
+    _pme_convolve_backward_kernel_overload[t] = wp.overload(
+        _pme_convolve_backward_kernel,
+        [
+            wp.array3d(dtype=_C[t]),  # mesh_fft
+            wp.array3d(dtype=_C[t]),  # grad_convolved
+            wp.array3d(dtype=t),  # k_squared
+            wp.array(dtype=t),  # moduli_x
+            wp.array(dtype=t),  # moduli_y
+            wp.array(dtype=t),  # moduli_z
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # volume
+            wp.array3d(dtype=_C[t]),  # grad_mesh_fft
+            wp.array(dtype=t),  # grad_alpha (1,)
+            wp.array(dtype=t),  # grad_volume (1,)
+            wp.array3d(dtype=t),  # grad_k_squared
+        ],
+    )
+    _batch_pme_convolve_backward_kernel_overload[t] = wp.overload(
+        _batch_pme_convolve_backward_kernel,
+        [
+            wp.array4d(dtype=_C[t]),  # mesh_fft
+            wp.array4d(dtype=_C[t]),  # grad_convolved
+            wp.array4d(dtype=t),  # k_squared
+            wp.array(dtype=t),  # moduli_x
+            wp.array(dtype=t),  # moduli_y
+            wp.array(dtype=t),  # moduli_z
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # volumes
+            wp.array4d(dtype=_C[t]),  # grad_mesh_fft
+            wp.array(dtype=t),  # grad_alpha (B,)
+            wp.array(dtype=t),  # grad_volumes (B,)
+            wp.array4d(dtype=t),  # grad_k_squared (B, nx, ny, nz_r)
+        ],
+    )
+
     # Energy corrections kernel overloads
     _pme_energy_corrections_kernel_overload[t] = wp.overload(
         _pme_energy_corrections_kernel,
@@ -755,6 +1633,88 @@ for t in _T:
             wp.array(dtype=t),  # alpha
             wp.array(dtype=t),  # total_charges
             wp.array(dtype=t),  # corrected_energies
+        ],
+    )
+
+    # Energy corrections backward kernel overloads
+    _pme_energy_corrections_backward_kernel_overload[t] = wp.overload(
+        _pme_energy_corrections_backward_kernel,
+        [
+            wp.array(dtype=t),  # grad_E
+            wp.array(dtype=t),  # raw_energies
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=t),  # volume
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # total_charge
+            wp.array(dtype=t),  # grad_raw
+            wp.array(dtype=t),  # grad_charges
+            wp.array(dtype=t),  # grad_volume
+            wp.array(dtype=t),  # grad_alpha
+            wp.array(dtype=t),  # grad_total_charge
+        ],
+    )
+    _batch_pme_energy_corrections_backward_kernel_overload[t] = wp.overload(
+        _batch_pme_energy_corrections_backward_kernel,
+        [
+            wp.array(dtype=t),  # grad_E
+            wp.array(dtype=t),  # raw_energies
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array(dtype=t),  # volumes
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # total_charges
+            wp.array(dtype=t),  # grad_raw
+            wp.array(dtype=t),  # grad_charges
+            wp.array(dtype=t),  # grad_volumes (B,)
+            wp.array(dtype=t),  # grad_alpha (B,)
+            wp.array(dtype=t),  # grad_total_charges (B,)
+        ],
+    )
+
+    # Energy corrections DOUBLE-backward kernel overloads
+    _pme_energy_corrections_double_backward_kernel_overload[t] = wp.overload(
+        _pme_energy_corrections_double_backward_kernel,
+        [
+            wp.array(dtype=t),  # h_raw
+            wp.array(dtype=t),  # h_chg
+            wp.array(dtype=t),  # h_vol
+            wp.array(dtype=t),  # h_alpha
+            wp.array(dtype=t),  # h_qtot
+            wp.array(dtype=t),  # grad_E (saved)
+            wp.array(dtype=t),  # raw_energies (saved)
+            wp.array(dtype=t),  # charges (saved)
+            wp.array(dtype=t),  # volume
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # total_charge
+            wp.array(dtype=t),  # grad_grad_E
+            wp.array(dtype=t),  # grad_raw
+            wp.array(dtype=t),  # grad_charges
+            wp.array(dtype=t),  # grad_volume
+            wp.array(dtype=t),  # grad_alpha
+            wp.array(dtype=t),  # grad_total_charge
+        ],
+    )
+    _batch_pme_energy_corrections_double_backward_kernel_overload[t] = wp.overload(
+        _batch_pme_energy_corrections_double_backward_kernel,
+        [
+            wp.array(dtype=t),  # h_raw
+            wp.array(dtype=t),  # h_chg
+            wp.array(dtype=t),  # h_vol  (B,)
+            wp.array(dtype=t),  # h_alpha (B,)
+            wp.array(dtype=t),  # h_qtot (B,)
+            wp.array(dtype=t),  # grad_E
+            wp.array(dtype=t),  # raw_energies
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array(dtype=t),  # volumes
+            wp.array(dtype=t),  # alpha
+            wp.array(dtype=t),  # total_charges
+            wp.array(dtype=t),  # grad_grad_E
+            wp.array(dtype=t),  # grad_raw
+            wp.array(dtype=t),  # grad_charges
+            wp.array(dtype=t),  # grad_volumes (B,)
+            wp.array(dtype=t),  # grad_alpha (B,)
+            wp.array(dtype=t),  # grad_total_charges (B,)
         ],
     )
 
@@ -783,6 +1743,45 @@ for t in _T:
             wp.array(dtype=t),  # total_charges
             wp.array(dtype=t),  # corrected_energies
             wp.array(dtype=t),  # charge_gradients
+        ],
+    )
+
+    _pme_virial_bg_reduce_kernel_overload[t] = wp.overload(
+        _pme_virial_bg_reduce_kernel,
+        [
+            wp.array(dtype=t),         # charges
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array(dtype=t),         # total_charges
+        ],
+    )
+    _pme_virial_bg_apply_kernel_overload[t] = wp.overload(
+        _pme_virial_bg_apply_kernel,
+        [
+            wp.array(dtype=t),     # total_charges
+            wp.array3d(dtype=t),   # cell
+            wp.array(dtype=t),     # alpha
+            wp.array3d(dtype=t),   # virial_in
+            wp.array3d(dtype=t),   # virial_out
+        ],
+    )
+    _pme_virial_bg_backward_per_system_kernel_overload[t] = wp.overload(
+        _pme_virial_bg_backward_per_system_kernel,
+        [
+            wp.array3d(dtype=t),   # grad_virial
+            wp.array(dtype=t),     # total_charges
+            wp.array3d(dtype=t),   # cell
+            wp.array(dtype=t),     # alpha
+            wp.array(dtype=t),     # grad_total_charges
+            wp.array(dtype=t),     # grad_alpha
+            wp.array3d(dtype=t),   # grad_cell
+        ],
+    )
+    _pme_virial_bg_backward_per_atom_kernel_overload[t] = wp.overload(
+        _pme_virial_bg_backward_per_atom_kernel,
+        [
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array(dtype=t),         # grad_total_charges
+            wp.array(dtype=t),         # grad_charges
         ],
     )
 
@@ -958,6 +1957,166 @@ def batch_pme_green_structure_factor(
     )
 
 
+def pme_convolve(
+    mesh_fft: wp.array,
+    k_squared: wp.array,
+    moduli_x: wp.array,
+    moduli_y: wp.array,
+    moduli_z: wp.array,
+    alpha: wp.array,
+    volume: wp.array,
+    convolved_mesh: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Fused per-k-point Green's compute + B-spline deconvolution + multiply.
+
+    Single-system. ``moduli_x/y/z`` are precomputed 1D B-spline modulus LUTs
+    (``sinc(m/N)^spline_order`` per miller index, one per axis); the kernel
+    reads three values + multiplies + squares them per (i, j, k) thread,
+    replacing the inline sinc-and-power computation used pre-P-C.
+
+    Parameters
+    ----------
+    mesh_fft : wp.array3d, shape (nx, ny, nz_rfft), dtype=vec2f/vec2d
+        Input mesh after forward rFFT, complex represented as (real, imag).
+    convolved_mesh : wp.array3d, same shape/dtype as ``mesh_fft``
+        OUTPUT. May alias ``mesh_fft`` for in-place.
+    """
+    nx, ny, nz_rfft = mesh_fft.shape[0], mesh_fft.shape[1], mesh_fft.shape[2]
+    kernel = _pme_convolve_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=(nx, ny, nz_rfft),
+        inputs=[
+            mesh_fft,
+            k_squared,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+            alpha,
+            volume,
+        ],
+        outputs=[convolved_mesh],
+        device=device,
+    )
+
+
+def batch_pme_convolve(
+    mesh_fft: wp.array,
+    k_squared: wp.array,
+    moduli_x: wp.array,
+    moduli_y: wp.array,
+    moduli_z: wp.array,
+    alpha: wp.array,
+    volumes: wp.array,
+    convolved_mesh: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Batched version of ``pme_convolve``. Mesh shapes are (B, nx, ny, nz_r)."""
+    num_systems = mesh_fft.shape[0]
+    nx, ny, nz_rfft = mesh_fft.shape[1], mesh_fft.shape[2], mesh_fft.shape[3]
+    kernel = _batch_pme_convolve_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=(num_systems, nx, ny, nz_rfft),
+        inputs=[
+            mesh_fft,
+            k_squared,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+            alpha,
+            volumes,
+        ],
+        outputs=[convolved_mesh],
+        device=device,
+    )
+
+
+def pme_convolve_backward(
+    mesh_fft: wp.array,
+    grad_convolved: wp.array,
+    k_squared: wp.array,
+    moduli_x: wp.array,
+    moduli_y: wp.array,
+    moduli_z: wp.array,
+    alpha: wp.array,
+    volume: wp.array,
+    grad_mesh_fft: wp.array,
+    grad_alpha: wp.array,
+    grad_volume: wp.array,
+    grad_k_squared: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Single-system backward for ``pme_convolve``. See kernel docstring for math.
+
+    ``grad_alpha`` and ``grad_volume`` must be zero-initialized 1-element arrays
+    (the kernel atomically accumulates into them across all k-points).
+    ``grad_k_squared`` is written elementwise (no zero-init required).
+    """
+    nx, ny, nz_rfft = mesh_fft.shape[0], mesh_fft.shape[1], mesh_fft.shape[2]
+    kernel = _pme_convolve_backward_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=(nx, ny, nz_rfft),
+        inputs=[
+            mesh_fft,
+            grad_convolved,
+            k_squared,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+            alpha,
+            volume,
+        ],
+        outputs=[grad_mesh_fft, grad_alpha, grad_volume, grad_k_squared],
+        device=device,
+    )
+
+
+def batch_pme_convolve_backward(
+    mesh_fft: wp.array,
+    grad_convolved: wp.array,
+    k_squared: wp.array,
+    moduli_x: wp.array,
+    moduli_y: wp.array,
+    moduli_z: wp.array,
+    alpha: wp.array,
+    volumes: wp.array,
+    grad_mesh_fft: wp.array,
+    grad_alpha: wp.array,
+    grad_volumes: wp.array,
+    grad_k_squared: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Batched backward for ``batch_pme_convolve``. ``grad_alpha`` and
+    ``grad_volumes`` are length-B arrays zero-initialized by the caller.
+    ``grad_k_squared`` is written elementwise (no zero-init required)."""
+    num_systems = mesh_fft.shape[0]
+    nx, ny, nz_rfft = mesh_fft.shape[1], mesh_fft.shape[2], mesh_fft.shape[3]
+    kernel = _batch_pme_convolve_backward_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=(num_systems, nx, ny, nz_rfft),
+        inputs=[
+            mesh_fft,
+            grad_convolved,
+            k_squared,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+            alpha,
+            volumes,
+        ],
+        outputs=[grad_mesh_fft, grad_alpha, grad_volumes, grad_k_squared],
+        device=device,
+    )
+
+
 def pme_energy_corrections(
     raw_energies: wp.array,
     charges: wp.array,
@@ -1055,6 +2214,163 @@ def batch_pme_energy_corrections(
         dim=num_atoms,
         inputs=[raw_energies, charges, batch_idx, volumes, alpha, total_charges],
         outputs=[corrected_energies],
+        device=device,
+    )
+
+
+def pme_energy_corrections_backward(
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    volume: wp.array,
+    alpha: wp.array,
+    total_charge: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volume: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charge: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Single-system launcher for ``_pme_energy_corrections_backward_kernel``.
+
+    ``grad_volume``, ``grad_alpha``, and ``grad_total_charge`` must be
+    zero-initialized 1-element arrays.
+    """
+    kernel = _pme_energy_corrections_backward_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=raw_energies.shape[0],
+        inputs=[grad_E, raw_energies, charges, volume, alpha, total_charge],
+        outputs=[
+            grad_raw,
+            grad_charges,
+            grad_volume,
+            grad_alpha,
+            grad_total_charge,
+        ],
+        device=device,
+    )
+
+
+def batch_pme_energy_corrections_backward(
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    volumes: wp.array,
+    alpha: wp.array,
+    total_charges: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volumes: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charges: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Batched launcher for ``_batch_pme_energy_corrections_backward_kernel``.
+
+    Per-system grads must be zero-initialized length-B arrays.
+    """
+    kernel = _batch_pme_energy_corrections_backward_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=raw_energies.shape[0],
+        inputs=[
+            grad_E, raw_energies, charges, batch_idx,
+            volumes, alpha, total_charges,
+        ],
+        outputs=[
+            grad_raw,
+            grad_charges,
+            grad_volumes,
+            grad_alpha,
+            grad_total_charges,
+        ],
+        device=device,
+    )
+
+
+def pme_energy_corrections_double_backward(
+    h_raw: wp.array,
+    h_chg: wp.array,
+    h_vol: wp.array,
+    h_alpha: wp.array,
+    h_qtot: wp.array,
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    volume: wp.array,
+    alpha: wp.array,
+    total_charge: wp.array,
+    grad_grad_E: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volume: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charge: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Single-system launcher for ``_pme_energy_corrections_double_backward_kernel``.
+
+    ``grad_volume`` / ``grad_alpha`` / ``grad_total_charge`` must be
+    zero-initialized 1-element arrays.
+    """
+    kernel = _pme_energy_corrections_double_backward_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=raw_energies.shape[0],
+        inputs=[
+            h_raw, h_chg, h_vol, h_alpha, h_qtot,
+            grad_E, raw_energies, charges, volume, alpha, total_charge,
+        ],
+        outputs=[
+            grad_grad_E, grad_raw, grad_charges,
+            grad_volume, grad_alpha, grad_total_charge,
+        ],
+        device=device,
+    )
+
+
+def batch_pme_energy_corrections_double_backward(
+    h_raw: wp.array,
+    h_chg: wp.array,
+    h_vol: wp.array,
+    h_alpha: wp.array,
+    h_qtot: wp.array,
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    volumes: wp.array,
+    alpha: wp.array,
+    total_charges: wp.array,
+    grad_grad_E: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volumes: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charges: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Batched launcher for ``_batch_pme_energy_corrections_double_backward_kernel``."""
+    kernel = _batch_pme_energy_corrections_double_backward_kernel_overload[wp_dtype]
+    wp.launch(
+        kernel,
+        dim=raw_energies.shape[0],
+        inputs=[
+            h_raw, h_chg, h_vol, h_alpha, h_qtot,
+            grad_E, raw_energies, charges, batch_idx,
+            volumes, alpha, total_charges,
+        ],
+        outputs=[
+            grad_grad_E, grad_raw, grad_charges,
+            grad_volumes, grad_alpha, grad_total_charges,
+        ],
         device=device,
     )
 
@@ -1164,6 +2480,102 @@ def batch_pme_energy_corrections_with_charge_grad(
     )
 
 
+def pme_virial_bg_correction(
+    charges: wp.array,
+    batch_idx: wp.array,
+    cell: wp.array,
+    alpha: wp.array,
+    total_charges: wp.array,
+    virial_in: wp.array,
+    virial_out: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Apply non-neutral background virial correction.
+
+    Two-pass: pass 1 reduces per-atom ``charges`` into per-system
+    ``total_charges`` (zero-initialized by the caller) via atomic_add;
+    pass 2 computes ``V = |det(cell[s])|``, ``E_bg = π Q² / (2 α² V)``,
+    subtracts ``E_bg`` from the three diagonal entries of ``virial_in``,
+    and writes the result to ``virial_out``. Single-system uses
+    ``batch_idx`` filled with zeros.
+
+    Shapes:
+      charges       (N,)
+      batch_idx     (N,) int32
+      cell          (B, 3, 3)
+      alpha         (B,)
+      total_charges (B,)  — zero-initialized by caller; written in pass 1
+      virial_in     (B, 3, 3)
+      virial_out    (B, 3, 3) — written in pass 2 (may alias virial_in)
+    """
+    num_atoms = charges.shape[0]
+    num_systems = total_charges.shape[0]
+    wp.launch(
+        _pme_virial_bg_reduce_kernel_overload[wp_dtype],
+        dim=num_atoms,
+        inputs=[charges, batch_idx, total_charges],
+        device=device,
+    )
+    wp.launch(
+        _pme_virial_bg_apply_kernel_overload[wp_dtype],
+        dim=num_systems,
+        inputs=[total_charges, cell, alpha, virial_in, virial_out],
+        device=device,
+    )
+
+
+def pme_virial_bg_correction_backward(
+    grad_virial: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    cell: wp.array,
+    alpha: wp.array,
+    total_charges: wp.array,
+    grad_total_charges: wp.array,
+    grad_charges: wp.array,
+    grad_alpha: wp.array,
+    grad_cell: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Analytic backward for ``pme_virial_bg_correction``.
+
+    Three passes:
+      1) reduce ``charges`` into ``total_charges`` (Q per system)
+      2) per-system: turn cotangent ``grad_virial`` into ``grad_total_charges``,
+         ``grad_alpha``, ``grad_cell`` via dE_bg/dQ, dE_bg/dα, and Jacobi's
+         formula for d|det C|/dC
+      3) per-atom: scatter ``grad_total_charges[s(j)]`` to ``grad_charges[j]``
+
+    All output buffers (``total_charges``, ``grad_*``) are zero-initialized
+    by the caller.
+    """
+    num_atoms = charges.shape[0]
+    num_systems = total_charges.shape[0]
+    wp.launch(
+        _pme_virial_bg_reduce_kernel_overload[wp_dtype],
+        dim=num_atoms,
+        inputs=[charges, batch_idx, total_charges],
+        device=device,
+    )
+    wp.launch(
+        _pme_virial_bg_backward_per_system_kernel_overload[wp_dtype],
+        dim=num_systems,
+        inputs=[
+            grad_virial, total_charges, cell, alpha,
+            grad_total_charges, grad_alpha, grad_cell,
+        ],
+        device=device,
+    )
+    wp.launch(
+        _pme_virial_bg_backward_per_atom_kernel_overload[wp_dtype],
+        dim=num_atoms,
+        inputs=[batch_idx, grad_total_charges, grad_charges],
+        device=device,
+    )
+
+
 ###########################################################################################
 ########################### Module Exports #################################################
 ###########################################################################################
@@ -1174,13 +2586,31 @@ __all__ = [
     "_batch_pme_green_structure_factor_kernel_overload",
     "_pme_energy_corrections_kernel_overload",
     "_batch_pme_energy_corrections_kernel_overload",
+    "_pme_energy_corrections_backward_kernel_overload",
+    "_batch_pme_energy_corrections_backward_kernel_overload",
+    "_pme_energy_corrections_double_backward_kernel_overload",
+    "_batch_pme_energy_corrections_double_backward_kernel_overload",
     "_pme_energy_corrections_with_charge_grad_kernel_overload",
     "_batch_pme_energy_corrections_with_charge_grad_kernel_overload",
+    "_pme_convolve_kernel_overload",
+    "_batch_pme_convolve_kernel_overload",
+    "_pme_convolve_backward_kernel_overload",
+    "_batch_pme_convolve_backward_kernel_overload",
     # Warp launchers
     "pme_green_structure_factor",
     "batch_pme_green_structure_factor",
+    "pme_convolve",
+    "batch_pme_convolve",
+    "pme_convolve_backward",
+    "batch_pme_convolve_backward",
     "pme_energy_corrections",
     "batch_pme_energy_corrections",
+    "pme_energy_corrections_backward",
+    "batch_pme_energy_corrections_backward",
+    "pme_energy_corrections_double_backward",
+    "batch_pme_energy_corrections_double_backward",
     "pme_energy_corrections_with_charge_grad",
     "batch_pme_energy_corrections_with_charge_grad",
+    "pme_virial_bg_correction",
+    "pme_virial_bg_correction_backward",
 ]

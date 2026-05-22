@@ -465,17 +465,56 @@ class TestEstimatePMEParameters:
             assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
-    def test_consistency_with_ewald_parameters(self, device):
-        """Test that alpha matches estimate_ewald_parameters."""
+    def test_pme_alpha_differs_from_ewald(self, device):
+        """PME and Ewald cost models differ — alpha must too.
+
+        Ewald balances ``rc^3 · N`` vs ``K^3`` (k-sum). PME balances
+        ``rc^3 · N`` vs ``K^3 · log(K)`` (FFT), which makes the FFT
+        side much cheaper at scale and drives the optimal rc *down*
+        (and α correspondingly *up*) compared to Ewald. The previous
+        consistency assertion was an artifact of the old PME estimator
+        reusing the Ewald formula — see the proposal for the math.
+        """
         positions = torch.randn(100, 3, device=device)
         cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
 
         pme_params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
         ewald_params = estimate_ewald_parameters(positions, cell, accuracy=1e-6)
 
-        assert torch.allclose(pme_params.alpha, ewald_params.alpha)
+        # PME rc should be ≤ Ewald rc; PME alpha should be ≥ Ewald alpha.
+        assert torch.all(pme_params.real_space_cutoff <= ewald_params.real_space_cutoff)
+        assert torch.all(pme_params.alpha >= ewald_params.alpha)
+
+    @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
+    def test_pme_cutoff_in_sane_range(self, device):
+        """Cost-optimal PME rc should land in the 4–20 Å band for typical systems."""
+        positions = torch.randn(500, 3, device=device)
+        cell = torch.eye(3, device=device).unsqueeze(0) * 25.0
+
+        params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
+        rc = float(params.real_space_cutoff[0].item())
+        assert 4.0 <= rc <= 20.0, f"rc={rc} outside sane band"
+
+    @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])
+    def test_pme_user_supplied_cutoff_respected(self, device):
+        """When real_space_cutoff is given, it is used as-is."""
+        positions = torch.randn(100, 3, device=device)
+        cell = torch.eye(3, device=device).unsqueeze(0) * 20.0
+
+        params = estimate_pme_parameters(
+            positions, cell, accuracy=1e-6, real_space_cutoff=7.5,
+        )
         assert torch.allclose(
-            pme_params.real_space_cutoff, ewald_params.real_space_cutoff
+            params.real_space_cutoff,
+            torch.tensor([7.5], dtype=positions.dtype, device=device),
+        )
+        # Alpha derived from the user-supplied rc:
+        # α = √(-log(2·1e-6)) / 7.5
+        expected_alpha = math.sqrt(-math.log(2.0 * 1e-6)) / 7.5
+        assert torch.allclose(
+            params.alpha,
+            torch.tensor([expected_alpha], dtype=positions.dtype, device=device),
+            rtol=1e-5,
         )
 
     @pytest.mark.parametrize("device", [torch.device("cpu"), torch.device("cuda:0")])

@@ -425,11 +425,19 @@ class TestPMEConservationLaws:
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_momentum_conservation(self, device):
-        """Test that net force is zero for neutral system."""
+        """Test that net force is zero for neutral system.
+
+        Seeded to avoid RNG-state-dependent fragility: with 6 atoms, the
+        PME spline-discretization residual on net force can swing from
+        ~1e-6 to ~5e-4 depending on which positions ``torch.rand`` produces.
+        Without seeding, this test was passing intermittently based on
+        test-collection / module-load ordering.
+        """
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
 
+        torch.manual_seed(0)
         positions, charges, cell = create_simple_system(device, num_atoms=6)
 
         _, forces = pme_reciprocal_space(
@@ -3715,37 +3723,15 @@ class TestPMETorchCompile:
         torch.testing.assert_close(grad_compiled, grad_eager, rtol=1e-3, atol=1e-3)
         torch.testing.assert_close(dq_compiled, dq_eager, rtol=1e-3, atol=1e-3)
 
-    @pytest.mark.skipif(
-        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
-    )
-    def test_pme_green_structure_factor_stream_ordering(self):
-        """Compiled pme_green_structure_factor output consumed by Torch math matches eager."""
-        from nvalchemiops.torch.interactions.electrostatics.pme import (
-            pme_green_structure_factor,
-        )
-
-        device = torch.device("cuda")
-        dtype = torch.float64
-        torch.manual_seed(42)
-
-        cell = (torch.eye(3, device=device, dtype=dtype) * 10.0).unsqueeze(0)
-        mesh_dims = (8, 8, 8)
-        _, k_squared = generate_k_vectors_pme(cell, mesh_dims)
-        alpha = torch.tensor([0.3], dtype=dtype, device=device)
-
-        def green_and_consume(k_squared, alpha, cell):
-            green, bspline = pme_green_structure_factor(
-                k_squared, mesh_dims, alpha, cell, spline_order=4
-            )
-            return green.sum() + bspline.sum()
-
-        result_eager = green_and_consume(k_squared, alpha, cell)
-
-        compiled_fn = torch.compile(green_and_consume, dynamic=True)
-        result_compiled = compiled_fn(k_squared, alpha, cell)
-
-        assert torch.isfinite(result_compiled)
-        torch.testing.assert_close(result_compiled, result_eager, rtol=1e-5, atol=1e-5)
+    # NOTE: ``test_pme_green_structure_factor_stream_ordering`` was removed
+    # when the standalone ``pme_green_structure_factor`` torch wrapper was
+    # retired — its role in ``pme_reciprocal_space`` is now covered by the
+    # fused ``_PMEFusedConvolve`` convolve kernel, leaving the wrapper as
+    # dead code with no internal callers. The framework-agnostic Warp
+    # launcher
+    # ``nvalchemiops.interactions.electrostatics.pme_kernels.pme_green_structure_factor``
+    # is retained for direct kernel use and standalone correctness testing
+    # in ``test/interactions/electrostatics/test_pme_kernels.py``.
 
 
 ###########################################################################################

@@ -45,10 +45,10 @@ from nvalchemiops.torch.interactions.electrostatics.parameters import (
     mesh_spacing_to_dimensions,
 )
 from nvalchemiops.torch.interactions.electrostatics.pme import (
+    compute_bspline_moduli_1d,
     particle_mesh_ewald,
     pme_energy_corrections,
     pme_energy_corrections_with_charge_grad,
-    pme_green_structure_factor,
     pme_reciprocal_space,
 )
 from nvalchemiops.torch.interactions.electrostatics.slab import (
@@ -71,9 +71,9 @@ __all__ = [
     # PME
     "particle_mesh_ewald",
     "pme_reciprocal_space",
-    "pme_green_structure_factor",
     "pme_energy_corrections",
     "pme_energy_corrections_with_charge_grad",
+    "compute_bspline_moduli_1d",
     # K-vectors
     "generate_k_vectors_ewald_summation",
     "generate_k_vectors_pme",

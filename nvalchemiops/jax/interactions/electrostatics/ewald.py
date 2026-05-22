@@ -59,9 +59,11 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _build_electrostatic_result,
     _combine_electrostatic_outputs,
-    _make_jax_kernels,
     _normalize_dtype,
     _prepare_cell,
+)
+from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
+    make_jax_kernels as _make_jax_kernels,
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
@@ -83,6 +85,13 @@ __all__ = [
 ]
 
 PI = math.pi
+
+# ``_make_jax_kernels`` is imported from ``_lazy_jax_kernels``: it returns a
+# lazy dict whose dtype entries materialize their ``jax_kernel`` wrappers on
+# first ``__getitem__``. Module import is therefore free of FFI work; warp
+# NVRTC compile defers to first launch (same lazy-per-module shape used by
+# ``nvalchemiops.math.spline``).
+
 
 # ==============================================================================
 # JAX Kernel Wrappers - Real Space

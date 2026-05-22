@@ -194,7 +194,6 @@ _DEPRECATED_TORCH_EXPORTS = {
     # PME
     "particle_mesh_ewald": "nvalchemiops.torch.interactions.electrostatics.pme",
     "pme_reciprocal_space": "nvalchemiops.torch.interactions.electrostatics.pme",
-    "pme_green_structure_factor": "nvalchemiops.torch.interactions.electrostatics.pme",
     "pme_energy_corrections": "nvalchemiops.torch.interactions.electrostatics.pme",
     "pme_energy_corrections_with_charge_grad": "nvalchemiops.torch.interactions.electrostatics.pme",
     # Slab correction
