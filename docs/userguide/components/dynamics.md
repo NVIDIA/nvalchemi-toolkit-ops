@@ -290,8 +290,10 @@ $$
 
 ### NPT (Isothermal-Isobaric)
 
-Constant temperature and pressure simulations using Martyna-Tobias-Klein (MTK) equations
-with coupled Nosé-Hoover chains for thermostat and barostat:
+Constant temperature and pressure simulations using Martyna-Tobias-Klein (MTK)
+equations. The convenience `run_npt_step` applies particle thermostat friction
+inside its NPT velocity half-steps; it is not a drop-in primitive for integrator
+splits that apply particle Nosé-Hoover velocity scaling separately.
 
 ```python
 from nvalchemiops.dynamics.integrators import run_npt_step
@@ -310,7 +312,8 @@ run_npt_step(
 
 - Maintains constant temperature and pressure
 - Supports isotropic (scalar), orthorhombic (3 components), and fully anisotropic (9 components) pressure control
-- Uses Nosé-Hoover chains for both thermostat and barostat
+- Uses an NPT velocity primitive that includes particle thermostat drag
+- Use `nph_velocity_half_step` or another no-thermostat velocity primitive when composing a separate particle NHC Trotter scaling step
 
 ### NPH (Isenthalpic-Isobaric)
 

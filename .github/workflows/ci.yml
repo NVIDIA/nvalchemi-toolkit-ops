@@ -162,7 +162,7 @@ jobs:
       - get-pr-labels
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -218,6 +218,8 @@ jobs:
       #
       # PR branches use push events to refs/heads/pull-request/*, not the
       # pull_request event. Detect them via the branch name pattern.
+      # Testmon baselines are Python-version-specific because testmon keys its
+      # dependency database by the interpreter version and installed packages.
       - name: Restore testmon baseline (for PRs)
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: actions/cache/restore@v4
@@ -225,9 +227,9 @@ jobs:
           path: |
             .testmondata
             .coverage
-          key: testmon-baseline-main-${{ github.run_id }}
+          key: testmon-baseline-main-py${{ matrix.python-version }}-${{ github.run_id }}
           restore-keys: |
-            testmon-baseline-main-
+            testmon-baseline-main-py${{ matrix.python-version }}-
 
       - name: Run tests with testmon and coverage
         run: |
@@ -242,15 +244,8 @@ jobs:
             make testmon-coverage PYTEST_TESTMON_FLAGS=""
           fi
 
-      # Cache baseline (only from main/schedule runs)
-      - name: Delete old testmon cache
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh cache list --key testmon-baseline-main- --json id,key --jq '.[].key' | \
-            xargs -I{} gh cache delete "{}" || true
-
+      # Save one baseline per Python version from main/schedule runs. PR runs
+      # restore the newest matching baseline for their matrix interpreter.
       - name: Save testmon baseline
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
         uses: actions/cache/save@v4
@@ -258,7 +253,7 @@ jobs:
           path: |
             .testmondata
             .coverage
-          key: testmon-baseline-main-${{ github.run_id }}
+          key: testmon-baseline-main-py${{ matrix.python-version }}-${{ github.run_id }}
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'

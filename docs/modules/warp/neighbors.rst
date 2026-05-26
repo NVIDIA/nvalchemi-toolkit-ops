@@ -65,6 +65,5 @@ Exceptions
 Utility Functions
 ^^^^^^^^^^^^^^^^^
 
-.. autofunction:: nvalchemiops.neighbors.neighbor_utils.zero_array
 .. autofunction:: nvalchemiops.neighbors.neighbor_utils.estimate_max_neighbors
 .. autofunction:: nvalchemiops.neighbors.neighbor_utils.compute_naive_num_shifts
