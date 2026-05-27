@@ -98,7 +98,9 @@ Moment Reduction:
     _slab_reduce_moments_kernel: Accumulate projected M, M2, Q_total per system
 
 Per-Atom Correction:
-    _slab_correction_kernel: Energy, forces, charge gradients, and virial
+    Ewald-style split kernels cover energy, energy+forces, and
+    energy+forces+charge gradients. Virial is gated by a compute_virial bool
+    inside the force-capable kernels.
 
 Both kernels handle single-system and batched calculations via batch_idx.
 For single systems, pass batch_idx = zeros(N, dtype=int32).
@@ -254,8 +256,9 @@ def _slab_reduce_moments_kernel(
 ###########################################################################################
 
 
-@wp.kernel
-def _slab_correction_kernel(
+@wp.func
+def _slab_correction_terms(
+    atom_idx: wp.int32,
     positions: wp.array(dtype=Any),  # (N,) vec3
     charges: wp.array(dtype=Any),  # (N,)
     batch_idx: wp.array(dtype=wp.int32),  # (N,)
@@ -264,87 +267,26 @@ def _slab_correction_kernel(
     mz: wp.array2d(dtype=wp.float64),  # (B, 3) projected M in slab-axis slot
     mz2: wp.array2d(dtype=wp.float64),  # (B, 3) projected M2 in slab-axis slot
     qtotal: wp.array(dtype=wp.float64),  # (B,) precomputed total charge
-    energy_in: wp.array(dtype=wp.float64),  # (N,) input energies
-    energy_out: wp.array(dtype=wp.float64),  # (N,) OUTPUT: energy_in + slab correction
-    forces: wp.array(dtype=Any),  # (N,) vec3 -- OUTPUT: accumulated forces
-    charge_grads: wp.array(
-        dtype=wp.float64
-    ),  # (N,) OUTPUT: accumulated charge gradients
-    virial: wp.array(dtype=Any),  # (B,) mat33 -- OUTPUT: accumulated virial tensor
-):
-    """Apply Yeh-Berkowitz slab correction (with Ballenegger non-neutral
-    extension) to per-atom energies, forces, charge gradients, and virial.
-
-    Each thread processes one atom independently. Reads precomputed moments
-    from the reduction kernel and computes all correction terms. The
-    non-periodic axis is determined per-system from pbc[system_id].
-
-    Launch Grid
-    -----------
-    dim = [N_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates.
-    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Atomic charges.
-    batch_idx : wp.array, shape (N,), dtype=wp.int32
-        System index for each atom (0 to B-1).
-    pbc : wp.array2d, shape (B, 3), dtype=wp.bool
-        Per-system periodic boundary conditions.
-    cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
-        Per-system cell matrices. Volume, periodic-plane normal, and projected
-        slab height are computed inside the kernel so the Warp tape captures
-        the chain for autograd backpropagation to cell.
-    mz : wp.array, shape (B, 3), dtype=wp.float64
-        Per-system projected dipole moment from reduction kernel, stored in
-        the non-periodic axis slot.
-    mz2 : wp.array, shape (B, 3), dtype=wp.float64
-        Per-system projected second moment from reduction kernel, stored in
-        the non-periodic axis slot.
-    qtotal : wp.array, shape (B,), dtype=wp.float64
-        Per-system total charge from reduction kernel.
-    energy_in : wp.array, shape (N,), dtype=wp.float64
-        Input per-atom energies (from Ewald).
-    energy_out : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Corrected per-atom energies (energy_in + slab correction).
-    forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Slab force contribution accumulated onto existing forces.
-    charge_grads : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Slab charge gradient contribution accumulated onto existing gradients.
-    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Slab virial contribution accumulated onto existing virial.
-
-    Notes
-    -----
-    - Uses separate energy_in/energy_out arrays for Warp autodiff compatibility.
-    - Forces and charge_grads are accumulated via atomic_add (not overwritten).
-    - Virial follows the normal-following affine strain convention:
-      W_i = E_i * (I - 2 n n^T).
-    - Cell is accepted in user dtype; geometry is computed inside the Warp
-      kernel so the tape captures the full cell -> correction chain for
-      autograd backpropagation.
-    - Forces/virial are cast back to input dtype for output.
-    - Energy prefactor is 2*pi/V (toolkit-ops returns per-atom energies
-      directly; no final /2 division).
-    - Force and charge gradient prefactors are 4*pi/V due to the double-sum
-      structure of the total energy.
-    - Systems whose pbc is not slab-like (not exactly one False entry) get
-      energy_out[i] = energy_in[i] (passthrough) and zero contribution to
-      forces, charge_grads, virial.
-    """
-    atom_idx = wp.tid()
-
+) -> tuple[
+    bool,
+    wp.int32,
+    Any,
+    wp.float64,
+    wp.float64,
+    wp.float64,
+    wp.float64,
+    wp.float64,
+    wp.float64,
+]:
+    """Compute common slab terms for one atom."""
     system_id = batch_idx[atom_idx]
     p0 = pbc[system_id, 0]
     p1 = pbc[system_id, 1]
     p2 = pbc[system_id, 2]
 
-    q = charges[atom_idx]
     pos = positions[atom_idx]
+    q = charges[atom_idx]
 
-    # Determine non-periodic axis index (0, 1, or 2).
     axis_idx = wp.int32(2)
     is_slab = False
 
@@ -358,12 +300,15 @@ def _slab_correction_kernel(
         axis_idx = wp.int32(2)
         is_slab = True
 
+    zero = wp.float64(0.0)
+    normal = type(pos)(
+        type(pos[0])(zero),
+        type(pos[0])(zero),
+        type(pos[0])(zero),
+    )
     if not is_slab:
-        # Passthrough; no slab contribution
-        energy_out[atom_idx] = energy_in[atom_idx]
-        return
+        return False, system_id, normal, zero, zero, zero, zero, zero, zero
 
-    # Compute geometry inside the kernel so Warp autodiff tracks cell dependence.
     cell_b = cell[system_id]
     vol = wp.float64(wp.abs(wp.determinant(cell_b)))
 
@@ -385,8 +330,6 @@ def _slab_correction_kernel(
     c_dot_n = wp.dot(nonperiodic_c, normal)
     height_sq = wp.float64(c_dot_n) * wp.float64(c_dot_n)
 
-    # Load projected per-system moments (float64). The reduction kernel stores
-    # M and M2 in the slot corresponding to the non-periodic pbc axis.
     mz_val = mz[system_id, 2]
     mz2_val = mz2[system_id, 2]
     if axis_idx == wp.int32(0):
@@ -397,41 +340,58 @@ def _slab_correction_kernel(
         mz2_val = mz2[system_id, 1]
     qtot = qtotal[system_id]
 
-    # Cast to float64 for bracket computation (mixes with float64 moments)
     z_f64 = wp.float64(z)
     q_f64 = wp.float64(q)
-
-    # Common subexpression: bracket term
-    # [z_i * M - 0.5 * (M2 + Q * z_i^2) - Q/12 * L^2]
     bracket = (
         z_f64 * mz_val
         - wp.float64(0.5) * (mz2_val + qtot * z_f64 * z_f64)
         - qtot / wp.float64(12.0) * height_sq
     )
+    e_slab = (TWOPI / vol) * q_f64 * bracket
 
-    # E_slab_i = (2*pi/V) * q_i * bracket
-    twopi_over_v = TWOPI / vol
-    e_slab = twopi_over_v * q_f64 * bracket
-    energy_out[atom_idx] = energy_in[atom_idx] + e_slab
+    return True, system_id, normal, vol, e_slab, bracket, z_f64, q_f64, mz_val
 
-    # F_slab_i = -(4*pi/V) * q_i * (M - Q * z_i) * n
-    fourpi_over_v = FOURPI / vol
-    f_slab_mag = -fourpi_over_v * q_f64 * (mz_val - qtot * z_f64)
 
-    f_slab = type(pos)(
-        type(pos[0])(f_slab_mag * wp.float64(normal[0])),
-        type(pos[0])(f_slab_mag * wp.float64(normal[1])),
-        type(pos[0])(f_slab_mag * wp.float64(normal[2])),
+@wp.func
+def _slab_add_force(
+    atom_idx: wp.int32,
+    normal: Any,
+    vol: wp.float64,
+    z_f64: wp.float64,
+    q_f64: wp.float64,
+    mz_val: wp.float64,
+    qtot: wp.float64,
+    forces: wp.array(dtype=Any),
+):
+    """Accumulate one atom's slab force."""
+    f_slab_mag = -(FOURPI / vol) * q_f64 * (mz_val - qtot * z_f64)
+    f_slab = type(normal)(
+        type(normal[0])(f_slab_mag * wp.float64(normal[0])),
+        type(normal[0])(f_slab_mag * wp.float64(normal[1])),
+        type(normal[0])(f_slab_mag * wp.float64(normal[2])),
     )
-
     wp.atomic_add(forces, atom_idx, f_slab)
 
-    # dE_slab/dq_i = (4*pi/V) * bracket
-    cg_slab = fourpi_over_v * bracket
-    wp.atomic_add(charge_grads, atom_idx, cg_slab)
 
-    # Under affine strain of positions and cell, n follows the periodic plane:
-    # W_i = E_i * (I - 2 n n^T).
+@wp.func
+def _slab_add_charge_grad(
+    atom_idx: wp.int32,
+    vol: wp.float64,
+    bracket: wp.float64,
+    charge_grads: wp.array(dtype=wp.float64),
+):
+    """Accumulate one atom's slab charge gradient."""
+    wp.atomic_add(charge_grads, atom_idx, (FOURPI / vol) * bracket)
+
+
+@wp.func
+def _slab_add_virial(
+    system_id: wp.int32,
+    normal: Any,
+    e_slab: wp.float64,
+    virial: wp.array(dtype=Any),
+):
+    """Accumulate one atom's normal-following slab virial."""
     n0 = wp.float64(normal[0])
     n1 = wp.float64(normal[1])
     n2 = wp.float64(normal[2])
@@ -449,8 +409,111 @@ def _slab_correction_kernel(
         e_slab * (-two * n2 * n1),
         e_slab * (one - two * n2 * n2),
     )
-
     wp.atomic_add(virial, system_id, type(virial[0])(virial_mat))
+
+
+@wp.kernel
+def _slab_correction_energy_kernel(
+    positions: wp.array(dtype=Any),  # (N,) vec3
+    charges: wp.array(dtype=Any),  # (N,)
+    batch_idx: wp.array(dtype=wp.int32),  # (N,)
+    pbc: wp.array2d(dtype=wp.bool),  # (B, 3) per-system pbc
+    cell: wp.array(dtype=Any),  # (B,) mat33 -- volume/normal/height computed inside
+    mz: wp.array2d(dtype=wp.float64),  # (B, 3) projected M in slab-axis slot
+    mz2: wp.array2d(dtype=wp.float64),  # (B, 3) projected M2 in slab-axis slot
+    qtotal: wp.array(dtype=wp.float64),  # (B,) precomputed total charge
+    energy_in: wp.array(dtype=wp.float64),  # (N,) input energies
+    energy_out: wp.array(dtype=wp.float64),  # (N,) OUTPUT: energy_in + slab correction
+):
+    """Apply the slab energy correction."""
+    atom_idx = wp.tid()
+    (
+        is_slab,
+        energy_system_id,
+        energy_normal,
+        energy_vol,
+        e_slab,
+        energy_bracket,
+        energy_z,
+        energy_q,
+        energy_mz,
+    ) = _slab_correction_terms(
+        atom_idx, positions, charges, batch_idx, pbc, cell, mz, mz2, qtotal
+    )
+    if not is_slab:
+        energy_out[atom_idx] = energy_in[atom_idx]
+        return
+    energy_out[atom_idx] = energy_in[atom_idx] + e_slab
+
+
+@wp.kernel
+def _slab_correction_energy_forces_kernel(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    pbc: wp.array2d(dtype=wp.bool),
+    cell: wp.array(dtype=Any),
+    mz: wp.array2d(dtype=wp.float64),
+    mz2: wp.array2d(dtype=wp.float64),
+    qtotal: wp.array(dtype=wp.float64),
+    energy_in: wp.array(dtype=wp.float64),
+    energy_out: wp.array(dtype=wp.float64),
+    compute_virial: bool,
+    forces: wp.array(dtype=Any),
+    virial: wp.array(dtype=Any),
+):
+    """Apply slab energy and force corrections, optionally accumulating virial."""
+    atom_idx = wp.tid()
+    is_slab, system_id, normal, vol, e_slab, force_bracket, z_f64, q_f64, mz_val = (
+        _slab_correction_terms(
+            atom_idx, positions, charges, batch_idx, pbc, cell, mz, mz2, qtotal
+        )
+    )
+    if not is_slab:
+        energy_out[atom_idx] = energy_in[atom_idx]
+        return
+    energy_out[atom_idx] = energy_in[atom_idx] + e_slab
+    _slab_add_force(
+        atom_idx, normal, vol, z_f64, q_f64, mz_val, qtotal[system_id], forces
+    )
+    if compute_virial:
+        _slab_add_virial(system_id, normal, e_slab, virial)
+
+
+@wp.kernel
+def _slab_correction_energy_forces_charge_grad_kernel(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    pbc: wp.array2d(dtype=wp.bool),
+    cell: wp.array(dtype=Any),
+    mz: wp.array2d(dtype=wp.float64),
+    mz2: wp.array2d(dtype=wp.float64),
+    qtotal: wp.array(dtype=wp.float64),
+    energy_in: wp.array(dtype=wp.float64),
+    energy_out: wp.array(dtype=wp.float64),
+    compute_virial: bool,
+    forces: wp.array(dtype=Any),
+    charge_grads: wp.array(dtype=wp.float64),
+    virial: wp.array(dtype=Any),
+):
+    """Apply slab energy, force, and charge-gradient corrections, optionally virial."""
+    atom_idx = wp.tid()
+    is_slab, system_id, normal, vol, e_slab, bracket, z_f64, q_f64, mz_val = (
+        _slab_correction_terms(
+            atom_idx, positions, charges, batch_idx, pbc, cell, mz, mz2, qtotal
+        )
+    )
+    if not is_slab:
+        energy_out[atom_idx] = energy_in[atom_idx]
+        return
+    energy_out[atom_idx] = energy_in[atom_idx] + e_slab
+    _slab_add_force(
+        atom_idx, normal, vol, z_f64, q_f64, mz_val, qtotal[system_id], forces
+    )
+    _slab_add_charge_grad(atom_idx, vol, bracket, charge_grads)
+    if compute_virial:
+        _slab_add_virial(system_id, normal, e_slab, virial)
 
 
 ###########################################################################################
@@ -464,7 +527,9 @@ _M = [wp.mat33f, wp.mat33d]
 
 # Overload dictionaries
 _slab_reduce_moments_kernel_overload = {}
-_slab_correction_kernel_overload = {}
+_slab_correction_energy_kernel_overload = {}
+_slab_correction_energy_forces_kernel_overload = {}
+_slab_correction_energy_forces_charge_grad_kernel_overload = {}
 
 for t, v, m in zip(_T, _V, _M):
     _slab_reduce_moments_kernel_overload[t] = wp.overload(
@@ -481,8 +546,8 @@ for t, v, m in zip(_T, _V, _M):
         ],
     )
 
-    _slab_correction_kernel_overload[t] = wp.overload(
-        _slab_correction_kernel,
+    _slab_correction_energy_kernel_overload[t] = wp.overload(
+        _slab_correction_energy_kernel,
         [
             wp.array(dtype=v),  # positions
             wp.array(dtype=t),  # charges
@@ -494,6 +559,42 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=wp.float64),  # qtotal
             wp.array(dtype=wp.float64),  # energy_in
             wp.array(dtype=wp.float64),  # energy_out
+        ],
+    )
+
+    _slab_correction_energy_forces_kernel_overload[t] = wp.overload(
+        _slab_correction_energy_forces_kernel,
+        [
+            wp.array(dtype=v),  # positions
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array2d(dtype=wp.bool),  # pbc
+            wp.array(dtype=m),  # cell (mat33)
+            wp.array2d(dtype=wp.float64),  # mz (B, 3)
+            wp.array2d(dtype=wp.float64),  # mz2 (B, 3)
+            wp.array(dtype=wp.float64),  # qtotal
+            wp.array(dtype=wp.float64),  # energy_in
+            wp.array(dtype=wp.float64),  # energy_out
+            wp.bool,  # compute_virial
+            wp.array(dtype=v),  # forces
+            wp.array(dtype=m),  # virial
+        ],
+    )
+
+    _slab_correction_energy_forces_charge_grad_kernel_overload[t] = wp.overload(
+        _slab_correction_energy_forces_charge_grad_kernel,
+        [
+            wp.array(dtype=v),  # positions
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array2d(dtype=wp.bool),  # pbc
+            wp.array(dtype=m),  # cell (mat33)
+            wp.array2d(dtype=wp.float64),  # mz (B, 3)
+            wp.array2d(dtype=wp.float64),  # mz2 (B, 3)
+            wp.array(dtype=wp.float64),  # qtotal
+            wp.array(dtype=wp.float64),  # energy_in
+            wp.array(dtype=wp.float64),  # energy_out
+            wp.bool,  # compute_virial
             wp.array(dtype=v),  # forces
             wp.array(dtype=wp.float64),  # charge_grads
             wp.array(dtype=m),  # virial
@@ -557,6 +658,58 @@ def slab_reduce_moments(
     )
 
 
+def _launch_slab_correction(
+    positions: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    pbc: wp.array,
+    cell: wp.array,
+    mz: wp.array,
+    mz2: wp.array,
+    qtotal: wp.array,
+    energy_in: wp.array,
+    energy_out: wp.array,
+    wp_dtype: type,
+    *,
+    forces: wp.array | None = None,
+    charge_grads: wp.array | None = None,
+    virial: wp.array | None = None,
+    compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
+    device: str | None = None,
+) -> None:
+    """Launch an Ewald-style slab correction kernel for the requested outputs."""
+    num_atoms = charges.shape[0]
+    if device is None:
+        device = str(charges.device)
+
+    common_inputs = [
+        positions,
+        charges,
+        batch_idx,
+        pbc,
+        cell,
+        mz,
+        mz2,
+        qtotal,
+        energy_in,
+        energy_out,
+    ]
+
+    if compute_charge_gradients:
+        kernel = _slab_correction_energy_forces_charge_grad_kernel_overload[wp_dtype]
+        inputs = [*common_inputs, compute_virial, forces, charge_grads, virial]
+    elif compute_forces or compute_virial:
+        kernel = _slab_correction_energy_forces_kernel_overload[wp_dtype]
+        inputs = [*common_inputs, compute_virial, forces, virial]
+    else:
+        kernel = _slab_correction_energy_kernel_overload[wp_dtype]
+        inputs = common_inputs
+
+    wp.launch(kernel, dim=num_atoms, inputs=inputs, device=device)
+
+
 def slab_correction(
     positions: wp.array,
     charges: wp.array,
@@ -572,10 +725,12 @@ def slab_correction(
     charge_grads: wp.array,
     virial: wp.array,
     wp_dtype: type,
+    compute_forces: bool = True,
+    compute_charge_gradients: bool = True,
+    compute_virial: bool = True,
     device: str | None = None,
 ) -> None:
-    """Launch kernel to apply slab correction to energies, forces,
-    charge gradients, and virial.
+    """Launch split slab correction kernels for requested outputs.
 
     Parameters
     ----------
@@ -600,6 +755,12 @@ def slab_correction(
         Input per-atom energies.
     energy_out : wp.array, shape (N,), dtype=wp.float64
         OUTPUT: Corrected per-atom energies.
+    compute_forces : bool, default=True
+        If True, compute and accumulate slab forces.
+    compute_charge_gradients : bool, default=True
+        If True, compute and accumulate slab charge gradients.
+    compute_virial : bool, default=True
+        If True, compute and accumulate slab virial.
     forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
         OUTPUT: Forces (slab contribution accumulated).
     charge_grads : wp.array, shape (N,), dtype=wp.float64
@@ -611,27 +772,23 @@ def slab_correction(
     device : str, optional
         Warp device.
     """
-    num_atoms = charges.shape[0]
-    if device is None:
-        device = str(charges.device)
-
-    wp.launch(
-        _slab_correction_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            batch_idx,
-            pbc,
-            cell,
-            mz,
-            mz2,
-            qtotal,
-            energy_in,
-            energy_out,
-            forces,
-            charge_grads,
-            virial,
-        ],
+    _launch_slab_correction(
+        positions=positions,
+        charges=charges,
+        batch_idx=batch_idx,
+        pbc=pbc,
+        cell=cell,
+        mz=mz,
+        mz2=mz2,
+        qtotal=qtotal,
+        energy_in=energy_in,
+        energy_out=energy_out,
+        wp_dtype=wp_dtype,
+        forces=forces,
+        charge_grads=charge_grads,
+        virial=virial,
+        compute_forces=compute_forces,
+        compute_charge_gradients=compute_charge_gradients,
+        compute_virial=compute_virial,
         device=device,
     )

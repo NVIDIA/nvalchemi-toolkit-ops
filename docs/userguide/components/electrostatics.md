@@ -7,8 +7,8 @@
 Electrostatic interactions arise from Coulombic forces between charged particles.
 In periodic systems, the $1/r$ potential decays slowly, requiring special techniques
 to handle the conditionally convergent lattice sum. ALCHEMI Toolkit-Ops provides
-GPU-accelerated implementations of Ewald summation, Particle Mesh Ewald (PME), and
-Damped Shifted Force (DSF) electrostatics
+GPU-accelerated implementations of Ewald summation, two-dimensional Ewald slab
+correction, Particle Mesh Ewald (PME), and Damped Shifted Force (DSF) electrostatics
 via [NVIDIA Warp](https://nvidia.github.io/warp/), with PyTorch and JAX autograd support
 for machine learning applications (Ewald and PME support full position/charge/cell
 autograd; DSF provides charge gradients via autograd and computes forces/virials
@@ -23,6 +23,8 @@ For periodic systems, start with
 systems or large-scale simulations, consider approximate
 {func}`~nvalchemiops.torch.interactions.electrostatics.dsf_coulomb` (PyTorch only) which provides $O(N)$ scaling
 with smooth force continuity at the cutoff.
+For slab-like interfaces with two periodic directions, use
+`ewald_summation(..., slab_correction=True, pbc=...)` in PyTorch.
 ```
 
 ## Overview of Available Methods
@@ -31,7 +33,7 @@ ALCHEMI Toolkit-Ops provides electrostatics modules for point charges:
 
 | Method | Scaling | Best For |
 |--------|---------|----------|
-| **Ewald Summation** | $O(N^2)$ | Small/medium systems (<5000 atoms) |
+| **Ewald Summation** | $O(N^2)$ | Small/medium systems (<5000 atoms), 2D slabs |
 | **Particle Mesh Ewald** | $O(N \log N)$ | Large periodic systems |
 | **Damped Shifted Force (DSF)** | $O(N)$ | Large systems, non-periodic |
 | **Direct Coulomb** | $O(N^2)$ | Non-periodic or as real-space component |
@@ -482,6 +484,52 @@ k_{\text{cutoff}} = \sqrt{-2 \ln \varepsilon} / \eta
 
 ```{tip}
 Refer to the [Parameter Estimation](parameter-estimation) section for API usage.
+```
+
+#### 2D Slab Correction (PyTorch)
+
+For interfacial systems with two periodic directions and one non-periodic direction,
+PyTorch Ewald can add the Yeh-Berkowitz / Ballenegger slab correction. Pass
+`slab_correction=True` and a boolean `pbc` tensor whose `False` entry marks the
+non-periodic axis:
+
+```python
+import torch
+
+from nvalchemiops.torch.interactions.electrostatics import ewald_summation
+from nvalchemiops.torch.neighbors import neighbor_list
+
+pbc_slab = torch.tensor([[True, True, False]], dtype=torch.bool, device=positions.device)
+
+# The neighbor list controls the real-space 3D Ewald images. For a slab setup,
+# use a cell with enough vacuum in the non-periodic direction.
+pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=positions.device)
+neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
+    positions,
+    cutoff=5.0,
+    cell=cell,
+    pbc=pbc_neighbor,
+    return_neighbor_list=True,
+)
+
+energies, forces = ewald_summation(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=0.3,
+    k_cutoff=8.0,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    pbc=pbc_slab,
+    slab_correction=True,
+    compute_forces=True,
+)
+```
+
+```{tip}
+For batched slab simulations, pass `pbc` as an explicit contiguous `(B, 3)`
+tensor so each system carries its own slab geometry.
 ```
 
 #### Separating real- and reciprocal-space

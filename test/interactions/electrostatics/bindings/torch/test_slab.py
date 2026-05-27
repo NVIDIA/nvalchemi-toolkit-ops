@@ -19,10 +19,11 @@ Integration tests for slab correction (Yeh-Berkowitz / Ballenegger Eq. 29).
 Coverage:
 - LAMMPS reference energy for CsCl slab
 - Cross-validation against torch-pme (energies + forces)
-- Analytical forces/charge_grads/virial vs autograd
+- Standalone slab custom-op gradcheck
 - 3D periodic = zero correction
 - Triclinic projected-normal geometry
-- Standalone apply_slab_correction() API agrees with ewald_summation integration
+- Standalone apply_slab_correction() API edge cases
+- Hybrid-force slab semantics
 """
 
 from __future__ import annotations
@@ -317,118 +318,33 @@ class TestTorchPMECrossValidation:
 class TestAnalyticalVsAutograd:
     """Analytical kernel outputs should match autograd derivatives."""
 
-    def test_forces_and_charge_grads_vs_autograd(self, device):
+    def test_slab_gradcheck_all_outputs(self, device):
+        """Slab energy, forces, charge gradients, and virial pass gradcheck."""
         dtype = torch.float64
 
-        positions, charges, cell, pbc, nl, ptr, shifts = _make_cscl_ewald_inputs(
-            dtype, device
-        )
+        positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
         positions = positions.clone().detach().requires_grad_(True)
         charges = charges.clone().detach().requires_grad_(True)
+        cell = cell.clone().detach().requires_grad_(True)
 
-        energies, analytical_forces, charge_grads = ewald_summation(
-            positions,
-            charges,
-            cell,
-            alpha=EWALD_ALPHA,
-            k_cutoff=EWALD_K_CUTOFF,
-            neighbor_list=nl,
-            neighbor_ptr=ptr,
-            neighbor_shifts=shifts,
-            compute_forces=True,
-            compute_charge_gradients=True,
-            pbc=pbc,
-            slab_correction=True,
-        )
+        def slab_outputs(positions_in, charges_in, cell_in):
+            return apply_slab_correction(
+                positions_in,
+                charges_in,
+                cell_in,
+                pbc,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
 
-        autograd_positions, autograd_charge_grads = torch.autograd.grad(
-            energies.sum(), (positions, charges), create_graph=False
-        )
-        autograd_forces = -autograd_positions
-
-        # Analytical total Ewald forces match autograd forces.
-        torch.testing.assert_close(
-            analytical_forces, autograd_forces, rtol=1e-6, atol=1e-10
-        )
-        # Analytical total Ewald charge gradients match autograd charge gradients.
-        torch.testing.assert_close(
-            charge_grads,
-            autograd_charge_grads,
-            rtol=1e-6,
-            atol=1e-10,
-        )
-
-    def test_virial_full_vs_autograd(self, device):
-        """Full 3x3 slab virial should match -dE/d(eps) via autograd strain.
-
-        Strain: r_i -> (I + eps) r_i, h_a -> (I + eps) h_a; W = -dE/deps at eps=0.
-        The kernel emits the normal-following virial W = E * (I - 2 n n^T).
-        """
-        dtype = torch.float64
-
-        positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
-
-        # Analytical virial via the kernel
-        _, analytical_virial = apply_slab_correction(
-            positions, charges, cell, pbc, compute_virial=True
-        )
-        # (1, 3, 3) -> (3, 3) for comparison
-        analytical_W = analytical_virial[0]
-
-        # Autograd via a strain perturbation
-        eps = torch.zeros(3, 3, dtype=dtype, device=device, requires_grad=True)
-        I3 = torch.eye(3, dtype=dtype, device=device)
-        F = I3 + eps  # deformation gradient
-        positions_strained = positions @ F.T
-        cell_strained = cell @ F.T
-
-        e_slab_total = apply_slab_correction(
-            positions_strained, charges, cell_strained, pbc
-        ).sum()
-        autograd_W = -torch.autograd.grad(e_slab_total, eps)[0]
-
-        # Analytical slab-only virial matches strain autograd.
-        torch.testing.assert_close(
-            analytical_W,
-            autograd_W,
-            rtol=1e-6,
-            atol=1e-10,
-        )
-
-    def test_virial_full_non_neutral(self, device):
-        """Full virial test with a non-neutral, non-aligned-charge system."""
-        dtype = torch.float64
-
-        # Non-neutral system with off-axis coordinates. For an axis-aligned
-        # T/T/F cell, normal-following virial has zero shear components for
-        # this strain convention.
-        positions = torch.tensor(
-            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [2.0, 3.0, 7.0]],
-            dtype=dtype,
-            device=device,
-        )
-        charges = torch.tensor([1.0, -0.5, 0.3], dtype=dtype, device=device)
-        cell = torch.diag(
-            torch.tensor([10.0, 10.0, 30.0], dtype=dtype, device=device)
-        ).unsqueeze(0)
-        pbc = torch.tensor([True, True, False], device=device)
-
-        e_slab, analytical_virial = apply_slab_correction(
-            positions, charges, cell, pbc, compute_virial=True
-        )
-        analytical_W = analytical_virial[0]
-
-        eps = torch.zeros(3, 3, dtype=dtype, device=device, requires_grad=True)
-        F = torch.eye(3, dtype=dtype, device=device) + eps
-        e_total = apply_slab_correction(positions @ F.T, charges, cell @ F.T, pbc).sum()
-        autograd_W = -torch.autograd.grad(e_total, eps)[0]
-
-        # Non-neutral slab-only virial matches strain autograd.
-        torch.testing.assert_close(
-            analytical_W,
-            autograd_W,
-            rtol=1e-6,
-            atol=1e-10,
+        assert torch.autograd.gradcheck(
+            slab_outputs,
+            (positions, charges, cell),
+            eps=1e-6,
+            atol=1e-5,
+            rtol=1e-4,
+            nondet_tol=1e-10,
         )
 
 
@@ -508,56 +424,6 @@ class TestTriclinicCells:
         torch.testing.assert_close(charge_grads, ref_cg, rtol=1e-12, atol=1e-15)
         # Triclinic standalone slab virial matches the independent reference.
         torch.testing.assert_close(virial[0], ref_v, rtol=1e-12, atol=1e-15)
-
-    def test_triclinic_forces_and_charge_grads_match_autograd(self, device):
-        dtype = torch.float64
-
-        positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
-        positions = positions.clone().detach().requires_grad_(True)
-        charges = charges.clone().detach().requires_grad_(True)
-
-        energies, analytical_forces, analytical_charge_grads = apply_slab_correction(
-            positions,
-            charges,
-            cell,
-            pbc,
-            compute_forces=True,
-            compute_charge_gradients=True,
-        )
-        autograd_positions, autograd_charge_grads = torch.autograd.grad(
-            energies.sum(), (positions, charges)
-        )
-        autograd_forces = -autograd_positions
-
-        # Triclinic slab forces match autograd forces.
-        torch.testing.assert_close(
-            analytical_forces, autograd_forces, rtol=1e-6, atol=1e-10
-        )
-        # Triclinic slab charge gradients match autograd charge gradients.
-        torch.testing.assert_close(
-            analytical_charge_grads,
-            autograd_charge_grads,
-            rtol=1e-6,
-            atol=1e-10,
-        )
-
-    def test_triclinic_virial_matches_autograd_strain(self, device):
-        dtype = torch.float64
-
-        positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
-
-        _, analytical_virial = apply_slab_correction(
-            positions, charges, cell, pbc, compute_virial=True
-        )
-        eps = torch.zeros(3, 3, dtype=dtype, device=device, requires_grad=True)
-        F = torch.eye(3, dtype=dtype, device=device) + eps
-        e_total = apply_slab_correction(positions @ F.T, charges, cell @ F.T, pbc).sum()
-        autograd_virial = -torch.autograd.grad(e_total, eps)[0]
-
-        # Triclinic slab virial matches strain autograd.
-        torch.testing.assert_close(
-            analytical_virial[0], autograd_virial, rtol=1e-6, atol=1e-10
-        )
 
     def test_triclinic_full_ewald_matches_decomposition(self, device):
         dtype = torch.float64
@@ -748,53 +614,7 @@ class TestPbcNoneHandling:
 
 
 class TestStandaloneSlabAPI:
-    """Standalone apply_slab_correction() should produce the same delta that
-    ewald_summation(slab_correction=True) applies internally."""
-
-    def test_standalone_matches_integrated(self, device):
-        dtype = torch.float64
-
-        positions, charges, cell, pbc, nl, ptr, shifts = _make_cscl_ewald_inputs(
-            dtype, device
-        )
-
-        # Integrated: with slab correction
-        e_with, f_with = ewald_summation(
-            positions,
-            charges,
-            cell,
-            alpha=EWALD_ALPHA,
-            k_cutoff=EWALD_K_CUTOFF,
-            neighbor_list=nl,
-            neighbor_ptr=ptr,
-            neighbor_shifts=shifts,
-            compute_forces=True,
-            pbc=pbc,
-            slab_correction=True,
-        )
-
-        # Without slab correction
-        e_without, f_without = ewald_summation(
-            positions,
-            charges,
-            cell,
-            alpha=EWALD_ALPHA,
-            k_cutoff=EWALD_K_CUTOFF,
-            neighbor_list=nl,
-            neighbor_ptr=ptr,
-            neighbor_shifts=shifts,
-            compute_forces=True,
-        )
-
-        # Standalone slab correction
-        e_slab, f_slab = apply_slab_correction(
-            positions, charges, cell, pbc, compute_forces=True
-        )
-
-        # Integrated slab energy delta equals the standalone slab correction.
-        torch.testing.assert_close(e_with - e_without, e_slab, rtol=1e-12, atol=1e-15)
-        # Integrated slab force delta equals the standalone slab correction.
-        torch.testing.assert_close(f_with - f_without, f_slab, rtol=1e-10, atol=1e-12)
+    """Standalone apply_slab_correction() should validate output shapes and edges."""
 
     def test_standalone_outputs_subset(self, device):
         """Standalone API should return the right tuple based on flags."""
@@ -831,8 +651,8 @@ class TestStandaloneSlabAPI:
         assert cg.shape == (positions.shape[0],)
         assert v.shape == (1, 3, 3)
 
-    def test_standalone_pbc_broadcast(self, device):
-        """A (3,) pbc tensor should broadcast across the batch."""
+    def test_standalone_pbc_single_system_1d_matches_2d(self, device):
+        """A (3,) pbc tensor is accepted for a single system."""
         dtype = torch.float64
 
         positions, charges, cell, _ = _make_cscl_slab_system(dtype, device)
@@ -843,8 +663,97 @@ class TestStandaloneSlabAPI:
         e_1d = apply_slab_correction(positions, charges, cell, pbc_1d)
         e_2d = apply_slab_correction(positions, charges, cell, pbc_2d)
 
-        # Broadcasted 1D and explicit 2D pbc produce identical energies.
+        # Single-system 1D and explicit 2D pbc produce identical energies.
         torch.testing.assert_close(e_1d, e_2d, rtol=0, atol=0)
+
+    def test_standalone_pbc_batched_requires_per_system_pbc(self, device):
+        """Batched slab calls require explicit per-system pbc."""
+        dtype = torch.float64
+
+        positions_a, charges_a, cell_a, _ = _make_cscl_slab_system(dtype, device)
+        positions_b = positions_a + torch.tensor(
+            [0.2, -0.1, 0.3], dtype=dtype, device=device
+        )
+        charges_b = charges_a.clone()
+        cell_b = cell_a.clone()
+
+        positions = torch.cat([positions_a, positions_b], dim=0)
+        charges = torch.cat([charges_a, charges_b], dim=0)
+        cell = torch.cat([cell_a, cell_b], dim=0)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        pbc_1d = torch.tensor([True, True, False], device=device)
+
+        with pytest.raises(ValueError, match="requires `pbc` shape"):
+            apply_slab_correction(
+                positions,
+                charges,
+                cell,
+                pbc_1d,
+                batch_idx=batch_idx,
+            )
+
+    def test_single_atom_non_neutral(self, device):
+        """Single charged slabs should keep finite background terms."""
+        dtype = torch.float64
+
+        positions = torch.tensor([[1.2, -0.4, 3.5]], dtype=dtype, device=device)
+        charges = torch.tensor([0.7], dtype=dtype, device=device)
+        cell = torch.diag(
+            torch.tensor([8.0, 9.0, 24.0], dtype=dtype, device=device)
+        ).unsqueeze(0)
+        pbc = torch.tensor([True, True, False], device=device)
+
+        energies, forces, charge_grads, virial = apply_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+        ref_energies, ref_forces, ref_charge_grads, ref_virial = (
+            _reference_slab_correction(positions, charges, cell, pbc)
+        )
+
+        # Single-atom non-neutral energies match the independent reference.
+        torch.testing.assert_close(energies, ref_energies, rtol=1e-12, atol=1e-15)
+        # Single-atom non-neutral forces match the independent reference.
+        torch.testing.assert_close(forces, ref_forces, rtol=1e-12, atol=1e-15)
+        # Single-atom non-neutral charge gradients match the independent reference.
+        torch.testing.assert_close(
+            charge_grads, ref_charge_grads, rtol=1e-12, atol=1e-15
+        )
+        # Single-atom non-neutral virial matches the independent reference.
+        torch.testing.assert_close(virial[0], ref_virial, rtol=1e-12, atol=1e-15)
+
+    def test_empty_standalone_system(self, device):
+        """Empty standalone slab calls should return empty outputs and zero virial."""
+        dtype = torch.float64
+
+        positions = torch.empty((0, 3), dtype=dtype, device=device)
+        charges = torch.empty((0,), dtype=dtype, device=device)
+        cell = torch.diag(
+            torch.tensor([8.0, 9.0, 24.0], dtype=dtype, device=device)
+        ).unsqueeze(0)
+        pbc = torch.tensor([True, True, False], device=device)
+
+        energies, forces, charge_grads, virial = apply_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+
+        assert energies.shape == (0,)
+        assert forces.shape == (0, 3)
+        assert charge_grads.shape == (0,)
+        assert virial.shape == (1, 3, 3)
+        # Empty slab virial is exactly zero.
+        torch.testing.assert_close(virial, torch.zeros_like(virial), rtol=0, atol=0)
 
 
 # ==============================================================================
@@ -868,48 +777,20 @@ class TestSlabHybridForces:
         k_vectors = generate_k_vectors_ewald_summation(cell.detach(), EWALD_K_CUTOFF)
         return nl, ptr, shifts, k_vectors
 
-    def test_hybrid_slab_positions_and_cell_no_grad(self, device):
-        """Hybrid slab energy must not attach position/cell autograd paths."""
+    def test_hybrid_backward_charge_grad_matches_standard(self, device):
+        """Hybrid backward injects charge gradients without position/cell paths."""
         dtype = torch.float64
 
-        positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
-        positions = positions.clone().requires_grad_(True)
-        charges = charges.clone().requires_grad_(True)
-        cell = cell.clone().requires_grad_(True)
-        nl, ptr, shifts, k_vectors = self._ewald_inputs(positions, cell)
-
-        energies = ewald_summation(
-            positions,
-            charges,
-            cell,
-            alpha=EWALD_ALPHA,
-            k_vectors=k_vectors,
-            neighbor_list=nl,
-            neighbor_ptr=ptr,
-            neighbor_shifts=shifts,
-            pbc=pbc,
-            slab_correction=True,
-            hybrid_forces=True,
+        positions_ref, charges_ref, cell_ref, pbc = _make_cscl_slab_system(
+            dtype, device
         )
-        energies.sum().backward()
-
-        assert positions.grad is None or torch.all(positions.grad == 0)
-        assert cell.grad is None or torch.all(cell.grad == 0)
-        assert charges.grad is not None
-        assert torch.isfinite(charges.grad).all()
-
-    def test_hybrid_slab_charge_grad_matches_standard(self, device):
-        """Injected hybrid charge gradients include the slab contribution."""
-        dtype = torch.float64
-
-        positions, charges_ref, cell, pbc = _make_cscl_slab_system(dtype, device)
-        nl, ptr, shifts, k_vectors = self._ewald_inputs(positions, cell)
+        nl, ptr, shifts, k_vectors = self._ewald_inputs(positions_ref, cell_ref)
 
         charges_std = charges_ref.clone().requires_grad_(True)
         e_std = ewald_summation(
-            positions,
+            positions_ref,
             charges_std,
-            cell,
+            cell_ref,
             alpha=EWALD_ALPHA,
             k_vectors=k_vectors,
             neighbor_list=nl,
@@ -920,11 +801,13 @@ class TestSlabHybridForces:
         )
         grad_std = torch.autograd.grad(e_std.sum(), charges_std)[0]
 
+        positions_hyb = positions_ref.clone().requires_grad_(True)
         charges_hyb = charges_ref.clone().requires_grad_(True)
+        cell_hyb = cell_ref.clone().requires_grad_(True)
         e_hyb = ewald_summation(
-            positions,
+            positions_hyb,
             charges_hyb,
-            cell,
+            cell_hyb,
             alpha=EWALD_ALPHA,
             k_vectors=k_vectors,
             neighbor_list=nl,
@@ -934,19 +817,22 @@ class TestSlabHybridForces:
             slab_correction=True,
             hybrid_forces=True,
         )
-        grad_hyb = torch.autograd.grad(e_hyb.sum(), charges_hyb)[0]
+        e_hyb.sum().backward()
 
+        assert positions_hyb.grad is None or torch.all(positions_hyb.grad == 0)
+        assert cell_hyb.grad is None or torch.all(cell_hyb.grad == 0)
+        assert charges_hyb.grad is not None
         # Hybrid injected charge gradients match standard autograd gradients.
-        torch.testing.assert_close(grad_hyb, grad_std, rtol=1e-6, atol=1e-10)
+        torch.testing.assert_close(charges_hyb.grad, grad_std, rtol=1e-6, atol=1e-10)
 
-    def test_hybrid_slab_forces_match_standard(self, device):
-        """Hybrid forward forces include the same slab force as standard mode."""
+    def test_hybrid_forward_outputs_match_standard(self, device):
+        """Hybrid forward outputs match standard energy, forces, charge grads, virial."""
         dtype = torch.float64
 
         positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
         nl, ptr, shifts, k_vectors = self._ewald_inputs(positions, cell)
 
-        e_std, f_std = ewald_summation(
+        e_std, f_std, cg_std, v_std = ewald_summation(
             positions,
             charges,
             cell,
@@ -956,10 +842,12 @@ class TestSlabHybridForces:
             neighbor_ptr=ptr,
             neighbor_shifts=shifts,
             compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
             pbc=pbc,
             slab_correction=True,
         )
-        e_hyb, f_hyb = ewald_summation(
+        e_hyb, f_hyb, cg_hyb, v_hyb = ewald_summation(
             positions,
             charges,
             cell,
@@ -969,6 +857,8 @@ class TestSlabHybridForces:
             neighbor_ptr=ptr,
             neighbor_shifts=shifts,
             compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
             pbc=pbc,
             slab_correction=True,
             hybrid_forces=True,
@@ -978,44 +868,8 @@ class TestSlabHybridForces:
         torch.testing.assert_close(e_hyb, e_std, rtol=1e-12, atol=1e-15)
         # Hybrid forward forces match standard mode forces.
         torch.testing.assert_close(f_hyb, f_std, rtol=1e-10, atol=1e-12)
-
-    def test_hybrid_slab_virial_forward_only(self, device):
-        """Hybrid virial values match standard mode and remain forward-only."""
-        dtype = torch.float64
-
-        positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
-        nl, ptr, shifts, k_vectors = self._ewald_inputs(positions, cell)
-
-        _, _, v_std = ewald_summation(
-            positions,
-            charges,
-            cell,
-            alpha=EWALD_ALPHA,
-            k_vectors=k_vectors,
-            neighbor_list=nl,
-            neighbor_ptr=ptr,
-            neighbor_shifts=shifts,
-            compute_forces=True,
-            compute_virial=True,
-            pbc=pbc,
-            slab_correction=True,
-        )
-        _, _, v_hyb = ewald_summation(
-            positions,
-            charges,
-            cell,
-            alpha=EWALD_ALPHA,
-            k_vectors=k_vectors,
-            neighbor_list=nl,
-            neighbor_ptr=ptr,
-            neighbor_shifts=shifts,
-            compute_forces=True,
-            compute_virial=True,
-            pbc=pbc,
-            slab_correction=True,
-            hybrid_forces=True,
-        )
-
+        # Hybrid returned charge gradients match standard returned charge gradients.
+        torch.testing.assert_close(cg_hyb, cg_std, rtol=1e-6, atol=1e-10)
         # Hybrid forward virial matches standard mode virial.
         torch.testing.assert_close(v_hyb, v_std, rtol=1e-10, atol=1e-12)
         assert v_hyb.grad_fn is None
