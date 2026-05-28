@@ -191,17 +191,21 @@ system_energy = atom_energies.sum()
 ## CUDA 13 Support
 
 CUDA 13 is required for Blackwell GPUs. `torch>=2.11.0` and `jax[cuda13]`
-publish CUDA 13 wheels on the default PyPI index for x86 platforms. On Arm
-platforms (e.g. NVIDIA DGX Spark), an `--extra-index-url` is required for
-PyTorch.
+publish CUDA 13 wheels on the default PyPI index for Linux x86_64 and
+aarch64 platforms.
+
+The `torch` and `jax` extras use CUDA 13 by default and are equivalent to the
+explicit `torch-cu13` and `jax-cu13` extras. Use `torch-cu12` and `jax-cu12`
+when CUDA 12.6 PyTorch wheels or CUDA 12 JAX plugins are required. The PyTorch
+indexes used for explicit CUDA selection are `cu130` for CUDA 13 and `cu126`
+for the CUDA 12 fallback.
 
 ```bash
-# Standalone install (x86)
+# Standalone install
 uv venv --seed --python 3.12
 uv pip install nvalchemi-toolkit-ops torch==2.11.0
 
-# Standalone install (Arm, e.g. DGX Spark)
-uv venv --seed --python 3.12
+# Explicit CUDA 13 PyTorch wheel index
 uv pip install nvalchemi-toolkit-ops \
     torch==2.11.0+cu130 \
     --extra-index-url https://download.pytorch.org/whl/cu130
