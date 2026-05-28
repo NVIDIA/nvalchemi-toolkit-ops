@@ -23,6 +23,12 @@ import numpy as np
 import pytest
 
 from nvalchemiops.jax.interactions.dispersion import D3Parameters, dftd3
+from nvalchemiops.jax.interactions.dispersion._dftd3 import (
+    cn_forces_contrib_nl,
+    cn_forces_contrib_nm,
+    direct_forces_kernel_nl,
+    direct_forces_kernel_nm,
+)
 
 # ==============================================================================
 # Fixtures
@@ -356,6 +362,178 @@ class TestDFT_D3Basic:
                 neighbor_ptr=neighbor_ptr,
                 d3_params=d3_params,
             )
+
+
+# ==============================================================================
+# Low-level Kernel Wrapper Compatibility Tests
+# ==============================================================================
+
+
+class TestDFTD3KernelWrapperCompatibility:
+    """Test compatibility of exported low-level JAX kernel wrappers."""
+
+    @staticmethod
+    def _base_buffers(h2_system):
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        batch_idx = jnp.zeros(2, dtype=jnp.int32)
+        coord_num = jnp.zeros(2, dtype=jnp.float32)
+        dE_dCN = jnp.zeros(2, dtype=jnp.float32)
+        forces = jnp.zeros((2, 3), dtype=jnp.float32)
+        energy = jnp.zeros(1, dtype=jnp.float32)
+        virial = jnp.full((1, 3, 3), 7.0, dtype=jnp.float32)
+        return positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial
+
+    @pytest.mark.parametrize("compute_virial", [False, True])
+    def test_neighbor_matrix_wrappers_keep_old_output_arity(
+        self,
+        h2_system,
+        functional_params,
+        d3_params,
+        compute_virial,
+        device,
+    ):
+        """Neighbor-matrix wrappers keep the old exported tuple sizes."""
+        positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial = (
+            self._base_buffers(h2_system)
+        )
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+        cartesian_shifts = jnp.zeros(
+            (2, neighbor_matrix.shape[1], 3), dtype=jnp.float32
+        )
+
+        direct_outputs = direct_forces_kernel_nm(
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            coord_num,
+            d3_params.r4r2,
+            d3_params.c6ab,
+            d3_params.cn_ref,
+            functional_params["k3"],
+            functional_params["a1"],
+            functional_params["a2"],
+            functional_params["s6"],
+            functional_params["s8"],
+            1e10,
+            1e10,
+            0.0,
+            2,
+            False,
+            batch_idx,
+            compute_virial,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+        )
+
+        assert len(direct_outputs) == 4
+        assert direct_outputs[0].shape == (2,)
+        assert direct_outputs[1].shape == (2, 3)
+        assert direct_outputs[2].shape == (1,)
+        assert direct_outputs[3].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(direct_outputs[3], virial)
+
+        cn_virial = jnp.full((1, 3, 3), -3.0, dtype=jnp.float32)
+        cn_outputs = cn_forces_contrib_nm(
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            d3_params.rcov,
+            direct_outputs[0],
+            functional_params["k1"],
+            2,
+            False,
+            batch_idx,
+            compute_virial,
+            jnp.zeros_like(forces),
+            cn_virial,
+        )
+
+        assert len(cn_outputs) == 2
+        assert cn_outputs[0].shape == (2, 3)
+        assert cn_outputs[1].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(cn_outputs[1], cn_virial)
+
+    @pytest.mark.parametrize("compute_virial", [False, True])
+    def test_neighbor_list_wrappers_keep_old_output_arity(
+        self,
+        h2_system,
+        functional_params,
+        d3_params,
+        compute_virial,
+        device,
+    ):
+        """Neighbor-list wrappers keep the old exported tuple sizes."""
+        positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial = (
+            self._base_buffers(h2_system)
+        )
+        idx_j = jnp.array([1, 0], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        cartesian_shifts = jnp.zeros((2, 3), dtype=jnp.float32)
+
+        direct_outputs = direct_forces_kernel_nl(
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            coord_num,
+            d3_params.r4r2,
+            d3_params.c6ab,
+            d3_params.cn_ref,
+            functional_params["k3"],
+            functional_params["a1"],
+            functional_params["a2"],
+            functional_params["s6"],
+            functional_params["s8"],
+            1e10,
+            1e10,
+            0.0,
+            False,
+            batch_idx,
+            compute_virial,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+        )
+
+        assert len(direct_outputs) == 4
+        assert direct_outputs[0].shape == (2,)
+        assert direct_outputs[1].shape == (2, 3)
+        assert direct_outputs[2].shape == (1,)
+        assert direct_outputs[3].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(direct_outputs[3], virial)
+
+        cn_virial = jnp.full((1, 3, 3), -3.0, dtype=jnp.float32)
+        cn_outputs = cn_forces_contrib_nl(
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            d3_params.rcov,
+            direct_outputs[0],
+            functional_params["k1"],
+            False,
+            batch_idx,
+            compute_virial,
+            jnp.zeros_like(forces),
+            cn_virial,
+        )
+
+        assert len(cn_outputs) == 2
+        assert cn_outputs[0].shape == (2, 3)
+        assert cn_outputs[1].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(cn_outputs[1], cn_virial)
 
 
 # ==============================================================================

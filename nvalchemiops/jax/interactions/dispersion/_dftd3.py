@@ -182,10 +182,187 @@ _direct_forces_kernel_nl_virial = _make_jax_kernels(
     num_outputs=4,
     in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
 )
-direct_forces_kernel_nm = _direct_forces_kernel_nm[jnp.float32]
 direct_forces_kernel_nm_virial = _direct_forces_kernel_nm_virial[jnp.float32]
-direct_forces_kernel_nl = _direct_forces_kernel_nl[jnp.float32]
 direct_forces_kernel_nl_virial = _direct_forces_kernel_nl_virial[jnp.float32]
+
+
+def direct_forces_kernel_nm(
+    positions: jax.Array,
+    numbers: jax.Array,
+    neighbor_matrix: jax.Array,
+    cartesian_shifts: jax.Array,
+    coord_num: jax.Array,
+    r4r2: jax.Array,
+    c6_reference: jax.Array,
+    coord_num_ref: jax.Array,
+    k3: float,
+    a1: float,
+    a2: float,
+    s6: float,
+    s8: float,
+    s5_smoothing_on: float,
+    s5_smoothing_off: float,
+    inv_w: float,
+    fill_value: int,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    dE_dCN: jax.Array,
+    forces: jax.Array,
+    energy: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-matrix direct-force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    kwargs.pop("launch_dims", None)
+    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    if compute_virial:
+        return _direct_forces_kernel_nm_virial[kernel_dtype](
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            coord_num,
+            r4r2,
+            c6_reference,
+            coord_num_ref,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+            **launch_kwargs,
+        )
+
+    dE_dCN, forces, energy = _direct_forces_kernel_nm[kernel_dtype](
+        positions,
+        numbers,
+        neighbor_matrix,
+        cartesian_shifts,
+        coord_num,
+        r4r2,
+        c6_reference,
+        coord_num_ref,
+        float(k3),
+        float(a1),
+        float(a2),
+        float(s6),
+        float(s8),
+        float(s5_smoothing_on),
+        float(s5_smoothing_off),
+        float(inv_w),
+        int(fill_value),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        batch_idx,
+        dE_dCN,
+        forces,
+        energy,
+        **launch_kwargs,
+    )
+    return dE_dCN, forces, energy, virial
+
+
+def direct_forces_kernel_nl(
+    positions: jax.Array,
+    numbers: jax.Array,
+    idx_j: jax.Array,
+    neighbor_ptr: jax.Array,
+    cartesian_shifts: jax.Array,
+    coord_num: jax.Array,
+    r4r2: jax.Array,
+    c6_reference: jax.Array,
+    coord_num_ref: jax.Array,
+    k3: float,
+    a1: float,
+    a2: float,
+    s6: float,
+    s8: float,
+    s5_smoothing_on: float,
+    s5_smoothing_off: float,
+    inv_w: float,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    dE_dCN: jax.Array,
+    forces: jax.Array,
+    energy: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-list direct-force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    kwargs.pop("launch_dims", None)
+    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    if compute_virial:
+        return _direct_forces_kernel_nl_virial[kernel_dtype](
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            coord_num,
+            r4r2,
+            c6_reference,
+            coord_num_ref,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+            **launch_kwargs,
+        )
+
+    dE_dCN, forces, energy = _direct_forces_kernel_nl[kernel_dtype](
+        positions,
+        numbers,
+        idx_j,
+        neighbor_ptr,
+        cartesian_shifts,
+        coord_num,
+        r4r2,
+        c6_reference,
+        coord_num_ref,
+        float(k3),
+        float(a1),
+        float(a2),
+        float(s6),
+        float(s8),
+        float(s5_smoothing_on),
+        float(s5_smoothing_off),
+        float(inv_w),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        batch_idx,
+        dE_dCN,
+        forces,
+        energy,
+        **launch_kwargs,
+    )
+    return dE_dCN, forces, energy, virial
+
 
 # --- Pass 3: CN-Dependent Force Contribution ---
 
@@ -209,10 +386,119 @@ _cn_forces_contrib_nl_virial = _make_jax_kernels(
     num_outputs=2,
     in_out_argnames=["forces", "virial"],
 )
-cn_forces_contrib_nm = _cn_forces_contrib_nm[jnp.float32]
 cn_forces_contrib_nm_virial = _cn_forces_contrib_nm_virial[jnp.float32]
-cn_forces_contrib_nl = _cn_forces_contrib_nl[jnp.float32]
 cn_forces_contrib_nl_virial = _cn_forces_contrib_nl_virial[jnp.float32]
+
+
+def cn_forces_contrib_nm(
+    positions: jax.Array,
+    numbers: jax.Array,
+    neighbor_matrix: jax.Array,
+    cartesian_shifts: jax.Array,
+    covalent_radii: jax.Array,
+    dE_dCN: jax.Array,
+    k1: float,
+    fill_value: int,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    forces: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-matrix CN force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    kwargs.pop("launch_dims", None)
+    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    if compute_virial:
+        return _cn_forces_contrib_nm_virial[kernel_dtype](
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            covalent_radii,
+            dE_dCN,
+            float(k1),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            forces,
+            virial,
+            **launch_kwargs,
+        )
+
+    (forces,) = _cn_forces_contrib_nm[kernel_dtype](
+        positions,
+        numbers,
+        neighbor_matrix,
+        cartesian_shifts,
+        covalent_radii,
+        dE_dCN,
+        float(k1),
+        int(fill_value),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        forces,
+        **launch_kwargs,
+    )
+    return forces, virial
+
+
+def cn_forces_contrib_nl(
+    positions: jax.Array,
+    numbers: jax.Array,
+    idx_j: jax.Array,
+    neighbor_ptr: jax.Array,
+    cartesian_shifts: jax.Array,
+    covalent_radii: jax.Array,
+    dE_dCN: jax.Array,
+    k1: float,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    forces: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-list CN force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    kwargs.pop("launch_dims", None)
+    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    if compute_virial:
+        return _cn_forces_contrib_nl_virial[kernel_dtype](
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            covalent_radii,
+            dE_dCN,
+            float(k1),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            forces,
+            virial,
+            **launch_kwargs,
+        )
+
+    (forces,) = _cn_forces_contrib_nl[kernel_dtype](
+        positions,
+        numbers,
+        idx_j,
+        neighbor_ptr,
+        cartesian_shifts,
+        covalent_radii,
+        dE_dCN,
+        float(k1),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        forces,
+        **launch_kwargs,
+    )
+    return forces, virial
+
 
 __all__ = [
     "D3Parameters",
