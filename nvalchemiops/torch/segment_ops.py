@@ -43,11 +43,18 @@ import torch
 import warp as wp
 
 from nvalchemiops.segment_ops import (
-    segmented_count,
     segmented_dot as _wp_segmented_dot,
+)
+from nvalchemiops.segment_ops import (
     segmented_matvec as _wp_segmented_matvec,
+)
+from nvalchemiops.segment_ops import (
     segmented_mean as _wp_segmented_mean,
+)
+from nvalchemiops.segment_ops import (
     segmented_mul as _wp_segmented_mul,
+)
+from nvalchemiops.segment_ops import (
     segmented_sum as _wp_segmented_sum,
 )
 from nvalchemiops.segment_ops_backward import (
@@ -66,7 +73,8 @@ from nvalchemiops.segment_ops_backward import (
     _launch_segmented_sum_double_backward,
 )
 from nvalchemiops.torch.autograd import warp_stream_from_torch
-from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
+
+# from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype  #, get_wp_vec_dtype
 
 __all__ = [
     "segmented_dot",
@@ -252,9 +260,16 @@ class _SegmentedDotBwd(torch.autograd.Function):
         grad_y_extra = _zeros(y.shape, y)
         with warp_stream_from_torch(gg_gx):
             _launch_segmented_dot_double_backward(
-                _inp(gg_gx), _inp(gg_gy), _inp(g_out), _inp(x), _inp(y),
-                _inp_int(idx), M,
-                _out(grad_g_out), _out(grad_x_extra), _out(grad_y_extra),
+                _inp(gg_gx),
+                _inp(gg_gy),
+                _inp(g_out),
+                _inp(x),
+                _inp(y),
+                _inp_int(idx),
+                M,
+                _out(grad_g_out),
+                _out(grad_x_extra),
+                _out(grad_y_extra),
             )
         return grad_g_out, grad_x_extra, grad_y_extra, None
 
@@ -266,7 +281,7 @@ class _SegmentedDot(torch.autograd.Function):
     ) -> torch.Tensor:
         out = _zeros((M,), x)
         with warp_stream_from_torch(x):
-            scalar_dtype = _SCALAR_DTYPE[x.dtype]
+            # scalar_dtype = _SCALAR_DTYPE[x.dtype]
             _wp_segmented_dot(_inp(x), _inp(y), _inp_int(idx), _out(out))
         return out
 
@@ -279,7 +294,7 @@ class _SegmentedDot(torch.autograd.Function):
     @staticmethod
     def backward(ctx, g_out: torch.Tensor):
         x, y, idx = ctx.saved_tensors
-        M = ctx.M
+        # M = ctx.M
         grad_x, grad_y = _SegmentedDotBwd.apply(g_out.contiguous(), x, y, idx)
         return grad_x, grad_y, None, None
 
@@ -333,13 +348,18 @@ class _SegmentedMulBwd(torch.autograd.Function):
         idx: torch.Tensor,
         M: int,
     ):
-        N = x.shape[0]
+        # N = x.shape[0]
         grad_x = _zeros(x.shape, x)
         grad_y = _zeros((M,), y)
         with warp_stream_from_torch(g_out):
             _launch_segmented_mul_backward(
-                _inp(g_out), _inp(x), _inp(y), _inp_int(idx), M,
-                _out(grad_x), _out(grad_y),
+                _inp(g_out),
+                _inp(x),
+                _inp(y),
+                _inp_int(idx),
+                M,
+                _out(grad_x),
+                _out(grad_y),
             )
         return grad_x, grad_y
 
@@ -358,8 +378,15 @@ class _SegmentedMulBwd(torch.autograd.Function):
         grad_y_extra = _zeros((M,), y)
         with warp_stream_from_torch(gg_gx):
             _launch_segmented_mul_double_backward(
-                _inp(gg_gx), _inp(gg_gy), _inp(g_out), _inp(x), _inp(y), _inp_int(idx),
-                _out(grad_g_out), _out(grad_x_extra), _out(grad_y_extra),
+                _inp(gg_gx),
+                _inp(gg_gy),
+                _inp(g_out),
+                _inp(x),
+                _inp(y),
+                _inp_int(idx),
+                _out(grad_g_out),
+                _out(grad_x_extra),
+                _out(grad_y_extra),
             )
         return grad_g_out, grad_x_extra, grad_y_extra, None, None
 
@@ -466,7 +493,9 @@ class _SegmentedMean(torch.autograd.Function):
         sums = _zeros(out_shape, x)
         counts = _zeros_int((M,), x)
         with warp_stream_from_torch(x):
-            _wp_segmented_mean(_inp(x), _inp_int(idx), _out(sums), _out_int(counts), _out(out))
+            _wp_segmented_mean(
+                _inp(x), _inp_int(idx), _out(sums), _out_int(counts), _out(out)
+            )
         return out, counts
 
     @staticmethod
@@ -479,7 +508,7 @@ class _SegmentedMean(torch.autograd.Function):
     @staticmethod
     def backward(ctx, g_out: torch.Tensor, _g_counts):
         counts, idx = ctx.saved_tensors
-        M = ctx.M
+        # M = ctx.M
         grad_x = _SegmentedMeanBwd.apply(g_out.contiguous(), counts, idx)
         return grad_x, None, None
 
@@ -552,9 +581,15 @@ class _SegmentedRmsNormBwd(torch.autograd.Function):
         grad_g_out = _zeros((M,), g_out)
         with warp_stream_from_torch(gg_x):
             _launch_segmented_rms_norm_double_backward(
-                _inp(gg_x), _inp(x), _inp(g_out), _inp(inv_norm),
-                _inp_int(counts), _inp_int(idx), M,
-                _out(grad_x_extra), _out(grad_g_out),
+                _inp(gg_x),
+                _inp(x),
+                _inp(g_out),
+                _inp(inv_norm),
+                _inp_int(counts),
+                _inp_int(idx),
+                M,
+                _out(grad_x_extra),
+                _out(grad_g_out),
             )
         return grad_g_out, grad_x_extra, None, None, None
 
@@ -562,15 +597,19 @@ class _SegmentedRmsNormBwd(torch.autograd.Function):
 class _SegmentedRmsNorm(torch.autograd.Function):
     @staticmethod
     def forward(x: torch.Tensor, idx: torch.Tensor, M: int):
-        scalar_dtype = x.dtype
+        # scalar_dtype = x.dtype
         out = _zeros((M,), x)
         sum_sq = _zeros((M,), x)
         counts = _zeros_int((M,), x)
         inv_norm = _zeros((M,), x)
         with warp_stream_from_torch(x):
             _launch_segmented_rms_norm_forward_precompute(
-                _inp(x), _inp_int(idx),
-                _out(sum_sq), _out_int(counts), _out(out), _out(inv_norm),
+                _inp(x),
+                _inp_int(idx),
+                _out(sum_sq),
+                _out_int(counts),
+                _out(out),
+                _out(inv_norm),
             )
         return out, inv_norm, counts
 
@@ -584,7 +623,7 @@ class _SegmentedRmsNorm(torch.autograd.Function):
     @staticmethod
     def backward(ctx, g_out: torch.Tensor, _g_inv_norm, _g_counts):
         x, inv_norm, counts, idx = ctx.saved_tensors
-        M = ctx.M
+        # M = ctx.M
         grad_x = _SegmentedRmsNormBwd.apply(
             g_out.contiguous(), x, inv_norm, counts, idx
         )
@@ -645,8 +684,12 @@ class _SegmentedMatvecBwd(torch.autograd.Function):
         grad_m = _zeros(m.shape, m)
         with warp_stream_from_torch(g_out):
             _launch_segmented_matvec_backward(
-                _inp(g_out), _inp(v), _inp(m), _inp_int(idx),
-                _out(grad_v), _out(grad_m),
+                _inp(g_out),
+                _inp(v),
+                _inp(m),
+                _inp_int(idx),
+                _out(grad_v),
+                _out(grad_m),
             )
         return grad_v, grad_m
 
@@ -659,14 +702,21 @@ class _SegmentedMatvecBwd(torch.autograd.Function):
     @staticmethod
     def backward(ctx, gg_gv: torch.Tensor, gg_gm: torch.Tensor):
         g_out, v, m, idx = ctx.saved_tensors
-        M = ctx.M
+        # M = ctx.M
         grad_g_out = _zeros(g_out.shape, g_out)
         grad_v_extra = _zeros(v.shape, v)
         grad_m_extra = _zeros(m.shape, m)
         with warp_stream_from_torch(gg_gv):
             _launch_segmented_matvec_double_backward(
-                _inp(gg_gv), _inp(gg_gm), _inp(g_out), _inp(v), _inp(m), _inp_int(idx),
-                _out(grad_g_out), _out(grad_v_extra), _out(grad_m_extra),
+                _inp(gg_gv),
+                _inp(gg_gm),
+                _inp(g_out),
+                _inp(v),
+                _inp(m),
+                _inp_int(idx),
+                _out(grad_g_out),
+                _out(grad_v_extra),
+                _out(grad_m_extra),
             )
         return grad_g_out, grad_v_extra, grad_m_extra, None, None
 
