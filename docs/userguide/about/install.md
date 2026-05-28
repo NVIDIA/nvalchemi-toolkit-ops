@@ -128,12 +128,14 @@ This method is recommended for local development and testing.
 $ git clone git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync
-# include torch backend
+# include torch backend with the default CUDA version
 $ uv sync --extra torch
-# include jax backend
+# include jax backend with the default CUDA version
 $ uv sync --extra jax
-# include both backends
-$ uv sync --all-extras
+# include both backends with the default CUDA version
+$ uv sync --extra torch --extra jax
+# include both backends with CUDA 12
+$ uv sync --extra torch-cu12 --extra jax-cu12
 ```
 
 </details>
@@ -248,8 +250,10 @@ $ uv pip install 'jax[cuda13]'
 
 ```bash
 $ uv venv --seed --python 3.12
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl"
 $ uv pip install nvalchemi-toolkit-ops \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl \
+    "$WARP_CU13_WHEEL" \
     torch==2.11.0 \
     'jax[cuda13]'
 ```
@@ -260,8 +264,10 @@ $ uv pip install nvalchemi-toolkit-ops \
 
 ```bash
 $ uv venv --seed --python 3.12
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl"
 $ uv pip install nvalchemi-toolkit-ops \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl \
+    "$WARP_CU13_WHEEL" \
     torch==2.11.0+cu130 \
     'jax[cuda13]' \
     --extra-index-url https://download.pytorch.org/whl/cu130
@@ -281,9 +287,10 @@ $ uv pip install nvalchemi-toolkit-ops \
 $ git clone git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync --group dev
-# Replace the default CUDA 12 wheels with CUDA 13 builds
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl"
 $ uv pip install \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl \
+    "$WARP_CU13_WHEEL" \
     torch==2.11.0 \
     'jax[cuda13]' \
     --force-reinstall
@@ -297,9 +304,10 @@ $ uv pip install \
 $ git clone git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync --group dev
-# Replace the default CUDA 12 wheels with CUDA 13 builds
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl"
 $ uv pip install \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl \
+    "$WARP_CU13_WHEEL" \
     torch==2.11.0+cu130 \
     'jax[cuda13]' \
     --force-reinstall \
@@ -314,17 +322,17 @@ $ uv pip uninstall jax-cuda12-pjrt jax-cuda12-plugin
 
 ```{note}
 The `--force-reinstall` flag is needed in the developer flow because `uv sync`
-will have already installed default CUDA 12 wheels. On x86, `torch>=2.11.0` and `jax[cuda13]` resolve from the default PyPI index.
+will have already installed package wheels. On x86, `torch>=2.11.0` and
+`jax[cuda13]` resolve from the default PyPI index.
 On Arm, the `--extra-index-url` is required for PyTorch; versions 2.9.0, 2.9.1,
 2.10.0, and 2.11.0 provide Arm `cu130` wheels. `jax[cuda13]` resolves from the
 default index on both architectures.
 
-The `jax` extra in `pyproject.toml` pulls in `jax[cuda12]`, so `uv sync
---all-extras` installs the CUDA 12 PJRT plugin and shared library. These must
-be removed after installing `jax[cuda13]`, otherwise JAX will error with
-`ALREADY_EXISTS: PJRT_Api already exists for device type cuda` at import time.
-This only applies to the developer flow — a clean venv (as in the "without
-cloning" path) does not have the CUDA 12 plugins and does not need this step.
+The `jax` and `torch` extras in `pyproject.toml` target the newest supported
+CUDA version. Use `jax-cu12`/`torch-cu12` when a CUDA 12 environment is required.
+Do not sync CUDA 12 and CUDA 13 extras into the same environment; JAX will error
+with `ALREADY_EXISTS: PJRT_Api already exists for device type cuda` when both
+CUDA plugins are present.
 ```
 
 ## Installation with Conda & Mamba

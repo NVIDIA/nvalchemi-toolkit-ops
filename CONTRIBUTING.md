@@ -78,8 +78,8 @@ This will not only help developers pass the CI pipeline, but also accelerate rev
 Contributions that have not used pre-commit will *not be reviewed*.
 
 `pre-commit` is installed as part of the `dev` optional dependencies defined in `pyproject.toml`.
-If using `uv`, then running `uv sync --all-extras` will include all of the required dependencies
-for pre-commit hooks and for building documentation.
+If using `uv`, then running `uv sync --extra torch --extra jax` will include the default
+CUDA-enabled backend dependencies, pre-commit hooks, and documentation dependencies.
 To install `pre-commit` in an existing environment, follow the below steps inside the ALCHEMI
 Toolkit-Ops repository folder:
 

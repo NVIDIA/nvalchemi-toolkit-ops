@@ -131,7 +131,7 @@ cd nvalchemi-toolkit-ops
 git remote add upstream git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 
 # Step 2.5: Set up development environment; install `uv` if not available already
-uv sync --all-extras
+uv sync --extra torch --extra jax
 uv pip install -r './test/test-requirements.txt'
 pre-commit install
 
