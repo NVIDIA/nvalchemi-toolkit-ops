@@ -157,7 +157,7 @@ jobs:
   # TEST STAGE (GPU Runner)
   # ============================================================================
   test:
-    name: Test py${{ matrix.python-version }} CUDA ${{ matrix.cuda.version }}
+    name: Test CUDA ${{ matrix.cuda.version }} py${{ matrix.python-version }}
     needs:
       - lint
       - get-pr-labels
@@ -167,7 +167,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
         cuda:
           - version: "12"
             image: nvcr.io/nvidia/cuda:12.8.2-runtime-ubuntu24.04
@@ -175,6 +174,7 @@ jobs:
           - version: "13"
             image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
             extras: "--extra torch --extra jax"
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     container:
       image: ${{ matrix.cuda.image }}
       options: --gpus all
