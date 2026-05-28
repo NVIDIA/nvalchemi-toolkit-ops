@@ -392,9 +392,9 @@ python benchmark_electrostatics.py \
 : Computational backend (default: `torch`). `both` dispatches per-method:
   `torch` + `torchpme` for Ewald/PME, `torch` + `torch_dsf` for DSF.
 
-`--method {ewald,pme,dsf,both,all}`
-: Electrostatics method (default: `both`). `both` = Ewald + PME (backward
-  compatible). `all` = Ewald + PME + DSF.
+`--method {ewald,ewald_slab,pme,pme_slab,dsf,both,all}`
+: Electrostatics method (default: `both`). `both` = Ewald + PME.
+  `all` = Ewald + Ewald slab + PME + PME slab + DSF.
 
 `--neighbor-format {list,matrix,both}`
 : Neighbor format for DSF benchmarks (default: `list`). Ewald/PME always use matrix.
@@ -418,5 +418,24 @@ python benchmark_electrostatics.py \
     --neighbor-format list
 ```
 
-Results will be saved as CSV files and plots will be automatically generated
-during the next documentation build.
+#### Slab Benchmarks
+
+```bash
+# Ewald slab
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend torch \
+    --method ewald_slab
+
+# PME slab
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend torch \
+    --method pme_slab
+```
+
+Slab benchmarks run the full high-level Ewald or PME path with
+`slab_correction=True` and two periodic directions.
+
+Results are saved as CSV files. Documented benchmark plots are generated from
+supported benchmark CSVs during the next documentation build.

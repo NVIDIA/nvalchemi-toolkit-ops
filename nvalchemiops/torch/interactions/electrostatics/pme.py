@@ -181,6 +181,7 @@ from nvalchemiops.torch.autograd import (
 )
 from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
+    apply_slab_correction,
     ewald_real_space,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
@@ -2024,6 +2025,8 @@ def particle_mesh_ewald(
     compute_virial: bool = False,
     accuracy: float = 1e-6,
     hybrid_forces: bool = False,
+    pbc: torch.Tensor | None = None,
+    slab_correction: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
@@ -2117,6 +2120,16 @@ def particle_mesh_ewald(
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         See :func:`ewald_real_space` for details.
+    pbc : torch.Tensor, shape (3,) or (B, 3), optional
+        Per-system periodic boundary conditions for slab correction. Required
+        when ``slab_correction=True``. Each row has True for periodic
+        directions and False for the non-periodic slab direction. Batched
+        slab correction requires explicit shape (B, 3).
+    slab_correction : bool, default=False
+        Whether to add the two-dimensional Yeh-Berkowitz / Ballenegger slab
+        correction to the 3D-periodic PME result. This is only available for
+        the full PME interface; use :func:`apply_slab_correction` explicitly
+        when manually composing ``ewald_real_space`` and ``pme_reciprocal_space``.
 
     Returns
     -------
@@ -2163,7 +2176,7 @@ def particle_mesh_ewald(
         ...     positions, charges, cell,
         ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
         ...     spline_order=4, neighbor_list=nl,
-        ... neighbor_shifts=shifts, neighbor_ptr=nptr,
+        ...     neighbor_shifts=shifts, neighbor_ptr=nptr,
         ...     compute_forces=True,
         ... )
 
@@ -2215,6 +2228,19 @@ def particle_mesh_ewald(
         ...     compute_forces=True, compute_charge_gradients=True,
         ... )
         >>> # Use charge_grads for training on ∂E/∂q
+
+    PME with slab correction::
+
+        >>> pbc_slab = torch.tensor([[True, True, False]], device=positions.device)
+        >>> energies, forces = particle_mesh_ewald(
+        ...     positions, charges, cell,
+        ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
+        ...     neighbor_list=nl, neighbor_shifts=shifts,
+        ...     neighbor_ptr=nptr,
+        ...     compute_forces=True,
+        ...     pbc=pbc_slab,
+        ...     slab_correction=True,
+        ... )
 
     Using PyTorch autograd::
 
@@ -2319,21 +2345,97 @@ def particle_mesh_ewald(
         hybrid_forces=hybrid_forces,
     )
 
-    # Normalize return tuples for easy combination
-    # Both rs and rec return: energies, [forces], [charge_grads], [virial]
-    # where virial is always last if present
+    slab_tuple: tuple[torch.Tensor, ...] | None = None
+    if slab_correction:
+        if hybrid_forces:
+            slab_out = apply_slab_correction(
+                positions.detach(),
+                charges.detach(),
+                cell.detach(),
+                pbc,
+                batch_idx=batch_idx,
+                compute_forces=compute_forces,
+                compute_charge_gradients=True,
+                compute_virial=compute_virial,
+            )
+            slab_raw = slab_out if isinstance(slab_out, tuple) else (slab_out,)
+            slab_index = 0
+
+            slab_energies = slab_raw[slab_index]
+            slab_index += 1
+
+            slab_forces = None
+            if compute_forces:
+                slab_forces = slab_raw[slab_index]
+                slab_index += 1
+
+            slab_charge_grads = slab_raw[slab_index]
+            slab_index += 1
+
+            slab_virial = None
+            if compute_virial:
+                slab_virial = slab_raw[slab_index]
+
+            if charges.requires_grad:
+                slab_energies = _InjectChargeGrad.apply(
+                    slab_energies, charges, slab_charge_grads, batch_idx
+                )
+
+            slab_tuple = (slab_energies,)
+            if compute_forces and slab_forces is not None:
+                slab_tuple += (slab_forces,)
+            if compute_charge_gradients:
+                slab_tuple += (slab_charge_grads,)
+            if compute_virial and slab_virial is not None:
+                slab_tuple += (slab_virial,)
+        else:
+            slab_out = apply_slab_correction(
+                positions,
+                charges,
+                cell,
+                pbc,
+                batch_idx=batch_idx,
+                compute_forces=compute_forces,
+                compute_charge_gradients=compute_charge_gradients,
+                compute_virial=compute_virial,
+            )
+            slab_tuple = slab_out if isinstance(slab_out, tuple) else (slab_out,)
+
+    # Normalize return tuples for easy combination.
+    # All tuples return: energies, [forces], [charge_grads], [virial].
     rs_tuple = rs if isinstance(rs, tuple) else (rs,)
     rec_tuple = rec if isinstance(rec, tuple) else (rec,)
+    tuple_index = 0
 
-    # The number of outputs should match between rs and rec
-    # Combine element-wise
-    results = []
-    for r, s in zip(rs_tuple, rec_tuple):
-        results.append(r + s)
+    energies = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+    if slab_tuple is not None:
+        energies = energies + slab_tuple[tuple_index]
+    tuple_index += 1
+    results: tuple[torch.Tensor, ...] = (energies,)
+
+    if compute_forces:
+        forces = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        if slab_tuple is not None:
+            forces = forces + slab_tuple[tuple_index]
+        results += (forces,)
+        tuple_index += 1
+
+    if compute_charge_gradients:
+        charge_grads = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        if slab_tuple is not None:
+            charge_grads = charge_grads + slab_tuple[tuple_index]
+        results += (charge_grads,)
+        tuple_index += 1
+
+    if compute_virial:
+        virial = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        if slab_tuple is not None:
+            virial = virial + slab_tuple[tuple_index]
+        results += (virial,)
 
     if len(results) == 1:
         return results[0]
-    return tuple(results)
+    return results
 
 
 __all__ = [

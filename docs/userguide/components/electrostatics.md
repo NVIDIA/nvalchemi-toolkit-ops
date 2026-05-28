@@ -489,14 +489,17 @@ Refer to the [Parameter Estimation](parameter-estimation) section for API usage.
 #### 2D Slab Correction (PyTorch)
 
 For interfacial systems with two periodic directions and one non-periodic direction,
-PyTorch Ewald can add the Yeh-Berkowitz / Ballenegger slab correction. Pass
-`slab_correction=True` and a boolean `pbc` tensor whose `False` entry marks the
-non-periodic axis:
+PyTorch Ewald and full PyTorch PME can add the Yeh-Berkowitz / Ballenegger slab
+correction. Pass `slab_correction=True` and a boolean `pbc` tensor whose `False`
+entry marks the non-periodic axis:
 
 ```python
 import torch
 
-from nvalchemiops.torch.interactions.electrostatics import ewald_summation
+from nvalchemiops.torch.interactions.electrostatics import (
+    ewald_summation,
+    particle_mesh_ewald,
+)
 from nvalchemiops.torch.neighbors import neighbor_list
 
 pbc_slab = torch.tensor([[True, True, False]], dtype=torch.bool, device=positions.device)
@@ -525,11 +528,85 @@ energies, forces = ewald_summation(
     slab_correction=True,
     compute_forces=True,
 )
+
+pme_energies, pme_forces = particle_mesh_ewald(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=0.3,
+    mesh_dimensions=(32, 32, 32),
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    pbc=pbc_slab,
+    slab_correction=True,
+    compute_forces=True,
+)
 ```
 
 ```{tip}
 For batched slab simulations, pass `pbc` as an explicit contiguous `(B, 3)`
 tensor so each system carries its own slab geometry.
+```
+
+The Ewald and PME reciprocal-space components remain 3D-periodic reciprocal
+calculations. When manually composing either method from components, add the
+slab correction explicitly:
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import (
+    apply_slab_correction,
+    ewald_real_space,
+    ewald_reciprocal_space,
+    generate_k_vectors_ewald_summation,
+    pme_reciprocal_space,
+)
+
+alpha = torch.tensor([0.3], dtype=positions.dtype, device=positions.device)
+
+real_energy, real_forces = ewald_real_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
+)
+
+k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+ewald_reciprocal_energy, ewald_reciprocal_forces = ewald_reciprocal_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    k_vectors=k_vectors,
+    alpha=alpha,
+    compute_forces=True,
+)
+
+pme_reciprocal_energy, pme_reciprocal_forces = pme_reciprocal_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    mesh_dimensions=(32, 32, 32),
+    compute_forces=True,
+)
+
+slab_energy, slab_forces = apply_slab_correction(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    pbc=pbc_slab,
+    compute_forces=True,
+)
+
+ewald_total_energy = real_energy + ewald_reciprocal_energy + slab_energy
+ewald_total_forces = real_forces + ewald_reciprocal_forces + slab_forces
+
+pme_total_energy = real_energy + pme_reciprocal_energy + slab_energy
+pme_total_forces = real_forces + pme_reciprocal_forces + slab_forces
 ```
 
 #### Separating real- and reciprocal-space
