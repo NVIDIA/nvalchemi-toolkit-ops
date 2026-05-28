@@ -20,6 +20,14 @@ These are the primary entry points for most users.
 .. autofunction:: ewald_summation
 .. autofunction:: particle_mesh_ewald
 
+Slab Correction
+---------------
+
+Two-dimensional Ewald slab correction for systems with two periodic axes
+and one non-periodic axis.
+
+.. autofunction:: apply_slab_correction
+
 Coulomb Interactions
 --------------------
 

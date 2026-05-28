@@ -20,6 +20,7 @@ See `nvalchemiops.torch.neighbors` for PyTorch bindings.
 """
 
 import math
+import warnings
 from typing import Any
 
 import warp as wp
@@ -53,7 +54,6 @@ __all__ = [
     "NeighborOverflowError",
     "compute_naive_num_shifts",
     "compute_inv_cells",
-    "zero_array",
     "selective_zero_num_neighbors",
     "selective_zero_num_neighbors_single",
     "estimate_max_neighbors",
@@ -389,6 +389,9 @@ def zero_array(
 ) -> None:
     """Core warp launcher for zeroing an array.
 
+    .. deprecated::
+        Use ``array.zero_()`` (Warp's built-in in-place zero) instead.
+
     Zeros all elements of an array in parallel using pure warp operations.
 
     Parameters
@@ -400,13 +403,21 @@ def zero_array(
 
     Notes
     -----
-    - This is a low-level warp interface.
+    - This is a low-level warp interface kept for backwards compatibility.
     - Operates on arrays of any dtype.
 
     See Also
     --------
     _zero_array_kernel : Kernel that performs the zeroing
+    warp.array.zero_ : Recommended in-place replacement
     """
+    warnings.warn(
+        "nvalchemiops.neighbors.neighbor_utils.zero_array is deprecated; "
+        "use the Warp built-in `array.zero_()` instead "
+        "(e.g. `my_array.zero_()`).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     n = array.shape[0]
 
     wp.launch(

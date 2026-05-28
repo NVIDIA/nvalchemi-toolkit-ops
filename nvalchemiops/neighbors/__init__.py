@@ -65,7 +65,6 @@ from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
     compute_naive_num_shifts,
     estimate_max_neighbors,
-    zero_array,
 )
 
 # Warp launchers from rebuild_detection
@@ -138,7 +137,6 @@ __all__ = [
     "check_batch_neighbor_list_rebuild",
     "check_batch_cell_list_rebuild",
     "compute_naive_num_shifts",
-    "zero_array",
     "estimate_max_neighbors",
     "neighbor_list",
 ]

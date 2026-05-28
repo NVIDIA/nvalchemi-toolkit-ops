@@ -26,7 +26,6 @@ import warp as wp
 from nvalchemiops.math import wpdivmod
 from nvalchemiops.neighbors.neighbor_utils import (
     _update_neighbor_matrix_pbc,
-    zero_array,
 )
 
 __all__ = [
@@ -869,7 +868,7 @@ def build_cell_list(
     wp.utils.array_scan(atoms_per_cell_count, cell_atom_start_indices, inclusive=False)
 
     # Zero counts before binning atoms (second pass needs fresh counts)
-    zero_array(atoms_per_cell_count, device)
+    atoms_per_cell_count.zero_()
 
     # Bin atoms (expects atoms_per_cell_count to be zeroed)
     wp.launch(

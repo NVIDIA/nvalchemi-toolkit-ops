@@ -17,11 +17,14 @@
 
 from __future__ import annotations
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import pytest
 
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
+from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from .conftest import requires_gpu
 
@@ -466,3 +469,280 @@ class TestNaiveSelectiveRebuildFlags:
         assert jnp.all(nn2 == nn_ref), (
             "num_neighbors should match full rebuild when flag=True"
         )
+
+
+def _assert_arrays_equal(lhs, rhs) -> None:
+    """Assert two tuples of JAX arrays are exactly equal."""
+    assert len(lhs) == len(rhs)
+    for left, right in zip(lhs, rhs, strict=True):
+        assert left.shape == right.shape
+        assert left.dtype == right.dtype
+        assert jnp.array_equal(left, right)
+
+
+def _make_naive_inputs(dtype, *, pbc_enabled: bool, wrap_positions: bool):
+    """Create a small but nontrivial naive neighbor-list test system."""
+    if pbc_enabled and wrap_positions:
+        positions = jnp.array(
+            [
+                [0.1, 0.0, 0.0],
+                [9.8, 0.0, 0.0],
+                [10.4, 0.1, 0.0],
+                [-0.2, 0.2, 0.0],
+            ],
+            dtype=dtype,
+        )
+    else:
+        positions = jnp.array(
+            [
+                [0.1, 0.0, 0.0],
+                [0.8, 0.0, 0.0],
+                [0.1, 0.8, 0.0],
+                [0.8, 0.8, 0.0],
+            ],
+            dtype=dtype,
+        )
+
+    cutoff = 1.1
+    max_neighbors = 12
+    if pbc_enabled:
+        cell = jnp.eye(3, dtype=dtype).reshape(1, 3, 3) * 10.0
+        pbc = jnp.array([[True, True, True]])
+    else:
+        cell = None
+        pbc = None
+
+    return positions, cutoff, cell, pbc, max_neighbors
+
+
+def _make_naive_stale_inputs(
+    positions,
+    cutoff,
+    cell,
+    pbc,
+    max_neighbors,
+    *,
+    wrap_positions: bool,
+):
+    """Create stale outputs to verify graph-mode reset behavior.
+
+    For PBC + ``wrap_positions=True``, also seeds stale ``positions_wrapped`` and
+    ``per_atom_cell_offsets`` scratch buffers (the wrap kernel always overwrites
+    them, so any prior contents must be irrelevant to the final result on both
+    ``graph_mode`` paths).
+    """
+    base = naive_neighbor_list(
+        positions,
+        cutoff,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=max_neighbors,
+        wrap_positions=wrap_positions,
+        graph_mode="none",
+    )
+    stale_inputs = {
+        "neighbor_matrix": jnp.full_like(base[0], 77),
+        "num_neighbors": jnp.full_like(base[1], 33),
+    }
+    if pbc is not None:
+        stale_inputs["neighbor_matrix_shifts"] = jnp.full_like(base[2], -5)
+    if pbc is not None and wrap_positions:
+        stale_inputs["positions_wrapped"] = jnp.full_like(positions, 1234.5)
+        stale_inputs["per_atom_cell_offsets"] = jnp.full(
+            (positions.shape[0], 3), -7, dtype=jnp.int32
+        )
+    return stale_inputs
+
+
+class TestNaiveGraphMode:
+    """Graph-mode coverage for JAX naive neighbor lists."""
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize(
+        ("pbc_enabled", "wrap_positions"),
+        [
+            (False, True),
+            (True, True),
+            (True, False),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "selective",
+        [None, False, True],
+        ids=["norebuild", "rebuild_false", "rebuild_true"],
+    )
+    def test_matches_default(
+        self,
+        dtype,
+        pbc_enabled: bool,
+        wrap_positions: bool,
+        selective: bool | None,
+    ):
+        """`graph_mode="warp"` should match the default path for legal naive cases."""
+        positions, cutoff, cell, pbc, max_neighbors = _make_naive_inputs(
+            dtype,
+            pbc_enabled=pbc_enabled,
+            wrap_positions=wrap_positions,
+        )
+        rebuild_flags = (
+            None if selective is None else jnp.array([selective], dtype=jnp.bool_)
+        )
+        stale_inputs = _make_naive_stale_inputs(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            max_neighbors,
+            wrap_positions=wrap_positions,
+        )
+
+        none_result = naive_neighbor_list(
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            wrap_positions=wrap_positions,
+            rebuild_flags=rebuild_flags,
+            graph_mode="none",
+            **stale_inputs,
+        )
+        warp_result = naive_neighbor_list(
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            wrap_positions=wrap_positions,
+            rebuild_flags=rebuild_flags,
+            graph_mode="warp",
+            **stale_inputs,
+        )
+
+        _assert_arrays_equal(none_result, warp_result)
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_return_neighbor_list(self, dtype):
+        """COO conversion should work around the Warp graph callback."""
+        positions, cutoff, cell, pbc, max_neighbors = _make_naive_inputs(
+            dtype,
+            pbc_enabled=True,
+            wrap_positions=True,
+        )
+        stale_neighbor_matrix = jnp.full(
+            (positions.shape[0], max_neighbors),
+            99,
+            dtype=jnp.int32,
+        )
+        stale_num_neighbors = jnp.full((positions.shape[0],), 99, dtype=jnp.int32)
+        stale_shifts = jnp.full(
+            (positions.shape[0], max_neighbors, 3),
+            -9,
+            dtype=jnp.int32,
+        )
+
+        none_result = naive_neighbor_list(
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            wrap_positions=True,
+            return_neighbor_list=True,
+            neighbor_matrix=stale_neighbor_matrix,
+            num_neighbors=stale_num_neighbors,
+            neighbor_matrix_shifts=stale_shifts,
+            graph_mode="none",
+        )
+        warp_result = naive_neighbor_list(
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            wrap_positions=True,
+            return_neighbor_list=True,
+            neighbor_matrix=stale_neighbor_matrix,
+            num_neighbors=stale_num_neighbors,
+            neighbor_matrix_shifts=stale_shifts,
+            graph_mode="warp",
+        )
+
+        _assert_arrays_equal(none_result, warp_result)
+
+    def test_invalid_value(self):
+        """Invalid graph_mode values should raise a ValueError."""
+        positions = jnp.zeros((2, 3), dtype=jnp.float32)
+        with pytest.raises(ValueError, match="graph_mode"):
+            naive_neighbor_list(positions, 1.0, max_neighbors=4, graph_mode="bad")
+
+    def test_wrapped_warp_replay_stable_pointers(self):
+        """Donation contract from the docstring example should produce stable results.
+
+        Functional smoke test: jit-compile the wrapped warp step exactly like the
+        docstring example (donating the returned buffers, capturing ``inv_cell`` /
+        ``positions_wrapped`` / ``per_atom_cell_offsets`` in the closure so their
+        buffer pointers stay stable across calls), run it 5 times, and assert each
+        call's outputs match a fresh ``graph_mode="none"`` reference. This guards
+        the contract that lets Warp's graph cache hit on the wrapped path; we
+        deliberately avoid timing assertions because perf tests are flaky.
+        """
+        dtype = jnp.float32
+        positions, cutoff, cell, pbc, max_neighbors = _make_naive_inputs(
+            dtype,
+            pbc_enabled=True,
+            wrap_positions=True,
+        )
+        n_atoms = positions.shape[0]
+        fill_value = n_atoms
+        inv_cell = jnp.linalg.inv(cell)
+        positions_wrapped = jnp.zeros((n_atoms, 3), dtype=dtype)
+        per_atom_cell_offsets = jnp.zeros((n_atoms, 3), dtype=jnp.int32)
+        shift_range, num_shifts_per_system, max_shifts_per_system = (
+            compute_naive_num_shifts(cell, cutoff, pbc)
+        )
+
+        @functools.partial(jax.jit, donate_argnums=(1, 2, 3))
+        def md_step(pos, neighbor_matrix, num_neighbors, shifts):
+            return naive_neighbor_list(
+                pos,
+                cutoff,
+                cell=cell,
+                pbc=pbc,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+                neighbor_matrix_shifts=shifts,
+                inv_cell=inv_cell,
+                positions_wrapped=positions_wrapped,
+                per_atom_cell_offsets=per_atom_cell_offsets,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts_per_system,
+                max_shifts_per_system=max_shifts_per_system,
+                graph_mode="warp",
+            )
+
+        reference = naive_neighbor_list(
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=max_neighbors,
+            wrap_positions=True,
+            graph_mode="none",
+        )
+
+        neighbor_matrix = jnp.full(
+            (n_atoms, max_neighbors), fill_value, dtype=jnp.int32
+        )
+        num_neighbors = jnp.zeros((n_atoms,), dtype=jnp.int32)
+        shifts = jnp.zeros((n_atoms, max_neighbors, 3), dtype=jnp.int32)
+
+        for _ in range(5):
+            out_nm, out_nn, out_shifts = md_step(
+                positions,
+                neighbor_matrix,
+                num_neighbors,
+                shifts,
+            )
+            neighbor_matrix, num_neighbors, shifts = out_nm, out_nn, out_shifts
+            _assert_arrays_equal(reference, (out_nm, out_nn, out_shifts))
