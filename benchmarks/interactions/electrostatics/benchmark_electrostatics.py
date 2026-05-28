@@ -18,8 +18,9 @@
 Electrostatics Benchmark
 ========================
 
-CLI tool to benchmark electrostatic interaction methods (Ewald summation, PME, and DSF)
-and generate CSV files for documentation. Results are saved with GPU-specific naming:
+CLI tool to benchmark electrostatic interaction methods (Ewald summation, Ewald
+with slab correction, PME, and DSF) and generate CSV files for documentation.
+Results are saved with GPU-specific naming:
 `electrostatics_benchmark_<method>_<backend>_<gpu_sku>.csv`
 
 Supports multiple backends:
@@ -30,6 +31,7 @@ Supports multiple backends:
 
 Methods:
 - Ewald summation
+- Ewald summation with 2D slab correction
 - PME (Particle Mesh Ewald)
 - DSF (Damped Shifted Force)
 
@@ -37,6 +39,7 @@ Usage:
     python benchmark_electrostatics.py --config benchmark_config.yaml --output-dir ./results
     python benchmark_electrostatics.py --config benchmark_config.yaml --backend jax
     python benchmark_electrostatics.py --config benchmark_config.yaml --backend torchpme --method ewald
+    python benchmark_electrostatics.py --config benchmark_config.yaml --backend torch --method ewald_slab
     python benchmark_electrostatics.py --config benchmark_config.yaml --method dsf --backend both
 """
 
@@ -533,6 +536,9 @@ def prepare_single_system(
     if pbc.dim() == 2 and pbc.shape[0] == 1:
         pbc = pbc.squeeze(0)
 
+    pbc_slab = backend_data["pbc"].clone()
+    pbc_slab[..., 2] = False
+
     mesh_spacing = params["mesh_spacing"]
     if hasattr(mesh_spacing, "tolist"):
         mesh_spacing = mesh_spacing.tolist()
@@ -542,6 +548,7 @@ def prepare_single_system(
         "charges": backend_data["charges"],
         "cell": backend_data["cell"],
         "pbc": pbc,
+        "pbc_slab": pbc_slab,
         "neighbor_matrix": neighbor_matrix,
         "num_neighbors": num_neighbors,
         "neighbor_matrix_shifts": neighbor_matrix_shifts,
@@ -601,11 +608,15 @@ def prepare_batch_system(
         backend_data, "torch", params["cutoff"]
     )
 
+    pbc_slab = backend_data["pbc"].clone()
+    pbc_slab[..., 2] = False
+
     return {
         "positions": backend_data["positions"],
         "charges": backend_data["charges"],
         "cell": backend_data["cell"],
         "pbc": backend_data["pbc"],
+        "pbc_slab": pbc_slab,
         "neighbor_matrix": neighbor_matrix,
         "num_neighbors": num_neighbors,
         "neighbor_matrix_shifts": neighbor_matrix_shifts,
@@ -878,6 +889,7 @@ def run_nvalchemiops_ewald(
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
     compute_virial: bool = False,
+    slab_correction: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     """Run Ewald summation using nvalchemiops backend."""
     positions = system_data["positions"]
@@ -887,6 +899,7 @@ def run_nvalchemiops_ewald(
     alpha = system_data.get("alpha")
     k_cutoff = system_data.get("k_cutoff")
     k_vectors = _torch_electrostatics.generate_k_vectors_ewald_summation(cell, k_cutoff)
+    pbc_slab = system_data.get("pbc_slab")
 
     neighbor_matrix_data = system_data.get("neighbor_matrix")
     neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
@@ -925,6 +938,8 @@ def run_nvalchemiops_ewald(
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
+                pbc=pbc_slab,
+                slab_correction=slab_correction,
             )
     else:
         if component == "real":
@@ -963,6 +978,8 @@ def run_nvalchemiops_ewald(
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=compute_forces,
                 compute_virial=compute_virial,
+                pbc=pbc_slab,
+                slab_correction=slab_correction,
             )
 
 
@@ -1782,7 +1799,7 @@ def run_torch_dsf(
 
 
 def run_benchmark(
-    method: Literal["ewald", "pme", "dsf"],
+    method: Literal["ewald", "ewald_slab", "pme", "dsf"],
     backend: Literal["torch", "jax", "torchpme", "torch_dsf"],
     system_data: dict,
     component: Literal["real", "reciprocal", "full"],
@@ -1833,7 +1850,7 @@ def run_benchmark(
                     "error_type": "NotApplicable",
                 }
         elif backend == "torch":
-            if method == "ewald":
+            if method in ("ewald", "ewald_slab"):
 
                 def bench_fn():
                     return run_nvalchemiops_ewald(
@@ -1841,6 +1858,7 @@ def run_benchmark(
                         component,
                         compute_forces,
                         effective_virial,
+                        slab_correction=method == "ewald_slab",
                     )
             else:  # pme
 
@@ -2004,12 +2022,12 @@ def main():
     parser.add_argument(
         "--method",
         type=str,
-        choices=["ewald", "pme", "dsf", "both", "all"],
+        choices=["ewald", "ewald_slab", "pme", "dsf", "both", "all"],
         default="both",
         help=(
             "Method to benchmark (default: both). "
             "'both' = ewald + pme (backward compat). "
-            "'all' = ewald + pme + dsf."
+            "'all' = ewald + ewald_slab + pme + dsf."
         ),
     )
     parser.add_argument(
@@ -2089,7 +2107,7 @@ def main():
     if args.method == "both":
         methods = ["ewald", "pme"]
     elif args.method == "all":
-        methods = ["ewald", "pme", "dsf"]
+        methods = ["ewald", "ewald_slab", "pme", "dsf"]
     else:
         methods = [args.method]
 
@@ -2101,6 +2119,8 @@ def main():
                 if TORCHPME_AVAILABLE:
                     result.append("torchpme")
                 return result
+            elif method == "ewald_slab":
+                return ["torch"]
             elif method == "dsf":
                 return ["torch", "torch_dsf"]
         elif args.backend == "torch":
@@ -2258,7 +2278,9 @@ def main():
                     if system_data is None:
                         continue
 
-                    method_components = ["full"] if method == "dsf" else components
+                    method_components = (
+                        ["full"] if method in ("dsf", "ewald_slab") else components
+                    )
                     for backend in backends:
                         for component in method_components:
                             if method == "dsf" and backend in ("torch", "torch_dsf"):
@@ -2415,7 +2437,9 @@ def main():
                     if system_data is None:
                         continue
 
-                    method_components = ["full"] if method == "dsf" else components
+                    method_components = (
+                        ["full"] if method in ("dsf", "ewald_slab") else components
+                    )
                     for backend in backends:
                         for component in method_components:
                             if method == "dsf" and backend in ("torch", "torch_dsf"):
