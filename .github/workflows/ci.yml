@@ -118,7 +118,7 @@ jobs:
 
       - name: Install dependencies and run lint
         run: |
-          uv sync --all-extras
+          uv sync --extra torch --extra jax
           make lint
 
   # ============================================================================
@@ -211,7 +211,7 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           uv venv --seed --python ${{ matrix.python-version }}
-          uv sync --all-extras
+          uv sync --extra torch --extra jax
           uv pip install -r test/test-requires.txt
 
       # CONDITIONAL LOGIC BASED ON EVENT TYPE

@@ -81,7 +81,7 @@ jobs:
       - name: Install dependencies
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          uv sync --all-extras
+          uv sync --extra torch --extra jax
           make docs-install-examples
 
       - name: Run all examples
