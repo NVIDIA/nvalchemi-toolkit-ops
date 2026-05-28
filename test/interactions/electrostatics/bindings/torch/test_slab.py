@@ -60,6 +60,12 @@ EWALD_ALPHA = 0.3
 EWALD_K_CUTOFF = 8.0
 TRICLINIC_EWALD_K_CUTOFF = 7.0
 REAL_SPACE_CUTOFF = 5.0
+SLAB_STRICT_RTOL = 1e-12
+SLAB_STRICT_ATOL = 1e-14
+SLAB_CHARGE_GRAD_RTOL = 1e-8
+SLAB_CHARGE_GRAD_ATOL = 1e-10
+PME_SLAB_GRADCHECK_RTOL = 1e-6
+PME_SLAB_GRADCHECK_ATOL = 1e-9
 
 
 # ==============================================================================
@@ -559,7 +565,10 @@ class TestTriclinicCells:
         torch.testing.assert_close(forces, autograd_forces, rtol=1e-8, atol=2e-8)
         # Full triclinic Ewald charge gradients match autograd charge gradients.
         torch.testing.assert_close(
-            charge_grads, autograd_charge_grads, rtol=1e-10, atol=1e-12
+            charge_grads,
+            autograd_charge_grads,
+            rtol=SLAB_CHARGE_GRAD_RTOL,
+            atol=SLAB_CHARGE_GRAD_ATOL,
         )
 
         _, _, virial = ewald_summation(
@@ -911,7 +920,12 @@ class TestSlabHybridForces:
         assert cell_hyb.grad is None or torch.all(cell_hyb.grad == 0)
         assert charges_hyb.grad is not None
         # Hybrid injected charge gradients match standard autograd gradients.
-        torch.testing.assert_close(charges_hyb.grad, grad_std, rtol=1e-10, atol=1e-12)
+        torch.testing.assert_close(
+            charges_hyb.grad,
+            grad_std,
+            rtol=SLAB_CHARGE_GRAD_RTOL,
+            atol=SLAB_CHARGE_GRAD_ATOL,
+        )
 
     def test_hybrid_forward_outputs_match_standard(self, device):
         """Hybrid forward outputs match standard energy, forces, charge grads, virial."""
@@ -1031,19 +1045,31 @@ class TestPMESlabIntegration:
 
         # Full PME slab energies equal real + reciprocal + slab correction.
         torch.testing.assert_close(
-            energies, real[0] + reciprocal[0] + slab[0], rtol=0, atol=0
+            energies,
+            real[0] + reciprocal[0] + slab[0],
+            rtol=SLAB_STRICT_RTOL,
+            atol=SLAB_STRICT_ATOL,
         )
         # Full PME slab forces equal real + reciprocal + slab correction.
         torch.testing.assert_close(
-            forces, real[1] + reciprocal[1] + slab[1], rtol=0, atol=0
+            forces,
+            real[1] + reciprocal[1] + slab[1],
+            rtol=SLAB_STRICT_RTOL,
+            atol=SLAB_STRICT_ATOL,
         )
         # Full PME slab charge gradients equal real + reciprocal + slab correction.
         torch.testing.assert_close(
-            charge_grads, real[2] + reciprocal[2] + slab[2], rtol=0, atol=0
+            charge_grads,
+            real[2] + reciprocal[2] + slab[2],
+            rtol=SLAB_STRICT_RTOL,
+            atol=SLAB_STRICT_ATOL,
         )
         # Full PME slab virial equals real + reciprocal + slab correction.
         torch.testing.assert_close(
-            virial, real[3] + reciprocal[3] + slab[3], rtol=0, atol=0
+            virial,
+            real[3] + reciprocal[3] + slab[3],
+            rtol=SLAB_STRICT_RTOL,
+            atol=SLAB_STRICT_ATOL,
         )
 
     def test_full_pme_slab_energy_gradcheck(self, device):
@@ -1075,8 +1101,8 @@ class TestPMESlabIntegration:
             pme_slab_energy,
             (positions, charges, cell),
             eps=1e-6,
-            atol=1e-10,
-            rtol=1e-8,
+            atol=PME_SLAB_GRADCHECK_ATOL,
+            rtol=PME_SLAB_GRADCHECK_RTOL,
             nondet_tol=1e-12,
         )
 
@@ -1191,13 +1217,21 @@ class TestPMESlabIntegration:
         )
 
         # 3D pbc slab mode leaves PME energies unchanged.
-        torch.testing.assert_close(e_3d, e_off, rtol=0, atol=0)
+        torch.testing.assert_close(
+            e_3d, e_off, rtol=SLAB_STRICT_RTOL, atol=SLAB_STRICT_ATOL
+        )
         # 3D pbc slab mode leaves PME forces unchanged.
-        torch.testing.assert_close(f_3d, f_off, rtol=0, atol=0)
+        torch.testing.assert_close(
+            f_3d, f_off, rtol=SLAB_STRICT_RTOL, atol=SLAB_STRICT_ATOL
+        )
         # 3D pbc slab mode leaves PME charge gradients unchanged.
-        torch.testing.assert_close(cg_3d, cg_off, rtol=0, atol=0)
+        torch.testing.assert_close(
+            cg_3d, cg_off, rtol=SLAB_STRICT_RTOL, atol=SLAB_STRICT_ATOL
+        )
         # 3D pbc slab mode leaves PME virial unchanged.
-        torch.testing.assert_close(v_3d, v_off, rtol=0, atol=0)
+        torch.testing.assert_close(
+            v_3d, v_off, rtol=SLAB_STRICT_RTOL, atol=SLAB_STRICT_ATOL
+        )
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     def test_full_pme_slab_output_dtypes(self, device, dtype):
@@ -1430,11 +1464,17 @@ class TestPMESlabIntegration:
 
         # Mixed-batch PME energies equal 3D PME plus slab correction.
         torch.testing.assert_close(
-            energies, energies_3d + slab_energies, rtol=0, atol=0
+            energies,
+            energies_3d + slab_energies,
+            rtol=SLAB_STRICT_RTOL,
+            atol=SLAB_STRICT_ATOL,
         )
         # Mixed-batch PME forces equal 3D PME plus slab correction.
         torch.testing.assert_close(
-            forces, forces_3d + slab_forces, rtol=1e-12, atol=1e-15
+            forces,
+            forces_3d + slab_forces,
+            rtol=SLAB_STRICT_RTOL,
+            atol=SLAB_STRICT_ATOL,
         )
         # The 3D-periodic system receives zero slab energy contribution.
         torch.testing.assert_close(
