@@ -157,6 +157,7 @@ jobs:
   # TEST STAGE (GPU Runner)
   # ============================================================================
   test:
+    name: Test py${{ matrix.python-version }} CUDA ${{ matrix.cuda.version }}
     needs:
       - lint
       - get-pr-labels
@@ -167,8 +168,15 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        cuda:
+          - version: "12"
+            image: nvcr.io/nvidia/cuda:12.8.2-runtime-ubuntu24.04
+            extras: "--extra torch-cu12 --extra jax-cu12"
+          - version: "13"
+            image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
+            extras: "--extra torch --extra jax"
     container:
-      image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
+      image: ${{ matrix.cuda.image }}
       options: --gpus all
     if: |
       (github.event_name == 'schedule') ||
@@ -211,14 +219,14 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           uv venv --seed --python ${{ matrix.python-version }}
-          uv sync --extra torch --extra jax
+          uv sync ${{ matrix.cuda.extras }}
           uv pip install -r test/test-requires.txt
 
       # CONDITIONAL LOGIC BASED ON EVENT TYPE
       #
       # PR branches use push events to refs/heads/pull-request/*, not the
       # pull_request event. Detect them via the branch name pattern.
-      # Testmon baselines are Python-version-specific because testmon keys its
+      # Testmon baselines are Python/CUDA-specific because testmon keys its
       # dependency database by the interpreter version and installed packages.
       - name: Restore testmon baseline (for PRs)
         if: startsWith(github.ref, 'refs/heads/pull-request/')
@@ -227,9 +235,9 @@ jobs:
           path: |
             .testmondata
             .coverage
-          key: testmon-baseline-main-py${{ matrix.python-version }}-${{ github.run_id }}
+          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda${{ matrix.cuda.version }}-${{ github.run_id }}
           restore-keys: |
-            testmon-baseline-main-py${{ matrix.python-version }}-
+            testmon-baseline-main-py${{ matrix.python-version }}-cuda${{ matrix.cuda.version }}-
 
       - name: Run tests with testmon and coverage
         run: |
@@ -253,7 +261,7 @@ jobs:
           path: |
             .testmondata
             .coverage
-          key: testmon-baseline-main-py${{ matrix.python-version }}-${{ github.run_id }}
+          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda${{ matrix.cuda.version }}-${{ github.run_id }}
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
@@ -266,7 +274,7 @@ jobs:
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report-py${{ matrix.python-version }}
+          name: coverage-report-py${{ matrix.python-version }}-cuda${{ matrix.cuda.version }}
           path: nvalchemiops.coverage.xml
           retention-days: 7
 
