@@ -103,13 +103,25 @@ def _get_gpu_sku() -> str:
 
 
 def _bench_cuda(setup, fn, torch_device, warmup, runs) -> float:
-    """Return median GPU time (ms) over *runs* using CUDA events."""
+    """Return median GPU time (ms) over *runs* using CUDA events.
+
+    Binds Warp launches to torch's current stream via ``wp.ScopedStream`` so
+    that the CUDA events recorded on that stream actually capture Warp work.
+    Without the binding Warp uses its own default stream and the events
+    under-report (or miss entirely) the timed kernels.  The scoped stream is a
+    no-op for pure-torch ``fn`` bodies, so the wrapper is applied uniformly to
+    keep the timed region identical between the Warp and torch comparison
+    paths.
+    """
+    stream = torch.cuda.current_stream(torch_device)
+    wp_stream = wp.stream_from_torch(stream)
+
     for _ in range(warmup):
         setup()
-        fn()
+        with wp.ScopedStream(wp_stream):
+            fn()
     torch.cuda.synchronize(torch_device)
 
-    stream = torch.cuda.current_stream(torch_device)
     times = []
     for _ in range(runs):
         setup()
@@ -117,7 +129,8 @@ def _bench_cuda(setup, fn, torch_device, warmup, runs) -> float:
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         start.record(stream)
-        fn()
+        with wp.ScopedStream(wp_stream):
+            fn()
         end.record(stream)
         torch.cuda.synchronize(torch_device)
         times.append(start.elapsed_time(end))
