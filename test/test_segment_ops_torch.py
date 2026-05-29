@@ -460,6 +460,27 @@ class TestEdgeCases:
         assert x.grad is not None
         assert idx.grad is None
 
+    def test_mul_num_segments_mismatch_raises(self, device):
+        """``segmented_mul`` must validate ``num_segments == y.shape[0]``.
+
+        Without the guard, forward succeeds (``y`` is only indexed via ``idx``)
+        but backward allocates ``grad_y`` with the wrong leading dimension —
+        a tensor whose shape disagrees with the leaf ``y``.
+        """
+        x = torch.randn(3, device=device, requires_grad=True)
+        y = torch.randn(2, device=device, requires_grad=True)
+        idx = torch.tensor([0, 1, 0], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="num_segments"):
+            segmented_mul(x, y, idx, num_segments=3)
+
+    def test_matvec_num_segments_mismatch_raises(self, device):
+        """``segmented_matvec`` must validate ``num_segments == m.shape[0]``."""
+        v = torch.randn(3, 3, device=device, requires_grad=True)
+        m = torch.randn(2, 3, 3, device=device, requires_grad=True)
+        idx = torch.tensor([0, 1, 0], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="num_segments"):
+            segmented_matvec(v, m, idx, num_segments=3)
+
 
 # ---------------------------------------------------------------------------
 # loss.backward() — the typical user-facing flow

@@ -488,13 +488,27 @@ def segmented_mul(
     idx : torch.Tensor
         Shape ``(N,)``, dtype int32.
     num_segments : int
-        Number of segments.
+        Number of segments.  Must equal ``y.shape[0]``.
 
     Returns
     -------
     torch.Tensor
         Same shape as ``x``.
+
+    Raises
+    ------
+    ValueError
+        If ``num_segments != y.shape[0]``.  Without this guard, ``forward``
+        would still succeed (``y`` is only indexed by ``idx``) but ``backward``
+        would allocate ``grad_y`` with shape ``(num_segments,)`` — a tensor
+        whose shape disagrees with the leaf ``y``, breaking the autograd
+        contract.
     """
+    if y.shape[0] != num_segments:
+        raise ValueError(
+            f"segmented_mul: num_segments ({num_segments}) must equal "
+            f"y.shape[0] ({y.shape[0]}); y is the per-segment broadcast operand."
+        )
     return SegmentedMul.apply(x, y, idx, num_segments)
 
 
@@ -880,11 +894,24 @@ def segmented_matvec(
     idx : torch.Tensor
         Shape ``(N,)``, dtype int32.
     num_segments : int
-        Number of segments.
+        Number of segments.  Must equal ``m.shape[0]``.
 
     Returns
     -------
     torch.Tensor
         Shape ``(N, 3)``.
+
+    Raises
+    ------
+    ValueError
+        If ``num_segments != m.shape[0]``.  Without this guard, ``forward``
+        would succeed (``m`` is only indexed by ``idx``) but ``backward``
+        would allocate ``grad_m`` with the wrong leading dimension, breaking
+        the autograd contract.
     """
+    if m.shape[0] != num_segments:
+        raise ValueError(
+            f"segmented_matvec: num_segments ({num_segments}) must equal "
+            f"m.shape[0] ({m.shape[0]}); m is the per-segment matrix operand."
+        )
     return SegmentedMatvec.apply(v, m, idx, num_segments)
