@@ -39,11 +39,27 @@ dynamic = ["version"]
 [project.optional-dependencies]
 
 torch = [
-    "torch>=2.8.0",
+    "torch>=2.11.0",
+]
+
+torch-cu12 = [
+    "torch>=2.11.0",
+]
+
+torch-cu13 = [
+    "torch>=2.11.0",
 ]
 
 jax = [
+    "jax[cuda13]",
+]
+
+jax-cu12 = [
     "jax[cuda12]",
+]
+
+jax-cu13 = [
+    "jax[cuda13]",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -89,11 +105,62 @@ docs = [
 # == UV configuration =====
 [tool.uv]
 managed = true
+conflicts = [
+    [
+        { extra = "torch" },
+        { extra = "torch-cu12" },
+    ],
+    [
+        { extra = "torch-cu12" },
+        { extra = "torch-cu13" },
+    ],
+    [
+        { extra = "jax" },
+        { extra = "jax-cu12" },
+    ],
+    [
+        { extra = "jax-cu12" },
+        { extra = "jax-cu13" },
+    ],
+    [
+        { extra = "torch-cu12" },
+        { extra = "jax" },
+    ],
+    [
+        { extra = "torch-cu12" },
+        { extra = "jax-cu13" },
+    ],
+    [
+        { extra = "jax-cu12" },
+        { extra = "torch" },
+    ],
+    [
+        { extra = "jax-cu12" },
+        { extra = "torch-cu13" },
+    ],
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", extra = "torch-cu12" },
+    { index = "pytorch-cu130", extra = "torch" },
+    { index = "pytorch-cu130", extra = "torch-cu13" },
+]
 
 [[tool.uv.index]]
 name = "internal-alchemi"
 url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
 publish-url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 

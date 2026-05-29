@@ -47,10 +47,21 @@ jobs:
   # EXAMPLES STAGE (GPU Runner)
   # ============================================================================
   examples:
+    name: Examples CUDA ${{ matrix.cuda.version }}
     runs-on: linux-amd64-gpu-h100-latest-1
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda:
+          - version: "12"
+            image: nvcr.io/nvidia/cuda:12.8.2-runtime-ubuntu24.04
+            extras: "--extra torch-cu12 --extra jax-cu12"
+          - version: "13"
+            image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
+            extras: "--extra torch --extra jax"
     container:
-      image: nvcr.io/nvidia/cuda:13.1.0-runtime-ubuntu24.04
+      image: ${{ matrix.cuda.image }}
       options: --gpus all
     steps:
       - name: Checkout repository
@@ -81,7 +92,7 @@ jobs:
       - name: Install dependencies
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          uv sync --all-extras
+          uv sync ${{ matrix.cuda.extras }}
           make docs-install-examples
 
       - name: Run all examples
@@ -152,7 +163,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: examples-report
+          name: examples-report-cuda${{ matrix.cuda.version }}
           path: |
             examples-report.md
             examples-logs/
@@ -171,15 +182,23 @@ jobs:
         if: always()
         uses: actions/download-artifact@v4
         with:
-          name: examples-report
+          pattern: examples-report-*
           path: report
+          merge-multiple: false
         continue-on-error: true
 
       - name: Print failure report
         if: always()
         run: |
-          if [ -f report/examples-report.md ]; then
-            cat report/examples-report.md
+          REPORTS=""
+          if [ -d report ]; then
+            REPORTS=$(find report -name examples-report.md -print | sort)
+          fi
+          if [[ -n "$REPORTS" ]]; then
+            while IFS= read -r report; do
+              echo "===== ${report} ====="
+              cat "$report"
+            done <<< "$REPORTS"
           else
             echo "No report artifact found."
           fi
