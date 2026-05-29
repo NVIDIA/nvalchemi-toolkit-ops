@@ -577,6 +577,11 @@ class SegmentedMean(torch.autograd.Function):
         out, counts = output
         ctx.save_for_backward(counts, idx)
         ctx.num_segments = num_segments
+        # ``counts`` is saved state, not a differentiable output.  Marking it
+        # non-differentiable makes ``counts.requires_grad`` False so a caller
+        # that tries to backprop through it gets a clear ``RuntimeError`` rather
+        # than a silently dropped gradient.
+        ctx.mark_non_differentiable(counts)
 
     @staticmethod
     def backward(ctx, g_out: torch.Tensor, _g_counts):
@@ -709,6 +714,13 @@ class SegmentedRmsNorm(torch.autograd.Function):
         out, inv_norm, counts = output
         ctx.save_for_backward(x, inv_norm, counts, idx)
         ctx.num_segments = num_segments
+        # ``inv_norm`` and ``counts`` are saved state, not first-class
+        # differentiable outputs — backward only consumes the cotangent of
+        # ``out`` and discards the other slots.  Marking them
+        # non-differentiable sets ``requires_grad=False`` on both, so a caller
+        # that tries ``inv_norm.sum().backward()`` gets a clear ``RuntimeError``
+        # rather than a silently dropped VJP into ``x``.
+        ctx.mark_non_differentiable(inv_norm, counts)
 
     @staticmethod
     def backward(ctx, g_out: torch.Tensor, _g_inv_norm, _g_counts):

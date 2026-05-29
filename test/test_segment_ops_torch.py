@@ -550,6 +550,41 @@ class TestFunctionApplyDirect:
         ref_inv = torch.where(denom > 0, denom.reciprocal(), torch.zeros_like(denom))
         torch.testing.assert_close(inv_norm, ref_inv, rtol=1e-10, atol=1e-12)
 
+    def test_rms_norm_apply_saved_state_is_non_differentiable(self, device):
+        """``inv_norm`` and ``counts`` are saved state, not differentiable outputs.
+
+        Without ``ctx.mark_non_differentiable`` the backward silently drops the
+        cotangent on ``inv_norm`` — a loss depending on it would *compile* but
+        leave ``x.grad`` empty.  Asserts both saved-state tensors have
+        ``requires_grad=False`` and that backpropping through them raises.
+        """
+        from nvalchemiops.torch.segment_ops import SegmentedRmsNorm
+
+        idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        x = torch.randn(4, 3, dtype=torch.float64, device=device, requires_grad=True)
+        out, inv_norm, counts = SegmentedRmsNorm.apply(x, idx, 2)
+        # ``out`` is the only differentiable output.
+        assert out.requires_grad
+        assert not inv_norm.requires_grad
+        assert not counts.requires_grad
+        # Attempting to backprop through inv_norm must raise rather than
+        # silently zero out the gradient on ``x``.
+        with pytest.raises(RuntimeError):
+            inv_norm.sum().backward()
+        # The real path still works.
+        out.pow(2).sum().backward()
+        assert x.grad is not None and x.grad.abs().sum() > 0
+
+    def test_mean_apply_counts_is_non_differentiable(self, device):
+        """``counts`` from SegmentedMean.apply is saved state, not differentiable."""
+        from nvalchemiops.torch.segment_ops import SegmentedMean
+
+        idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        x = torch.randn(4, 3, dtype=torch.float64, device=device, requires_grad=True)
+        out, counts = SegmentedMean.apply(x, idx, 2)
+        assert out.requires_grad
+        assert not counts.requires_grad
+
 
 # ---------------------------------------------------------------------------
 # Empty / degenerate inputs
@@ -647,13 +682,19 @@ class TestIdxReuse:
 class _FakeCtx:
     """Minimal stand-in for ``torch.autograd.function.FunctionCtx``.
 
-    ``setup_context`` only needs ``save_for_backward`` plus arbitrary attribute
-    assignment; ``backward`` only reads ``ctx.saved_tensors`` and the stashed
-    attributes.  No need for the full C++ object.
+    ``setup_context`` needs ``save_for_backward`` and
+    ``mark_non_differentiable`` plus arbitrary attribute assignment;
+    ``backward`` only reads ``ctx.saved_tensors`` and the stashed attributes.
+    No need for the full C++ object.
     """
 
     def save_for_backward(self, *tensors: torch.Tensor) -> None:
         self.saved_tensors = tuple(tensors)
+
+    def mark_non_differentiable(self, *tensors: torch.Tensor) -> None:
+        # Real ctx flips ``.requires_grad`` on each tensor; for coverage tests
+        # we only need to record that the method was called.
+        self.non_differentiable = tuple(tensors)
 
 
 class TestDirectFunctionInvocation:
