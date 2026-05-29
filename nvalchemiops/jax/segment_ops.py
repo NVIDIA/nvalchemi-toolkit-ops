@@ -571,12 +571,14 @@ def _make_mean_fwd(wp_dtype):
         x: wp.array(dtype=wp_dtype),
         idx: wp.array(dtype=wp.int32),
         out: wp.array(dtype=wp_dtype),
+        counts: wp.array(dtype=wp.int32),
     ):
+        # ``counts`` is exposed as a kernel output so the JAX VJP can save it
+        # as residual state without recomputing ``jnp.bincount`` on the host.
         num_segments = out.shape[0]
         sums = wp.zeros(num_segments, dtype=wp_dtype, device=x.device)
-        counts_tmp = wp.zeros(num_segments, dtype=wp.int32, device=x.device)
         _wp_segmented_sum(x, idx, sums)
-        _wp_segmented_count(idx, counts_tmp)
+        _wp_segmented_count(idx, counts)
         from nvalchemiops.segment_ops import (
             _segmented_vec_div_by_count_overloads,
         )
@@ -585,11 +587,11 @@ def _make_mean_fwd(wp_dtype):
             wp.launch(
                 _segmented_vec_div_by_count_overloads[wp_dtype],
                 dim=num_segments,
-                inputs=[sums, counts_tmp, out],
+                inputs=[sums, counts, out],
                 device=x.device,
             )
         else:
-            _wp_segment_div(sums, counts_tmp, out)
+            _wp_segment_div(sums, counts, out)
 
     return fn
 
@@ -620,7 +622,7 @@ def _make_mean_dbl_bwd(wp_dtype):
 
 _MEAN_WP = _SUM_WP
 _FWD_MEAN = {
-    k: jax_callable(_make_mean_fwd(v), num_outputs=1) for k, v in _MEAN_WP.items()
+    k: jax_callable(_make_mean_fwd(v), num_outputs=2) for k, v in _MEAN_WP.items()
 }
 _BWD_MEAN = {
     k: jax_callable(_make_mean_bwd(v), num_outputs=1) for k, v in _MEAN_WP.items()
@@ -656,22 +658,25 @@ _mean_bwd_op.defvjp(_mean_bwd_op_fwd, _mean_bwd_op_bwd)
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3))
 def _mean_op(x, idx, num_segments, kind):
+    # Returns (out, counts) so the VJP can save ``counts`` as residual state
+    # without recomputing it.  ``counts`` is int32 → JAX treats it as
+    # non-differentiable automatically.
     out_shape = (num_segments, 3) if kind[1] == "vec3" else (num_segments,)
-    (out,) = _FWD_MEAN[kind](x, idx, output_dims={"out": out_shape})
-    return out
+    out, counts = _FWD_MEAN[kind](
+        x, idx, output_dims={"out": out_shape, "counts": (num_segments,)}
+    )
+    return out, counts
 
 
 def _mean_op_fwd(x, idx, num_segments, kind):
-    # Call _mean_op recursively so 2nd-order autograd dispatches through the
-    # custom_vjp rather than the bare FFI call.  ``counts`` is computed
-    # separately via a pure-JAX primitive (jnp.bincount) so the fwd_fn body
-    # contains no non-differentiable FFI side effects.
-    out = _mean_op(x, idx, num_segments, kind)
-    counts = jnp.bincount(idx, length=num_segments).astype(jnp.int32)
-    return out, (idx, counts)
+    out, counts = _mean_op(x, idx, num_segments, kind)
+    return (out, counts), (idx, counts)
 
 
-def _mean_op_bwd(num_segments, kind, residuals, g_out):
+def _mean_op_bwd(num_segments, kind, residuals, cotangents):
+    # ``cotangents`` is the pair (g_out, g_counts); g_counts is the zero
+    # JVP-tangent of an int32 output and is unused.
+    g_out, _g_counts = cotangents
     idx, counts = residuals
     grad_x = _mean_bwd_op(idx, kind, num_segments, g_out, counts)
     return grad_x, None
@@ -682,7 +687,8 @@ _mean_op.defvjp(_mean_op_fwd, _mean_op_bwd)
 
 def segmented_mean(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
     """Differentiable per-segment mean."""
-    return _mean_op(x, idx, num_segments, _sum_kind(x))
+    out, _counts = _mean_op(x, idx, num_segments, _sum_kind(x))
+    return out
 
 
 # =============================================================================
@@ -701,13 +707,16 @@ def _make_rms_fwd(vec_t):
         x: wp.array(dtype=vec_t),
         idx: wp.array(dtype=wp.int32),
         out: wp.array(dtype=scalar_t),
+        inv_norm: wp.array(dtype=scalar_t),
+        counts: wp.array(dtype=wp.int32),
     ):
+        # ``inv_norm`` and ``counts`` are exposed as kernel outputs so the JAX
+        # VJP can save them as residual state without recomputing the divide
+        # and the bincount on the host.
         num_segments = out.shape[0]
         sum_sq = wp.zeros(num_segments, dtype=scalar_t, device=x.device)
-        counts_tmp = wp.zeros(num_segments, dtype=wp.int32, device=x.device)
-        inv_norm_tmp = wp.zeros(num_segments, dtype=scalar_t, device=x.device)
         _launch_segmented_rms_norm_forward_precompute(
-            x, idx, sum_sq, counts_tmp, out, inv_norm_tmp
+            x, idx, sum_sq, counts, out, inv_norm
         )
 
     return fn
@@ -758,7 +767,7 @@ def _make_rms_dbl_bwd(vec_t):
 
 _RMS_WP = {_F: wp.vec3f, _D: wp.vec3d}
 _FWD_RMS = {
-    k: jax_callable(_make_rms_fwd(v), num_outputs=1) for k, v in _RMS_WP.items()
+    k: jax_callable(_make_rms_fwd(v), num_outputs=3) for k, v in _RMS_WP.items()
 }
 _BWD_RMS = {
     k: jax_callable(_make_rms_bwd(v), num_outputs=1) for k, v in _RMS_WP.items()
@@ -815,23 +824,32 @@ _rms_bwd_op.defvjp(_rms_bwd_op_fwd, _rms_bwd_op_bwd)
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3))
 def _rms_op(x, idx, num_segments, dtype):
-    (out,) = _FWD_RMS[dtype](x, idx, output_dims={"out": (num_segments,)})
-    return out
+    # Returns (out, inv_norm, counts) so the VJP can save the precompute
+    # state as residuals.  ``counts`` is int32 and ``inv_norm`` is the
+    # already-saved-state slot from the underlying Warp precompute kernel
+    # — JAX treats counts as non-differentiable automatically, and we
+    # don't differentiate inv_norm because it's bookkeeping for the bwd.
+    out, inv_norm, counts = _FWD_RMS[dtype](
+        x,
+        idx,
+        output_dims={
+            "out": (num_segments,),
+            "inv_norm": (num_segments,),
+            "counts": (num_segments,),
+        },
+    )
+    return out, inv_norm, counts
 
 
 def _rms_op_fwd(x, idx, num_segments, dtype):
-    out = _rms_op(x, idx, num_segments, dtype)
-    counts = jnp.bincount(idx, length=num_segments).astype(jnp.int32)
-    # inv_norm[s] = 1 / (out[s] * counts[s]) when both are positive, else 0.
-    counts_f = counts.astype(out.dtype)
-    denom = out * counts_f
-    inv_norm = jnp.where(
-        denom > 0, jnp.reciprocal(jnp.where(denom > 0, denom, 1.0)), 0.0
-    )
-    return out, (idx, x, inv_norm, counts)
+    out, inv_norm, counts = _rms_op(x, idx, num_segments, dtype)
+    return (out, inv_norm, counts), (idx, x, inv_norm, counts)
 
 
-def _rms_op_bwd(num_segments, dtype, residuals, g_out):
+def _rms_op_bwd(num_segments, dtype, residuals, cotangents):
+    # ``cotangents`` is the triple (g_out, g_inv_norm, g_counts); only
+    # g_out is meaningful (the other two are saved state).
+    g_out, _g_inv_norm, _g_counts = cotangents
     idx, x, inv_norm, counts = residuals
     grad_x = _rms_bwd_op(idx, dtype, num_segments, g_out, x, inv_norm, counts)
     return grad_x, None
@@ -842,7 +860,8 @@ _rms_op.defvjp(_rms_op_fwd, _rms_op_bwd)
 
 def segmented_rms_norm(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
     """Differentiable per-segment RMS norm."""
-    return _rms_op(x, idx, num_segments, _norm_dtype(x.dtype))
+    out, _inv_norm, _counts = _rms_op(x, idx, num_segments, _norm_dtype(x.dtype))
+    return out
 
 
 # =============================================================================
