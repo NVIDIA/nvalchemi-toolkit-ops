@@ -61,16 +61,13 @@ from nvalchemiops.segment_ops_backward import (
 N, M = 30, 5
 
 
-def _available_devices():
-    devices = ["cpu"]
-    if wp.is_cuda_available():
-        devices.append("cuda:0")
-    return devices
-
-
-@pytest.fixture(scope="module", params=_available_devices())
+@pytest.fixture(params=["cpu", "cuda:0"], ids=["cpu", "gpu"])
 def device(request):
-    return request.param
+    """Both CPU and GPU; GPU is skipped if CUDA is not available."""
+    device_name = request.param
+    if device_name == "cuda:0" and not wp.is_cuda_available():
+        pytest.skip("CUDA not available")
+    return device_name
 
 
 def _make_idx(N: int, M: int, rng) -> np.ndarray:

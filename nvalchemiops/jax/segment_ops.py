@@ -31,10 +31,10 @@ segmented_dot      : per-segment dot product (vec3, f32 or f64)
 segmented_mul      : per-element scale by per-segment scalar (vec3 × scalar)
 segmented_mean     : per-segment mean (scalar or vec3, f32 or f64)
 segmented_rms_norm : per-segment RMS norm of vec3 inputs
-segmented_matvec   : per-segment matvec ``out[i] = M[idx[i]]^T @ v[i]``
+segmented_matvec   : per-segment matvec ``out[i] = m[idx[i]]^T @ v[i]``
 
 Index inputs (``idx``) are non-differentiable — JAX returns ``None`` for them.
-``M`` (number of segments) is a static argument (compile-time constant).
+``num_segments`` (number of segments) is a static argument (compile-time constant).
 """
 
 from collections.abc import Callable
@@ -205,22 +205,22 @@ def _sum_kind(x: jax.Array) -> tuple:
     return (_norm_dtype(x.dtype), "vec3" if x.ndim == 2 else "scalar")
 
 
-# Double-backward of segmented_sum.  ``kind`` and ``M`` are static.
+# Double-backward of segmented_sum.  ``kind`` and ``num_segments`` are static.
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2))
-def _sum_bwd_op(idx, kind, M, g_out):
+def _sum_bwd_op(idx, kind, num_segments, g_out):
     n = idx.shape[0]
     out_shape = (n, 3) if kind[1] == "vec3" else (n,)
     (grad_x,) = _BWD_SUM[kind](g_out, idx, output_dims={"grad_x": out_shape})
     return grad_x
 
 
-def _sum_bwd_op_fwd(idx, kind, M, g_out):
-    return _sum_bwd_op(idx, kind, M, g_out), (idx,)
+def _sum_bwd_op_fwd(idx, kind, num_segments, g_out):
+    return _sum_bwd_op(idx, kind, num_segments, g_out), (idx,)
 
 
-def _sum_bwd_op_bwd(kind, M, residuals, gg_x):
+def _sum_bwd_op_bwd(kind, num_segments, residuals, gg_x):
     (idx,) = residuals
-    out_shape = (M, 3) if kind[1] == "vec3" else (M,)
+    out_shape = (num_segments, 3) if kind[1] == "vec3" else (num_segments,)
     (grad_g_out,) = _DBL_SUM[kind](gg_x, idx, output_dims={"grad_g_out": out_shape})
     # Return grads matching (idx, g_out).  idx is integer / non-differentiable.
     return (jnp.zeros_like(idx), grad_g_out)
@@ -229,41 +229,41 @@ def _sum_bwd_op_bwd(kind, M, residuals, gg_x):
 _sum_bwd_op.defvjp(_sum_bwd_op_fwd, _sum_bwd_op_bwd)
 
 
-# First-order forward.  ``kind`` and ``M`` are static.
+# First-order forward.  ``kind`` and ``num_segments`` are static.
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3))
-def _sum_op(x, idx, M, kind):
-    out_shape = (M, 3) if kind[1] == "vec3" else (M,)
+def _sum_op(x, idx, num_segments, kind):
+    out_shape = (num_segments, 3) if kind[1] == "vec3" else (num_segments,)
     (out,) = _FWD_SUM[kind](x, idx, output_dims={"out": out_shape})
     return out
 
 
-def _sum_op_fwd(x, idx, M, kind):
-    return _sum_op(x, idx, M, kind), (idx,)
+def _sum_op_fwd(x, idx, num_segments, kind):
+    return _sum_op(x, idx, num_segments, kind), (idx,)
 
 
-def _sum_op_bwd(M, kind, residuals, g_out):
+def _sum_op_bwd(num_segments, kind, residuals, g_out):
     (idx,) = residuals
-    grad_x = _sum_bwd_op(idx, kind, M, g_out)
+    grad_x = _sum_bwd_op(idx, kind, num_segments, g_out)
     return grad_x, None
 
 
 _sum_op.defvjp(_sum_op_fwd, _sum_op_bwd)
 
 
-def segmented_sum(x: jax.Array, idx: jax.Array, M: int) -> jax.Array:
+def segmented_sum(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
     """Differentiable segmented sum.
 
     Parameters
     ----------
     x   : jax.Array, shape ``(N,)`` or ``(N, 3)``, float32 / float64.
-    idx : jax.Array, shape ``(N,)``, dtype int32, sorted in ``[0, M)``.
-    M   : int — number of segments.  Static argument.
+    idx : jax.Array, shape ``(N,)``, dtype int32, sorted in ``[0, num_segments)``.
+    num_segments   : int — number of segments.  Static argument.
 
     Returns
     -------
-    jax.Array of shape ``(M,)`` or ``(M, 3)``.
+    jax.Array of shape ``(num_segments,)`` or ``(num_segments, 3)``.
     """
-    return _sum_op(x, idx, M, _sum_kind(x))
+    return _sum_op(x, idx, num_segments, _sum_kind(x))
 
 
 # =============================================================================
@@ -346,9 +346,9 @@ _DBL_DOT = {
 }
 
 
-# Double-backward of segmented_dot.  ``dtype`` and ``M`` static.
+# Double-backward of segmented_dot.  ``dtype`` and ``num_segments`` static.
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2))
-def _dot_bwd_op(idx, dtype, M, g_out, x, y):
+def _dot_bwd_op(idx, dtype, num_segments, g_out, x, y):
     n = x.shape[0]
     (grad_x, grad_y) = _BWD_DOT[dtype](
         g_out,
@@ -360,11 +360,11 @@ def _dot_bwd_op(idx, dtype, M, g_out, x, y):
     return grad_x, grad_y
 
 
-def _dot_bwd_op_fwd(idx, dtype, M, g_out, x, y):
-    return _dot_bwd_op(idx, dtype, M, g_out, x, y), (idx, g_out, x, y)
+def _dot_bwd_op_fwd(idx, dtype, num_segments, g_out, x, y):
+    return _dot_bwd_op(idx, dtype, num_segments, g_out, x, y), (idx, g_out, x, y)
 
 
-def _dot_bwd_op_bwd(dtype, M, residuals, cotangents):
+def _dot_bwd_op_bwd(dtype, num_segments, residuals, cotangents):
     idx, g_out, x, y = residuals
     gg_gx, gg_gy = cotangents
     n = x.shape[0]
@@ -376,7 +376,7 @@ def _dot_bwd_op_bwd(dtype, M, residuals, cotangents):
         y,
         idx,
         output_dims={
-            "grad_g_out": (M,),
+            "grad_g_out": (num_segments,),
             "grad_x_extra": (n, 3),
             "grad_y_extra": (n, 3),
         },
@@ -388,27 +388,29 @@ _dot_bwd_op.defvjp(_dot_bwd_op_fwd, _dot_bwd_op_bwd)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(3, 4))
-def _dot_op(x, y, idx, M, dtype):
-    (out,) = _FWD_DOT[dtype](x, y, idx, output_dims={"out": (M,)})
+def _dot_op(x, y, idx, num_segments, dtype):
+    (out,) = _FWD_DOT[dtype](x, y, idx, output_dims={"out": (num_segments,)})
     return out
 
 
-def _dot_op_fwd(x, y, idx, M, dtype):
-    return _dot_op(x, y, idx, M, dtype), (x, y, idx)
+def _dot_op_fwd(x, y, idx, num_segments, dtype):
+    return _dot_op(x, y, idx, num_segments, dtype), (x, y, idx)
 
 
-def _dot_op_bwd(M, dtype, residuals, g_out):
+def _dot_op_bwd(num_segments, dtype, residuals, g_out):
     x, y, idx = residuals
-    grad_x, grad_y = _dot_bwd_op(idx, dtype, M, g_out, x, y)
+    grad_x, grad_y = _dot_bwd_op(idx, dtype, num_segments, g_out, x, y)
     return grad_x, grad_y, None
 
 
 _dot_op.defvjp(_dot_op_fwd, _dot_op_bwd)
 
 
-def segmented_dot(x: jax.Array, y: jax.Array, idx: jax.Array, M: int) -> jax.Array:
+def segmented_dot(
+    x: jax.Array, y: jax.Array, idx: jax.Array, num_segments: int
+) -> jax.Array:
     """Differentiable per-segment dot product (vec3 inputs)."""
-    return _dot_op(x, y, idx, M, _norm_dtype(x.dtype))
+    return _dot_op(x, y, idx, num_segments, _norm_dtype(x.dtype))
 
 
 # =============================================================================
@@ -490,22 +492,22 @@ _DBL_MUL = {
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2))
-def _mul_bwd_op(idx, dtype, M, g_out, x, y):
+def _mul_bwd_op(idx, dtype, num_segments, g_out, x, y):
     (grad_x, grad_y) = _BWD_MUL[dtype](
         g_out,
         x,
         y,
         idx,
-        output_dims={"grad_x": x.shape, "grad_y": (M,)},
+        output_dims={"grad_x": x.shape, "grad_y": (num_segments,)},
     )
     return grad_x, grad_y
 
 
-def _mul_bwd_op_fwd(idx, dtype, M, g_out, x, y):
-    return _mul_bwd_op(idx, dtype, M, g_out, x, y), (idx, g_out, x, y)
+def _mul_bwd_op_fwd(idx, dtype, num_segments, g_out, x, y):
+    return _mul_bwd_op(idx, dtype, num_segments, g_out, x, y), (idx, g_out, x, y)
 
 
-def _mul_bwd_op_bwd(dtype, M, residuals, cotangents):
+def _mul_bwd_op_bwd(dtype, num_segments, residuals, cotangents):
     idx, g_out, x, y = residuals
     gg_gx, gg_gy = cotangents
     (grad_g_out, grad_x_extra, grad_y_extra) = _DBL_MUL[dtype](
@@ -518,7 +520,7 @@ def _mul_bwd_op_bwd(dtype, M, residuals, cotangents):
         output_dims={
             "grad_g_out": x.shape,
             "grad_x_extra": x.shape,
-            "grad_y_extra": (M,),
+            "grad_y_extra": (num_segments,),
         },
     )
     return (jnp.zeros_like(idx), grad_g_out, grad_x_extra, grad_y_extra)
@@ -528,27 +530,29 @@ _mul_bwd_op.defvjp(_mul_bwd_op_fwd, _mul_bwd_op_bwd)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(3, 4))
-def _mul_op(x, y, idx, M, dtype):
+def _mul_op(x, y, idx, num_segments, dtype):
     (out,) = _FWD_MUL[dtype](x, y, idx, output_dims={"out": x.shape})
     return out
 
 
-def _mul_op_fwd(x, y, idx, M, dtype):
-    return _mul_op(x, y, idx, M, dtype), (x, y, idx)
+def _mul_op_fwd(x, y, idx, num_segments, dtype):
+    return _mul_op(x, y, idx, num_segments, dtype), (x, y, idx)
 
 
-def _mul_op_bwd(M, dtype, residuals, g_out):
+def _mul_op_bwd(num_segments, dtype, residuals, g_out):
     x, y, idx = residuals
-    grad_x, grad_y = _mul_bwd_op(idx, dtype, M, g_out, x, y)
+    grad_x, grad_y = _mul_bwd_op(idx, dtype, num_segments, g_out, x, y)
     return grad_x, grad_y, None
 
 
 _mul_op.defvjp(_mul_op_fwd, _mul_op_bwd)
 
 
-def segmented_mul(x: jax.Array, y: jax.Array, idx: jax.Array, M: int) -> jax.Array:
+def segmented_mul(
+    x: jax.Array, y: jax.Array, idx: jax.Array, num_segments: int
+) -> jax.Array:
     """Differentiable per-element scale ``out[i] = x[i] * y[idx[i]]``."""
-    return _mul_op(x, y, idx, M, _norm_dtype(x.dtype))
+    return _mul_op(x, y, idx, num_segments, _norm_dtype(x.dtype))
 
 
 # =============================================================================
@@ -568,9 +572,9 @@ def _make_mean_fwd(wp_dtype):
         idx: wp.array(dtype=wp.int32),
         out: wp.array(dtype=wp_dtype),
     ):
-        M = out.shape[0]
-        sums = wp.zeros(M, dtype=wp_dtype, device=x.device)
-        counts_tmp = wp.zeros(M, dtype=wp.int32, device=x.device)
+        num_segments = out.shape[0]
+        sums = wp.zeros(num_segments, dtype=wp_dtype, device=x.device)
+        counts_tmp = wp.zeros(num_segments, dtype=wp.int32, device=x.device)
         _wp_segmented_sum(x, idx, sums)
         _wp_segmented_count(idx, counts_tmp)
         from nvalchemiops.segment_ops import (
@@ -580,7 +584,7 @@ def _make_mean_fwd(wp_dtype):
         if is_vec:
             wp.launch(
                 _segmented_vec_div_by_count_overloads[wp_dtype],
-                dim=M,
+                dim=num_segments,
                 inputs=[sums, counts_tmp, out],
                 device=x.device,
             )
@@ -627,20 +631,20 @@ _DBL_MEAN = {
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2))
-def _mean_bwd_op(idx, kind, M, g_out, counts):
+def _mean_bwd_op(idx, kind, num_segments, g_out, counts):
     n = idx.shape[0]
     out_shape = (n, 3) if kind[1] == "vec3" else (n,)
     (grad_x,) = _BWD_MEAN[kind](g_out, counts, idx, output_dims={"grad_x": out_shape})
     return grad_x
 
 
-def _mean_bwd_op_fwd(idx, kind, M, g_out, counts):
-    return _mean_bwd_op(idx, kind, M, g_out, counts), (idx, counts)
+def _mean_bwd_op_fwd(idx, kind, num_segments, g_out, counts):
+    return _mean_bwd_op(idx, kind, num_segments, g_out, counts), (idx, counts)
 
 
-def _mean_bwd_op_bwd(kind, M, residuals, gg_x):
+def _mean_bwd_op_bwd(kind, num_segments, residuals, gg_x):
     idx, counts = residuals
-    out_shape = (M, 3) if kind[1] == "vec3" else (M,)
+    out_shape = (num_segments, 3) if kind[1] == "vec3" else (num_segments,)
     (grad_g_out,) = _DBL_MEAN[kind](
         gg_x, counts, idx, output_dims={"grad_g_out": out_shape}
     )
@@ -651,34 +655,34 @@ _mean_bwd_op.defvjp(_mean_bwd_op_fwd, _mean_bwd_op_bwd)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3))
-def _mean_op(x, idx, M, kind):
-    out_shape = (M, 3) if kind[1] == "vec3" else (M,)
+def _mean_op(x, idx, num_segments, kind):
+    out_shape = (num_segments, 3) if kind[1] == "vec3" else (num_segments,)
     (out,) = _FWD_MEAN[kind](x, idx, output_dims={"out": out_shape})
     return out
 
 
-def _mean_op_fwd(x, idx, M, kind):
+def _mean_op_fwd(x, idx, num_segments, kind):
     # Call _mean_op recursively so 2nd-order autograd dispatches through the
     # custom_vjp rather than the bare FFI call.  ``counts`` is computed
     # separately via a pure-JAX primitive (jnp.bincount) so the fwd_fn body
     # contains no non-differentiable FFI side effects.
-    out = _mean_op(x, idx, M, kind)
-    counts = jnp.bincount(idx, length=M).astype(jnp.int32)
+    out = _mean_op(x, idx, num_segments, kind)
+    counts = jnp.bincount(idx, length=num_segments).astype(jnp.int32)
     return out, (idx, counts)
 
 
-def _mean_op_bwd(M, kind, residuals, g_out):
+def _mean_op_bwd(num_segments, kind, residuals, g_out):
     idx, counts = residuals
-    grad_x = _mean_bwd_op(idx, kind, M, g_out, counts)
+    grad_x = _mean_bwd_op(idx, kind, num_segments, g_out, counts)
     return grad_x, None
 
 
 _mean_op.defvjp(_mean_op_fwd, _mean_op_bwd)
 
 
-def segmented_mean(x: jax.Array, idx: jax.Array, M: int) -> jax.Array:
+def segmented_mean(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
     """Differentiable per-segment mean."""
-    return _mean_op(x, idx, M, _sum_kind(x))
+    return _mean_op(x, idx, num_segments, _sum_kind(x))
 
 
 # =============================================================================
@@ -698,10 +702,10 @@ def _make_rms_fwd(vec_t):
         idx: wp.array(dtype=wp.int32),
         out: wp.array(dtype=scalar_t),
     ):
-        M = out.shape[0]
-        sum_sq = wp.zeros(M, dtype=scalar_t, device=x.device)
-        counts_tmp = wp.zeros(M, dtype=wp.int32, device=x.device)
-        inv_norm_tmp = wp.zeros(M, dtype=scalar_t, device=x.device)
+        num_segments = out.shape[0]
+        sum_sq = wp.zeros(num_segments, dtype=scalar_t, device=x.device)
+        counts_tmp = wp.zeros(num_segments, dtype=wp.int32, device=x.device)
+        inv_norm_tmp = wp.zeros(num_segments, dtype=scalar_t, device=x.device)
         _launch_segmented_rms_norm_forward_precompute(
             x, idx, sum_sq, counts_tmp, out, inv_norm_tmp
         )
@@ -765,7 +769,7 @@ _DBL_RMS = {
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2))
-def _rms_bwd_op(idx, dtype, M, g_out, x, inv_norm, counts):
+def _rms_bwd_op(idx, dtype, num_segments, g_out, x, inv_norm, counts):
     (grad_x,) = _BWD_RMS[dtype](
         g_out,
         x,
@@ -776,8 +780,8 @@ def _rms_bwd_op(idx, dtype, M, g_out, x, inv_norm, counts):
     return grad_x
 
 
-def _rms_bwd_op_fwd(idx, dtype, M, g_out, x, inv_norm, counts):
-    return _rms_bwd_op(idx, dtype, M, g_out, x, inv_norm, counts), (
+def _rms_bwd_op_fwd(idx, dtype, num_segments, g_out, x, inv_norm, counts):
+    return _rms_bwd_op(idx, dtype, num_segments, g_out, x, inv_norm, counts), (
         idx,
         g_out,
         x,
@@ -786,7 +790,7 @@ def _rms_bwd_op_fwd(idx, dtype, M, g_out, x, inv_norm, counts):
     )
 
 
-def _rms_bwd_op_bwd(dtype, M, residuals, gg_x):
+def _rms_bwd_op_bwd(dtype, num_segments, residuals, gg_x):
     idx, g_out, x, inv_norm, counts = residuals
     (grad_x_extra, grad_g_out_extra) = _DBL_RMS[dtype](
         gg_x,
@@ -795,7 +799,7 @@ def _rms_bwd_op_bwd(dtype, M, residuals, gg_x):
         inv_norm,
         counts,
         idx,
-        output_dims={"grad_x_extra": x.shape, "grad_g_out_extra": (M,)},
+        output_dims={"grad_x_extra": x.shape, "grad_g_out_extra": (num_segments,)},
     )
     return (
         jnp.zeros_like(idx),
@@ -810,14 +814,14 @@ _rms_bwd_op.defvjp(_rms_bwd_op_fwd, _rms_bwd_op_bwd)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(2, 3))
-def _rms_op(x, idx, M, dtype):
-    (out,) = _FWD_RMS[dtype](x, idx, output_dims={"out": (M,)})
+def _rms_op(x, idx, num_segments, dtype):
+    (out,) = _FWD_RMS[dtype](x, idx, output_dims={"out": (num_segments,)})
     return out
 
 
-def _rms_op_fwd(x, idx, M, dtype):
-    out = _rms_op(x, idx, M, dtype)
-    counts = jnp.bincount(idx, length=M).astype(jnp.int32)
+def _rms_op_fwd(x, idx, num_segments, dtype):
+    out = _rms_op(x, idx, num_segments, dtype)
+    counts = jnp.bincount(idx, length=num_segments).astype(jnp.int32)
     # inv_norm[s] = 1 / (out[s] * counts[s]) when both are positive, else 0.
     counts_f = counts.astype(out.dtype)
     denom = out * counts_f
@@ -827,27 +831,27 @@ def _rms_op_fwd(x, idx, M, dtype):
     return out, (idx, x, inv_norm, counts)
 
 
-def _rms_op_bwd(M, dtype, residuals, g_out):
+def _rms_op_bwd(num_segments, dtype, residuals, g_out):
     idx, x, inv_norm, counts = residuals
-    grad_x = _rms_bwd_op(idx, dtype, M, g_out, x, inv_norm, counts)
+    grad_x = _rms_bwd_op(idx, dtype, num_segments, g_out, x, inv_norm, counts)
     return grad_x, None
 
 
 _rms_op.defvjp(_rms_op_fwd, _rms_op_bwd)
 
 
-def segmented_rms_norm(x: jax.Array, idx: jax.Array, M: int) -> jax.Array:
+def segmented_rms_norm(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
     """Differentiable per-segment RMS norm."""
-    return _rms_op(x, idx, M, _norm_dtype(x.dtype))
+    return _rms_op(x, idx, num_segments, _norm_dtype(x.dtype))
 
 
 # =============================================================================
 # segmented_matvec
 # =============================================================================
-# Forward:  out[i] = M[idx[i]]^T @ v[i]
-# Bwd:      grad_v[i] = M[s] @ g_out[i]
+# Forward:  out[i] = m[idx[i]]^T @ v[i]
+# Bwd:      grad_v[i] = num_segments[s] @ g_out[i]
 #           grad_M[s] = sum_{i: idx[i]=s} outer(v[i], g_out[i])
-# Dbl-bwd:  grad_g_out[i]   = M[s]^T @ gg_gv[i] + gg_gM[s]^T @ v[i]
+# Dbl-bwd:  grad_g_out[i]   = num_segments[s]^T @ gg_gv[i] + gg_gM[s]^T @ v[i]
 #           grad_v_extra[i] = gg_gM[s] @ g_out[i]
 #           grad_M_extra[s] = sum outer(gg_gv[i], g_out[i])
 
@@ -918,7 +922,7 @@ _DBL_MAT = {
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(1, 2))
-def _matvec_bwd_op(idx, dtype, M, g_out, v, m):
+def _matvec_bwd_op(idx, dtype, num_segments, g_out, v, m):
     (grad_v, grad_M) = _BWD_MAT[dtype](
         g_out,
         v,
@@ -929,11 +933,11 @@ def _matvec_bwd_op(idx, dtype, M, g_out, v, m):
     return grad_v, grad_M
 
 
-def _matvec_bwd_op_fwd(idx, dtype, M, g_out, v, m):
-    return _matvec_bwd_op(idx, dtype, M, g_out, v, m), (idx, g_out, v, m)
+def _matvec_bwd_op_fwd(idx, dtype, num_segments, g_out, v, m):
+    return _matvec_bwd_op(idx, dtype, num_segments, g_out, v, m), (idx, g_out, v, m)
 
 
-def _matvec_bwd_op_bwd(dtype, M, residuals, cotangents):
+def _matvec_bwd_op_bwd(dtype, num_segments, residuals, cotangents):
     idx, g_out, v, m = residuals
     gg_gv, gg_gM = cotangents
     (grad_g_out, grad_v_extra, grad_M_extra) = _DBL_MAT[dtype](
@@ -956,24 +960,26 @@ _matvec_bwd_op.defvjp(_matvec_bwd_op_fwd, _matvec_bwd_op_bwd)
 
 
 @partial(jax.custom_vjp, nondiff_argnums=(3, 4))
-def _matvec_op(v, m, idx, M, dtype):
+def _matvec_op(v, m, idx, num_segments, dtype):
     (out,) = _FWD_MAT[dtype](v, m, idx, output_dims={"out": v.shape})
     return out
 
 
-def _matvec_op_fwd(v, m, idx, M, dtype):
-    return _matvec_op(v, m, idx, M, dtype), (v, m, idx)
+def _matvec_op_fwd(v, m, idx, num_segments, dtype):
+    return _matvec_op(v, m, idx, num_segments, dtype), (v, m, idx)
 
 
-def _matvec_op_bwd(M, dtype, residuals, g_out):
+def _matvec_op_bwd(num_segments, dtype, residuals, g_out):
     v, m, idx = residuals
-    grad_v, grad_M = _matvec_bwd_op(idx, dtype, M, g_out, v, m)
+    grad_v, grad_M = _matvec_bwd_op(idx, dtype, num_segments, g_out, v, m)
     return grad_v, grad_M, None
 
 
 _matvec_op.defvjp(_matvec_op_fwd, _matvec_op_bwd)
 
 
-def segmented_matvec(v: jax.Array, m: jax.Array, idx: jax.Array, M: int) -> jax.Array:
-    """Differentiable per-segment matvec ``out[i] = M[idx[i]]^T @ v[i]``."""
-    return _matvec_op(v, m, idx, M, _norm_dtype(v.dtype))
+def segmented_matvec(
+    v: jax.Array, m: jax.Array, idx: jax.Array, num_segments: int
+) -> jax.Array:
+    """Differentiable per-segment matvec ``out[i] = m[idx[i]]^T @ v[i]``."""
+    return _matvec_op(v, m, idx, num_segments, _norm_dtype(v.dtype))

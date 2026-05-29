@@ -40,6 +40,7 @@ import warp as wp
 
 from nvalchemiops.segment_ops import (
     _ALL_SCALAR_TYPES,
+    _ALL_SUPPORTED_TYPES,
     _ALL_VEC_SCALAR_PAIRS,
     _BLOCK_DIM,
     _SCALAR_TYPES,
@@ -814,6 +815,131 @@ _segmented_inner_products_dbl_bwd_overloads.update(
 
 
 # ===========================================================================
+# Section 9b – axpy double-backward grad_g_out (fused element-wise)
+# ===========================================================================
+# grad_g_out[i] = gg_gy_in[i] + gg_gx[i]*a[s] + gg_ga[s]*x[i]
+
+
+@wp.kernel(enable_backward=False)
+def _segmented_axpy_dbl_bwd_grad_out_scalar_kernel(
+    gg_gy_in: wp.array(dtype=Any),
+    gg_gx: wp.array(dtype=Any),
+    a: wp.array(dtype=Any),
+    gg_ga: wp.array(dtype=Any),
+    x: wp.array(dtype=Any),
+    idx: wp.array(dtype=wp.int32),
+    grad_g_out: wp.array(dtype=Any),
+):
+    i = wp.tid()
+    s = idx[i]
+    grad_g_out[i] = gg_gy_in[i] + gg_gx[i] * a[s] + gg_ga[s] * x[i]
+
+
+@wp.kernel(enable_backward=False)
+def _segmented_axpy_dbl_bwd_grad_out_vec_scalar_kernel(
+    gg_gy_in: wp.array(dtype=Any),
+    gg_gx: wp.array(dtype=Any),
+    a: wp.array(dtype=Any),
+    gg_ga: wp.array(dtype=Any),
+    x: wp.array(dtype=Any),
+    idx: wp.array(dtype=wp.int32),
+    grad_g_out: wp.array(dtype=Any),
+):
+    i = wp.tid()
+    s = idx[i]
+    # gg_gy_in/gg_gx/x are vec3; a/gg_ga are scalar
+    grad_g_out[i] = gg_gy_in[i] + a[s] * gg_gx[i] + gg_ga[s] * x[i]
+
+
+_segmented_axpy_dbl_bwd_grad_out_overloads = register_overloads(
+    _segmented_axpy_dbl_bwd_grad_out_scalar_kernel,
+    lambda t: [wp.array(dtype=t)] * 5 + [wp.array(dtype=wp.int32), wp.array(dtype=t)],
+    dtypes=_ALL_SCALAR_TYPES,
+)
+_segmented_axpy_dbl_bwd_grad_out_overloads.update(
+    register_overloads(
+        _segmented_axpy_dbl_bwd_grad_out_vec_scalar_kernel,
+        lambda v, s: [
+            wp.array(dtype=v),
+            wp.array(dtype=v),
+            wp.array(dtype=s),
+            wp.array(dtype=s),
+            wp.array(dtype=v),
+            wp.array(dtype=wp.int32),
+            wp.array(dtype=v),
+        ],
+        dtype_pairs=_ALL_VEC_SCALAR_PAIRS,
+    )
+)
+
+
+# ===========================================================================
+# Section 9c – matvec double-backward grad_g_out (fused two-term matvec)
+# ===========================================================================
+# grad_g_out[i] = m[s]^T @ gg_gv[i] + gg_gM[s]^T @ v[i]
+# (warp's wp.mul(vec, mat) computes v^T @ M = M^T @ v)
+
+
+@wp.kernel(enable_backward=False)
+def _segmented_matvec_dbl_bwd_grad_out_kernel(
+    gg_gv: wp.array(dtype=Any),
+    m: wp.array(dtype=Any),
+    v: wp.array(dtype=Any),
+    gg_gM: wp.array(dtype=Any),
+    idx: wp.array(dtype=wp.int32),
+    grad_g_out: wp.array(dtype=Any),
+):
+    i = wp.tid()
+    s = idx[i]
+    grad_g_out[i] = wp.mul(gg_gv[i], m[s]) + wp.mul(v[i], gg_gM[s])
+
+
+_segmented_matvec_dbl_bwd_grad_out_overloads = register_overloads(
+    _segmented_matvec_dbl_bwd_grad_out_kernel,
+    lambda v, m: [
+        wp.array(dtype=v),
+        wp.array(dtype=m),
+        wp.array(dtype=v),
+        wp.array(dtype=m),
+        wp.array(dtype=wp.int32),
+        wp.array(dtype=v),
+    ],
+    dtype_pairs=_VEC_MAT_PAIRS,
+    key_fn=lambda v, m: (v, m),
+)
+
+
+# ===========================================================================
+# Section 10 – add double-backward (fused broadcast + add)
+# ===========================================================================
+# Forward:        out[i] = x[i] + y[idx[i]]
+# Backward:       grad_x[i] = g_out[i];  grad_y[s] = sum_i g_out[i]
+# Double-backward: grad_g_out[i] = gg_x[i] + gg_y[idx[i]]
+#
+# One element-wise kernel writes the full result directly into grad_g_out,
+# avoiding a tmp buffer + separate "broadcast then add-inplace" pair.
+
+
+@wp.kernel(enable_backward=False)
+def _segmented_add_dbl_bwd_grad_out_kernel(
+    gg_x: wp.array(dtype=Any),
+    gg_y: wp.array(dtype=Any),
+    idx: wp.array(dtype=wp.int32),
+    grad_g_out: wp.array(dtype=Any),
+):
+    """grad_g_out[i] = gg_x[i] + gg_y[idx[i]]."""
+    i = wp.tid()
+    grad_g_out[i] = gg_x[i] + gg_y[idx[i]]
+
+
+_segmented_add_dbl_bwd_grad_out_overloads = register_overloads(
+    _segmented_add_dbl_bwd_grad_out_kernel,
+    lambda t: [wp.array(dtype=t)] * 2 + [wp.array(dtype=wp.int32), wp.array(dtype=t)],
+    dtypes=_ALL_SUPPORTED_TYPES,
+)
+
+
+# ===========================================================================
 # Internal launch functions
 # All functions below are the contracts consumed by PR 2 (Torch) and PR 3 (JAX).
 # Convention: output arrays are zeroed by the callee before writing.
@@ -943,22 +1069,16 @@ def _launch_segmented_add_double_backward(
     idx: wp.array,
     grad_g_out: wp.array,
 ) -> None:
-    """grad_g_out[i] = gg_x[i] + gg_y[idx[i]]."""
+    """grad_g_out[i] = gg_x[i] + gg_y[idx[i]]  (fused gather + add)."""
     N = gg_x.shape[0]
     if N == 0:
         return
-    grad_g_out.zero_()
-    # grad_g_out = gg_x + broadcast(gg_y)
-    wp.copy(grad_g_out, gg_x)
-    # Add gg_y[idx[i]]: use segmented_broadcast into a tmp then add inplace
-    tmp = wp.zeros(N, dtype=gg_x.dtype, device=gg_x.device)
     wp.launch(
-        _segmented_broadcast_overloads[gg_y.dtype],
+        _segmented_add_dbl_bwd_grad_out_overloads[gg_x.dtype],
         dim=N,
-        inputs=[gg_y, idx, tmp],
+        inputs=[gg_x, gg_y, idx, grad_g_out],
         device=gg_x.device,
     )
-    _add_arrays_inplace(grad_g_out, tmp)
 
 
 # ---------------------------------------------------------------------------
@@ -1102,7 +1222,7 @@ def _launch_segmented_dot_double_backward(
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
     # grad_g_out[s] = sum dot(gg_gx, y) + sum dot(gg_gy, x)
-    tmp = wp.zeros(M, dtype=g_out.dtype, device=device)
+    # Both reductions atomic_add into the pre-zeroed grad_g_out — no tmp needed.
     wp.launch(
         _segmented_dot_overloads[x.dtype],
         dim=dim_rle,
@@ -1112,10 +1232,9 @@ def _launch_segmented_dot_double_backward(
     wp.launch(
         _segmented_dot_overloads[x.dtype],
         dim=dim_rle,
-        inputs=[gg_gy, x, idx, tmp, N, ept],
+        inputs=[gg_gy, x, idx, grad_g_out, N, ept],
         device=device,
     )
-    _add_arrays_inplace(grad_g_out, tmp)
     # grad_x_extra[i] = gg_gy[i]*g_out[s]
     wp.launch(
         _segmented_mul_overloads[(gg_gy.dtype, g_out.dtype)],
@@ -1198,10 +1317,9 @@ def _launch_segmented_inner_products_double_backward(
         inputs=[gg_gx, gg_gy, g_xy, g_xx, g_yy, idx, grad_x_extra, grad_y_extra],
         device=device,
     )
-    # scalar outputs use segmented_dot
+    # scalar outputs use segmented_dot (which atomic_adds into a pre-zeroed buffer)
     scalar_dt = _VEC_TO_SCALAR.get(x.dtype, x.dtype)
-    tmp = wp.zeros(M, dtype=scalar_dt, device=device)
-    # grad_g_xy_extra[s] = sum dot(gg_gx,y) + sum dot(gg_gy,x)
+    # grad_g_xy_extra[s] = sum dot(gg_gx,y) + sum dot(gg_gy,x) — accumulate in place.
     wp.launch(
         _segmented_dot_overloads[x.dtype],
         dim=dim_rle,
@@ -1211,28 +1329,25 @@ def _launch_segmented_inner_products_double_backward(
     wp.launch(
         _segmented_dot_overloads[x.dtype],
         dim=dim_rle,
-        inputs=[gg_gy, x, idx, tmp, N, ept],
+        inputs=[gg_gy, x, idx, grad_g_xy_extra, N, ept],
         device=device,
     )
-    _add_arrays_inplace(grad_g_xy_extra, tmp)
-    # grad_g_xx_extra[s] = 2*sum dot(gg_gx, x)
-    tmp.zero_()
+    # grad_g_xx_extra[s] = 2*sum dot(gg_gx, x) — reduce then scale in place.
     wp.launch(
         _segmented_dot_overloads[x.dtype],
         dim=dim_rle,
-        inputs=[gg_gx, x, idx, tmp, N, ept],
+        inputs=[gg_gx, x, idx, grad_g_xx_extra, N, ept],
         device=device,
     )
-    _scale_and_add_inplace(grad_g_xx_extra, tmp, type_=scalar_dt, factor=2.0)
-    # grad_g_yy_extra[s] = 2*sum dot(gg_gy, y)
-    tmp.zero_()
+    _scale_inplace(grad_g_xx_extra, type_=scalar_dt, factor=2.0)
+    # grad_g_yy_extra[s] = 2*sum dot(gg_gy, y) — reduce then scale in place.
     wp.launch(
         _segmented_dot_overloads[x.dtype],
         dim=dim_rle,
-        inputs=[gg_gy, y, idx, tmp, N, ept],
+        inputs=[gg_gy, y, idx, grad_g_yy_extra, N, ept],
         device=device,
     )
-    _scale_and_add_inplace(grad_g_yy_extra, tmp, type_=scalar_dt, factor=2.0)
+    _scale_inplace(grad_g_yy_extra, type_=scalar_dt, factor=2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1293,43 +1408,26 @@ def _launch_segmented_axpy_double_backward(
     N = g_out.shape[0]
     if N == 0:
         return
-    grad_g_out.zero_()
     grad_x_extra.zero_()
     grad_a_extra.zero_()
     device = g_out.device
-    # M = a.shape[0]
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
-    # From grad_y_in = g_out: grad_g_out += gg_gy_in (identity)
-    wp.copy(grad_g_out, gg_gy_in)
-    # From grad_x[i]=a[s]*g_out[i]:
-    #   grad_g_out[i] += gg_gx[i]*a[s]   → mul(gg_gx, a)
-    tmp = wp.zeros(N, dtype=g_out.dtype, device=device)
+    # grad_g_out[i] = gg_gy_in[i] + gg_gx[i]*a[s] + gg_ga[s]*x[i]  (single fused kernel)
     wp.launch(
-        _segmented_mul_overloads[(g_out.dtype, a.dtype)],
+        _segmented_axpy_dbl_bwd_grad_out_overloads[g_out.dtype],
         dim=N,
-        inputs=[gg_gx, a, idx, tmp],
+        inputs=[gg_gy_in, gg_gx, a, gg_ga, x, idx, grad_g_out],
         device=device,
     )
-    _add_arrays_inplace(grad_g_out, tmp)
-    #   grad_a_extra[s] += sum dot(gg_gx, g_out)
+    # grad_a_extra[s] = sum dot(gg_gx, g_out)
     wp.launch(
         _segmented_dot_overloads[x.dtype],
         dim=dim_rle,
         inputs=[gg_gx, g_out, idx, grad_a_extra, N, ept],
         device=device,
     )
-    # From grad_a[s]=sum dot(x, g_out):
-    #   grad_g_out[i] += gg_ga[s]*x[i]
-    tmp.zero_()
-    wp.launch(
-        _segmented_mul_overloads[(x.dtype, gg_ga.dtype)],
-        dim=N,
-        inputs=[x, gg_ga, idx, tmp],
-        device=device,
-    )
-    _add_arrays_inplace(grad_g_out, tmp)
-    #   grad_x_extra[i] += gg_ga[s]*g_out[i]
+    # grad_x_extra[i] = gg_ga[s]*g_out[i]
     wp.launch(
         _segmented_mul_overloads[(g_out.dtype, gg_ga.dtype)],
         dim=N,
@@ -1620,12 +1718,11 @@ def _launch_segmented_max_norm_forward_precompute(
     from nvalchemiops.segment_ops import segmented_max_norm as _fwd_max_norm
 
     N = x.shape[0]
-    M = out.shape[0]
     if N == 0:
         return
     device = x.device
     # Initialize argmax_idx to -1 so that the first valid write wins via atomic_max
-    wp.launch(_fill_int32_kernel, dim=M, inputs=[argmax_idx, -1], device=device)
+    argmax_idx.fill_(-1)
     _fwd_max_norm(x, idx, out)
     ept = compute_ept(N, max(device.sm_count, 1), True)
     dim = (N + ept - 1) // ept
@@ -1731,29 +1828,18 @@ def _launch_segmented_matvec_double_backward(
     N = v.shape[0]
     if N == 0:
         return
-    grad_g_out.zero_()
     grad_v_extra.zero_()
     grad_M_extra.zero_()
     device = v.device
     ept = compute_ept(N, max(device.sm_count, 1), True)
     dim_rle = (N + ept - 1) // ept
-    # grad_g_out[i] = M[s]^T @ gg_gv[i]  +  gg_gM[s]^T @ v[i]
-    # First term: matvec fwd (v=gg_gv, M=m_fwd): out[i] = m[s]^T @ gg_gv[i]
-    tmp = wp.zeros(N, dtype=v.dtype, device=device)
+    # grad_g_out[i] = m[s]^T @ gg_gv[i] + gg_gM[s]^T @ v[i]  (single fused kernel)
     wp.launch(
-        _segmented_mul_overloads[(v.dtype, m.dtype)],
+        _segmented_matvec_dbl_bwd_grad_out_overloads[(v.dtype, m.dtype)],
         dim=N,
-        inputs=[gg_gv, m, idx, grad_g_out],
+        inputs=[gg_gv, m, v, gg_gM, idx, grad_g_out],
         device=device,
     )
-    # Second term: matvec fwd (v=v_fwd, M=gg_gM): out[i] = gg_gM[s]^T @ v[i]
-    wp.launch(
-        _segmented_mul_overloads[(v.dtype, m.dtype)],
-        dim=N,
-        inputs=[v, gg_gM, idx, tmp],
-        device=device,
-    )
-    _add_arrays_inplace(grad_g_out, tmp)
     # grad_v_extra[i] = gg_gM[s] @ g_out[i]   (non-transposed matvec)
     wp.launch(
         _segmented_matvec_backward_v_overloads[(v.dtype, m.dtype)],
@@ -1811,98 +1897,36 @@ def _launch_segment_div_double_backward(
 
 
 @wp.kernel(enable_backward=False)
-def _fill_int32_kernel(
-    out: wp.array(dtype=wp.int32),
-    value: wp.int32,
-):
-    out[wp.tid()] = value
-
-
-@wp.kernel(enable_backward=False)
-def _add_arrays_inplace_float32_kernel(
-    a: wp.array(dtype=wp.float32),
-    b: wp.array(dtype=wp.float32),
-):
-    i = wp.tid()
-    a[i] = a[i] + b[i]
-
-
-@wp.kernel(enable_backward=False)
-def _add_arrays_inplace_float64_kernel(
-    a: wp.array(dtype=wp.float64),
-    b: wp.array(dtype=wp.float64),
-):
-    i = wp.tid()
-    a[i] = a[i] + b[i]
-
-
-@wp.kernel(enable_backward=False)
-def _add_arrays_inplace_vec3f_kernel(
-    a: wp.array(dtype=wp.vec3f),
-    b: wp.array(dtype=wp.vec3f),
-):
-    i = wp.tid()
-    a[i] = a[i] + b[i]
-
-
-@wp.kernel(enable_backward=False)
-def _add_arrays_inplace_vec3d_kernel(
-    a: wp.array(dtype=wp.vec3d),
-    b: wp.array(dtype=wp.vec3d),
-):
-    i = wp.tid()
-    a[i] = a[i] + b[i]
-
-
-_ADD_INPLACE = {
-    wp.float32: _add_arrays_inplace_float32_kernel,
-    wp.float64: _add_arrays_inplace_float64_kernel,
-    wp.vec3f: _add_arrays_inplace_vec3f_kernel,
-    wp.vec3d: _add_arrays_inplace_vec3d_kernel,
-}
-
-
-def _add_arrays_inplace(a: wp.array, b: wp.array) -> None:
-    """a[i] += b[i]  for matching Warp arrays."""
-    if a.shape[0] == 0:
-        return
-    wp.launch(_ADD_INPLACE[a.dtype], dim=a.shape[0], inputs=[a, b], device=a.device)
-
-
-@wp.kernel(enable_backward=False)
-def _scale_add_float32_kernel(
+def _scale_inplace_float32_kernel(
     dst: wp.array(dtype=wp.float32),
-    src: wp.array(dtype=wp.float32),
     scale: wp.float32,
 ):
     i = wp.tid()
-    dst[i] = dst[i] + src[i] * scale
+    dst[i] = dst[i] * scale
 
 
 @wp.kernel(enable_backward=False)
-def _scale_add_float64_kernel(
+def _scale_inplace_float64_kernel(
     dst: wp.array(dtype=wp.float64),
-    src: wp.array(dtype=wp.float64),
     scale: wp.float64,
 ):
     i = wp.tid()
-    dst[i] = dst[i] + src[i] * scale
+    dst[i] = dst[i] * scale
 
 
-_SCALE_ADD = {
-    wp.float32: _scale_add_float32_kernel,
-    wp.float64: _scale_add_float64_kernel,
+_SCALE_INPLACE = {
+    wp.float32: _scale_inplace_float32_kernel,
+    wp.float64: _scale_inplace_float64_kernel,
 }
 
 
-def _scale_and_add_inplace(dst: wp.array, src: wp.array, type_, factor: float) -> None:
-    """dst[i] += src[i] * factor.  type_ is wp.float32 or wp.float64."""
+def _scale_inplace(dst: wp.array, type_, factor: float) -> None:
+    """dst[i] *= factor.  type_ is wp.float32 or wp.float64."""
     if dst.shape[0] == 0:
         return
-    # Warp converts plain Python float to the kernel's declared scalar type automatically.
     wp.launch(
-        _SCALE_ADD[type_],
+        _SCALE_INPLACE[type_],
         dim=dst.shape[0],
-        inputs=[dst, src, float(factor)],
+        inputs=[dst, float(factor)],
         device=dst.device,
     )

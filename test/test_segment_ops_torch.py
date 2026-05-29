@@ -35,6 +35,18 @@ import torch
 import warp as wp
 
 from nvalchemiops.torch.segment_ops import (
+    SegmentedDot,
+    SegmentedDotBwd,
+    SegmentedMatvec,
+    SegmentedMatvecBwd,
+    SegmentedMean,
+    SegmentedMeanBwd,
+    SegmentedMul,
+    SegmentedMulBwd,
+    SegmentedRmsNorm,
+    SegmentedRmsNormBwd,
+    SegmentedSum,
+    SegmentedSumBwd,
     segmented_dot,
     segmented_matvec,
     segmented_mean,
@@ -51,16 +63,15 @@ wp.init()
 # ---------------------------------------------------------------------------
 
 
-def _available_devices():
-    devices = ["cpu"]
-    if torch.cuda.is_available() and wp.is_cuda_available():
-        devices.append("cuda:0")
-    return devices
-
-
-@pytest.fixture(scope="module", params=_available_devices())
+@pytest.fixture(params=["cpu", "cuda:0"], ids=["cpu", "gpu"])
 def device(request):
-    return request.param
+    """Both CPU and GPU; GPU is skipped if CUDA is not available."""
+    device_name = request.param
+    if device_name == "cuda:0" and not (
+        torch.cuda.is_available() and wp.is_cuda_available()
+    ):
+        pytest.skip("CUDA not available")
+    return device_name
 
 
 N, M = 12, 4
@@ -167,6 +178,17 @@ class TestSegmentedDot:
         )
         torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_scalar(self, device, dtype):
+        idx = _make_idx(device)
+        x = _leaf((N,), device, dtype=dtype)
+        y = _leaf((N,), device, dtype=dtype)
+        out = segmented_dot(x, y, idx, M)
+        ref = torch.zeros(M, dtype=dtype, device=device).index_add_(
+            0, idx.long(), x.detach() * y.detach()
+        )
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
+
     def test_gradcheck_vec3(self, device):
         idx = _make_idx(device)
         x = _leaf((N, 3), device)
@@ -175,10 +197,29 @@ class TestSegmentedDot:
             lambda a, b: segmented_dot(a, b, idx, M), (x, y), eps=1e-6, atol=1e-5
         )
 
+    def test_gradcheck_scalar(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N,), device)
+        y = _leaf((N,), device)
+        assert torch.autograd.gradcheck(
+            lambda a, b: segmented_dot(a, b, idx, M), (x, y), eps=1e-6, atol=1e-5
+        )
+
     def test_gradgradcheck_vec3(self, device):
         idx = _make_idx(device)
         x = _leaf((N, 3), device)
         y = _leaf((N, 3), device)
+        assert torch.autograd.gradgradcheck(
+            lambda a, b: segmented_dot(a, b, idx, M),
+            (x, y),
+            eps=1e-6,
+            atol=1e-4,
+        )
+
+    def test_gradgradcheck_scalar(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N,), device)
+        y = _leaf((N,), device)
         assert torch.autograd.gradgradcheck(
             lambda a, b: segmented_dot(a, b, idx, M),
             (x, y),
@@ -202,6 +243,15 @@ class TestSegmentedMul:
         ref = x.detach() * y.detach()[idx.long(), None]
         torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_scalar(self, device, dtype):
+        idx = _make_idx(device)
+        x = _leaf((N,), device, dtype=dtype)
+        y = _leaf((M,), device, dtype=dtype)
+        out = segmented_mul(x, y, idx, M)
+        ref = x.detach() * y.detach()[idx.long()]
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
+
     def test_gradcheck_vec3(self, device):
         idx = _make_idx(device)
         x = _leaf((N, 3), device)
@@ -210,9 +260,28 @@ class TestSegmentedMul:
             lambda a, b: segmented_mul(a, b, idx, M), (x, y), eps=1e-6, atol=1e-5
         )
 
+    def test_gradcheck_scalar(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N,), device)
+        y = _leaf((M,), device)
+        assert torch.autograd.gradcheck(
+            lambda a, b: segmented_mul(a, b, idx, M), (x, y), eps=1e-6, atol=1e-5
+        )
+
     def test_gradgradcheck_vec3(self, device):
         idx = _make_idx(device)
         x = _leaf((N, 3), device)
+        y = _leaf((M,), device)
+        assert torch.autograd.gradgradcheck(
+            lambda a, b: segmented_mul(a, b, idx, M),
+            (x, y),
+            eps=1e-6,
+            atol=1e-4,
+        )
+
+    def test_gradgradcheck_scalar(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N,), device)
         y = _leaf((M,), device)
         assert torch.autograd.gradgradcheck(
             lambda a, b: segmented_mul(a, b, idx, M),
@@ -241,6 +310,19 @@ class TestSegmentedMean:
         ref = sums / counts.unsqueeze(-1)
         torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_scalar(self, device, dtype):
+        idx = _make_idx(device)
+        x = _leaf((N,), device, dtype=dtype)
+        out = segmented_mean(x, idx, M)
+        idx_long = idx.long()
+        counts = torch.bincount(idx_long, minlength=M).to(dtype)
+        sums = torch.zeros(M, dtype=dtype, device=device).index_add_(
+            0, idx_long, x.detach()
+        )
+        ref = sums / counts
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
+
     def test_gradcheck_scalar(self, device):
         idx = _make_idx(device)
         x = _leaf((N,), device)
@@ -252,6 +334,13 @@ class TestSegmentedMean:
         idx = _make_idx(device)
         x = _leaf((N, 3), device)
         assert torch.autograd.gradcheck(
+            lambda v: segmented_mean(v, idx, M), (x,), eps=1e-6, atol=1e-5
+        )
+
+    def test_gradgradcheck_scalar(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N,), device)
+        assert torch.autograd.gradgradcheck(
             lambda v: segmented_mean(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
 
@@ -370,3 +459,439 @@ class TestEdgeCases:
         loss.backward()
         assert x.grad is not None
         assert idx.grad is None
+
+
+# ---------------------------------------------------------------------------
+# loss.backward() — the typical user-facing flow
+# ---------------------------------------------------------------------------
+
+
+class TestBackwardFlow:
+    """Realistic training-loop pattern: build a loss, call loss.backward(),
+    then read ``.grad`` off each leaf.  Distinct from gradcheck which validates
+    via finite differences — these tests catch gradient *accumulation* bugs."""
+
+    def test_backward_grad_accumulates(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64)
+        # First pass populates .grad
+        segmented_sum(x, idx, M).pow(2).sum().backward()
+        first = x.grad.clone()
+        # Second pass without zero_grad should double the accumulated grad
+        segmented_sum(x, idx, M).pow(2).sum().backward()
+        torch.testing.assert_close(x.grad, 2.0 * first, rtol=1e-12, atol=1e-14)
+
+    def test_backward_two_outputs_two_leaves(self, device):
+        idx = _make_idx(device)
+        v = _leaf((N, 3), device, dtype=torch.float64)
+        m = _leaf((M, 3, 3), device, dtype=torch.float64)
+        # Mix two ops with shared idx to exercise grad path for both leaves.
+        out_v = segmented_matvec(v, m, idx, M).pow(2).sum()
+        out_dot = segmented_dot(v, v, idx, M).sum()
+        (out_v + out_dot).backward()
+        assert v.grad is not None and v.grad.shape == v.shape
+        assert m.grad is not None and m.grad.shape == m.shape
+
+    def test_retain_graph_second_backward(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N,), device, dtype=torch.float64)
+        loss = segmented_sum(x, idx, M).pow(2).sum()
+        loss.backward(retain_graph=True)
+        first = x.grad.clone()
+        loss.backward()  # second backward through the same graph
+        torch.testing.assert_close(x.grad, 2.0 * first, rtol=1e-12, atol=1e-14)
+
+
+# ---------------------------------------------------------------------------
+# Direct ``.apply()`` invocation on the public autograd.Function classes
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionApplyDirect:
+    """The public Function classes (SegmentedSum, …) should be callable via
+    ``.apply`` without going through the convenience wrappers."""
+
+    def test_sum_apply_matches_wrapper(self, device):
+        from nvalchemiops.torch.segment_ops import SegmentedSum
+
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64)
+        torch.testing.assert_close(
+            SegmentedSum.apply(x, idx, M),
+            segmented_sum(x, idx, M),
+            rtol=1e-12,
+            atol=1e-14,
+        )
+
+    def test_mean_apply_returns_out_and_counts(self, device):
+        from nvalchemiops.torch.segment_ops import SegmentedMean
+
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64)
+        out, counts = SegmentedMean.apply(x, idx, M)
+        torch.testing.assert_close(
+            out, segmented_mean(x, idx, M), rtol=1e-12, atol=1e-14
+        )
+        # counts is integer-typed; wrapper drops it.  Verify it's consistent.
+        ref_counts = torch.bincount(idx.long(), minlength=M).to(torch.int32)
+        torch.testing.assert_close(counts, ref_counts, rtol=0, atol=0)
+
+    def test_rms_norm_apply_returns_saved_state(self, device):
+        from nvalchemiops.torch.segment_ops import SegmentedRmsNorm
+
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64)
+        out, inv_norm, counts = SegmentedRmsNorm.apply(x, idx, M)
+        torch.testing.assert_close(
+            out, segmented_rms_norm(x, idx, M), rtol=1e-12, atol=1e-14
+        )
+        # inv_norm[s] = 1 / (out[s] * counts[s]) when denom > 0
+        denom = out * counts.to(out.dtype)
+        ref_inv = torch.where(denom > 0, denom.reciprocal(), torch.zeros_like(denom))
+        torch.testing.assert_close(inv_norm, ref_inv, rtol=1e-10, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Empty / degenerate inputs
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyInputs:
+    """``N == 0`` and segments with no entries should not crash and should
+    produce zero-valued outputs of the right shape."""
+
+    def test_sum_empty(self, device):
+        idx = torch.empty(0, dtype=torch.int32, device=device)
+        x = torch.empty(0, dtype=torch.float32, device=device)
+        out = segmented_sum(x, idx, M)
+        assert out.shape == (M,)
+        torch.testing.assert_close(out, torch.zeros_like(out), rtol=0, atol=0)
+
+    def test_mean_with_empty_segment_at_end(self, device):
+        """One segment has no atoms.  Mean should be zero there (no NaN)."""
+        # Three segments declared, only segments 0 and 1 receive atoms.
+        idx = torch.tensor([0, 0, 1], dtype=torch.int32, device=device)
+        x = torch.ones(3, 3, dtype=torch.float32, device=device)
+        out = segmented_mean(x, idx, 3)
+        # Segments 0 and 1 → mean is 1; segment 2 → 0 (empty).
+        expected = torch.tensor(
+            [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        torch.testing.assert_close(out, expected, rtol=1e-6, atol=1e-7)
+
+
+# ---------------------------------------------------------------------------
+# Non-contiguous inputs
+# ---------------------------------------------------------------------------
+
+
+class TestNonContiguous:
+    """The bindings call ``.contiguous()`` internally on inputs.  This test
+    feeds a non-contiguous tensor (via slicing) and confirms the result still
+    matches a fresh contiguous copy."""
+
+    def test_sum_non_contiguous_x(self, device):
+        idx = _make_idx(device)
+        # Allocate (N, 6) then slice columns [:, ::2] → stride-2 view, non-contiguous.
+        big = _leaf((N, 6), device, dtype=torch.float64)
+        x_view = big[:, ::2]
+        assert not x_view.is_contiguous()
+        out_view = segmented_sum(x_view, idx, M)
+        out_copy = segmented_sum(x_view.contiguous(), idx, M)
+        torch.testing.assert_close(out_view, out_copy, rtol=1e-12, atol=1e-14)
+
+    def test_dot_non_contiguous_y(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64)
+        y_big = _leaf((N, 6), device, dtype=torch.float64)
+        y_view = y_big[:, ::2]
+        out_view = segmented_dot(x, y_view, idx, M)
+        out_copy = segmented_dot(x, y_view.contiguous(), idx, M)
+        torch.testing.assert_close(out_view, out_copy, rtol=1e-12, atol=1e-14)
+
+
+# ---------------------------------------------------------------------------
+# idx reuse across calls (different op, same idx)
+# ---------------------------------------------------------------------------
+
+
+class TestIdxReuse:
+    """``idx`` is a non-differentiable metadata tensor; reusing it across
+    consecutive ops with autograd enabled must not corrupt state."""
+
+    def test_same_idx_two_ops_same_backward(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64)
+        loss = segmented_sum(x, idx, M).sum() + segmented_mean(x, idx, M).sum()
+        loss.backward()
+        assert x.grad is not None
+        # Closed-form reference: d/dx [sum_s sum_j x_j + sum_s mean_s] = 1 + 1/counts[s]
+        counts = torch.bincount(idx.long(), minlength=M).to(x.dtype)
+        expected = 1.0 + 1.0 / counts[idx.long(), None].expand(-1, 3)
+        torch.testing.assert_close(x.grad, expected, rtol=1e-12, atol=1e-14)
+
+
+# ---------------------------------------------------------------------------
+# Direct ``.forward / .setup_context / .backward`` invocation on every
+# ``torch.autograd.Function`` class.
+#
+# ``Function.apply(...)`` runs these static methods through PyTorch's C++
+# autograd dispatch, which bypasses ``sys.settrace`` — coverage tools never
+# see the Python method bodies execute.  Calling them directly with a fake
+# ctx restores tracer visibility.
+# ---------------------------------------------------------------------------
+
+
+class _FakeCtx:
+    """Minimal stand-in for ``torch.autograd.function.FunctionCtx``.
+
+    ``setup_context`` only needs ``save_for_backward`` plus arbitrary attribute
+    assignment; ``backward`` only reads ``ctx.saved_tensors`` and the stashed
+    attributes.  No need for the full C++ object.
+    """
+
+    def save_for_backward(self, *tensors: torch.Tensor) -> None:
+        self.saved_tensors = tuple(tensors)
+
+
+class TestDirectFunctionInvocation:
+    """Cover every Function class's static method bodies."""
+
+    # ----- segmented_sum -----------------------------------------------------
+
+    def test_segmented_sum_static_methods(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64).detach()
+        out = SegmentedSum.forward(x, idx, M)
+        torch.testing.assert_close(
+            out, segmented_sum(x, idx, M).detach(), rtol=1e-12, atol=1e-14
+        )
+        ctx = _FakeCtx()
+        SegmentedSum.setup_context(ctx, (x, idx, M), out)
+        assert ctx.saved_tensors == (idx,)
+        assert ctx.num_segments == M
+        g_out = torch.randn_like(out)
+        grad_x, grad_idx, grad_num_segments = SegmentedSum.backward(ctx, g_out)
+        assert grad_x.shape == x.shape
+        assert grad_idx is None and grad_num_segments is None
+
+    def test_segmented_sum_bwd_static_methods(self, device):
+        idx = _make_idx(device)
+        g_out = torch.randn(M, 3, dtype=torch.float64, device=device)
+        grad_x = SegmentedSumBwd.forward(g_out, idx, M)
+        assert grad_x.shape == (N, 3)
+        ctx = _FakeCtx()
+        SegmentedSumBwd.setup_context(ctx, (g_out, idx, M), grad_x)
+        assert ctx.saved_tensors == (idx,)
+        assert ctx.num_segments == M
+        gg_x = torch.randn_like(grad_x)
+        grad_g_out, grad_idx, grad_num_segments = SegmentedSumBwd.backward(ctx, gg_x)
+        assert grad_g_out.shape == g_out.shape
+        assert grad_idx is None and grad_num_segments is None
+
+    # ----- segmented_dot -----------------------------------------------------
+
+    def test_segmented_dot_static_methods(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64).detach()
+        y = _leaf((N, 3), device, dtype=torch.float64).detach()
+        out = SegmentedDot.forward(x, y, idx, M)
+        torch.testing.assert_close(
+            out, segmented_dot(x, y, idx, M).detach(), rtol=1e-12, atol=1e-14
+        )
+        ctx = _FakeCtx()
+        SegmentedDot.setup_context(ctx, (x, y, idx, M), out)
+        assert ctx.saved_tensors == (x, y, idx)
+        assert ctx.num_segments == M
+        g_out = torch.randn_like(out)
+        grad_x, grad_y, *rest = SegmentedDot.backward(ctx, g_out)
+        assert grad_x.shape == x.shape and grad_y.shape == y.shape
+        assert all(r is None for r in rest)
+
+    def test_segmented_dot_bwd_static_methods(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64).detach()
+        y = _leaf((N, 3), device, dtype=torch.float64).detach()
+        g_out = torch.randn(M, dtype=torch.float64, device=device)
+        grad_x, grad_y = SegmentedDotBwd.forward(g_out, x, y, idx)
+        assert grad_x.shape == x.shape and grad_y.shape == y.shape
+        ctx = _FakeCtx()
+        SegmentedDotBwd.setup_context(ctx, (g_out, x, y, idx), (grad_x, grad_y))
+        assert ctx.saved_tensors == (g_out, x, y, idx)
+        assert ctx.num_segments == g_out.shape[0]
+        gg_gx = torch.randn_like(x)
+        gg_gy = torch.randn_like(y)
+        grad_g_out, grad_x_ex, grad_y_ex, grad_idx = SegmentedDotBwd.backward(
+            ctx, gg_gx, gg_gy
+        )
+        assert grad_g_out.shape == g_out.shape
+        assert grad_x_ex.shape == x.shape and grad_y_ex.shape == y.shape
+        assert grad_idx is None
+
+    # ----- segmented_mul -----------------------------------------------------
+
+    def test_segmented_mul_static_methods(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64).detach()
+        y = _leaf((M,), device, dtype=torch.float64).detach()
+        out = SegmentedMul.forward(x, y, idx, M)
+        torch.testing.assert_close(
+            out, segmented_mul(x, y, idx, M).detach(), rtol=1e-12, atol=1e-14
+        )
+        ctx = _FakeCtx()
+        SegmentedMul.setup_context(ctx, (x, y, idx, M), out)
+        assert ctx.saved_tensors == (x, y, idx)
+        assert ctx.num_segments == M
+        g_out = torch.randn_like(out)
+        grad_x, grad_y, *rest = SegmentedMul.backward(ctx, g_out)
+        assert grad_x.shape == x.shape and grad_y.shape == y.shape
+        assert all(r is None for r in rest)
+
+    def test_segmented_mul_bwd_static_methods(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64).detach()
+        y = _leaf((M,), device, dtype=torch.float64).detach()
+        g_out = torch.randn_like(x)
+        grad_x, grad_y = SegmentedMulBwd.forward(g_out, x, y, idx, M)
+        assert grad_x.shape == x.shape and grad_y.shape == y.shape
+        ctx = _FakeCtx()
+        SegmentedMulBwd.setup_context(ctx, (g_out, x, y, idx, M), (grad_x, grad_y))
+        assert ctx.saved_tensors == (g_out, x, y, idx)
+        assert ctx.num_segments == M
+        gg_gx = torch.randn_like(x)
+        gg_gy = torch.randn_like(y)
+        grad_g_out, grad_x_ex, grad_y_ex, *rest = SegmentedMulBwd.backward(
+            ctx, gg_gx, gg_gy
+        )
+        assert grad_g_out.shape == g_out.shape
+        assert grad_x_ex.shape == x.shape and grad_y_ex.shape == y.shape
+        assert all(r is None for r in rest)
+
+    # ----- segmented_mean ----------------------------------------------------
+
+    def test_segmented_mean_static_methods(self, device):
+        idx = _make_idx(device)
+        x = _leaf((N, 3), device, dtype=torch.float64).detach()
+        out, counts = SegmentedMean.forward(x, idx, M)
+        torch.testing.assert_close(
+            out, segmented_mean(x, idx, M).detach(), rtol=1e-12, atol=1e-14
+        )
+        ctx = _FakeCtx()
+        SegmentedMean.setup_context(ctx, (x, idx, M), (out, counts))
+        assert ctx.saved_tensors == (counts, idx)
+        assert ctx.num_segments == M
+        g_out = torch.randn_like(out)
+        grad_x, grad_idx, grad_num_segments = SegmentedMean.backward(ctx, g_out, None)
+        assert grad_x.shape == x.shape
+        assert grad_idx is None and grad_num_segments is None
+
+    def test_segmented_mean_bwd_static_methods(self, device):
+        idx = _make_idx(device)
+        counts = torch.bincount(idx.long(), minlength=M).to(torch.int32)
+        g_out = torch.randn(M, 3, dtype=torch.float64, device=device)
+        grad_x = SegmentedMeanBwd.forward(g_out, counts, idx)
+        assert grad_x.shape == (N, 3)
+        ctx = _FakeCtx()
+        SegmentedMeanBwd.setup_context(ctx, (g_out, counts, idx), grad_x)
+        assert ctx.saved_tensors == (counts, idx)
+        assert ctx.num_segments == M
+        gg_x = torch.randn_like(grad_x)
+        grad_g_out, grad_counts, grad_idx = SegmentedMeanBwd.backward(ctx, gg_x)
+        assert grad_g_out.shape == g_out.shape
+        assert grad_counts is None and grad_idx is None
+
+    # ----- segmented_rms_norm ------------------------------------------------
+
+    def test_segmented_rms_norm_static_methods(self, device):
+        idx = _make_idx(device)
+        x = (_leaf((N, 3), device, dtype=torch.float64) + 2.0).detach()
+        out, inv_norm, counts = SegmentedRmsNorm.forward(x, idx, M)
+        torch.testing.assert_close(
+            out, segmented_rms_norm(x, idx, M).detach(), rtol=1e-12, atol=1e-14
+        )
+        ctx = _FakeCtx()
+        SegmentedRmsNorm.setup_context(ctx, (x, idx, M), (out, inv_norm, counts))
+        assert ctx.saved_tensors == (x, inv_norm, counts, idx)
+        assert ctx.num_segments == M
+        g_out = torch.randn_like(out)
+        grad_x, grad_idx, grad_num_segments = SegmentedRmsNorm.backward(
+            ctx, g_out, None, None
+        )
+        assert grad_x.shape == x.shape
+        assert grad_idx is None and grad_num_segments is None
+
+    def test_segmented_rms_norm_bwd_static_methods(self, device):
+        idx = _make_idx(device)
+        x = (_leaf((N, 3), device, dtype=torch.float64) + 2.0).detach()
+        counts = torch.bincount(idx.long(), minlength=M).to(torch.int32)
+        # Build inv_norm from the precompute-equivalent formula.
+        sum_sq = torch.zeros(M, dtype=x.dtype, device=device).index_add_(
+            0, idx.long(), (x * x).sum(dim=1)
+        )
+        out_norm = torch.sqrt(sum_sq / counts.to(x.dtype).clamp(min=1))
+        denom = out_norm * counts.to(x.dtype)
+        inv_norm = torch.where(denom > 0, denom.reciprocal(), torch.zeros_like(denom))
+        g_out = torch.randn_like(out_norm)
+        grad_x = SegmentedRmsNormBwd.forward(g_out, x, inv_norm, counts, idx)
+        assert grad_x.shape == x.shape
+        ctx = _FakeCtx()
+        SegmentedRmsNormBwd.setup_context(
+            ctx, (g_out, x, inv_norm, counts, idx), grad_x
+        )
+        assert ctx.saved_tensors == (g_out, x, inv_norm, counts, idx)
+        assert ctx.num_segments == g_out.shape[0]
+        gg_x = torch.randn_like(grad_x)
+        (
+            grad_g_out,
+            grad_x_extra,
+            grad_inv_norm,
+            grad_counts,
+            grad_idx,
+        ) = SegmentedRmsNormBwd.backward(ctx, gg_x)
+        assert grad_g_out.shape == g_out.shape
+        assert grad_x_extra.shape == x.shape
+        assert grad_inv_norm is None and grad_counts is None and grad_idx is None
+
+    # ----- segmented_matvec --------------------------------------------------
+
+    def test_segmented_matvec_static_methods(self, device):
+        idx = _make_idx(device)
+        v = _leaf((N, 3), device, dtype=torch.float64).detach()
+        m = _leaf((M, 3, 3), device, dtype=torch.float64).detach()
+        out = SegmentedMatvec.forward(v, m, idx, M)
+        torch.testing.assert_close(
+            out, segmented_matvec(v, m, idx, M).detach(), rtol=1e-12, atol=1e-14
+        )
+        ctx = _FakeCtx()
+        SegmentedMatvec.setup_context(ctx, (v, m, idx, M), out)
+        assert ctx.saved_tensors == (v, m, idx)
+        assert ctx.num_segments == M
+        g_out = torch.randn_like(out)
+        grad_v, grad_m, *rest = SegmentedMatvec.backward(ctx, g_out)
+        assert grad_v.shape == v.shape and grad_m.shape == m.shape
+        assert all(r is None for r in rest)
+
+    def test_segmented_matvec_bwd_static_methods(self, device):
+        idx = _make_idx(device)
+        v = _leaf((N, 3), device, dtype=torch.float64).detach()
+        m = _leaf((M, 3, 3), device, dtype=torch.float64).detach()
+        g_out = torch.randn_like(v)
+        grad_v, grad_m = SegmentedMatvecBwd.forward(g_out, v, m, idx, M)
+        assert grad_v.shape == v.shape and grad_m.shape == m.shape
+        ctx = _FakeCtx()
+        SegmentedMatvecBwd.setup_context(ctx, (g_out, v, m, idx, M), (grad_v, grad_m))
+        assert ctx.saved_tensors == (g_out, v, m, idx)
+        assert ctx.num_segments == M
+        gg_gv = torch.randn_like(v)
+        gg_gm = torch.randn_like(m)
+        (
+            grad_g_out,
+            grad_v_extra,
+            grad_m_extra,
+            *rest,
+        ) = SegmentedMatvecBwd.backward(ctx, gg_gv, gg_gm)
+        assert grad_g_out.shape == g_out.shape
+        assert grad_v_extra.shape == v.shape and grad_m_extra.shape == m.shape
+        assert all(r is None for r in rest)
