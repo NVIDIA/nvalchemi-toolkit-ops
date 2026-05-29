@@ -605,17 +605,33 @@ def _setup_dot_arrays(N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, 
     if is_vec:
         x_np = rng.standard_normal((N, 3)).astype(np_dt)
         y_np = rng.standard_normal((N, 3)).astype(np_dt)
+        gg_gx_np = rng.standard_normal((N, 3)).astype(np_dt)
+        gg_gy_np = rng.standard_normal((N, 3)).astype(np_dt)
         x = _wp_vec_array(x_np, wp_dt, device)
         y = _wp_vec_array(y_np, wp_dt, device)
+        gg_gx = _wp_vec_array(gg_gx_np, wp_dt, device)
+        gg_gy = _wp_vec_array(gg_gy_np, wp_dt, device)
         t_x = torch.from_numpy(x_np).to(torch_device)
         t_y = torch.from_numpy(y_np).to(torch_device)
     else:
         x_np = rng.standard_normal(N).astype(np_dt)
         y_np = rng.standard_normal(N).astype(np_dt)
+        gg_gx_np = rng.standard_normal(N).astype(np_dt)
+        gg_gy_np = rng.standard_normal(N).astype(np_dt)
         x = wp.array(x_np, dtype=wp_dt, device=device)
         y = wp.array(y_np, dtype=wp_dt, device=device)
+        gg_gx = wp.array(gg_gx_np, dtype=wp_dt, device=device)
+        gg_gy = wp.array(gg_gy_np, dtype=wp_dt, device=device)
         t_x = torch.from_numpy(x_np).to(torch_device)
         t_y = torch.from_numpy(y_np).to(torch_device)
+
+    # The Warp and Torch cotangents must come from the same NumPy buffer so
+    # the two paths benchmark equivalent math.  Materializing via
+    # ``wp.zeros_like`` + ``torch.randn_like`` (the previous setup) had the
+    # Warp side seeing all-zeros and the Torch side seeing random data,
+    # making the reported speedup meaningless.
+    t_gg_x = torch.from_numpy(gg_gx_np).to(torch_device)
+    t_gg_y = torch.from_numpy(gg_gy_np).to(torch_device)
 
     g_out = wp.array(
         rng.standard_normal(M).astype(np_dt), dtype=scalar_wp, device=device
@@ -623,8 +639,6 @@ def _setup_dot_arrays(N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, 
     t_g_out = torch.from_numpy(np.asarray(g_out.numpy())).to(torch_device)
     grad_x = wp.zeros(N, dtype=wp_dt, device=device)
     grad_y = wp.zeros(N, dtype=wp_dt, device=device)
-    gg_gx = wp.zeros_like(x)
-    gg_gy = wp.zeros_like(y)
     grad_g_out = wp.zeros(M, dtype=scalar_wp, device=device)
     grad_x_ex = wp.zeros(N, dtype=wp_dt, device=device)
     grad_y_ex = wp.zeros(N, dtype=wp_dt, device=device)
@@ -646,6 +660,8 @@ def _setup_dot_arrays(N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, 
         t_y,
         t_g_out,
         t_grad_g_out,
+        t_gg_x,
+        t_gg_y,
         is_vec,
     )
 
@@ -668,6 +684,8 @@ def bench_segmented_dot_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
             t_y,
             t_g_out,
             _t_gd,
+            _t_gg_x,
+            _t_gg_y,
             _is_vec,
         ) = _setup_dot_arrays(
             N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, np_dt
@@ -722,18 +740,12 @@ def bench_segmented_dot_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
             t_y,
             t_g_out,
             t_grad_g_out,
+            t_gg_x,
+            t_gg_y,
             _is_vec,
         ) = _setup_dot_arrays(
             N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, np_dt
         )
-
-        # populate gg tensors with non-zero data for fair timing
-        if is_vec:
-            t_gg_x = torch.randn_like(t_x)
-            t_gg_y = torch.randn_like(t_y)
-        else:
-            t_gg_x = torch.randn_like(t_x)
-            t_gg_y = torch.randn_like(t_y)
 
         ms_wp = _bench_cuda(
             _noop,
@@ -788,23 +800,34 @@ def _setup_mul_arrays(N, M, device, torch_device, rng, is_vec, np_dt):
     y_np = rng.standard_normal(M).astype(np_dt)
     g_out_np = rng.standard_normal(x_np.shape).astype(np_dt)
 
+    # Generate ``gg_gx`` / ``gg_gy`` from shared NumPy buffers so the Warp
+    # and Torch double-backward paths benchmark equivalent math.  The previous
+    # setup created ``gg_gx = wp.zeros_like(x)`` (zeros) on the Warp side and
+    # ``torch.randn_like(t_x)`` on the Torch side — different inputs, so the
+    # reported speedup was meaningless.
+    gg_gx_np = rng.standard_normal(x_np.shape).astype(np_dt)
+    gg_gy_np = rng.standard_normal(M).astype(np_dt)
+
     if is_vec:
         x = _wp_vec_array(x_np, wp_xt, device)
         g_out = _wp_vec_array(g_out_np, wp_xt, device)
+        gg_gx = _wp_vec_array(gg_gx_np, wp_xt, device)
     else:
         x = wp.array(x_np, dtype=wp_xt, device=device)
         g_out = wp.array(g_out_np, dtype=wp_xt, device=device)
+        gg_gx = wp.array(gg_gx_np, dtype=wp_xt, device=device)
     y = wp.array(y_np, dtype=wp_yt, device=device)
+    gg_gy = wp.array(gg_gy_np, dtype=wp_yt, device=device)
     grad_x = wp.zeros_like(x)
     grad_y = wp.zeros(M, dtype=wp_yt, device=device)
-    gg_gx = wp.zeros_like(x)
-    gg_gy = wp.zeros(M, dtype=wp_yt, device=device)
     grad_g_out = wp.zeros_like(x)
     grad_x_ex = wp.zeros_like(x)
     grad_y_ex = wp.zeros(M, dtype=wp_yt, device=device)
     t_x = torch.from_numpy(x_np).to(torch_device)
     t_y = torch.from_numpy(y_np).to(torch_device)
     t_g_out = torch.from_numpy(g_out_np).to(torch_device)
+    t_gg_gx = torch.from_numpy(gg_gx_np).to(torch_device)
+    t_gg_gy = torch.from_numpy(gg_gy_np).to(torch_device)
     t_grad_y = torch.zeros(M, dtype=torch_dt, device=torch_device)
     t_grad_g_out = torch.zeros_like(t_x)
     return (
@@ -825,6 +848,8 @@ def _setup_mul_arrays(N, M, device, torch_device, rng, is_vec, np_dt):
         t_g_out,
         t_grad_y,
         t_grad_g_out,
+        t_gg_gx,
+        t_gg_gy,
         is_vec,
     )
 
@@ -850,6 +875,8 @@ def bench_segmented_mul_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
             t_g_out,
             t_grad_y,
             _t_gd,
+            _t_gg_gx,
+            _t_gg_gy,
             _is_vec,
         ) = _setup_mul_arrays(N, M, device, torch_device, rng, is_vec, np_dt)
 
@@ -907,10 +934,10 @@ def bench_segmented_mul_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
             t_g_out,
             t_grad_y,
             t_grad_g_out,
+            t_gg_gx,
+            t_gg_gy,
             _is_vec,
         ) = _setup_mul_arrays(N, M, device, torch_device, rng, is_vec, np_dt)
-        t_gg_gx = torch.randn_like(t_x)
-        t_gg_gy = torch.randn(M, dtype=t_y.dtype, device=t_y.device)
 
         ms_wp = _bench_cuda(
             _noop,
