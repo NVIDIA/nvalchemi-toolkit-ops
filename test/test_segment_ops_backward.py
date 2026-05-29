@@ -1259,3 +1259,16 @@ class TestEdgeCases:
         grad_x = wp.zeros(0, dtype=wp.vec3f, device=device)
         _launch_segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x)
         wp.synchronize()
+
+    def test_empty_reduction_zeros_prefilled_output(self, device):
+        """An empty reduction must still zero its pre-filled output buffer.
+
+        Encodes the reviewer's minimal repro: the mathematical result of
+        ``sum_i gg_x[i]`` over an empty input is zero, but earlier versions
+        early-returned without clearing ``grad_g_out``, leaving stale values.
+        """
+        gg_x = wp.zeros(0, dtype=wp.float32, device=device)
+        idx = wp.zeros(0, dtype=wp.int32, device=device)
+        out = wp.array([5.0, 6.0], dtype=wp.float32, device=device)
+        _launch_segmented_sum_double_backward(gg_x, idx, 2, out)
+        np.testing.assert_array_equal(_np(out), np.zeros(2, dtype=np.float32))

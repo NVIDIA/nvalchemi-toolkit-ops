@@ -95,10 +95,10 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
     --------
     _launch_broadcast : Inverse op (per-segment scalar → per-element gather).
     """
+    out.zero_()
     N = x.shape[0]
     if N == 0:
         return
-    out.zero_()
     device = x.device
     M = out.shape[0]
     if M == 1 and N >= 8192:
@@ -159,10 +159,10 @@ def _launch_broadcast(values: wp.array, idx: wp.array, out: wp.array) -> None:
     --------
     _launch_sum : Inverse op (per-element scatter-sum → per-segment).
     """
+    out.zero_()
     N = out.shape[0]
     if N == 0:
         return
-    out.zero_()
     wp.launch(
         _segmented_broadcast_overloads[values.dtype],
         dim=N,
@@ -1161,10 +1161,10 @@ def _launch_segmented_component_sum_backward(
     --------
     _launch_segmented_component_sum_double_backward : Symmetric reduction.
     """
+    grad_x.zero_()
     N = grad_x.shape[0]
     if N == 0:
         return
-    grad_x.zero_()
     wp.launch(
         _segmented_component_sum_backward_overloads[grad_x.dtype],
         dim=N,
@@ -1203,10 +1203,10 @@ def _launch_segmented_component_sum_double_backward(
     --------
     _launch_segmented_component_sum_backward : First-order backward (broadcast).
     """
+    grad_g_out.zero_()
     N = gg_x.shape[0]
     if N == 0:
         return
-    grad_g_out.zero_()
     device = gg_x.device
     ept = compute_ept(N, max(device.sm_count, 1), True)
     dim = (N + ept - 1) // ept
@@ -1259,10 +1259,10 @@ def _launch_segmented_add_backward(
     --------
     _launch_segmented_add_double_backward : Fused gather-and-add second order.
     """
-    if g_out.shape[0] == 0:
-        return
     grad_x.zero_()
     grad_y.zero_()
+    if g_out.shape[0] == 0:
+        return
     wp.copy(grad_x, g_out)
     _launch_sum(g_out, idx, grad_y)
 
@@ -1356,12 +1356,12 @@ def _launch_segmented_mul_backward(
     --------
     _launch_segmented_mul_double_backward : Second-order backward.
     """
-    N = g_out.shape[0]
-    if N == 0:
-        return
     grad_x.zero_()
     grad_y.zero_()
     # grad_x[i] = g_out[i] * y[s]
+    N = g_out.shape[0]
+    if N == 0:
+        return
     wp.launch(
         _segmented_mul_overloads[(g_out.dtype, y.dtype)],
         dim=N,
@@ -1431,12 +1431,12 @@ def _launch_segmented_mul_double_backward(
     --------
     _launch_segmented_mul_backward : First-order backward.
     """
-    N = g_out.shape[0]
-    if N == 0:
-        return
     grad_g_out.zero_()
     grad_x_extra.zero_()
     grad_y_extra.zero_()
+    N = g_out.shape[0]
+    if N == 0:
+        return
     device = g_out.device
     # grad_g_out[i] = gg_gx[i]*y[s] + gg_gy[s]*x[i]
     wp.launch(
@@ -1499,12 +1499,12 @@ def _launch_segmented_dot_backward(
     --------
     _launch_segmented_dot_double_backward : Second-order backward.
     """
-    N = x.shape[0]
-    if N == 0:
-        return
     grad_x.zero_()
     grad_y.zero_()
     # grad_x[i] = y[i] * g_out[s]  → _segmented_mul(y, g_out, idx, grad_x)
+    N = x.shape[0]
+    if N == 0:
+        return
     wp.launch(
         _segmented_mul_overloads[(y.dtype, g_out.dtype)],
         dim=N,
@@ -1567,12 +1567,12 @@ def _launch_segmented_dot_double_backward(
     --------
     _launch_segmented_dot_backward : First-order backward.
     """
-    N = x.shape[0]
-    if N == 0:
-        return
     grad_g_out.zero_()
     grad_x_extra.zero_()
     grad_y_extra.zero_()
+    N = x.shape[0]
+    if N == 0:
+        return
     device = x.device
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
@@ -1648,11 +1648,11 @@ def _launch_segmented_inner_products_backward(
     --------
     _launch_segmented_inner_products_double_backward : Second-order backward.
     """
+    grad_x.zero_()
+    grad_y.zero_()
     N = x.shape[0]
     if N == 0:
         return
-    grad_x.zero_()
-    grad_y.zero_()
     wp.launch(
         _segmented_inner_products_backward_overloads[x.dtype],
         dim=N,
@@ -1724,9 +1724,6 @@ def _launch_segmented_inner_products_double_backward(
     _launch_segmented_inner_products_backward : First-order backward.
     _launch_segmented_dot_double_backward : Same RLE-reduction pattern.
     """
-    N = x.shape[0]
-    if N == 0:
-        return
     for arr in (
         grad_x_extra,
         grad_y_extra,
@@ -1735,6 +1732,9 @@ def _launch_segmented_inner_products_double_backward(
         grad_g_yy_extra,
     ):
         arr.zero_()
+    N = x.shape[0]
+    if N == 0:
+        return
     device = x.device
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
@@ -1831,12 +1831,12 @@ def _launch_segmented_axpy_backward(
     _launch_segmented_axpy_double_backward : Second-order backward.
     _launch_segmented_axpby_backward : Two-coefficient variant.
     """
-    N = g_out.shape[0]
-    if N == 0:
-        return
     grad_y_in.zero_()
     grad_x.zero_()
     grad_a.zero_()
+    N = g_out.shape[0]
+    if N == 0:
+        return
     wp.copy(grad_y_in, g_out)
     # grad_x[i] = a[s]*g_out[i]
     wp.launch(
@@ -1913,11 +1913,11 @@ def _launch_segmented_axpy_double_backward(
     _launch_segmented_axpy_backward : First-order backward.
     _launch_segmented_axpby_double_backward : Two-coefficient variant.
     """
+    grad_x_extra.zero_()
+    grad_a_extra.zero_()
     N = g_out.shape[0]
     if N == 0:
         return
-    grad_x_extra.zero_()
-    grad_a_extra.zero_()
     device = g_out.device
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
@@ -1999,11 +1999,11 @@ def _launch_segmented_axpby_backward(
     _launch_segmented_axpby_double_backward : Second-order backward.
     _launch_segmented_axpy_backward : Single-coefficient variant.
     """
+    for arr in (grad_x, grad_y, grad_a, grad_b):
+        arr.zero_()
     N = g_out.shape[0]
     if N == 0:
         return
-    for arr in (grad_x, grad_y, grad_a, grad_b):
-        arr.zero_()
     device = g_out.device
     wp.launch(
         _segmented_mul_overloads[(g_out.dtype, a.dtype)],
@@ -2097,11 +2097,11 @@ def _launch_segmented_axpby_double_backward(
     _launch_segmented_axpby_backward : First-order backward.
     _launch_segmented_axpy_double_backward : Single-coefficient variant.
     """
+    for arr in (grad_g_out, grad_x_extra, grad_y_extra, grad_a_extra, grad_b_extra):
+        arr.zero_()
     N = g_out.shape[0]
     if N == 0:
         return
-    for arr in (grad_g_out, grad_x_extra, grad_y_extra, grad_a_extra, grad_b_extra):
-        arr.zero_()
     device = g_out.device
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
@@ -2179,10 +2179,10 @@ def _launch_segmented_mean_backward(
     --------
     _launch_segmented_mean_double_backward : Symmetric mean of ``gg_x``.
     """
+    grad_x.zero_()
     N = grad_x.shape[0]
     if N == 0:
         return
-    grad_x.zero_()
     key = g_out.dtype
     if key in _segmented_mean_backward_scalar_overloads:
         wp.launch(
@@ -2234,9 +2234,9 @@ def _launch_segmented_mean_double_backward(
     _launch_segmented_mean_backward : First-order backward.
     """
     M = grad_g_out.shape[0]
+    grad_g_out.zero_()
     if gg_x.shape[0] == 0:
         return
-    grad_g_out.zero_()
     device = gg_x.device
     sums = wp.zeros(M, dtype=gg_x.dtype, device=device)
     _launch_sum(gg_x, idx, sums)
@@ -2355,10 +2355,10 @@ def _launch_segmented_rms_norm_backward(
     _launch_segmented_rms_norm_forward_precompute : Produces ``inv_norm``.
     _launch_segmented_rms_norm_double_backward : Second-order backward.
     """
+    grad_x.zero_()
     N = grad_x.shape[0]
     if N == 0:
         return
-    grad_x.zero_()
     wp.launch(
         _segmented_rms_norm_backward_overloads[x.dtype],
         dim=N,
@@ -2417,11 +2417,11 @@ def _launch_segmented_rms_norm_double_backward(
     --------
     _launch_segmented_rms_norm_backward : First-order backward.
     """
+    grad_x_extra.zero_()
+    grad_g_out_extra.zero_()
     N = x.shape[0]
     if N == 0:
         return
-    grad_x_extra.zero_()
-    grad_g_out_extra.zero_()
     device = x.device
     scalar_dtype = _VEC_TO_SCALAR[x.dtype]
     # Step 1: inner[s] = sum dot(gg_x[i], x[i])
@@ -2550,10 +2550,10 @@ def _launch_segmented_max_norm_backward(
     _launch_segmented_max_norm_forward_precompute : Produces ``argmax_idx``.
     _launch_segmented_max_norm_double_backward : Second-order backward.
     """
+    grad_x.zero_()
     N = grad_x.shape[0]
     if N == 0:
         return
-    grad_x.zero_()
     wp.launch(
         _segmented_max_norm_backward_overloads[x.dtype],
         dim=N,
@@ -2611,11 +2611,11 @@ def _launch_segmented_max_norm_double_backward(
     --------
     _launch_segmented_max_norm_backward : First-order backward.
     """
+    grad_x_extra.zero_()
+    grad_g_out.zero_()
     N = x.shape[0]
     if N == 0:
         return
-    grad_x_extra.zero_()
-    grad_g_out.zero_()
     wp.launch(
         _segmented_max_norm_double_backward_overloads[x.dtype],
         dim=N,
@@ -2669,11 +2669,11 @@ def _launch_segmented_matvec_backward(
     --------
     _launch_segmented_matvec_double_backward : Second-order backward.
     """
+    grad_v.zero_()
+    grad_M.zero_()
     N = v.shape[0]
     if N == 0:
         return
-    grad_v.zero_()
-    grad_M.zero_()
     device = v.device
     wp.launch(
         _segmented_matvec_backward_v_overloads[(v.dtype, m.dtype)],
@@ -2743,11 +2743,11 @@ def _launch_segmented_matvec_double_backward(
     --------
     _launch_segmented_matvec_backward : First-order backward.
     """
+    grad_v_extra.zero_()
+    grad_M_extra.zero_()
     N = v.shape[0]
     if N == 0:
         return
-    grad_v_extra.zero_()
-    grad_M_extra.zero_()
     device = v.device
     ept = compute_ept(N, max(device.sm_count, 1), True)
     dim_rle = (N + ept - 1) // ept
@@ -2808,10 +2808,10 @@ def _launch_segment_div_backward(
     --------
     _launch_segment_div_double_backward : Symmetric divide.
     """
+    grad_numerator.zero_()
     N = g_result.shape[0]
     if N == 0:
         return
-    grad_numerator.zero_()
     wp.launch(
         _segment_div_overloads[g_result.dtype],
         dim=N,
