@@ -429,7 +429,16 @@ def _segmented_max_norm_argmax_kernel(
     N: wp.int32,
     elems_per_thread: wp.int32,
 ):
-    """For each i where length(x[i]) == max_norms[idx[i]], record i via atomic_max."""
+    """For each i where length(x[i]) == max_norms[idx[i]], record i via atomic_max.
+
+    Requires ``argmax_idx`` to be pre-filled with ``-1`` (or any value smaller
+    than every valid index) — the ``atomic_max`` only keeps the *largest* index
+    it sees, so a buffer left at zero or stuffed with stale values from a
+    previous call will silently retain the wrong index when the true argmax has
+    a smaller ``i``.  ``_launch_segmented_max_norm_forward_precompute`` handles
+    the initialization; callers must not invoke this kernel directly without
+    that pre-fill.
+    """
     t = wp.tid()
     start = t * elems_per_thread
     if start >= N:
@@ -1714,14 +1723,23 @@ def _launch_segmented_max_norm_forward_precompute(
     out: wp.array,
     argmax_idx: wp.array,
 ) -> None:
-    """Run forward then find argmax element per segment."""
+    """Run forward then find argmax element per segment.
+
+    Writes both ``out[s] = max ||x[i]||`` and ``argmax_idx[s] = arg max_i ||x[i]||``.
+    ``argmax_idx`` is initialized to ``-1`` here before the argmax scan runs, so
+    the buffer the caller passes in does not need to be pre-filled — but it
+    *must* be passed to the backward launchers below as-is, without any
+    intermediate reuse that would clobber the recorded indices.
+    """
     from nvalchemiops.segment_ops import segmented_max_norm as _fwd_max_norm
 
     N = x.shape[0]
     if N == 0:
         return
     device = x.device
-    # Initialize argmax_idx to -1 so that the first valid write wins via atomic_max
+    # Initialize argmax_idx to -1 so that the first valid write wins via atomic_max.
+    # An empty segment retains -1 (skipped by the backward kernel's ``i == argmax_idx[s]``
+    # gate since tid() is always >= 0).
     argmax_idx.fill_(-1)
     _fwd_max_norm(x, idx, out)
     ept = compute_ept(N, max(device.sm_count, 1), True)
@@ -1741,7 +1759,14 @@ def _launch_segmented_max_norm_backward(
     idx: wp.array,
     grad_x: wp.array,
 ) -> None:
-    """Subgradient: only argmax element gets nonzero gradient."""
+    """Subgradient of segmented_max_norm: only the argmax element receives gradient.
+
+    ``argmax_idx`` MUST be the output of
+    :func:`_launch_segmented_max_norm_forward_precompute` against the same
+    ``(x, idx)``.  Passing a zero-initialized or stale buffer produces wrong
+    gradients silently (the kernel writes at ``i == argmax_idx[s]`` — with
+    zeros that's always ``i = 0``).
+    """
     N = grad_x.shape[0]
     if N == 0:
         return
@@ -1763,7 +1788,14 @@ def _launch_segmented_max_norm_double_backward(
     grad_x_extra: wp.array,
     grad_g_out: wp.array,
 ) -> None:
-    """Tangent-plane double-backward for max_norm (only at argmax element)."""
+    """Tangent-plane double-backward for segmented_max_norm.
+
+    ``argmax_idx`` MUST be the output of
+    :func:`_launch_segmented_max_norm_forward_precompute` against the same
+    ``(x, idx)`` — see the contract on
+    :func:`_launch_segmented_max_norm_backward` for the failure mode if the
+    buffer is constructed any other way.
+    """
     N = x.shape[0]
     if N == 0:
         return
