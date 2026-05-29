@@ -128,6 +128,60 @@ def _out_int(t: torch.Tensor) -> wp.array:
     return wp.from_torch(t, dtype=wp.int32)
 
 
+def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
+    """Validate segment-index metadata before dispatching to a Warp kernel.
+
+    ``idx`` is used as a raw memory index inside the Warp kernels, so a stray
+    value (wrong dtype, wrong rank, negative, or ``>= num_segments``) becomes
+    an out-of-bounds memory access rather than a clear Python error.  This
+    runs at the public-wrapper boundary so users get a typed exception before
+    any device launch.
+
+    Parameters
+    ----------
+    idx : torch.Tensor
+        The segment-index tensor to validate.
+    num_segments : int
+        Declared number of segments.  Every entry of ``idx`` must satisfy
+        ``0 <= idx[i] < num_segments``.
+    op : str
+        Name of the calling op (used in the error message).
+
+    Raises
+    ------
+    ValueError
+        On dtype mismatch (not ``int32``), wrong rank (not 1-D), or any value
+        outside ``[0, num_segments)``.
+
+    Notes
+    -----
+    The range check requires a CUDA → host synchronization to read
+    ``idx.min()`` and ``idx.max()`` as scalars.  This is unavoidable for a
+    correctness-level check on opaque integer metadata; callers that have
+    already validated ``idx`` can invoke the underlying ``Function.apply``
+    directly to skip the wrapper.
+    """
+    if idx.dtype != torch.int32:
+        raise ValueError(f"{op}: idx must be int32; got dtype={idx.dtype}.")
+    if idx.ndim != 1:
+        raise ValueError(f"{op}: idx must be 1-D; got shape={tuple(idx.shape)}.")
+    if idx.numel() == 0:
+        return
+    idx_min = int(idx.min().item())
+    idx_max = int(idx.max().item())
+    if idx_min < 0:
+        raise ValueError(
+            f"{op}: idx contains negative values (min={idx_min}); all values "
+            f"must be in the range [0, num_segments={num_segments})."
+        )
+    if idx_max >= num_segments:
+        raise ValueError(
+            f"{op}: idx contains out-of-range values (max={idx_max}, "
+            f"num_segments={num_segments}); all values must be in the range "
+            f"[0, num_segments)."
+        )
+
+
 # =============================================================================
 # segmented_sum
 # =============================================================================
@@ -231,6 +285,7 @@ def segmented_sum(
     torch.Tensor
         Shape ``(num_segments,)`` or ``(num_segments, 3)``.
     """
+    _validate_idx(idx, num_segments, op="segmented_sum")
     return SegmentedSum.apply(x, idx, num_segments)
 
 
@@ -358,6 +413,7 @@ def segmented_dot(
     torch.Tensor
         Shape ``(num_segments,)`` — scalar per segment.
     """
+    _validate_idx(idx, num_segments, op="segmented_dot")
     return SegmentedDot.apply(x, y, idx, num_segments)
 
 
@@ -509,6 +565,7 @@ def segmented_mul(
             f"segmented_mul: num_segments ({num_segments}) must equal "
             f"y.shape[0] ({y.shape[0]}); y is the per-segment broadcast operand."
         )
+    _validate_idx(idx, num_segments, op="segmented_mul")
     return SegmentedMul.apply(x, y, idx, num_segments)
 
 
@@ -626,6 +683,7 @@ def segmented_mean(
     torch.Tensor
         Shape ``(num_segments,)`` or ``(num_segments, 3)``.
     """
+    _validate_idx(idx, num_segments, op="segmented_mean")
     out, _ = SegmentedMean.apply(x, idx, num_segments)
     return out
 
@@ -765,6 +823,7 @@ def segmented_rms_norm(
     torch.Tensor
         Shape ``(num_segments,)`` — scalar RMS norm per segment.
     """
+    _validate_idx(idx, num_segments, op="segmented_rms_norm")
     out, _, _ = SegmentedRmsNorm.apply(x, idx, num_segments)
     return out
 
@@ -914,4 +973,5 @@ def segmented_matvec(
             f"segmented_matvec: num_segments ({num_segments}) must equal "
             f"m.shape[0] ({m.shape[0]}); m is the per-segment matrix operand."
         )
+    _validate_idx(idx, num_segments, op="segmented_matvec")
     return SegmentedMatvec.apply(v, m, idx, num_segments)

@@ -481,6 +481,87 @@ class TestEdgeCases:
         with pytest.raises(ValueError, match="num_segments"):
             segmented_matvec(v, m, idx, num_segments=3)
 
+    # --- idx validation -----------------------------------------------------
+    #
+    # ``idx`` is used as a raw memory index inside the Warp kernels.  The
+    # public wrappers must validate dtype, rank, and range before dispatch
+    # so a stray value produces a clear ``ValueError`` rather than an
+    # out-of-bounds device read/write.
+
+    def test_sum_idx_out_of_range_raises(self, device):
+        """``segmented_sum`` must reject ``idx.max() >= num_segments``.
+
+        Reproduces the reviewer's minimal contract test.
+        """
+        x = torch.ones(2, device=device)
+        idx = torch.tensor([0, 2], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="idx.*range"):
+            segmented_sum(x, idx, num_segments=2)
+
+    def test_sum_idx_negative_raises(self, device):
+        x = torch.ones(2, device=device)
+        idx = torch.tensor([0, -1], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="idx.*negative"):
+            segmented_sum(x, idx, num_segments=2)
+
+    def test_sum_idx_wrong_dtype_raises(self, device):
+        x = torch.ones(2, device=device)
+        idx = torch.tensor([0, 1], dtype=torch.int64, device=device)
+        with pytest.raises(ValueError, match="idx.*int32"):
+            segmented_sum(x, idx, num_segments=2)
+
+    def test_sum_idx_wrong_rank_raises(self, device):
+        x = torch.ones(2, device=device)
+        idx = torch.tensor([[0], [1]], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="idx.*1-D"):
+            segmented_sum(x, idx, num_segments=2)
+
+    @pytest.mark.parametrize(
+        "op_name,op,arg_factory",
+        [
+            (
+                "segmented_dot",
+                segmented_dot,
+                lambda dev: (
+                    torch.ones(2, 3, device=dev),
+                    torch.ones(2, 3, device=dev),
+                ),
+            ),
+            (
+                "segmented_mul",
+                segmented_mul,
+                lambda dev: (
+                    torch.ones(2, 3, device=dev),
+                    torch.ones(2, device=dev),
+                ),
+            ),
+            (
+                "segmented_mean",
+                segmented_mean,
+                lambda dev: (torch.ones(2, 3, device=dev),),
+            ),
+            (
+                "segmented_rms_norm",
+                segmented_rms_norm,
+                lambda dev: (torch.ones(2, 3, device=dev) + 1.0,),
+            ),
+            (
+                "segmented_matvec",
+                segmented_matvec,
+                lambda dev: (
+                    torch.ones(2, 3, device=dev),
+                    torch.ones(2, 3, 3, device=dev),
+                ),
+            ),
+        ],
+    )
+    def test_other_ops_idx_out_of_range_raises(self, device, op_name, op, arg_factory):
+        """The same idx-range validation must apply to every other public wrapper."""
+        args = arg_factory(device)
+        idx = torch.tensor([0, 2], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="idx.*range"):
+            op(*args, idx, 2)
+
 
 # ---------------------------------------------------------------------------
 # loss.backward() — the typical user-facing flow
