@@ -30,7 +30,6 @@ always takes the precompute path because backward requires the saved state).
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 import torch
 import warp as wp
@@ -66,21 +65,34 @@ def device(request):
 
 N, M = 12, 4
 
+# Precisions and matching tolerances used in forward parity checks.
+_DTYPES = [torch.float32, torch.float64]
 
-def _make_idx(device: str, *, n: int = N, m: int = M, seed: int = 0) -> torch.Tensor:
+
+def _tols(dtype: torch.dtype) -> dict:
+    if dtype is torch.float64:
+        return {"rtol": 1e-12, "atol": 1e-14}
+    return {"rtol": 1e-5, "atol": 1e-6}
+
+
+@pytest.fixture(autouse=True)
+def _seed_torch_rng():
+    """Seed PyTorch's global RNG (CPU and all CUDA devices) once per test."""
+    torch.manual_seed(0)
+
+
+def _make_idx(device: str, *, n: int = N, m: int = M) -> torch.Tensor:
     """Sorted int32 segment index of length ``n`` with at least one entry per segment."""
-    rng = np.random.default_rng(seed)
     # Guarantee every segment is non-empty so segmented_mean / segmented_rms_norm
     # are well-defined for gradcheck.
-    base = np.arange(m, dtype=np.int32)
-    extra = rng.integers(0, m, n - m).astype(np.int32)
-    idx = np.sort(np.concatenate([base, extra]))
-    return torch.from_numpy(idx).to(device)
+    base = torch.arange(m, dtype=torch.int32)
+    extra = torch.randint(0, m, (n - m,), dtype=torch.int32)
+    idx, _ = torch.cat([base, extra]).sort()
+    return idx.to(device)
 
 
-def _leaf(shape, device: str, *, dtype=torch.float64, seed: int = 0) -> torch.Tensor:
-    g = torch.Generator(device="cpu").manual_seed(seed)
-    return torch.randn(shape, generator=g, dtype=dtype).to(device).requires_grad_(True)
+def _leaf(shape, device: str, *, dtype=torch.float64) -> torch.Tensor:
+    return torch.randn(shape, dtype=dtype, device=device).requires_grad_(True)
 
 
 # ---------------------------------------------------------------------------
@@ -89,46 +101,50 @@ def _leaf(shape, device: str, *, dtype=torch.float64, seed: int = 0) -> torch.Te
 
 
 class TestSegmentedSum:
-    def test_forward_scalar(self, device):
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_scalar(self, device, dtype):
         idx = _make_idx(device)
-        x = _leaf((N,), device, dtype=torch.float32, seed=1)
+        x = _leaf((N,), device, dtype=dtype)
         out = segmented_sum(x, idx, M)
-        ref = np.zeros(M, dtype=np.float32)
-        np.add.at(ref, idx.cpu().numpy(), x.detach().cpu().numpy())
-        np.testing.assert_allclose(out.detach().cpu().numpy(), ref, rtol=1e-5)
+        ref = torch.zeros(M, dtype=dtype, device=device).index_add_(
+            0, idx.long(), x.detach()
+        )
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
-    def test_forward_vec3(self, device):
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_vec3(self, device, dtype):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, dtype=torch.float32, seed=2)
+        x = _leaf((N, 3), device, dtype=dtype)
         out = segmented_sum(x, idx, M)
-        ref = np.zeros((M, 3), dtype=np.float32)
-        np.add.at(ref, idx.cpu().numpy(), x.detach().cpu().numpy())
-        np.testing.assert_allclose(out.detach().cpu().numpy(), ref, rtol=1e-5)
+        ref = torch.zeros(M, 3, dtype=dtype, device=device).index_add_(
+            0, idx.long(), x.detach()
+        )
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
     def test_gradcheck_scalar(self, device):
         idx = _make_idx(device)
-        x = _leaf((N,), device, seed=3)
+        x = _leaf((N,), device)
         assert torch.autograd.gradcheck(
             lambda v: segmented_sum(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
 
     def test_gradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=4)
+        x = _leaf((N, 3), device)
         assert torch.autograd.gradcheck(
             lambda v: segmented_sum(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
 
     def test_gradgradcheck_scalar(self, device):
         idx = _make_idx(device)
-        x = _leaf((N,), device, seed=5)
+        x = _leaf((N,), device)
         assert torch.autograd.gradgradcheck(
             lambda v: segmented_sum(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
 
     def test_gradgradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=6)
+        x = _leaf((N, 3), device)
         assert torch.autograd.gradgradcheck(
             lambda v: segmented_sum(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
@@ -140,31 +156,29 @@ class TestSegmentedSum:
 
 
 class TestSegmentedDot:
-    def test_forward_vec3(self, device):
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_vec3(self, device, dtype):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, dtype=torch.float32, seed=10)
-        y = _leaf((N, 3), device, dtype=torch.float32, seed=11)
+        x = _leaf((N, 3), device, dtype=dtype)
+        y = _leaf((N, 3), device, dtype=dtype)
         out = segmented_dot(x, y, idx, M)
-        ref = np.zeros(M, dtype=np.float32)
-        np.add.at(
-            ref,
-            idx.cpu().numpy(),
-            (x.detach().cpu().numpy() * y.detach().cpu().numpy()).sum(axis=1),
+        ref = torch.zeros(M, dtype=dtype, device=device).index_add_(
+            0, idx.long(), (x.detach() * y.detach()).sum(dim=1)
         )
-        np.testing.assert_allclose(out.detach().cpu().numpy(), ref, rtol=1e-4)
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
     def test_gradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=12)
-        y = _leaf((N, 3), device, seed=13)
+        x = _leaf((N, 3), device)
+        y = _leaf((N, 3), device)
         assert torch.autograd.gradcheck(
             lambda a, b: segmented_dot(a, b, idx, M), (x, y), eps=1e-6, atol=1e-5
         )
 
     def test_gradgradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=14)
-        y = _leaf((N, 3), device, seed=15)
+        x = _leaf((N, 3), device)
+        y = _leaf((N, 3), device)
         assert torch.autograd.gradgradcheck(
             lambda a, b: segmented_dot(a, b, idx, M),
             (x, y),
@@ -179,28 +193,27 @@ class TestSegmentedDot:
 
 
 class TestSegmentedMul:
-    def test_forward_vec3(self, device):
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_vec3(self, device, dtype):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, dtype=torch.float32, seed=20)
-        y = _leaf((M,), device, dtype=torch.float32, seed=21)
+        x = _leaf((N, 3), device, dtype=dtype)
+        y = _leaf((M,), device, dtype=dtype)
         out = segmented_mul(x, y, idx, M)
-        ref = (
-            x.detach().cpu().numpy() * y.detach().cpu().numpy()[idx.cpu().numpy(), None]
-        )
-        np.testing.assert_allclose(out.detach().cpu().numpy(), ref, rtol=1e-5)
+        ref = x.detach() * y.detach()[idx.long(), None]
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
     def test_gradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=22)
-        y = _leaf((M,), device, seed=23)
+        x = _leaf((N, 3), device)
+        y = _leaf((M,), device)
         assert torch.autograd.gradcheck(
             lambda a, b: segmented_mul(a, b, idx, M), (x, y), eps=1e-6, atol=1e-5
         )
 
     def test_gradgradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=24)
-        y = _leaf((M,), device, seed=25)
+        x = _leaf((N, 3), device)
+        y = _leaf((M,), device)
         assert torch.autograd.gradgradcheck(
             lambda a, b: segmented_mul(a, b, idx, M),
             (x, y),
@@ -215,34 +228,36 @@ class TestSegmentedMul:
 
 
 class TestSegmentedMean:
-    def test_forward_vec3(self, device):
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_vec3(self, device, dtype):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, dtype=torch.float32, seed=30)
+        x = _leaf((N, 3), device, dtype=dtype)
         out = segmented_mean(x, idx, M)
-        idx_np = idx.cpu().numpy()
-        counts = np.bincount(idx_np, minlength=M).astype(np.float32)
-        sums = np.zeros((M, 3), dtype=np.float32)
-        np.add.at(sums, idx_np, x.detach().cpu().numpy())
-        ref = sums / counts[:, None]
-        np.testing.assert_allclose(out.detach().cpu().numpy(), ref, rtol=1e-5)
+        idx_long = idx.long()
+        counts = torch.bincount(idx_long, minlength=M).to(dtype)
+        sums = torch.zeros(M, 3, dtype=dtype, device=device).index_add_(
+            0, idx_long, x.detach()
+        )
+        ref = sums / counts.unsqueeze(-1)
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
     def test_gradcheck_scalar(self, device):
         idx = _make_idx(device)
-        x = _leaf((N,), device, seed=31)
+        x = _leaf((N,), device)
         assert torch.autograd.gradcheck(
             lambda v: segmented_mean(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
 
     def test_gradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=32)
+        x = _leaf((N, 3), device)
         assert torch.autograd.gradcheck(
             lambda v: segmented_mean(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
 
     def test_gradgradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=33)
+        x = _leaf((N, 3), device)
         assert torch.autograd.gradgradcheck(
             lambda v: segmented_mean(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
@@ -254,23 +269,24 @@ class TestSegmentedMean:
 
 
 class TestSegmentedRmsNorm:
-    def test_forward_matches_reference(self, device):
-        """Forward result equals NumPy reference — confirms precompute path."""
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward_matches_reference(self, device, dtype):
+        """Forward result equals a closed-form torch reference — confirms precompute path."""
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, dtype=torch.float64, seed=40)
+        x = _leaf((N, 3), device, dtype=dtype)
         out = segmented_rms_norm(x, idx, M)
-        idx_np = idx.cpu().numpy()
-        x_np = x.detach().cpu().numpy()
-        counts = np.bincount(idx_np, minlength=M).astype(np.float64)
-        sum_sq = np.zeros(M, dtype=np.float64)
-        np.add.at(sum_sq, idx_np, (x_np * x_np).sum(axis=1))
-        ref = np.sqrt(sum_sq / np.maximum(counts, 1))
-        np.testing.assert_allclose(out.detach().cpu().numpy(), ref, rtol=1e-10)
+        idx_long = idx.long()
+        counts = torch.bincount(idx_long, minlength=M).to(dtype)
+        sum_sq = torch.zeros(M, dtype=dtype, device=device).index_add_(
+            0, idx_long, (x.detach() * x.detach()).sum(dim=1)
+        )
+        ref = torch.sqrt(sum_sq / counts.clamp(min=1))
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
     def test_gradcheck_vec3(self, device):
         idx = _make_idx(device)
         # Bias away from zero so the inverse-norm divisor stays well-conditioned.
-        x = _leaf((N, 3), device, seed=41) + 2.0
+        x = _leaf((N, 3), device) + 2.0
         x = x.detach().clone().requires_grad_(True)
         assert torch.autograd.gradcheck(
             lambda v: segmented_rms_norm(v, idx, M), (x,), eps=1e-6, atol=1e-5
@@ -278,7 +294,7 @@ class TestSegmentedRmsNorm:
 
     def test_gradgradcheck_vec3(self, device):
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=42) + 2.0
+        x = _leaf((N, 3), device) + 2.0
         x = x.detach().clone().requires_grad_(True)
         assert torch.autograd.gradgradcheck(
             lambda v: segmented_rms_norm(v, idx, M), (x,), eps=1e-6, atol=1e-4
@@ -291,23 +307,20 @@ class TestSegmentedRmsNorm:
 
 
 class TestSegmentedMatvec:
-    def test_forward(self, device):
+    @pytest.mark.parametrize("dtype", _DTYPES)
+    def test_forward(self, device, dtype):
         idx = _make_idx(device)
-        v = _leaf((N, 3), device, dtype=torch.float32, seed=50)
-        m = _leaf((M, 3, 3), device, dtype=torch.float32, seed=51)
+        v = _leaf((N, 3), device, dtype=dtype)
+        m = _leaf((M, 3, 3), device, dtype=dtype)
         out = segmented_matvec(v, m, idx, M)
-        idx_np = idx.cpu().numpy()
-        v_np = v.detach().cpu().numpy()
-        m_np = m.detach().cpu().numpy()
-        ref = np.stack([m_np[idx_np[i]].T @ v_np[i] for i in range(N)], axis=0)
-        np.testing.assert_allclose(
-            out.detach().cpu().numpy(), ref, rtol=1e-5, atol=1e-6
-        )
+        # out[i] = M[idx[i]]^T @ v[i]
+        ref = torch.einsum("nji,nj->ni", m.detach()[idx.long()], v.detach())
+        torch.testing.assert_close(out.detach(), ref, **_tols(dtype))
 
     def test_gradcheck(self, device):
         idx = _make_idx(device)
-        v = _leaf((N, 3), device, seed=52)
-        m = _leaf((M, 3, 3), device, seed=53)
+        v = _leaf((N, 3), device)
+        m = _leaf((M, 3, 3), device)
         assert torch.autograd.gradcheck(
             lambda a, b: segmented_matvec(a, b, idx, M),
             (v, m),
@@ -317,8 +330,8 @@ class TestSegmentedMatvec:
 
     def test_gradgradcheck(self, device):
         idx = _make_idx(device)
-        v = _leaf((N, 3), device, seed=54)
-        m = _leaf((M, 3, 3), device, seed=55)
+        v = _leaf((N, 3), device)
+        m = _leaf((M, 3, 3), device)
         assert torch.autograd.gradgradcheck(
             lambda a, b: segmented_matvec(a, b, idx, M),
             (v, m),
@@ -335,7 +348,7 @@ class TestSegmentedMatvec:
 class TestEdgeCases:
     def test_single_segment(self, device):
         idx = torch.zeros(N, dtype=torch.int32, device=device)
-        x = _leaf((N, 3), device, seed=60)
+        x = _leaf((N, 3), device)
         assert torch.autograd.gradcheck(
             lambda v: segmented_sum(v, idx, 1), (x,), eps=1e-6, atol=1e-5
         )
@@ -343,7 +356,7 @@ class TestEdgeCases:
     def test_singletons(self, device):
         # Every segment has exactly one element (N == M).
         idx = torch.arange(M, dtype=torch.int32, device=device)
-        x = _leaf((M, 3), device, seed=61)
+        x = _leaf((M, 3), device)
         assert torch.autograd.gradcheck(
             lambda v: segmented_mean(v, idx, M), (x,), eps=1e-6, atol=1e-5
         )
@@ -351,7 +364,7 @@ class TestEdgeCases:
     def test_idx_not_used_for_grad(self, device):
         """idx is integer metadata; its gradient slot must be None."""
         idx = _make_idx(device)
-        x = _leaf((N, 3), device, seed=62)
+        x = _leaf((N, 3), device)
         out = segmented_sum(x, idx, M)
         loss = out.pow(2).sum()
         loss.backward()
