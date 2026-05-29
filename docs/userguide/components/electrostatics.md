@@ -633,9 +633,9 @@ correction explicitly after computing the 3D-periodic real- and reciprocal-space
 parts:
 
 ```python
-from nvalchemiops.torch.interactions.electrostatics import apply_slab_correction
+from nvalchemiops.torch.interactions.electrostatics import compute_slab_correction
 
-slab_energies, slab_forces = apply_slab_correction(
+slab_energies, slab_forces = compute_slab_correction(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -870,7 +870,7 @@ explicitly:
 
 ```python
 from nvalchemiops.torch.interactions.electrostatics import (
-    apply_slab_correction,
+    compute_slab_correction,
     ewald_real_space,
     pme_reciprocal_space,
 )
@@ -897,7 +897,7 @@ pme_reciprocal_energies, pme_reciprocal_forces = pme_reciprocal_space(
     compute_forces=True,
 )
 
-slab_energies, slab_forces = apply_slab_correction(
+slab_energies, slab_forces = compute_slab_correction(
     positions=positions,
     charges=charges,
     cell=cell,

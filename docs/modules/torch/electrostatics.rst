@@ -26,10 +26,10 @@ Slab Correction
 Two-dimensional slab correction for systems with two periodic axes and one
 non-periodic axis. The high-level Ewald and PME interfaces can add this
 correction directly. Component-level workflows should add
-``apply_slab_correction`` explicitly to ``ewald_real_space`` plus either
+``compute_slab_correction`` explicitly to ``ewald_real_space`` plus either
 ``ewald_reciprocal_space`` for Ewald or ``pme_reciprocal_space`` for PME.
 
-.. autofunction:: apply_slab_correction
+.. autofunction:: compute_slab_correction
 
 Coulomb Interactions
 --------------------

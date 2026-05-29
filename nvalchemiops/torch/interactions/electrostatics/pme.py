@@ -185,7 +185,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
 )
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     _prepare_pbc_for_slab,
-    apply_slab_correction,
+    compute_slab_correction,
     ewald_real_space,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
@@ -2132,7 +2132,7 @@ def particle_mesh_ewald(
     slab_correction : bool, default=False
         Whether to add the two-dimensional Yeh-Berkowitz / Ballenegger slab
         correction to the 3D-periodic PME result. This is only available for
-        the full PME interface; use :func:`apply_slab_correction` explicitly
+        the full PME interface; use :func:`compute_slab_correction` explicitly
         when manually composing ``ewald_real_space`` and ``pme_reciprocal_space``.
 
     Returns
@@ -2355,7 +2355,7 @@ def particle_mesh_ewald(
     slab_tuple: tuple[torch.Tensor, ...] | None = None
     if slab_correction:
         if hybrid_forces:
-            slab_out = apply_slab_correction(
+            slab_out = compute_slab_correction(
                 positions.detach(),
                 charges.detach(),
                 cell.detach(),
@@ -2393,7 +2393,7 @@ def particle_mesh_ewald(
             if compute_virial and slab_virial is not None:
                 slab_tuple += (slab_virial,)
         else:
-            slab_out = apply_slab_correction(
+            slab_out = compute_slab_correction(
                 positions,
                 charges,
                 cell,

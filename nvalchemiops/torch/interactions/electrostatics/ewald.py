@@ -26,7 +26,7 @@ Public API
 - ``ewald_real_space()``: Real-space component of Ewald summation
 - ``ewald_reciprocal_space()``: Reciprocal-space component
 - ``ewald_summation()``: Complete Ewald summation (real + reciprocal)
-- ``apply_slab_correction()``: Standalone 2D slab correction for Ewald outputs
+- ``compute_slab_correction()``: Standalone 2D slab correction for Ewald outputs
 
 Mathematical Formulation
 ------------------------
@@ -123,7 +123,7 @@ from nvalchemiops.torch.interactions.electrostatics.parameters import (
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
-    "apply_slab_correction",
+    "compute_slab_correction",
     "ewald_real_space",
     "ewald_reciprocal_space",
     "ewald_summation",
@@ -3438,7 +3438,7 @@ def _slab_correction_energy_forces_charge_grad_op(
     )
 
 
-def apply_slab_correction(
+def compute_slab_correction(
     positions: torch.Tensor,
     charges: torch.Tensor,
     cell: torch.Tensor,
@@ -3509,14 +3509,14 @@ def apply_slab_correction(
     Standalone correction for an orthorhombic slab with vacuum along z::
 
         >>> pbc_slab = torch.tensor([[True, True, False]], device=positions.device)
-        >>> slab_energy, slab_forces = apply_slab_correction(
+        >>> slab_energy, slab_forces = compute_slab_correction(
         ...     positions, charges, cell, pbc_slab, compute_forces=True
         ... )
         >>> corrected_energy = ewald_energy + slab_energy
 
     Triclinic cells use the normal to the periodic plane::
 
-        >>> triclinic_energy, triclinic_forces = apply_slab_correction(
+        >>> triclinic_energy, triclinic_forces = compute_slab_correction(
         ...     positions, charges, triclinic_cell, pbc_slab, compute_forces=True
         ... )
     """
@@ -3778,7 +3778,7 @@ def ewald_summation(
     slab_tuple: tuple[torch.Tensor, ...] | None = None
     if slab_correction:
         if hybrid_forces:
-            slab_out = apply_slab_correction(
+            slab_out = compute_slab_correction(
                 positions.detach(),
                 charges.detach(),
                 cell.detach(),
@@ -3816,7 +3816,7 @@ def ewald_summation(
             if compute_virial and slab_virial is not None:
                 slab_tuple += (slab_virial,)
         else:
-            slab_out = apply_slab_correction(
+            slab_out = compute_slab_correction(
                 positions,
                 charges,
                 cell,

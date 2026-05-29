@@ -23,7 +23,7 @@ Coverage:
 - Full PME slab energy gradcheck
 - 3D periodic = zero correction
 - Triclinic projected-normal geometry
-- Standalone apply_slab_correction() API edge cases
+- Standalone compute_slab_correction() API edge cases
 - Hybrid-force slab semantics
 """
 
@@ -33,7 +33,7 @@ import pytest
 import torch
 
 from nvalchemiops.torch.interactions.electrostatics import (
-    apply_slab_correction,
+    compute_slab_correction,
     ewald_real_space,
     particle_mesh_ewald,
     pme_reciprocal_space,
@@ -382,7 +382,7 @@ class TestAnalyticalVsAutograd:
         cell = cell.clone().detach().requires_grad_(True)
 
         def slab_outputs(positions_in, charges_in, cell_in):
-            return apply_slab_correction(
+            return compute_slab_correction(
                 positions_in,
                 charges_in,
                 cell_in,
@@ -410,7 +410,7 @@ class TestAnalyticalVsAutograd:
 class TestZeroCorrection:
     """3D periodic systems should give identical results with/without slab_correction."""
 
-    def test_pbc_3d_matches_no_apply_slab_correction(self, device):
+    def test_pbc_3d_matches_no_compute_slab_correction(self, device):
         dtype = torch.float64
 
         positions, charges, cell, _, nl, ptr, shifts = _make_cscl_ewald_inputs(
@@ -457,7 +457,7 @@ class TestTriclinicCells:
 
         positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
 
-        energies, forces, charge_grads, virial = apply_slab_correction(
+        energies, forces, charge_grads, virial = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -514,7 +514,7 @@ class TestTriclinicCells:
             compute_charge_gradients=True,
             compute_virial=True,
         )
-        e_slab, f_slab, cg_slab, v_slab = apply_slab_correction(
+        e_slab, f_slab, cg_slab, v_slab = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -610,7 +610,7 @@ class TestTriclinicCells:
         positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
         shift = torch.tensor([1.3, -0.7, 2.1], dtype=dtype, device=device)
 
-        e0, f0, cg0 = apply_slab_correction(
+        e0, f0, cg0 = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -618,7 +618,7 @@ class TestTriclinicCells:
             compute_forces=True,
             compute_charge_gradients=True,
         )
-        e1, f1, cg1 = apply_slab_correction(
+        e1, f1, cg1 = compute_slab_correction(
             positions + shift,
             charges,
             cell,
@@ -706,12 +706,12 @@ class TestPbcNoneHandling:
 
 
 # ==============================================================================
-# Standalone apply_slab_correction() API tests
+# Standalone compute_slab_correction() API tests
 # ==============================================================================
 
 
 class TestStandaloneSlabAPI:
-    """Standalone apply_slab_correction() should validate output shapes and edges."""
+    """Standalone compute_slab_correction() should validate output shapes and edges."""
 
     def test_standalone_outputs_subset(self, device):
         """Standalone API should return the right tuple based on flags."""
@@ -720,18 +720,20 @@ class TestStandaloneSlabAPI:
         positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
 
         # Energy only -> single tensor
-        out = apply_slab_correction(positions, charges, cell, pbc)
+        out = compute_slab_correction(positions, charges, cell, pbc)
         assert isinstance(out, torch.Tensor)
         assert out.shape == (positions.shape[0],)
 
         # Energy + forces
-        out = apply_slab_correction(positions, charges, cell, pbc, compute_forces=True)
+        out = compute_slab_correction(
+            positions, charges, cell, pbc, compute_forces=True
+        )
         assert isinstance(out, tuple)
         assert len(out) == 2
         assert out[1].shape == positions.shape
 
         # Energy + forces + charge grads + virial
-        out = apply_slab_correction(
+        out = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -757,8 +759,8 @@ class TestStandaloneSlabAPI:
         pbc_1d = torch.tensor([True, True, False], device=device)
         pbc_2d = torch.tensor([[True, True, False]], device=device)
 
-        e_1d = apply_slab_correction(positions, charges, cell, pbc_1d)
-        e_2d = apply_slab_correction(positions, charges, cell, pbc_2d)
+        e_1d = compute_slab_correction(positions, charges, cell, pbc_1d)
+        e_2d = compute_slab_correction(positions, charges, cell, pbc_2d)
 
         # Single-system 1D and explicit 2D pbc produce identical energies.
         torch.testing.assert_close(e_1d, e_2d, rtol=0, atol=0)
@@ -781,7 +783,7 @@ class TestStandaloneSlabAPI:
         pbc_1d = torch.tensor([True, True, False], device=device)
 
         with pytest.raises(ValueError, match="requires `pbc` shape"):
-            apply_slab_correction(
+            compute_slab_correction(
                 positions,
                 charges,
                 cell,
@@ -800,7 +802,7 @@ class TestStandaloneSlabAPI:
         ).unsqueeze(0)
         pbc = torch.tensor([True, True, False], device=device)
 
-        energies, forces, charge_grads, virial = apply_slab_correction(
+        energies, forces, charge_grads, virial = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -835,7 +837,7 @@ class TestStandaloneSlabAPI:
         ).unsqueeze(0)
         pbc = torch.tensor([True, True, False], device=device)
 
-        energies, forces, charge_grads, virial = apply_slab_correction(
+        energies, forces, charge_grads, virial = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -1033,7 +1035,7 @@ class TestPMESlabIntegration:
             compute_charge_gradients=True,
             compute_virial=True,
         )
-        slab = apply_slab_correction(
+        slab = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -1345,7 +1347,7 @@ class TestPMESlabIntegration:
             compute_charge_gradients=True,
             compute_virial=True,
         )
-        slab = apply_slab_correction(
+        slab = compute_slab_correction(
             positions,
             charges,
             cell,
@@ -1578,7 +1580,7 @@ class TestPMESlabIntegration:
             neighbor_shifts=shifts,
             compute_forces=True,
         )
-        slab_energies, slab_forces = apply_slab_correction(
+        slab_energies, slab_forces = compute_slab_correction(
             positions,
             charges,
             cell,

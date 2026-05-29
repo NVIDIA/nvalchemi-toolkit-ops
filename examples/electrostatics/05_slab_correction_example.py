@@ -28,7 +28,7 @@ In this example you will learn:
 - How to run ``ewald_summation(..., slab_correction=True)``
 - How to run ``particle_mesh_ewald(..., slab_correction=True)``
 - How to pass slab periodicity with a boolean ``pbc`` tensor
-- How to compute the standalone slab correction with ``apply_slab_correction``
+- How to compute the standalone slab correction with ``compute_slab_correction``
 - How the standalone correction equals the integrated Ewald energy/force delta
 - How to compose total Ewald and PME component workflows with slab
 - How triclinic slab cells use the normal to the periodic plane
@@ -50,7 +50,7 @@ from __future__ import annotations
 import torch
 
 from nvalchemiops.torch.interactions.electrostatics import (
-    apply_slab_correction,
+    compute_slab_correction,
     ewald_real_space,
     ewald_reciprocal_space,
     ewald_summation,
@@ -201,7 +201,7 @@ print(f"  Virial trace: {torch.trace(virial_slab[0]).item(): .8f}")
 # the difference between the slab-corrected and uncorrected Ewald outputs.
 
 correction_energy, correction_forces, correction_charge_grads, correction_virial = (
-    apply_slab_correction(
+    compute_slab_correction(
         positions=positions,
         charges=charges,
         cell=cell,
@@ -255,7 +255,7 @@ ewald_component_reciprocal_energy, ewald_component_reciprocal_forces = (
         compute_forces=True,
     )
 )
-ewald_component_slab_energy, ewald_component_slab_forces = apply_slab_correction(
+ewald_component_slab_energy, ewald_component_slab_forces = compute_slab_correction(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -345,7 +345,7 @@ reciprocal_energy, reciprocal_forces = pme_reciprocal_space(
     mesh_dimensions=mesh_dimensions,
     compute_forces=True,
 )
-slab_energy_correction, slab_forces_correction = apply_slab_correction(
+slab_energy_correction, slab_forces_correction = compute_slab_correction(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -379,7 +379,7 @@ triclinic_cell = torch.tensor(
     device=device,
 )
 
-triclinic_energy, triclinic_forces = apply_slab_correction(
+triclinic_energy, triclinic_forces = compute_slab_correction(
     positions=positions,
     charges=charges,
     cell=triclinic_cell,
@@ -397,7 +397,7 @@ print(f"  Forces:\n{triclinic_forces.cpu().numpy()}")
 # -------
 # Use ``ewald_summation(..., slab_correction=True, pbc=pbc_slab)`` or
 # ``particle_mesh_ewald(..., slab_correction=True, pbc=pbc_slab)`` when you want
-# the correction included in the total outputs. Use ``apply_slab_correction``
+# the correction included in the total outputs. Use ``compute_slab_correction``
 # directly when you need the correction term alone or when composing
 # ``ewald_real_space`` with ``ewald_reciprocal_space`` or
 # ``pme_reciprocal_space``.
