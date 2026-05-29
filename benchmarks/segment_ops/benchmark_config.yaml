@@ -43,3 +43,34 @@ operations:
 
   segmented_matvec:
     enabled: true
+
+  # ----------------------------------------------------------------------------
+  # PR 1 backward / double-backward groups.  Opt-in (default disabled): they
+  # multiply the run time substantially over the forward-only sweep, so a
+  # plain ``make pytest`` / default config run sticks to the forward ops above.
+  # Flip ``enabled: true`` on the rows you want to time.
+  # ----------------------------------------------------------------------------
+  segmented_sum_bwd:
+    enabled: false
+  segmented_sum_dbl:
+    enabled: false
+  segmented_dot_bwd:
+    enabled: false
+  segmented_dot_dbl:
+    enabled: false
+  segmented_mul_bwd:
+    enabled: false
+  segmented_mul_dbl:
+    enabled: false
+  segmented_matvec_bwd:
+    enabled: false
+  segmented_matvec_dbl:
+    enabled: false
+  segmented_max_norm_bwd:
+    enabled: false
+  segmented_max_norm_dbl:
+    enabled: false
+  segmented_rms_norm_bwd:
+    enabled: false
+  segmented_rms_norm_dbl:
+    enabled: false

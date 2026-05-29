@@ -1523,7 +1523,10 @@ def run_benchmarks(config: dict, output_dir: Path, device_str: str) -> None:
 
     for config_key, display_name, bench_fn, supports_dtypes in _BENCHMARKS:
         op_cfg = ops_config.get(config_key, {})
-        if isinstance(op_cfg, dict) and not op_cfg.get("enabled", True):
+        # Default to disabled: new registry entries must opt in via the yaml.
+        # This prevents adding a group to ``_BENCHMARKS`` from silently expanding
+        # the default benchmark run.
+        if not isinstance(op_cfg, dict) or not op_cfg.get("enabled", False):
             continue
 
         # Determine dtype variants for this operation
