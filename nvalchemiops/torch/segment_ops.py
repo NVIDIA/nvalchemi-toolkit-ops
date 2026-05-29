@@ -78,12 +78,12 @@ from nvalchemiops.torch.autograd import warp_stream_from_torch
 
 __all__ = [
     # torch.autograd.Function classes — callers may use ``.apply`` directly.
-    # "SegmentedDot",
-    # "SegmentedMatvec",
-    # "SegmentedMean",
-    # "SegmentedMul",
-    # "SegmentedRmsNorm",
-    # "SegmentedSum",
+    "SegmentedDot",
+    "SegmentedMatvec",
+    "SegmentedMean",
+    "SegmentedMul",
+    "SegmentedRmsNorm",
+    "SegmentedSum",
     # Convenience wrappers around ``.apply``.
     "segmented_dot",
     "segmented_matvec",
