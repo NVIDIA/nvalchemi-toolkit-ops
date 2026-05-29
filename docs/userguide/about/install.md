@@ -53,7 +53,9 @@ page found [here](https://docs.astral.sh/uv/getting-started/installation/).
 ### Backend Extras
 
 ALCHEMI Toolkit-Ops provides optional extras for framework-specific bindings.
-Install the extra matching your deep learning backend:
+Install the extra matching your deep learning backend. The plain `torch` and
+`jax` extras use CUDA 13 by default; use `torch-cu12` or `jax-cu12` when a
+CUDA 12 environment is required.
 
 ::::{tab-set}
 
@@ -79,7 +81,7 @@ $ python -c "from nvalchemiops.torch import neighbors; print('PyTorch bindings a
 $ pip install 'nvalchemi-toolkit-ops[jax]'
 ```
 
-This installs JAX with CUDA 12 support. Verify the JAX bindings are available:
+This installs JAX with CUDA 13 support. Verify the JAX bindings are available:
 
 ```bash
 $ python -c "from nvalchemiops.jax import neighbors; print('JAX bindings available')"
