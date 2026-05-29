@@ -198,7 +198,7 @@ _DEPRECATED_TORCH_EXPORTS = {
     "pme_energy_corrections": "nvalchemiops.torch.interactions.electrostatics.pme",
     "pme_energy_corrections_with_charge_grad": "nvalchemiops.torch.interactions.electrostatics.pme",
     # Slab correction
-    "compute_slab_correction": "nvalchemiops.torch.interactions.electrostatics.ewald",
+    "compute_slab_correction": "nvalchemiops.torch.interactions.electrostatics.slab",
     # K-vectors
     "generate_k_vectors_ewald_summation": "nvalchemiops.torch.interactions.electrostatics.k_vectors",
     "generate_k_vectors_pme": "nvalchemiops.torch.interactions.electrostatics.k_vectors",

@@ -180,12 +180,13 @@ from nvalchemiops.torch.autograd import (
     warp_from_torch,
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
+    ElectrostaticOutputs,
+    _build_electrostatic_result,
+    _combine_electrostatic_outputs,
     _InjectChargeGrad,
-    _sum_charge_gradients,
+    _unpack_electrostatic_outputs,
 )
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
-    _prepare_pbc_for_slab,
-    compute_slab_correction,
     ewald_real_space,
 )
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
@@ -195,6 +196,12 @@ from nvalchemiops.torch.interactions.electrostatics.parameters import (
     estimate_pme_mesh_dimensions,
     estimate_pme_parameters,
     mesh_spacing_to_dimensions,
+)
+from nvalchemiops.torch.interactions.electrostatics.slab import (
+    _prepare_pbc_for_slab,
+)
+from nvalchemiops.torch.interactions.electrostatics.slab import (
+    compute_slab_correction as _compute_slab_correction,
 )
 from nvalchemiops.torch.spline import (
     spline_gather,
@@ -2352,10 +2359,10 @@ def particle_mesh_ewald(
         hybrid_forces=hybrid_forces,
     )
 
-    slab_tuple: tuple[torch.Tensor, ...] | None = None
+    slab_result: torch.Tensor | tuple[torch.Tensor, ...] | None = None
     if slab_correction:
         if hybrid_forces:
-            slab_out = compute_slab_correction(
+            slab_out = _compute_slab_correction(
                 positions.detach(),
                 charges.detach(),
                 cell.detach(),
@@ -2365,35 +2372,32 @@ def particle_mesh_ewald(
                 compute_charge_gradients=True,
                 compute_virial=compute_virial,
             )
-            slab_raw = slab_out if isinstance(slab_out, tuple) else (slab_out,)
-
-            if compute_forces and compute_virial:
-                slab_energies, slab_forces, slab_charge_grads, slab_virial = slab_raw
-            elif compute_forces:
-                slab_energies, slab_forces, slab_charge_grads = slab_raw
-                slab_virial = None
-            elif compute_virial:
-                slab_energies, slab_charge_grads, slab_virial = slab_raw
-                slab_forces = None
-            else:
-                slab_energies, slab_charge_grads = slab_raw
-                slab_forces = None
-                slab_virial = None
+            slab = _unpack_electrostatic_outputs(
+                slab_out,
+                compute_forces,
+                compute_charge_gradients=True,
+                compute_virial=compute_virial,
+            )
+            slab_energies = slab.energies
 
             if charges.requires_grad:
                 slab_energies = _InjectChargeGrad.apply(
-                    slab_energies, charges, slab_charge_grads, batch_idx
+                    slab_energies, charges, slab.charge_grads, batch_idx
                 )
 
-            slab_tuple = (slab_energies,)
-            if compute_forces and slab_forces is not None:
-                slab_tuple += (slab_forces,)
-            if compute_charge_gradients:
-                slab_tuple += (slab_charge_grads,)
-            if compute_virial and slab_virial is not None:
-                slab_tuple += (slab_virial,)
+            slab_result = _build_electrostatic_result(
+                ElectrostaticOutputs(
+                    slab_energies,
+                    slab.forces,
+                    slab.charge_grads,
+                    slab.virial,
+                ),
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
         else:
-            slab_out = compute_slab_correction(
+            slab_result = _compute_slab_correction(
                 positions,
                 charges,
                 cell,
@@ -2403,50 +2407,15 @@ def particle_mesh_ewald(
                 compute_charge_gradients=compute_charge_gradients,
                 compute_virial=compute_virial,
             )
-            slab_tuple = slab_out if isinstance(slab_out, tuple) else (slab_out,)
 
-    # Normalize return tuples for easy combination.
-    # All tuples return: energies, [forces], [charge_grads], [virial].
-    rs_tuple = rs if isinstance(rs, tuple) else (rs,)
-    rec_tuple = rec if isinstance(rec, tuple) else (rec,)
-    tuple_index = 0
-
-    energies = rs_tuple[tuple_index] + rec_tuple[tuple_index]
-    if slab_tuple is not None:
-        energies = energies + slab_tuple[tuple_index]
-    tuple_index += 1
-    results: tuple[torch.Tensor, ...] = (energies,)
-
-    if compute_forces:
-        forces = rs_tuple[tuple_index] + rec_tuple[tuple_index]
-        if slab_tuple is not None:
-            forces = forces + slab_tuple[tuple_index]
-        results += (forces,)
-        tuple_index += 1
-
-    if compute_charge_gradients:
-        real_charge_grads = rs_tuple[tuple_index]
-        reciprocal_charge_grads = rec_tuple[tuple_index]
-        if torch.compiler.is_compiling():
-            charge_grads = _sum_charge_gradients(
-                real_charge_grads, reciprocal_charge_grads
-            )
-        else:
-            charge_grads = real_charge_grads + reciprocal_charge_grads
-        if slab_tuple is not None:
-            charge_grads = charge_grads + slab_tuple[tuple_index]
-        results += (charge_grads,)
-        tuple_index += 1
-
-    if compute_virial:
-        virial = rs_tuple[tuple_index] + rec_tuple[tuple_index]
-        if slab_tuple is not None:
-            virial = virial + slab_tuple[tuple_index]
-        results += (virial,)
-
-    if len(results) == 1:
-        return results[0]
-    return results
+    return _combine_electrostatic_outputs(
+        rs,
+        rec,
+        slab_result,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )
 
 
 __all__ = [
