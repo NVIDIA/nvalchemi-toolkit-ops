@@ -20,11 +20,13 @@ import torch
 import warp as wp
 
 from nvalchemiops.neighbors.cell_list import build_cell_list
-from nvalchemiops.neighbors.rebuild_detection import (
+from nvalchemiops.neighbors.rebuild import (
     check_batch_cell_list_rebuild,
     check_batch_neighbor_list_rebuild,
     check_cell_list_rebuild,
     check_neighbor_list_rebuild,
+    get_cell_list_rebuild_kernel,
+    get_neighbor_list_rebuild_kernel,
 )
 from nvalchemiops.torch.neighbors.cell_list import estimate_cell_list_sizes
 from nvalchemiops.torch.neighbors.neighbor_utils import allocate_cell_list
@@ -36,6 +38,37 @@ devices = ["cpu"]
 if torch.cuda.is_available():
     devices.append("cuda:0")
 dtypes = [torch.float32, torch.float64]
+
+
+class TestRebuildDetectionKernelFactory:
+    """Test the rebuild-detection kernel factory accessors."""
+
+    @pytest.mark.parametrize("wp_dtype", [wp.float16, wp.float32, wp.float64])
+    @pytest.mark.parametrize("batched", [False, True])
+    @pytest.mark.parametrize("pbc", [False, True])
+    def test_neighbor_list_rebuild_kernel_combinations(self, wp_dtype, batched, pbc):
+        """Neighbor-list factory should cover dtype, batching, and PBC axes."""
+        assert (
+            get_neighbor_list_rebuild_kernel(
+                wp_dtype,
+                batched=batched,
+                pbc=pbc,
+            )
+            is not None
+        )
+
+    @pytest.mark.parametrize("wp_dtype", [wp.float16, wp.float32, wp.float64])
+    @pytest.mark.parametrize("batched", [False, True])
+    def test_cell_list_rebuild_kernel_combinations(self, wp_dtype, batched):
+        """Cell-list factory should cover dtype and batching axes."""
+        assert get_cell_list_rebuild_kernel(wp_dtype, batched=batched) is not None
+
+    def test_rebuild_kernel_accessors_reject_invalid_dtype(self):
+        """Factory accessors should reject unsupported Warp dtypes."""
+        with pytest.raises(ValueError, match="Unsupported dtype"):
+            get_neighbor_list_rebuild_kernel(wp.int32)
+        with pytest.raises(ValueError, match="Unsupported dtype"):
+            get_cell_list_rebuild_kernel(wp.int32)
 
 
 @pytest.mark.parametrize("device", devices)

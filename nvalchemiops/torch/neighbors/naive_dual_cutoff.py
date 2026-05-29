@@ -20,7 +20,7 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.naive_dual_cutoff import (
+from nvalchemiops.neighbors.naive import (
     naive_neighbor_matrix_dual_cutoff,
     naive_neighbor_matrix_pbc_dual_cutoff,
 )
@@ -120,6 +120,9 @@ def _naive_neighbor_matrix_pbc_dual_cutoff(
     max_shifts_per_system: int,
     half_fill: bool = False,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
 ) -> None:
     """Compute two neighbor matrices with periodic boundary conditions using dual cutoffs.
 
@@ -154,6 +157,21 @@ def _naive_neighbor_matrix_pbc_dual_cutoff(
     )
     wp_num_neighbors1 = wp.from_torch(num_neighbors1, dtype=wp.int32, return_ctype=True)
     wp_num_neighbors2 = wp.from_torch(num_neighbors2, dtype=wp.int32, return_ctype=True)
+    wp_positions_wrapped = (
+        wp.from_torch(positions_wrapped_buffer, dtype=wp_vec_dtype, return_ctype=True)
+        if positions_wrapped_buffer is not None
+        else None
+    )
+    wp_per_atom_cell_offsets = (
+        wp.from_torch(per_atom_cell_offsets_buffer, dtype=wp.vec3i, return_ctype=True)
+        if per_atom_cell_offsets_buffer is not None
+        else None
+    )
+    wp_inv_cell = (
+        wp.from_torch(inv_cell_buffer, dtype=wp_mat_dtype, return_ctype=True)
+        if inv_cell_buffer is not None
+        else None
+    )
 
     naive_neighbor_matrix_pbc_dual_cutoff(
         positions=wp_positions,
@@ -172,6 +190,9 @@ def _naive_neighbor_matrix_pbc_dual_cutoff(
         device=str(device),
         half_fill=half_fill,
         wrap_positions=wrap_positions,
+        positions_wrapped_buffer=wp_positions_wrapped,
+        per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
+        inv_cell_buffer=wp_inv_cell,
     )
 
 
@@ -272,6 +293,9 @@ def _naive_neighbor_matrix_pbc_dual_cutoff_selective(
     rebuild_flags: torch.Tensor,
     half_fill: bool = False,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
 ) -> None:
     """Selective naive dual cutoff PBC neighbor matrix custom op.
 
@@ -310,6 +334,21 @@ def _naive_neighbor_matrix_pbc_dual_cutoff_selective(
     wp_rebuild_flags = wp.from_torch(
         rebuild_flags.view(-1)[:1].contiguous(), dtype=wp.bool, return_ctype=True
     )
+    wp_positions_wrapped = (
+        wp.from_torch(positions_wrapped_buffer, dtype=wp_vec_dtype, return_ctype=True)
+        if positions_wrapped_buffer is not None
+        else None
+    )
+    wp_per_atom_cell_offsets = (
+        wp.from_torch(per_atom_cell_offsets_buffer, dtype=wp.vec3i, return_ctype=True)
+        if per_atom_cell_offsets_buffer is not None
+        else None
+    )
+    wp_inv_cell = (
+        wp.from_torch(inv_cell_buffer, dtype=wp_mat_dtype, return_ctype=True)
+        if inv_cell_buffer is not None
+        else None
+    )
 
     selective_zero_num_neighbors_single(
         wp_num_neighbors1, wp_rebuild_flags, str(wp_device)
@@ -335,6 +374,9 @@ def _naive_neighbor_matrix_pbc_dual_cutoff_selective(
         half_fill=half_fill,
         rebuild_flags=wp_rebuild_flags,
         wrap_positions=wrap_positions,
+        positions_wrapped_buffer=wp_positions_wrapped,
+        per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
+        inv_cell_buffer=wp_inv_cell,
     )
 
 
@@ -360,6 +402,9 @@ def naive_neighbor_list_dual_cutoff(
     max_shifts_per_system: int | None = None,
     rebuild_flags: torch.Tensor | None = None,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
 ) -> (
     tuple[
         torch.Tensor,
@@ -543,6 +588,9 @@ def naive_neighbor_list_dual_cutoff(
                 rebuild_flags=rebuild_flags,
                 half_fill=half_fill,
                 wrap_positions=wrap_positions,
+                positions_wrapped_buffer=positions_wrapped_buffer,
+                per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+                inv_cell_buffer=inv_cell_buffer,
             )
         else:
             _naive_neighbor_matrix_pbc_dual_cutoff(
@@ -561,6 +609,9 @@ def naive_neighbor_list_dual_cutoff(
                 max_shifts_per_system=max_shifts_per_system,
                 half_fill=half_fill,
                 wrap_positions=wrap_positions,
+                positions_wrapped_buffer=positions_wrapped_buffer,
+                per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+                inv_cell_buffer=inv_cell_buffer,
             )
         if return_neighbor_list:
             neighbor_list1, neighbor_ptr1, unit_shifts1 = (

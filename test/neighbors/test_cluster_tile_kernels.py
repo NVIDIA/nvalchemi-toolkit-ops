@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for individual single-system tile_warp kernel launchers.
+"""Tests for individual single-system cluster_tile kernel launchers.
 
 The torch-binding suite at
-``test/neighbors/bindings/torch/test_tile_warp.py`` exercises the
-end-to-end pipeline; this file targets the public Warp launchers
-(``compute_morton``, ``permute_gather_soa``, ``tile_sort_pairs_warp``,
-``build_tile_neighbor_list``, ``tile_to_matrix``, ``tile_to_coo``)
+``test/neighbors/bindings/torch/test_cluster_tile.py`` exercises the
+end-to-end pipeline; this file targets the Warp support helpers and public launchers
+(``_compute_morton``, ``_permute_gather_soa``, ``_tile_sort_pairs``,
+``build_cluster_tile_list``, ``query_cluster_tile``, ``query_cluster_tile_coo``)
 directly with ``wp.array`` inputs.
 """
 
@@ -27,20 +27,23 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.tile_warp import (
+from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
-    build_tile_neighbor_list,
-    compute_morton,
-    permute_gather_soa,
-    tile_sort_pairs_warp,
-    tile_to_matrix,
+    build_cluster_tile_list,
+    query_cluster_tile,
+)
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    _compute_morton,
+    _permute_gather_soa,
+    _tile_sort_pairs,
 )
 
 
 def _mat33f_from_torch(mat: torch.Tensor):
     """Zero-copy view a ``(1, 3, 3)`` or ``(3, 3)`` torch tensor as a
-    ``wp.array(dtype=wp.mat33f, shape=(1,))``.  The tile_warp kernels read
-    ``cell``/``inv_cell`` as length-1 arrays and dereference ``[0]`` inside.
+    ``wp.array(dtype=wp.mat33f, shape=(1,))``.  Cluster-tile kernels read
+    ``cell`` / ``inv_cell`` as length-1 arrays and dereference ``[0]``
+    inside the kernel body.
     """
     if mat.ndim == 2:
         mat = mat.unsqueeze(0)
@@ -54,7 +57,7 @@ def _mat33f_from_torch(mat: torch.Tensor):
 @pytest.fixture
 def device():
     if not torch.cuda.is_available():
-        pytest.skip("tile_warp kernels require CUDA")
+        pytest.skip("cluster_tile kernels require CUDA")
     return "cuda:0"
 
 
@@ -86,7 +89,7 @@ class TestComputeMortonLauncher:
         wp_num_tiles = wp.from_torch(num_tiles, dtype=wp.int32, return_ctype=True)
         wp_inv_cell = _mat33f_from_torch(inv_cell_torch)
 
-        compute_morton(
+        _compute_morton(
             wp_positions,
             wp_inv_cell,
             N,
@@ -122,7 +125,7 @@ class TestComputeMortonLauncher:
         num_neighbors = torch.zeros(N, dtype=torch.int32, device=device)
         num_tiles = torch.zeros(1, dtype=torch.int32, device=device)
 
-        compute_morton(
+        _compute_morton(
             wp.from_torch(positions, dtype=wp.vec3f, return_ctype=True),
             _mat33f_from_torch(inv_cell_torch),
             N,
@@ -153,7 +156,7 @@ class TestPermuteGatherSoaLauncher:
         sorted_pos_y = torch.zeros(N, dtype=torch.float32, device=device)
         sorted_pos_z = torch.zeros(N, dtype=torch.float32, device=device)
 
-        permute_gather_soa(
+        _permute_gather_soa(
             wp.from_torch(positions, dtype=wp.vec3f, return_ctype=True),
             wp.from_torch(sorted_atom_index, dtype=wp.int32, return_ctype=True),
             N,
@@ -180,7 +183,7 @@ class TestPermuteGatherSoaLauncher:
         sorted_pos_y = torch.zeros(N, dtype=torch.float32, device=device)
         sorted_pos_z = torch.zeros(N, dtype=torch.float32, device=device)
 
-        permute_gather_soa(
+        _permute_gather_soa(
             wp.from_torch(positions, dtype=wp.vec3f, return_ctype=True),
             wp.from_torch(sorted_atom_index, dtype=wp.int32, return_ctype=True),
             N,
@@ -193,7 +196,7 @@ class TestPermuteGatherSoaLauncher:
         torch.testing.assert_close(sorted_pos_x, positions.flip(0)[:, 0])
 
 
-class TestTileSortPairsWarpLauncher:
+class TestTileSortPairsLauncher:
     """Tests for the bitonic-sort key-value launcher."""
 
     @pytest.mark.parametrize("N", [1024, 2048])
@@ -204,13 +207,13 @@ class TestTileSortPairsWarpLauncher:
         values = torch.arange(N, dtype=torch.int32, device=device)
         keys_sorted_ref, perm = torch.sort(keys)
 
-        ok = tile_sort_pairs_warp(
+        ok = _tile_sort_pairs(
             wp.from_torch(keys, dtype=wp.int32, return_ctype=True),
             wp.from_torch(values, dtype=wp.int32, return_ctype=True),
             N,
             device,
         )
-        assert ok, f"tile_sort_pairs_warp should have a specialization at N={N}"
+        assert ok, f"_tile_sort_pairs should have a specialization at N={N}"
         torch.testing.assert_close(keys, keys_sorted_ref)
         torch.testing.assert_close(values, perm.to(dtype=torch.int32))
 
@@ -222,7 +225,7 @@ class TestTileSortPairsWarpLauncher:
         keys_before = keys.clone()
         values_before = values.clone()
 
-        ok = tile_sort_pairs_warp(
+        ok = _tile_sort_pairs(
             wp.from_torch(keys, dtype=wp.int32, return_ctype=True),
             wp.from_torch(values, dtype=wp.int32, return_ctype=True),
             N,
@@ -258,7 +261,7 @@ class TestBuildTileNeighborListLauncher:
         num_neighbors = torch.zeros(natom, dtype=torch.int32, device=device)
         num_tiles = torch.zeros(1, dtype=torch.int32, device=device)
 
-        compute_morton(
+        _compute_morton(
             wp.from_torch(positions, dtype=wp.vec3f, return_ctype=True),
             _mat33f_from_torch(inv_cell_torch),
             natom,
@@ -272,7 +275,7 @@ class TestBuildTileNeighborListLauncher:
         # fall back to a torch-side argsort, which is enough for this test.
         perm = torch.argsort(morton_codes)
         sorted_atom_index.copy_(perm.to(torch.int32))
-        permute_gather_soa(
+        _permute_gather_soa(
             wp.from_torch(positions, dtype=wp.vec3f, return_ctype=True),
             wp.from_torch(sorted_atom_index, dtype=wp.int32, return_ctype=True),
             natom,
@@ -292,7 +295,7 @@ class TestBuildTileNeighborListLauncher:
         tile_row_group = torch.zeros(max_tiles, dtype=torch.int32, device=device)
         tile_col_group = torch.zeros(max_tiles, dtype=torch.int32, device=device)
 
-        build_tile_neighbor_list(
+        build_cluster_tile_list(
             sorted_pos_x=wp.from_torch(
                 sorted_pos_x, dtype=wp.float32, return_ctype=True
             ),
@@ -305,12 +308,24 @@ class TestBuildTileNeighborListLauncher:
             cell=_mat33f_from_torch(cell_torch),
             inv_cell=_mat33f_from_torch(inv_cell_torch),
             cutoff=cutoff,
-            group_ctr_x=wp.from_torch(group_ctr_x, dtype=wp.float32, return_ctype=True),
-            group_ctr_y=wp.from_torch(group_ctr_y, dtype=wp.float32, return_ctype=True),
-            group_ctr_z=wp.from_torch(group_ctr_z, dtype=wp.float32, return_ctype=True),
-            group_ext_x=wp.from_torch(group_ext_x, dtype=wp.float32, return_ctype=True),
-            group_ext_y=wp.from_torch(group_ext_y, dtype=wp.float32, return_ctype=True),
-            group_ext_z=wp.from_torch(group_ext_z, dtype=wp.float32, return_ctype=True),
+            group_ctr_x_buffer=wp.from_torch(
+                group_ctr_x, dtype=wp.float32, return_ctype=True
+            ),
+            group_ctr_y_buffer=wp.from_torch(
+                group_ctr_y, dtype=wp.float32, return_ctype=True
+            ),
+            group_ctr_z_buffer=wp.from_torch(
+                group_ctr_z, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_x_buffer=wp.from_torch(
+                group_ext_x, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_y_buffer=wp.from_torch(
+                group_ext_y, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_z_buffer=wp.from_torch(
+                group_ext_z, dtype=wp.float32, return_ctype=True
+            ),
             num_tiles=wp.from_torch(num_tiles, dtype=wp.int32, return_ctype=True),
             tile_row_group=wp.from_torch(
                 tile_row_group, dtype=wp.int32, return_ctype=True
@@ -330,12 +345,12 @@ class TestBuildTileNeighborListLauncher:
         assert int(used.max().item()) < ngroup
         assert int(used_col.max().item()) < ngroup
 
-        # tile_to_matrix smoke: converted neighbor matrix shape matches.
+        # query_cluster_tile smoke: converted neighbor matrix shape matches.
         max_neighbors = 32
         nm = torch.full((natom, max_neighbors), natom, dtype=torch.int32, device=device)
         nn = torch.zeros(natom, dtype=torch.int32, device=device)
         nms = torch.zeros((natom, max_neighbors, 3), dtype=torch.int32, device=device)
-        tile_to_matrix(
+        query_cluster_tile(
             sorted_atom_index=wp.from_torch(
                 sorted_atom_index, dtype=wp.int32, return_ctype=True
             ),
@@ -359,7 +374,6 @@ class TestBuildTileNeighborListLauncher:
             inv_cell=_mat33f_from_torch(inv_cell_torch),
             cutoff=cutoff,
             natom=natom,
-            n_tiles=n_tiles,
             neighbor_matrix=wp.from_torch(nm, dtype=wp.int32, return_ctype=True),
             neighbor_matrix_shifts=wp.from_torch(
                 nms, dtype=wp.int32, return_ctype=True

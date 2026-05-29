@@ -42,6 +42,40 @@
 - `npt_barostat_half_step{,_aniso,_triclinic}` drop the `eta_dots`
   argument; thermostat coupling is now a separate Trotter operator.
 
+### Added (neighbors)
+
+- **Pair potentials evaluated inline**: neighbor kernels now accept a
+  user-supplied `pair_fn` callback (with `pair_params`, `pair_energies`,
+  `pair_forces` buffers) that computes per-pair energy and force as pairs
+  are enumerated, so Lennard-Jones–style potentials no longer require a
+  separate pass over the neighbor list.
+- **Per-pair vectors and distances on demand**: `return_vectors` and
+  `return_distances` keyword arguments return the separation vectors
+  `r_ij` and Euclidean distances `|r_ij|` alongside the neighbor matrix,
+  avoiding a manual recomputation downstream.
+- **Cluster-pair tile algorithm**: a new CUDA strategy for large
+  fully-periodic float32 systems. `neighbor_list` auto-selects it when
+  it is eligible; pass `method="cluster_tile"` (or
+  `"batch_cluster_tile"`) to force it. Supports dual cutoff in
+  matrix format.
+- **Partial rebuild for batched workflows**: callers can pass
+  `rebuild_flags` to re-enumerate only the systems whose atoms have
+  moved enough to need a fresh list; unchanged systems keep their
+  previous output. Supported for matrix and segmented-COO outputs in
+  both the JAX and PyTorch bindings.
+
+### Changed (neighbors)
+
+- Restructured `nvalchemiops/neighbors/` into per-strategy subpackages:
+  `naive/`, `cell_list/`, `cluster_tile/`, `rebuild/`. Public launchers
+  live under `*/launchers.py`; strategy selection lives under
+  `*/dispatch.py`.
+- The flat compatibility modules `nvalchemiops.neighbors.{naive_dual_cutoff,
+  batch_naive, batch_cell_list, batch_naive_dual_cutoff, rebuild_detection}`
+  continue to re-export the new entry points with `DeprecationWarning`.
+  (Note: `nvalchemiops.neighbors.naive` and `nvalchemiops.neighbors.cell_list`
+  are now the canonical subpackages, not deprecated shims.)
+
 ## 0.3.0 - 2026-XX-XX
 
 ### Breaking Changes

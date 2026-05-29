@@ -26,14 +26,12 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.batch_cell_list import (
-    _batch_cell_list_bin_atoms_overload,
-    _batch_cell_list_construct_bin_size_overload,
-    _batch_cell_list_count_atoms_per_bin_overload,
-    _batch_estimate_cell_list_sizes_overload,
+from nvalchemiops.neighbors.cell_list import (
     batch_build_cell_list,
     batch_query_cell_list,
+    get_build_cell_list_kernel,
 )
+from nvalchemiops.neighbors.neighbor_utils import empty_sentinel as _empty_sentinel
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 
 from .test_utils import (
@@ -99,15 +97,17 @@ def estimate_batch_cell_list_sizes_wp(
     neighbor_search_radius = wp.zeros(num_systems, dtype=wp.vec3i, device=device)
 
     wp.launch(
-        _batch_estimate_cell_list_sizes_overload[wp_dtype],
+        get_build_cell_list_kernel("estimate_sizes", wp_dtype, batched=True),
         dim=num_systems,
         device=device,
         inputs=(
             cell,
+            _empty_sentinel(1, wp.bool, device),
             pbc,
             wp_dtype(cutoff),
             max_nbins,
             number_of_cells,
+            _empty_sentinel(1, wp.int32, device),
             neighbor_search_radius,
         ),
     )
@@ -206,12 +206,14 @@ class TestBatchCellListKernels:
 
         # Launch kernel
         wp.launch(
-            _batch_cell_list_construct_bin_size_overload[wp_dtype],
+            get_build_cell_list_kernel("construct_bin_size", wp_dtype, batched=True),
             dim=num_systems,
             device=wp_device,
             inputs=(
                 wp_cell,
+                _empty_sentinel(1, wp.bool, wp_device),
                 wp_pbc,
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cells_per_dimension,
                 wp_dtype(cutoff),
                 max_nbins,
@@ -304,14 +306,16 @@ class TestBatchCellListKernels:
 
         # Launch kernel
         wp.launch(
-            _batch_cell_list_count_atoms_per_bin_overload[wp_dtype],
+            get_build_cell_list_kernel("count_atoms", wp_dtype, batched=True),
             dim=total_atoms,
             device=wp_device,
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp.bool, wp_device),
                 wp_pbc,
                 wp_idx,
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cells_per_dimension,
                 wp_cell_offsets,
                 wp_atoms_per_cell_count,
@@ -414,14 +418,16 @@ class TestBatchCellListKernels:
 
         # First count atoms per bin
         wp.launch(
-            _batch_cell_list_count_atoms_per_bin_overload[wp_dtype],
+            get_build_cell_list_kernel("count_atoms", wp_dtype, batched=True),
             dim=total_atoms,
             device=wp_device,
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp.bool, wp_device),
                 wp_pbc,
                 wp_idx,
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cells_per_dimension,
                 wp_cell_offsets,
                 wp_atoms_per_cell_count,
@@ -453,14 +459,16 @@ class TestBatchCellListKernels:
 
         # Launch bin_atoms kernel
         wp.launch(
-            _batch_cell_list_bin_atoms_overload[wp_dtype],
+            get_build_cell_list_kernel("bin_atoms", wp_dtype, batched=True),
             dim=total_atoms,
             device=wp_device,
             inputs=(
                 wp_positions,
                 wp_cell,
+                _empty_sentinel(1, wp.bool, wp_device),
                 wp_pbc,
                 wp_idx,
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cells_per_dimension,
                 wp_cell_offsets,
                 wp_atom_to_cell_mapping,
@@ -693,15 +701,15 @@ class TestBatchCellListWpLaunchers:
             wp_atoms_per_cell_count,
             wp_cell_atom_start_indices,
             wp_cell_atom_list,
-            wp_sorted_pos,
-            wp_sorted_shifts,
             wp_neighbor_matrix,
             wp_neighbor_matrix_shifts,
             wp_num_neighbors,
-            wp_rebuild_flags,
             wp_dtype,
             wp_device,
             False,
+            sorted_positions=wp_sorted_pos,
+            sorted_atom_periodic_shifts=wp_sorted_shifts,
+            rebuild_flags=wp_rebuild_flags,
         )
 
         # Verify we found neighbors
@@ -878,15 +886,15 @@ class TestBatchCellListScalingPureWarp:
             wp_atoms_per_cell_count,
             wp_cell_atom_start_indices,
             wp_cell_atom_list,
-            wp_sorted_pos,
-            wp_sorted_shifts,
             wp_neighbor_matrix,
             wp_neighbor_matrix_shifts,
             wp_num_neighbors,
-            wp_rebuild_flags,
             wp_dtype,
             wp_device,
             False,
+            sorted_positions=wp_sorted_pos,
+            sorted_atom_periodic_shifts=wp_sorted_shifts,
+            rebuild_flags=wp_rebuild_flags,
         )
 
         # Verify we found neighbors
@@ -1239,60 +1247,60 @@ class TestBatchCellListPairCentric:
     """
 
     def test_dispatch_threshold_env(self, device, dtype, monkeypatch):
-        """Env-var overrides change the dispatch decision."""
+        """Env-var overrides change the strategy decision."""
         del device, dtype  # not used; fixture present for parametrization
         from nvalchemiops.torch.neighbors.batch_cell_list import (
-            _should_dispatch_batch_pair_centric,
+            select_batch_cell_list_strategy,
         )
 
         # Default rule: cutoff=12 always picks pair-centric.
         assert (
-            _should_dispatch_batch_pair_centric(
+            select_batch_cell_list_strategy(
                 total_atoms=1_000_000, num_systems=64, cutoff=12.0
             )
-            is True
+            == "pair_centric"
         )
 
         # cutoff=6, large total, many systems → atom-centric.
         assert (
-            _should_dispatch_batch_pair_centric(
+            select_batch_cell_list_strategy(
                 total_atoms=1_000_000, num_systems=64, cutoff=6.0
             )
-            is False
+            == "atom_centric"
         )
 
         # cutoff=6, few large systems (total > 65k cap) → pair (clause 3).
         assert (
-            _should_dispatch_batch_pair_centric(
+            select_batch_cell_list_strategy(
                 total_atoms=1_000_000, num_systems=8, cutoff=6.0
             )
-            is True
+            == "pair_centric"
         )
 
         # cutoff=6, few small systems (total ≤ 65k cap, avg_aps < 4096
         # floor) → atom: clause 3 is gated by total_atoms > total_cap to
         # avoid setup overhead.
         assert (
-            _should_dispatch_batch_pair_centric(
+            select_batch_cell_list_strategy(
                 total_atoms=4_096, num_systems=4, cutoff=6.0
             )
-            is False
+            == "atom_centric"
         )
 
         # cutoff=6, total below cap AND avg_aps reasonable → pair (clause 2).
         assert (
-            _should_dispatch_batch_pair_centric(
+            select_batch_cell_list_strategy(
                 total_atoms=32_768, num_systems=8, cutoff=6.0
             )
-            is True
+            == "pair_centric"
         )
 
         # cutoff=6, total below cap but avg_aps too small → atom (clause 2 fails).
         assert (
-            _should_dispatch_batch_pair_centric(
+            select_batch_cell_list_strategy(
                 total_atoms=32_768, num_systems=128, cutoff=6.0
             )
-            is False
+            == "atom_centric"
         )
 
         # Lifting all clauses disables pair-centric entirely.
@@ -1300,10 +1308,27 @@ class TestBatchCellListPairCentric:
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_BATCH_PAIR_TOTAL_CAP", "0")
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_BATCH_PAIR_NSYS_CAP", "0")
         assert (
-            _should_dispatch_batch_pair_centric(
+            select_batch_cell_list_strategy(
                 total_atoms=1_000_000, num_systems=64, cutoff=12.0
             )
-            is False
+            == "atom_centric"
+        )
+
+        # Check direct strategy override envar
+        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "pair_centric")
+        assert (
+            select_batch_cell_list_strategy(
+                total_atoms=1_000_000, num_systems=64, cutoff=12.0
+            )
+            == "pair_centric"
+        )
+
+        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "atom_centric")
+        assert (
+            select_batch_cell_list_strategy(
+                total_atoms=1_000_000, num_systems=64, cutoff=12.0
+            )
+            == "atom_centric"
         )
 
     def test_pair_set_matches_atom_centric(self, device, dtype, monkeypatch):
@@ -1311,7 +1336,7 @@ class TestBatchCellListPairCentric:
         from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA blockIdx/threadIdx")
+            pytest.skip("pair-centric kernel uses CUDA block scheduling")
 
         positions, cell, pbc, _ptr = create_batch_systems(
             num_systems=4,

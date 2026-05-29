@@ -1214,3 +1214,198 @@ class TestCellListSelectiveRebuildFlags:
         assert torch.equal(nn_sel, nn_ref), (
             "num_neighbors should match full rebuild when flag=True"
         )
+
+
+class TestCellListAutograd:
+    """Autograd path for per-pair distances and vectors.
+
+    When ``return_distances`` / ``return_vectors`` are set, the wrapper
+    appends the differentiable per-pair tensors to its return tuple.  The
+    backward is computed by ``_NeighborDistanceVectorFn`` via reconstruction
+    from positions and cell, which also enables second-order autograd.
+    """
+
+    def _make_system(self, device):
+        # fp64, small N, atoms well inside cutoff so the neighbor topology is
+        # stable under the central-difference perturbations gradcheck applies.
+        torch.manual_seed(0)
+        N = 6
+        positions = torch.randn(N, 3, dtype=torch.float64, device=device) * 0.4
+        cell = (torch.eye(3, dtype=torch.float64, device=device) * 4.0).unsqueeze(0)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        return positions, cell, pbc
+
+    def test_forward_returns_differentiable_distances_and_vectors(self, device):
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+        cell.requires_grad_(True)
+        nm, nn, shifts, dists, vecs = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert dists.requires_grad and vecs.requires_grad
+        assert dists.shape == (positions.shape[0], nm.shape[1])
+        assert vecs.shape == (positions.shape[0], nm.shape[1], 3)
+
+    def test_return_tuple_shape_extends_with_flags(self, device):
+        """Tuple shape changes only when pair-output flags are set; the
+        non-flag path keeps the 0.3.1 3-tuple."""
+        positions, cell, pbc = self._make_system(device)
+        out_default = cell_list(positions, 1.5, cell, pbc)
+        assert len(out_default) == 3
+
+        out_d = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+        )
+        assert len(out_d) == 4
+
+        out_v = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_vectors=True,
+        )
+        assert len(out_v) == 4
+
+        out_dv = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out_dv) == 5
+
+    def test_gradcheck_distances_wrt_positions(self, device):
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        assert torch.autograd.gradcheck(fn, (positions,), atol=1e-5, eps=1e-6)
+
+    def test_gradcheck_distances_wrt_cell(self, device):
+        positions, cell, pbc = self._make_system(device)
+        cell = cell.clone().requires_grad_(True)
+
+        def fn(c):
+            _, _, _, d, _ = cell_list(
+                positions,
+                1.5,
+                c,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        assert torch.autograd.gradcheck(fn, (cell,), atol=1e-5, eps=1e-6)
+
+    def test_gradcheck_vectors_wrt_positions(self, device):
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, _, v = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            # Linear-in-r loss exercises grad_r contributions in backward.
+            return v.sum()
+
+        assert torch.autograd.gradcheck(fn, (positions,), atol=1e-5, eps=1e-6)
+
+    def test_gradgradcheck_distances_second_order(self, device):
+        """Second-order autograd via reconstruction in backward."""
+        positions, cell, pbc = self._make_system(device)
+        # Smaller N for faster gradgradcheck.
+        positions = positions[:5].clone().requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            # Non-linear loss so the Hessian is non-trivial.
+            return d.pow(2).sum()
+
+        assert torch.autograd.gradgradcheck(fn, (positions,), atol=1e-4, eps=1e-6)
+
+    def test_hessian_vector_product_smoke(self, device):
+        """create_graph=True allows constructing an HVP without errors."""
+        positions, cell, pbc = self._make_system(device)
+        positions = positions[:5].clone().requires_grad_(True)
+
+        _, _, _, d, _ = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        loss = d.pow(2).sum()
+        grad_pos = torch.autograd.grad(loss, positions, create_graph=True)[0]
+        # HVP with a random direction vector.
+        v = torch.randn_like(positions)
+        hvp = torch.autograd.grad((grad_pos * v).sum(), positions, retain_graph=False)[
+            0
+        ]
+        assert torch.isfinite(hvp).all()
+        assert hvp.shape == positions.shape
+
+    def test_no_grad_path_unchanged(self, device):
+        """When inputs don't require grad, outputs are plain tensors and the
+        active portion of the return is numerically equal to the
+        non-autograd path.
+
+        Inactive matrix slots (column >= num_neighbors) are uninitialized by
+        the kernel and may hold different garbage between independent
+        ``torch.empty`` allocations — compare only the active slots.
+        """
+        positions, cell, pbc = self._make_system(device)
+
+        nm_a, nn_a, sh_a = cell_list(positions, 1.5, cell, pbc)
+        nm_b, nn_b, sh_b, d_b, v_b = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert not d_b.requires_grad and not v_b.requires_grad
+        assert torch.equal(nn_a, nn_b)
+        # Active-slot comparison: build a (N, M) mask from num_neighbors and
+        # gather the active entries from each tensor.
+        col_idx = torch.arange(nm_a.shape[1], device=nm_a.device)
+        active = col_idx[None, :] < nn_a[:, None]
+        assert torch.equal(nm_a[active], nm_b[active])
+        assert torch.equal(sh_a[active], sh_b[active])

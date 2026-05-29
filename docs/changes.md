@@ -2,6 +2,46 @@
 
 # Change Log
 
+## Unreleased
+
+### Neighbors subpackage layout
+
+The `nvalchemiops.neighbors` package was restructured from flat modules into
+per-strategy subpackages: `naive/`, `cell_list/`, `cluster_tile/`, and
+`rebuild/`.  Public launchers live under `*/launchers.py`; strategy selection
+lives under `*/dispatch.py`.
+
+The flat compatibility modules
+(`nvalchemiops.neighbors.{naive_dual_cutoff, batch_naive, batch_cell_list,
+batch_naive_dual_cutoff, rebuild_detection}`) continue to re-export the new
+entry points and emit `DeprecationWarning`.  `nvalchemiops.neighbors.naive`
+and `nvalchemiops.neighbors.cell_list` are now the canonical subpackages (not
+deprecated shims).  New code should import directly from the subpackages.
+
+### Added: neighbor-list features
+
+- **Pair potentials evaluated inline.** Neighbor kernels accept a
+  user-supplied `pair_fn` callback (with `pair_params`, `pair_energies`,
+  `pair_forces` buffers) that returns per-pair energy and force as pairs
+  are enumerated, so Lennard-Jones–style potentials no longer require a
+  separate pass over the neighbor list.
+- **Per-pair vectors and distances on demand.** Pass `return_vectors=True`
+  and/or `return_distances=True` to get the separation vectors `r_ij` and
+  Euclidean distances `|r_ij|` alongside the neighbor matrix, avoiding a
+  manual recomputation downstream.
+- **Cluster-pair tile algorithm.** A new CUDA strategy is available under
+  `nvalchemiops.neighbors.cluster_tile`, with framework bindings exposed
+  by `nvalchemiops.{jax,torch}.neighbors`. `neighbor_list` selects it
+  automatically for fully-periodic float32 CUDA inputs with at least
+  2000 average atoms per system; pass `method="cluster_tile"` (or
+  `"batch_cluster_tile"`) to force it. Dual cutoff is supported in
+  matrix format.
+- **Partial rebuild for batched workflows.** Pass `rebuild_flags` to
+  re-enumerate only the systems whose atoms have moved enough to need a
+  fresh list; unchanged systems keep their previous output. Supported
+  for matrix and segmented-COO outputs in both the JAX and PyTorch
+  bindings.
+
 ## Version 0.3.0
 
 ### Breaking Changes

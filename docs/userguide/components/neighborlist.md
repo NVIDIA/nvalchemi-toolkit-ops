@@ -6,11 +6,9 @@
 
 # Neighbor Lists
 
-Neighbor lists identify atom pairs within a cutoff distance---the foundation for
-all forms of interatomic interactions including but not limited to: machine-learned
-interatomic potentials, dispersion corrections, and so on. ALCHEMI Toolkit-Ops provides
-GPU-accelerated neighbor list algorithms via [NVIDIA Warp](https://nvidia.github.io/warp/)
-with bindings for both PyTorch and JAX.
+Neighbor lists enumerate atom pairs within a cutoff distance. ALCHEMI Toolkit-Ops
+provides GPU-accelerated neighbor list algorithms via
+[NVIDIA Warp](https://nvidia.github.io/warp/) with bindings for both PyTorch and JAX.
 
 ```{tip}
 Start with the unified `neighbor_list` function
@@ -22,19 +20,20 @@ both single and batched inputs.
 
 ## Why Neighbor Lists Matter for Performance
 
-Neighbor list construction can dominate runtime in atomistic foundation models:
+Neighbor list construction can dominate runtime when called repeatedly:
 
 - **Naive algorithms scale as \(O(N^2)\)**: Checking all atom pairs becomes
   prohibitive for systems with a large number of atoms (approx. 2000 atoms,
   but depends on structure and hardware)
-- **Repeated construction**: Training loops and MD simulations rebuild neighbor
-  lists frequently---every step or every few steps
+- **Repeated construction**: callers that rebuild lists every step pay this
+  cost on each call
 - **Memory bandwidth**: Large neighbor matrices can bottleneck GPU throughput
 
-ALCHEMI Toolkit-Ops addresses these challenges with O(N) cell list algorithms,
-efficient batch processing for heterogeneous datasets, and memory layouts
-optimized for GPU access patterns. See [performance considerations](nl_performance)
-for guidance.
+ALCHEMI Toolkit-Ops addresses these costs with O(N) cell-list algorithms, a
+cluster-pair tile algorithm for large fully-periodic float32 inputs, efficient
+batch processing for heterogeneous inputs, and memory layouts optimized for
+GPU access patterns. See [performance considerations](nl_performance) for
+guidance.
 
 ## Quick Start
 
@@ -131,7 +130,7 @@ Dispatches to {func}`~nvalchemiops.torch.neighbors.batch_naive_neighbor_list` --
 :::{tab-item} Single + Large
 :sync: single-large
 
-Single system with >5000 atoms
+Single system with >2000 atoms
 
 ```python
 from nvalchemiops.jax.neighbors import neighbor_list
@@ -148,7 +147,7 @@ using spatial decomposition.
 :::{tab-item} Single + Small
 :sync: single-small
 
-Single system with <5000 atoms
+Single system with <2000 atoms
 
 ```python
 from nvalchemiops.jax.neighbors import neighbor_list
@@ -165,7 +164,7 @@ algorithm with lower overhead.
 :::{tab-item} Batch + Large
 :sync: batch-large
 
-Multiple systems with >5000 atoms each
+Multiple systems with >2000 atoms each
 
 ```python
 from nvalchemiops.jax.neighbors import neighbor_list
@@ -183,7 +182,7 @@ algorithm for heterogeneous batches.
 :::{tab-item} Batch + Small
 :sync: batch-small
 
-Multiple systems with <5000 atoms each
+Multiple systems with <2000 atoms each
 
 ```python
 from nvalchemiops.jax.neighbors import neighbor_list
@@ -209,7 +208,10 @@ When `method` is not specified, `neighbor_list` automatically selects based on
 average system size and whether `batch_idx` is provided.
 The crossover point depends on system density and cutoff radius---benchmark
 your workload to find the optimal threshold. The default threshold is 2000
-atoms for PyTorch and 5000 atoms for JAX.
+average atoms per system for both PyTorch and JAX.  Above the threshold,
+fully-periodic float32 inputs on CUDA may select `cluster_tile`; see
+[Cluster-Pair Tile Algorithm](#cluster-pair-tile-algorithm) for the full
+eligibility rules.
 ```
 
 ## Data Formats
@@ -296,9 +298,12 @@ When `method=None`, `neighbor_list` selects an algorithm using the following
 logic:
 
 1. If `cutoff2` is provided, then dual cutoff method
-2. If average atoms per system exceeds the threshold, then `"cell_list"`
-3. Otherwise, `"naive"` ($N^2$ scaling algorithm)
-4. If `batch_idx` or `batch_ptr` is provided, then prepend `"batch_"` to the method
+2. If average atoms per system is at least 2000 and the input is
+   cluster-tile-eligible (float32, on GPU, fully periodic, no pair-output or
+   `target_indices` kwargs), then `"cluster_tile"`
+3. If average atoms per system is at least 2000, then `"cell_list"`
+4. Otherwise, `"naive"` ($N^2$ scaling algorithm)
+5. If `batch_idx` or `batch_ptr` is provided, then prepend `"batch_"` to the method
 
 ### Available Methods
 
@@ -306,10 +311,12 @@ logic:
 |--------|-----------|----------|
 | `"naive"` | \(O(N^2)\) pairwise | Small single systems |
 | `"cell_list"` | \(O(N)\) spatial decomposition | Large single systems |
+| `"cluster_tile"` | Cluster-pair tile (CUDA, float32, fully periodic) | Large single systems on GPU |
 | `"batch_naive"` | \(O(N^2)\) per system | Batched small systems |
 | `"batch_cell_list"` | \(O(N)\) per system | Batched large systems |
-| `"naive_dual_cutoff"` | \(O(N^2)\) with two cutoffs | Multi-range potentials |
-| `"batch_naive_dual_cutoff"` | Batched dual cutoff | Batched multi-range |
+| `"batch_cluster_tile"` | Batched cluster-pair tile | Batched large systems on GPU |
+| `"naive_dual_cutoff"` | \(O(N^2)\) with two cutoffs | Two-cutoff queries |
+| `"batch_naive_dual_cutoff"` | Batched dual cutoff | Batched two-cutoff queries |
 
 Override automatic selection by passing the `method` parameter:
 
@@ -345,9 +352,120 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 
 ::::
 
-## Performance Tuning
+(naive-algorithm)=
+
+## Naive Algorithm
+
+The naive algorithm enumerates every $N(N-1)/2$ atom pair, computes the
+Euclidean distance under the active periodic boundary conditions, and
+keeps pairs within the cutoff.  It has no spatial data structure and
+therefore the lowest setup overhead, which makes it the right choice for
+small single systems (typically below ~2000 atoms) and for batches of
+small heterogeneous systems via `batch_naive`.  Supports periodic
+boundaries (with or without pre-wrapped positions), half-fill, dual
+cutoff, and inline pair-potential evaluation through `pair_fn`.
+
+(cell-list-algorithm)=
+
+## Cell-List Algorithm
+
+The cell-list algorithm bins atoms into spatial cells aligned to the
+simulation box and enumerates pairs only between neighboring cells.  For
+systems with roughly uniform neighbor count it scales as $O(N)$ and is the
+default choice for large single systems (≥2000 atoms) and for batches of
+large heterogeneous systems via `batch_cell_list`.  Supports periodic
+boundaries with arbitrary (including triclinic) cells, dual cutoff, and
+inline pair-potential evaluation through `pair_fn`.  Build and query are
+exposed as separate launchers so the bin structure can be cached across
+steps (see [](#build-query-separation)).  Half-fill is not supported.
+
+(cluster-pair-tile-algorithm)=
+
+## Cluster-Pair Tile Algorithm
+
+The cluster-pair tile algorithm is a CUDA-only neighbor-build strategy that
+groups atoms into Morton-sorted tiles and queries pairs cooperatively per
+tile.  It targets large fully-periodic float32 inputs where the cell-list
+build overhead is unfavorable.
+
+### Selection Criteria
+
+`neighbor_list` selects `cluster_tile` automatically when **every** condition
+holds:
+
+- average atoms per system is at least 2000,
+- `positions.dtype` is float32,
+- `positions` is on a CUDA device,
+- `cell` is provided and `pbc` is True on all three axes (fully periodic),
+- `cutoff2` is not set (single-cutoff queries only),
+- no pair-output, target_indices, or explicit-format kwargs are active: `pair_fn`, `pair_params`,
+  `pair_energies`, `pair_forces`, `return_vectors`, `return_distances`,
+  `target_indices`, `neighbor_list`, `neighbor_list_shifts`,
+  `neighbor_distances`, `neighbor_vectors`, `pair_counter`, `format`,
+  `max_pairs`.
+
+When any condition fails, `neighbor_list` falls back to `cell_list` (or
+`naive` for small inputs).  To force the strategy, pass
+`method="cluster_tile"` (or `method="batch_cluster_tile"`) explicitly.
+
+### Quick Start
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+```python
+from nvalchemiops.torch.neighbors import neighbor_list
+
+# Float32 positions on CUDA, fully periodic, no pair-output kwargs
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, method="cluster_tile"
+)
+```
+
+Dispatches to {func}`~nvalchemiops.torch.neighbors.cluster_tile_neighbor_list`.
+Use `method="batch_cluster_tile"` with `batch_idx` for batched inputs.
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.neighbors import neighbor_list
+
+# Float32 positions on CUDA, fully periodic, no pair-output kwargs
+neighbor_matrix, num_neighbors, shifts = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, method="cluster_tile"
+)
+```
+
+Dispatches to {func}`~nvalchemiops.jax.neighbors.cluster_tile_neighbor_list`.
+Use `method="batch_cluster_tile"` with `batch_idx` for batched inputs.
+:::
+
+::::
+
+### Build/Query Separation
+
+Build and query are separate launchers for both the cell-list and
+cluster-pair tile algorithms, so the spatial data structure can be built
+once and queried repeatedly across simulation steps.  The cluster-tile
+launchers are
+{func}`~nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list` and
+{func}`~nvalchemiops.neighbors.cluster_tile.query_cluster_tile`; their
+framework bindings live under
+`nvalchemiops.{jax,torch}.neighbors.cluster_tile` and follow the same
+pattern as the cell-list pair documented under
+[](#build-query-separation) below.  For batched workflows, pass
+`rebuild_flags` to re-enumerate only the systems whose atoms have moved
+beyond the skin distance — unchanged systems keep their previous output.
+Dual cutoff is supported in matrix format and cannot be combined with
+pair-potential outputs.
 
 (nl_performance)=
+
+## Performance Tuning
 
 ### Key Parameters
 
@@ -473,7 +591,7 @@ and there is no guarantee that the nearest neighbors are included.
 ### Pre-allocation for Repeated Calculations
 
 Pre-allocating output arrays avoids repeated memory allocation overhead when
-computing neighbor lists in a loop (e.g., during MD simulation or training).
+computing neighbor lists repeatedly across calls.
 
 ::::{tab-set}
 
@@ -810,10 +928,12 @@ silently ignore this parameter and always produce full neighbor lists.
 
 ::::
 
-### Build/Query Separation for MD Workflows
+(build-query-separation)=
 
-For molecular dynamics, separate building and querying allows caching the
-spatial data structure:
+### Build/Query Separation
+
+Separate building and querying allows caching the spatial data structure
+across repeated calls when the cell-list bins remain valid:
 
 ::::{tab-set}
 
@@ -837,7 +957,7 @@ neighbor_matrix = torch.full((num_atoms, max_neighbors), -1, dtype=torch.int32, 
 neighbor_shifts = torch.zeros((num_atoms, max_neighbors, 3), dtype=torch.int32, device=device)
 num_neighbors = torch.zeros(num_atoms, dtype=torch.int32, device=device)
 
-# MD loop
+# Repeated-query loop
 for step in range(num_steps):
     # Build cell list (expensive, done when atoms change cells)
     build_cell_list(positions, cutoff, cell, pbc, *cell_list_cache)
@@ -875,7 +995,7 @@ cell_list_cache = allocate_cell_list(num_atoms, max_total_cells, neighbor_search
 
 max_neighbors = estimate_max_neighbors(cutoff)
 
-# MD loop (JAX returns new arrays each step; no in-place mutation)
+# Repeated-query loop (JAX returns new arrays each step; no in-place mutation)
 for step in range(num_steps):
     # Build cell list (expensive, done when atoms change cells)
     cell_list_cache = build_cell_list(

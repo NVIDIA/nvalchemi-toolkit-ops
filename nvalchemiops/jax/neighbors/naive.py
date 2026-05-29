@@ -24,24 +24,74 @@ import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import GraphMode, jax_callable, jax_kernel
 
+from nvalchemiops.jax.neighbors._autograd import (
+    _build_index_residuals,
+    _NeighborForwardOutput,
+    _route_pair_outputs,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     _validate_graph_mode,
+    build_naive_kernel_tables,
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.neighbors.naive import (
-    _fill_naive_neighbor_matrix_overload,
-    _fill_naive_neighbor_matrix_pbc_overload,
-    _fill_naive_neighbor_matrix_pbc_prewrapped_overload,
-    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_overload,
-    _fill_naive_neighbor_matrix_pbc_selective_overload,
-    _fill_naive_neighbor_matrix_selective_overload,
+    get_naive_neighbor_matrix_kernel as _get_naive_kernel,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
-    _selective_zero_num_neighbors_single,
-    _wrap_positions_single_overload,
+    DTYPE_INFO_ALL,
+    empty_sentinel,
     estimate_max_neighbors,
+    get_wrap_positions_kernel,
+    resolve_buffer_alias,
+    selective_zero_num_neighbors_single,
 )
+
+_DTYPE_TO_NAIVE_KERNELS = (wp.float32, wp.float64)
+(
+    _fill_naive_neighbor_matrix_kernels,
+    _fill_naive_neighbor_matrix_selective_kernels,
+    _fill_naive_neighbor_matrix_pbc_kernels,
+    _fill_naive_neighbor_matrix_pbc_selective_kernels,
+    _fill_naive_neighbor_matrix_pbc_prewrapped_kernels,
+    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_kernels,
+) = build_naive_kernel_tables(
+    "single_cutoff", batched=False, dtypes=_DTYPE_TO_NAIVE_KERNELS
+)
+
+# Pair-output variants — produced by the same factory but with
+# ``return_vectors`` / ``return_distances`` flipped on.  Used by the
+# autograd path in :mod:`nvalchemiops.jax.neighbors._autograd`.
+#
+# The PBC variant is hard-wired to ``pbc_mode='wrap_on_entry'``.  The kernel
+# is idempotent on already-wrapped positions and produces correct shifts
+# for raw (unwrapped) positions as well, so the autograd path silently
+# ignores the public ``wrap_positions`` kwarg.  Callers who pre-wrap to save
+# the two extra kernel launches lose that optimization on the autograd
+# path but retain numerical equivalence.
+
+_fill_naive_pair_kernels = {
+    t: _get_naive_kernel(
+        t,
+        pbc_mode="none",
+        batched=False,
+        selective=False,
+        return_vectors=True,
+        return_distances=True,
+    )
+    for t in _DTYPE_TO_NAIVE_KERNELS
+}
+_fill_naive_pbc_pair_kernels = {
+    t: _get_naive_kernel(
+        t,
+        pbc_mode="wrap_on_entry",
+        batched=False,
+        selective=False,
+        return_vectors=True,
+        return_distances=True,
+    )
+    for t in _DTYPE_TO_NAIVE_KERNELS
+}
 
 __all__ = ["naive_neighbor_list"]
 
@@ -51,97 +101,149 @@ __all__ = ["naive_neighbor_list"]
 
 # No-PBC naive neighbor matrix kernel wrappers
 _jax_fill_naive_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_overload[wp.float32],
+    _fill_naive_neighbor_matrix_kernels[wp.float32],
     num_outputs=2,
-    in_out_argnames=["neighbor_matrix", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
     enable_backward=False,
 )
 _jax_fill_naive_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_overload[wp.float64],
+    _fill_naive_neighbor_matrix_kernels[wp.float64],
     num_outputs=2,
-    in_out_argnames=["neighbor_matrix", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
     enable_backward=False,
 )
 
 # PBC naive neighbor matrix kernel wrappers
 _jax_fill_naive_pbc_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_overload[wp.float32],
+    _fill_naive_neighbor_matrix_pbc_kernels[wp.float32],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
     enable_backward=False,
 )
 _jax_fill_naive_pbc_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_overload[wp.float64],
+    _fill_naive_neighbor_matrix_pbc_kernels[wp.float64],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
     enable_backward=False,
 )
 
 # Selective no-PBC naive neighbor matrix kernel wrappers
 _jax_fill_naive_selective_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_selective_overload[wp.float32],
+    _fill_naive_neighbor_matrix_selective_kernels[wp.float32],
     num_outputs=2,
-    in_out_argnames=["neighbor_matrix", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
     enable_backward=False,
 )
 _jax_fill_naive_selective_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_selective_overload[wp.float64],
+    _fill_naive_neighbor_matrix_selective_kernels[wp.float64],
     num_outputs=2,
-    in_out_argnames=["neighbor_matrix", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "num_neighbors1"],
     enable_backward=False,
 )
 
 # Selective PBC naive neighbor matrix kernel wrappers
 _jax_fill_naive_pbc_selective_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_selective_overload[wp.float32],
+    _fill_naive_neighbor_matrix_pbc_selective_kernels[wp.float32],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
     enable_backward=False,
 )
 _jax_fill_naive_pbc_selective_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_selective_overload[wp.float64],
+    _fill_naive_neighbor_matrix_pbc_selective_kernels[wp.float64],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
     enable_backward=False,
 )
 
 # PBC prewrapped naive neighbor matrix kernel wrappers
 _jax_fill_naive_pbc_prewrapped_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_overload[wp.float32],
+    _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float32],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
     enable_backward=False,
 )
 _jax_fill_naive_pbc_prewrapped_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_overload[wp.float64],
+    _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float64],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
     enable_backward=False,
 )
 
 # Selective PBC prewrapped naive neighbor matrix kernel wrappers
 _jax_fill_naive_pbc_prewrapped_selective_f32 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_overload[wp.float32],
+    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_kernels[wp.float32],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
     enable_backward=False,
 )
 _jax_fill_naive_pbc_prewrapped_selective_f64 = jax_kernel(
-    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_overload[wp.float64],
+    _fill_naive_neighbor_matrix_pbc_prewrapped_selective_kernels[wp.float64],
     num_outputs=3,
-    in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    in_out_argnames=["neighbor_matrix1", "neighbor_matrix_shifts1", "num_neighbors1"],
+    enable_backward=False,
+)
+
+# Pair-output kernel wrappers (no PBC).  Returns 4 outputs: neighbor_matrix,
+# num_neighbors, neighbor_vectors, neighbor_distances.
+_jax_fill_naive_pair_f32 = jax_kernel(
+    _fill_naive_pair_kernels[wp.float32],
+    num_outputs=4,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_fill_naive_pair_f64 = jax_kernel(
+    _fill_naive_pair_kernels[wp.float64],
+    num_outputs=4,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+
+# Pair-output kernel wrappers (PBC, wrap-on-entry mode).  Returns 5 outputs:
+# adds neighbor_matrix_shifts.
+_jax_fill_naive_pbc_pair_f32 = jax_kernel(
+    _fill_naive_pbc_pair_kernels[wp.float32],
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "neighbor_matrix_shifts1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_fill_naive_pbc_pair_f64 = jax_kernel(
+    _fill_naive_pbc_pair_kernels[wp.float64],
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "neighbor_matrix_shifts1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
     enable_backward=False,
 )
 
 # Wrap positions single kernel wrappers
 _jax_wrap_positions_single_f32 = jax_kernel(
-    _wrap_positions_single_overload[wp.float32],
+    get_wrap_positions_kernel(wp.float32),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
 )
 _jax_wrap_positions_single_f64 = jax_kernel(
-    _wrap_positions_single_overload[wp.float64],
+    get_wrap_positions_kernel(wp.float64),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
@@ -161,6 +263,51 @@ def _reset_graph_neighbor_outputs(
         neighbor_matrix_shifts.zero_()
 
 
+def _jax_scalar_sentinels(dtype):
+    """Return JAX zero-size placeholders for inactive naive scalar inputs."""
+    return (
+        jnp.empty((0, 3), dtype=jnp.int32),
+        jnp.empty((0, 3, 3), dtype=dtype),
+        jnp.empty((0, 3), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0, 0), dtype=jnp.int32),
+        jnp.empty((0, 0, 3), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0, 0, 3), dtype=dtype),
+        jnp.empty((0, 0), dtype=dtype),
+        jnp.empty((0, 0), dtype=dtype),
+        jnp.empty((0, 0), dtype=dtype),
+        jnp.empty((0, 0, 3), dtype=dtype),
+        jnp.empty((0,), dtype=jnp.bool_),
+    )
+
+
+def _wp_scalar_sentinels(wp_dtype: type, device):
+    """Return Warp zero-size placeholders for inactive naive scalar inputs."""
+    vec_dtype, mat_dtype = DTYPE_INFO_ALL[wp_dtype]
+    return (
+        empty_sentinel(1, wp.vec3i, device),
+        empty_sentinel(1, mat_dtype, device),
+        empty_sentinel(1, wp.vec3i, device),
+        empty_sentinel(1, wp.int32, device),
+        empty_sentinel(1, wp.int32, device),
+        empty_sentinel(1, wp.int32, device),
+        empty_sentinel(1, wp.int32, device),
+        empty_sentinel(2, wp.int32, device),
+        empty_sentinel(2, wp.vec3i, device),
+        empty_sentinel(1, wp.int32, device),
+        empty_sentinel(2, vec_dtype, device),
+        empty_sentinel(2, wp_dtype, device),
+        empty_sentinel(2, wp_dtype, device),
+        empty_sentinel(2, wp_dtype, device),
+        empty_sentinel(2, vec_dtype, device),
+        empty_sentinel(1, wp.bool, device),
+    )
+
+
 def _run_graph_naive_no_pbc(
     positions,
     neighbor_matrix,
@@ -168,37 +315,70 @@ def _run_graph_naive_no_pbc(
     cutoff_sq,
     fill_value,
     half_fill,
+    wp_dtype,
     fill_kernel,
     selective_kernel=None,
     rebuild_flags=None,
 ) -> None:
     """Execute the no-PBC graph-mode body."""
     total_atoms = positions.shape[0]
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        empty_num_neighbors,
+        empty_vectors,
+        empty_distances,
+        empty_pair_params,
+        empty_energies,
+        empty_forces,
+        empty_rebuild_flags,
+    ) = _wp_scalar_sentinels(wp_dtype, num_neighbors.device)
     if rebuild_flags is None:
         _reset_graph_neighbor_outputs(neighbor_matrix, num_neighbors, fill_value)
-        wp.launch(
-            kernel=fill_kernel,
-            dim=total_atoms,
-            inputs=[positions, cutoff_sq, neighbor_matrix, num_neighbors, half_fill],
-        )
+        active_kernel = fill_kernel
+        rebuild_flags_arg = empty_rebuild_flags
     else:
-        wp.launch(
-            kernel=_selective_zero_num_neighbors_single,
-            dim=total_atoms,
-            inputs=[num_neighbors, rebuild_flags],
+        selective_zero_num_neighbors_single(
+            num_neighbors, rebuild_flags, str(num_neighbors.device)
         )
-        wp.launch(
-            kernel=selective_kernel,
-            dim=total_atoms,
-            inputs=[
-                positions,
-                cutoff_sq,
-                neighbor_matrix,
-                num_neighbors,
-                half_fill,
-                rebuild_flags,
-            ],
-        )
+        active_kernel = selective_kernel
+        rebuild_flags_arg = rebuild_flags
+    wp.launch(
+        kernel=active_kernel,
+        dim=(1, 1, total_atoms),
+        inputs=[
+            positions,
+            empty_offsets,
+            cutoff_sq,
+            wp_dtype(0.0),
+            empty_cell,
+            empty_shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            empty_target_indices,
+            neighbor_matrix,
+            empty_shifts,
+            num_neighbors,
+            empty_matrix,
+            empty_shifts,
+            empty_num_neighbors,
+            empty_vectors,
+            empty_distances,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            half_fill,
+            rebuild_flags_arg,
+        ],
+    )
 
 
 def _run_graph_naive_pbc_prewrapped(
@@ -212,12 +392,31 @@ def _run_graph_naive_pbc_prewrapped(
     num_shifts,
     fill_value,
     half_fill,
+    wp_dtype,
     fill_kernel,
     selective_kernel=None,
     rebuild_flags=None,
 ) -> None:
     """Execute the prewrapped-PBC graph-mode body."""
-    launch_dims = (num_shifts, positions.shape[0])
+    launch_dims = (1, num_shifts, positions.shape[0])
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        empty_num_neighbors,
+        empty_vectors,
+        empty_distances,
+        empty_pair_params,
+        empty_energies,
+        empty_forces,
+        empty_rebuild_flags,
+    ) = _wp_scalar_sentinels(wp_dtype, num_neighbors.device)
     if rebuild_flags is None:
         _reset_graph_neighbor_outputs(
             neighbor_matrix,
@@ -225,41 +424,44 @@ def _run_graph_naive_pbc_prewrapped(
             fill_value,
             neighbor_matrix_shifts,
         )
-        wp.launch(
-            kernel=fill_kernel,
-            dim=launch_dims,
-            inputs=[
-                positions,
-                cutoff_sq,
-                cell,
-                shift_range,
-                neighbor_matrix,
-                neighbor_matrix_shifts,
-                num_neighbors,
-                half_fill,
-            ],
-        )
+        active_kernel = fill_kernel
+        rebuild_flags_arg = empty_rebuild_flags
     else:
-        wp.launch(
-            kernel=_selective_zero_num_neighbors_single,
-            dim=positions.shape[0],
-            inputs=[num_neighbors, rebuild_flags],
+        selective_zero_num_neighbors_single(
+            num_neighbors, rebuild_flags, str(num_neighbors.device)
         )
-        wp.launch(
-            kernel=selective_kernel,
-            dim=launch_dims,
-            inputs=[
-                positions,
-                cutoff_sq,
-                cell,
-                shift_range,
-                neighbor_matrix,
-                neighbor_matrix_shifts,
-                num_neighbors,
-                half_fill,
-                rebuild_flags,
-            ],
-        )
+        active_kernel = selective_kernel
+        rebuild_flags_arg = rebuild_flags
+
+    wp.launch(
+        kernel=active_kernel,
+        dim=launch_dims,
+        inputs=[
+            positions,
+            empty_offsets,
+            cutoff_sq,
+            wp_dtype(0.0),
+            cell,
+            shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            empty_target_indices,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            empty_matrix,
+            empty_shifts,
+            empty_num_neighbors,
+            empty_vectors,
+            empty_distances,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            half_fill,
+            rebuild_flags_arg,
+        ],
+    )
 
 
 def _run_graph_naive_pbc_wrapped(
@@ -276,6 +478,7 @@ def _run_graph_naive_pbc_wrapped(
     num_shifts,
     fill_value,
     half_fill,
+    wp_dtype,
     wrap_kernel,
     fill_kernel,
     selective_kernel=None,
@@ -283,7 +486,25 @@ def _run_graph_naive_pbc_wrapped(
 ) -> None:
     """Execute the wrapped-PBC graph-mode body."""
     total_atoms = positions.shape[0]
-    launch_dims = (num_shifts, total_atoms)
+    launch_dims = (1, num_shifts, total_atoms)
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        empty_num_neighbors,
+        empty_vectors,
+        empty_distances,
+        empty_pair_params,
+        empty_energies,
+        empty_forces,
+        empty_rebuild_flags,
+    ) = _wp_scalar_sentinels(wp_dtype, num_neighbors.device)
     if rebuild_flags is None:
         _reset_graph_neighbor_outputs(
             neighbor_matrix,
@@ -291,38 +512,50 @@ def _run_graph_naive_pbc_wrapped(
             fill_value,
             neighbor_matrix_shifts,
         )
+        active_kernel = fill_kernel
+        rebuild_flags_arg = empty_rebuild_flags
     else:
-        wp.launch(
-            kernel=_selective_zero_num_neighbors_single,
-            dim=total_atoms,
-            inputs=[num_neighbors, rebuild_flags],
+        selective_zero_num_neighbors_single(
+            num_neighbors, rebuild_flags, str(num_neighbors.device)
         )
+        active_kernel = selective_kernel
+        rebuild_flags_arg = rebuild_flags
 
     wp.launch(
         kernel=wrap_kernel,
         dim=total_atoms,
-        inputs=[positions, cell, inv_cell],
+        inputs=[positions, cell, inv_cell, wp.empty((0,), dtype=wp.int32)],
         outputs=[positions_wrapped, per_atom_cell_offsets],
     )
 
-    fill_inputs = [
-        positions_wrapped,
-        per_atom_cell_offsets,
-        cutoff_sq,
-        cell,
-        shift_range,
-        neighbor_matrix,
-        neighbor_matrix_shifts,
-        num_neighbors,
-        half_fill,
-    ]
-    if rebuild_flags is not None:
-        fill_inputs.append(rebuild_flags)
-
     wp.launch(
-        kernel=fill_kernel if rebuild_flags is None else selective_kernel,
+        kernel=active_kernel,
         dim=launch_dims,
-        inputs=fill_inputs,
+        inputs=[
+            positions_wrapped,
+            per_atom_cell_offsets,
+            cutoff_sq,
+            wp_dtype(0.0),
+            cell,
+            shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            empty_target_indices,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            empty_matrix,
+            empty_shifts,
+            empty_num_neighbors,
+            empty_vectors,
+            empty_distances,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            half_fill,
+            rebuild_flags_arg,
+        ],
     )
 
 
@@ -341,7 +574,8 @@ def _graph_naive_no_pbc_f32(
         cutoff_sq,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_overload[wp.float32],
+        wp.float32,
+        _fill_naive_neighbor_matrix_kernels[wp.float32],
     )
 
 
@@ -360,7 +594,8 @@ def _graph_naive_no_pbc_f64(
         cutoff_sq,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_overload[wp.float64],
+        wp.float64,
+        _fill_naive_neighbor_matrix_kernels[wp.float64],
     )
 
 
@@ -380,8 +615,9 @@ def _graph_naive_no_pbc_selective_f32(
         cutoff_sq,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_overload[wp.float32],
-        selective_kernel=_fill_naive_neighbor_matrix_selective_overload[wp.float32],
+        wp.float32,
+        _fill_naive_neighbor_matrix_kernels[wp.float32],
+        selective_kernel=_fill_naive_neighbor_matrix_selective_kernels[wp.float32],
         rebuild_flags=rebuild_flags,
     )
 
@@ -402,8 +638,9 @@ def _graph_naive_no_pbc_selective_f64(
         cutoff_sq,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_overload[wp.float64],
-        selective_kernel=_fill_naive_neighbor_matrix_selective_overload[wp.float64],
+        wp.float64,
+        _fill_naive_neighbor_matrix_kernels[wp.float64],
+        selective_kernel=_fill_naive_neighbor_matrix_selective_kernels[wp.float64],
         rebuild_flags=rebuild_flags,
     )
 
@@ -431,7 +668,8 @@ def _graph_naive_pbc_prewrapped_f32(
         num_shifts,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_pbc_prewrapped_overload[wp.float32],
+        wp.float32,
+        _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float32],
     )
 
 
@@ -458,7 +696,8 @@ def _graph_naive_pbc_prewrapped_f64(
         num_shifts,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_pbc_prewrapped_overload[wp.float64],
+        wp.float64,
+        _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float64],
     )
 
 
@@ -486,8 +725,9 @@ def _graph_naive_pbc_prewrapped_selective_f32(
         num_shifts,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_pbc_prewrapped_overload[wp.float32],
-        selective_kernel=_fill_naive_neighbor_matrix_pbc_prewrapped_selective_overload[
+        wp.float32,
+        _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float32],
+        selective_kernel=_fill_naive_neighbor_matrix_pbc_prewrapped_selective_kernels[
             wp.float32
         ],
         rebuild_flags=rebuild_flags,
@@ -518,8 +758,9 @@ def _graph_naive_pbc_prewrapped_selective_f64(
         num_shifts,
         fill_value,
         half_fill,
-        _fill_naive_neighbor_matrix_pbc_prewrapped_overload[wp.float64],
-        selective_kernel=_fill_naive_neighbor_matrix_pbc_prewrapped_selective_overload[
+        wp.float64,
+        _fill_naive_neighbor_matrix_pbc_prewrapped_kernels[wp.float64],
+        selective_kernel=_fill_naive_neighbor_matrix_pbc_prewrapped_selective_kernels[
             wp.float64
         ],
         rebuild_flags=rebuild_flags,
@@ -555,8 +796,9 @@ def _graph_naive_pbc_wrapped_f32(
         num_shifts,
         fill_value,
         half_fill,
-        _wrap_positions_single_overload[wp.float32],
-        _fill_naive_neighbor_matrix_pbc_overload[wp.float32],
+        wp.float32,
+        get_wrap_positions_kernel(wp.float32),
+        _fill_naive_neighbor_matrix_pbc_kernels[wp.float32],
     )
 
 
@@ -589,8 +831,9 @@ def _graph_naive_pbc_wrapped_f64(
         num_shifts,
         fill_value,
         half_fill,
-        _wrap_positions_single_overload[wp.float64],
-        _fill_naive_neighbor_matrix_pbc_overload[wp.float64],
+        wp.float64,
+        get_wrap_positions_kernel(wp.float64),
+        _fill_naive_neighbor_matrix_pbc_kernels[wp.float64],
     )
 
 
@@ -624,9 +867,10 @@ def _graph_naive_pbc_wrapped_selective_f32(
         num_shifts,
         fill_value,
         half_fill,
-        _wrap_positions_single_overload[wp.float32],
-        _fill_naive_neighbor_matrix_pbc_overload[wp.float32],
-        selective_kernel=_fill_naive_neighbor_matrix_pbc_selective_overload[wp.float32],
+        wp.float32,
+        get_wrap_positions_kernel(wp.float32),
+        _fill_naive_neighbor_matrix_pbc_kernels[wp.float32],
+        selective_kernel=_fill_naive_neighbor_matrix_pbc_selective_kernels[wp.float32],
         rebuild_flags=rebuild_flags,
     )
 
@@ -661,9 +905,10 @@ def _graph_naive_pbc_wrapped_selective_f64(
         num_shifts,
         fill_value,
         half_fill,
-        _wrap_positions_single_overload[wp.float64],
-        _fill_naive_neighbor_matrix_pbc_overload[wp.float64],
-        selective_kernel=_fill_naive_neighbor_matrix_pbc_selective_overload[wp.float64],
+        wp.float64,
+        get_wrap_positions_kernel(wp.float64),
+        _fill_naive_neighbor_matrix_pbc_kernels[wp.float64],
+        selective_kernel=_fill_naive_neighbor_matrix_pbc_selective_kernels[wp.float64],
         rebuild_flags=rebuild_flags,
     )
 
@@ -751,6 +996,133 @@ def _register_graph_naive_callables() -> dict[
 _GRAPH_NAIVE_WARP_CALLABLES = _register_graph_naive_callables()
 
 
+def _naive_pair_outputs_forward(
+    positions: jax.Array,
+    cell: jax.Array | None,
+    *,
+    pbc: jax.Array | None,
+    cutoff: float,
+    max_neighbors: int,
+    fill_value: int,
+) -> _NeighborForwardOutput:
+    """Forward closure for the naive autograd path.
+
+    Detaches positions/cell, runs the pair-output naive kernel, and
+    packs the indices the autograd primitive needs for the reconstruction
+    backward.
+    """
+    positions = jax.lax.stop_gradient(positions)
+    if cell is not None:
+        cell = jax.lax.stop_gradient(cell)
+
+    total_atoms = positions.shape[0]
+    f64 = positions.dtype == jnp.float64
+    cutoff_sq = jnp.asarray(cutoff * cutoff, dtype=positions.dtype)
+    zero_dt = jnp.asarray(0.0, dtype=positions.dtype)
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        empty_num_neighbors,
+        empty_vectors,
+        empty_distances,
+        empty_pair_params,
+        empty_energies,
+        empty_forces,
+        empty_rebuild_flags,
+    ) = _jax_scalar_sentinels(positions.dtype)
+
+    nm = jnp.full((total_atoms, max_neighbors), fill_value, dtype=jnp.int32)
+    nn = jnp.zeros(total_atoms, dtype=jnp.int32)
+    nv = jnp.zeros((total_atoms, max_neighbors, 3), dtype=positions.dtype)
+    nd = jnp.zeros((total_atoms, max_neighbors), dtype=positions.dtype)
+
+    if pbc is None:
+        kernel = _jax_fill_naive_pair_f64 if f64 else _jax_fill_naive_pair_f32
+        nm, nn, nv, nd = kernel(
+            positions,
+            empty_offsets,
+            cutoff_sq,
+            zero_dt,
+            empty_cell,
+            empty_shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            empty_target_indices,
+            nm,
+            empty_shifts,
+            nn,
+            empty_matrix,
+            empty_shifts,
+            empty_num_neighbors,
+            nv,
+            nd,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            False,  # half_fill
+            empty_rebuild_flags,
+            launch_dims=(1, 1, total_atoms),
+        )
+        nms = jnp.zeros((total_atoms, max_neighbors, 3), dtype=jnp.int32)
+    else:
+        kernel = _jax_fill_naive_pbc_pair_f64 if f64 else _jax_fill_naive_pbc_pair_f32
+        if cell.ndim == 2:
+            cell = cell[jnp.newaxis, :, :]
+        if pbc.ndim == 1:
+            pbc = pbc[jnp.newaxis, :]
+        shift_range, num_shifts_arr, _ = compute_naive_num_shifts(cell, cutoff, pbc)
+        nms = jnp.zeros((total_atoms, max_neighbors, 3), dtype=jnp.int32)
+        offs = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+        nm, nms, nn, nv, nd = kernel(
+            positions,
+            offs,
+            cutoff_sq,
+            zero_dt,
+            cell,
+            shift_range,
+            num_shifts_arr,
+            empty_batch_idx,
+            empty_batch_ptr,
+            empty_target_indices,
+            nm,
+            nms,
+            nn,
+            empty_matrix,
+            empty_shifts,
+            empty_num_neighbors,
+            nv,
+            nd,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            False,  # half_fill
+            empty_rebuild_flags,
+            launch_dims=(1, 1, total_atoms),
+        )
+
+    i_idx, j_idx, shifts_ret, _, mask_ = _build_index_residuals(nm, nn, nms)
+    K, M = nm.shape
+    return _NeighborForwardOutput(
+        distances=nd,
+        vectors=nv,
+        extra_outputs=(nm, nn, nms),
+        i_idx=i_idx,
+        j_idx=j_idx,
+        shifts=shifts_ret,
+        batch_idx=None,
+        active_mask=mask_,
+        matrix_shape=(K, M),
+    )
+
+
 def naive_neighbor_list(
     positions: jax.Array,
     cutoff: float,
@@ -768,6 +1140,13 @@ def naive_neighbor_list(
     max_shifts_per_system: int | None = None,
     rebuild_flags: jax.Array | None = None,
     wrap_positions: bool = True,
+    inv_cell_buffer: jax.Array | None = None,
+    positions_wrapped_buffer: jax.Array | None = None,
+    per_atom_cell_offsets_buffer: jax.Array | None = None,
+    *,
+    return_distances: bool = False,
+    return_vectors: bool = False,
+    # Deprecated kwarg aliases (removed in 0.5):
     inv_cell: jax.Array | None = None,
     positions_wrapped: jax.Array | None = None,
     per_atom_cell_offsets: jax.Array | None = None,
@@ -999,13 +1378,81 @@ def naive_neighbor_list(
     if pbc is not None and cell is None:
         raise ValueError("If pbc is provided, cell must also be provided")
 
+    has_pair_outputs = bool(return_distances) or bool(return_vectors)
+    if has_pair_outputs:
+        if (
+            graph_mode != "none"
+            or half_fill
+            or rebuild_flags is not None
+            or return_neighbor_list
+        ):
+            raise NotImplementedError(
+                "return_distances / return_vectors on the JAX naive binding "
+                "require graph_mode='none', half_fill=False, no rebuild_flags, "
+                "and return_neighbor_list=False.",
+            )
+        if max_neighbors is None:
+            max_neighbors = estimate_max_neighbors(cutoff)
+        if fill_value is None:
+            fill_value = positions.shape[0]
+        if cell is not None and cell.ndim == 2:
+            cell_norm = cell[jnp.newaxis, :, :]
+        else:
+            cell_norm = cell
+        if cell_norm is not None and cell_norm.dtype != positions.dtype:
+            cell_norm = cell_norm.astype(positions.dtype)
+        pbc_norm = None
+        if pbc is not None:
+            pbc_norm = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
+        forward_kwargs = {
+            "pbc": pbc_norm,
+            "cutoff": float(cutoff),
+            "max_neighbors": int(max_neighbors),
+            "fill_value": int(fill_value),
+        }
+        distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
+            positions,
+            cell_norm,
+            _naive_pair_outputs_forward,
+            forward_kwargs,
+        )
+        if pbc is not None:
+            base = (nm_out, nn_out, shifts_out)
+        else:
+            base = (nm_out, nn_out)
+        if return_distances and return_vectors:
+            return (*base, distances_out, vectors_out)
+        if return_distances:
+            return (*base, distances_out)
+        return (*base, vectors_out)
+
     if cell is not None:
         cell = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
-        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+        # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
         if cell.dtype != positions.dtype:
             cell = cell.astype(positions.dtype)
     if pbc is not None:
         pbc = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
+
+    # Resolve deprecated unsuffixed kwarg aliases.
+    inv_cell = resolve_buffer_alias(
+        "inv_cell_buffer",
+        inv_cell_buffer,
+        "inv_cell",
+        inv_cell,
+    )
+    positions_wrapped = resolve_buffer_alias(
+        "positions_wrapped_buffer",
+        positions_wrapped_buffer,
+        "positions_wrapped",
+        positions_wrapped,
+    )
+    per_atom_cell_offsets = resolve_buffer_alias(
+        "per_atom_cell_offsets_buffer",
+        per_atom_cell_offsets_buffer,
+        "per_atom_cell_offsets",
+        per_atom_cell_offsets,
+    )
 
     # Validate caller-supplied scratch buffers used by the wrap kernel. Shape
     # or dtype mismatches would silently break graph_mode="warp" cache replay
@@ -1144,6 +1591,24 @@ def naive_neighbor_list(
 
     total_atoms = positions.shape[0]
     cutoff_sq = float(cutoff * cutoff)
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        empty_num_neighbors,
+        empty_vectors,
+        empty_distances,
+        empty_pair_params,
+        empty_energies,
+        empty_forces,
+        empty_rebuild_flags,
+    ) = _jax_scalar_sentinels(positions.dtype)
 
     if graph_mode == "warp":
         has_pbc = pbc is not None
@@ -1274,21 +1739,56 @@ def naive_neighbor_list(
             )
             neighbor_matrix, num_neighbors = _jax_fill_selective(
                 positions,
+                empty_offsets,
                 cutoff_sq,
+                0.0,
+                empty_cell,
+                empty_shift_range,
+                empty_num_shifts,
+                empty_batch_idx,
+                empty_batch_ptr,
+                empty_target_indices,
                 neighbor_matrix,
+                empty_shifts,
                 num_neighbors,
+                empty_matrix,
+                empty_shifts,
+                empty_num_neighbors,
+                empty_vectors,
+                empty_distances,
+                empty_pair_params,
+                empty_energies,
+                empty_forces,
                 half_fill,
                 rf,
-                launch_dims=(total_atoms,),
+                launch_dims=(1, 1, total_atoms),
             )
         else:
             neighbor_matrix, num_neighbors = _jax_fill(
                 positions,
+                empty_offsets,
                 cutoff_sq,
+                0.0,
+                empty_cell,
+                empty_shift_range,
+                empty_num_shifts,
+                empty_batch_idx,
+                empty_batch_ptr,
+                empty_target_indices,
                 neighbor_matrix,
+                empty_shifts,
                 num_neighbors,
+                empty_matrix,
+                empty_shifts,
+                empty_num_neighbors,
+                empty_vectors,
+                empty_distances,
+                empty_pair_params,
+                empty_energies,
+                empty_forces,
                 half_fill,
-                launch_dims=(total_atoms,),
+                empty_rebuild_flags,
+                launch_dims=(1, 1, total_atoms),
             )
     else:
         if cell.dtype != positions.dtype:
@@ -1305,6 +1805,7 @@ def naive_neighbor_list(
                 positions,
                 cell,
                 inv_cell,
+                jnp.empty((0,), dtype=jnp.int32),
                 positions_wrapped,
                 per_atom_cell_offsets,
                 launch_dims=(total_atoms,),
@@ -1320,14 +1821,27 @@ def naive_neighbor_list(
                         positions_wrapped,
                         per_atom_cell_offsets,
                         cutoff_sq,
+                        0.0,
                         cell,
                         shift_range_per_dimension,
+                        empty_num_shifts,
+                        empty_batch_idx,
+                        empty_batch_ptr,
+                        empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
+                        empty_matrix,
+                        empty_shifts,
+                        empty_num_neighbors,
+                        empty_vectors,
+                        empty_distances,
+                        empty_pair_params,
+                        empty_energies,
+                        empty_forces,
                         half_fill,
                         rf,
-                        launch_dims=(max_shifts_per_system, total_atoms),
+                        launch_dims=(1, max_shifts_per_system, total_atoms),
                     )
                 )
             else:
@@ -1335,13 +1849,27 @@ def naive_neighbor_list(
                     positions_wrapped,
                     per_atom_cell_offsets,
                     cutoff_sq,
+                    0.0,
                     cell,
                     shift_range_per_dimension,
+                    empty_num_shifts,
+                    empty_batch_idx,
+                    empty_batch_ptr,
+                    empty_target_indices,
                     neighbor_matrix,
                     neighbor_matrix_shifts,
                     num_neighbors,
+                    empty_matrix,
+                    empty_shifts,
+                    empty_num_neighbors,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
                     half_fill,
-                    launch_dims=(max_shifts_per_system, total_atoms),
+                    empty_rebuild_flags,
+                    launch_dims=(1, max_shifts_per_system, total_atoms),
                 )
         else:
             if rebuild_flags is not None:
@@ -1352,29 +1880,58 @@ def naive_neighbor_list(
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
                     _jax_fill_pbc_prewrapped_selective(
                         positions,
+                        empty_offsets,
                         cutoff_sq,
+                        0.0,
                         cell,
                         shift_range_per_dimension,
+                        empty_num_shifts,
+                        empty_batch_idx,
+                        empty_batch_ptr,
+                        empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
+                        empty_matrix,
+                        empty_shifts,
+                        empty_num_neighbors,
+                        empty_vectors,
+                        empty_distances,
+                        empty_pair_params,
+                        empty_energies,
+                        empty_forces,
                         half_fill,
                         rf,
-                        launch_dims=(max_shifts_per_system, total_atoms),
+                        launch_dims=(1, max_shifts_per_system, total_atoms),
                     )
                 )
             else:
                 neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
                     _jax_fill_pbc_prewrapped(
                         positions,
+                        empty_offsets,
                         cutoff_sq,
+                        0.0,
                         cell,
                         shift_range_per_dimension,
+                        empty_num_shifts,
+                        empty_batch_idx,
+                        empty_batch_ptr,
+                        empty_target_indices,
                         neighbor_matrix,
                         neighbor_matrix_shifts,
                         num_neighbors,
+                        empty_matrix,
+                        empty_shifts,
+                        empty_num_neighbors,
+                        empty_vectors,
+                        empty_distances,
+                        empty_pair_params,
+                        empty_energies,
+                        empty_forces,
                         half_fill,
-                        launch_dims=(max_shifts_per_system, total_atoms),
+                        empty_rebuild_flags,
+                        launch_dims=(1, max_shifts_per_system, total_atoms),
                     )
                 )
 

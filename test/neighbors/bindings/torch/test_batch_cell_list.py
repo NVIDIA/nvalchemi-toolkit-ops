@@ -1266,3 +1266,128 @@ class TestBatchTorchCompilability:
         assert torch.equal(num_neighbors_uncompiled, num_neighbors_compiled), (
             "Number of neighbors mismatch"
         )
+
+
+class TestBatchCellListAutograd:
+    """Autograd path for batched per-pair distances and vectors.
+
+    Mirror of TestCellListAutograd; verifies that grad_cell is routed
+    per-system via batch_idx.
+    """
+
+    def _make_two_systems(self, device):
+        torch.manual_seed(0)
+        atoms_per_sys = 4
+        S = 2
+        # Two independent clusters; positions in second cluster offset to keep
+        # them clearly in different systems.
+        pos = torch.cat(
+            [
+                torch.randn(atoms_per_sys, 3, dtype=torch.float64, device=device) * 0.4,
+                torch.randn(atoms_per_sys, 3, dtype=torch.float64, device=device) * 0.4
+                + torch.tensor([5.0, 0.0, 0.0], dtype=torch.float64, device=device),
+            ],
+            dim=0,
+        )
+        cell = (
+            (torch.eye(3, dtype=torch.float64, device=device) * 4.0)
+            .unsqueeze(0)
+            .expand(S, -1, -1)
+            .contiguous()
+        )
+        pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
+        batch_idx = torch.tensor(
+            [0] * atoms_per_sys + [1] * atoms_per_sys,
+            dtype=torch.int32,
+            device=device,
+        )
+        return pos, cell, pbc, batch_idx
+
+    def test_forward_returns_differentiable_outputs(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        pos.requires_grad_(True)
+        cell = cell.clone().requires_grad_(True)
+        nm, nn, shifts, d, v = batch_cell_list(
+            pos,
+            1.5,
+            cell,
+            pbc,
+            batch_idx,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert d.requires_grad and v.requires_grad
+
+    def test_gradcheck_distances_wrt_positions(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        # nondet_tol covers atomic_add ordering nondeterminism on CUDA.
+        assert torch.autograd.gradcheck(
+            fn,
+            (pos,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+
+    def test_gradcheck_distances_wrt_cell(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        cell = cell.clone().requires_grad_(True)
+
+        def fn(c):
+            _, _, _, d, _ = batch_cell_list(
+                pos,
+                1.5,
+                c,
+                pbc,
+                batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        # Cell has shape (2, 3, 3) — gradcheck on the multi-system cell tensor.
+        assert torch.autograd.gradcheck(
+            fn,
+            (cell,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+
+    def test_gradgradcheck_distances_second_order(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.pow(2).sum()
+
+        assert torch.autograd.gradgradcheck(
+            fn,
+            (pos,),
+            atol=1e-4,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )

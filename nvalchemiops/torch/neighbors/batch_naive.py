@@ -20,12 +20,17 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.batch_naive import (
+from nvalchemiops.neighbors.naive import (
     batch_naive_neighbor_matrix,
     batch_naive_neighbor_matrix_pbc,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
+)
+from nvalchemiops.torch.neighbors._autograd import (
+    _flatten_active_pairs,
+    _NeighborForwardOutput,
+    _route_pair_outputs,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     compute_naive_num_shifts,
@@ -144,6 +149,9 @@ def _batch_naive_neighbor_matrix_pbc(
     max_atoms_per_system: int | None = None,
     rebuild_flags: torch.Tensor | None = None,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
 ) -> None:
     """Compute batch neighbor matrix with PBC using naive O(N^2) algorithm.
 
@@ -218,6 +226,21 @@ def _batch_naive_neighbor_matrix_pbc(
         wp_rebuild_flags = wp.from_torch(
             rebuild_flags, dtype=wp.bool, return_ctype=True
         )
+    wp_positions_wrapped = (
+        wp.from_torch(positions_wrapped_buffer, dtype=wp_vec_dtype, return_ctype=True)
+        if positions_wrapped_buffer is not None
+        else None
+    )
+    wp_per_atom_cell_offsets = (
+        wp.from_torch(per_atom_cell_offsets_buffer, dtype=wp.vec3i, return_ctype=True)
+        if per_atom_cell_offsets_buffer is not None
+        else None
+    )
+    wp_inv_cell = (
+        wp.from_torch(inv_cell_buffer, dtype=wp_mat_dtype, return_ctype=True)
+        if inv_cell_buffer is not None
+        else None
+    )
     batch_naive_neighbor_matrix_pbc(
         positions=wp_positions,
         cell=wp_cell,
@@ -236,6 +259,228 @@ def _batch_naive_neighbor_matrix_pbc(
         half_fill=half_fill,
         rebuild_flags=wp_rebuild_flags,
         wrap_positions=wrap_positions,
+        positions_wrapped_buffer=wp_positions_wrapped,
+        per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
+        inv_cell_buffer=wp_inv_cell,
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_naive_neighbor_matrix_no_pbc_pair",
+    mutates_args=(
+        "neighbor_matrix",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+def _batch_naive_neighbor_matrix_no_pbc_pair(
+    positions: torch.Tensor,
+    cutoff: float,
+    batch_idx: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
+    half_fill: bool,
+) -> None:
+    """No-PBC batch naive neighbor kernel with pair outputs."""
+    device = positions.device
+    wp_dtype = get_wp_dtype(positions.dtype)
+    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
+    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
+    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
+    wp_neighbor_matrix = wp.from_torch(
+        neighbor_matrix, dtype=wp.int32, return_ctype=True
+    )
+    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    # Validated by ``_prepare_pair_output_args`` in the launcher -> pass real
+    # Warp arrays (zero-copy views of the torch tensors), not ctype structs.
+    wp_neighbor_vectors = wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype)
+    wp_neighbor_distances = wp.from_torch(neighbor_distances, dtype=wp_dtype)
+    batch_naive_neighbor_matrix(
+        positions=wp_positions,
+        cutoff=cutoff,
+        batch_idx=wp_batch_idx,
+        batch_ptr=wp_batch_ptr,
+        neighbor_matrix=wp_neighbor_matrix,
+        num_neighbors=wp_num_neighbors,
+        wp_dtype=wp_dtype,
+        device=str(device),
+        half_fill=half_fill,
+        rebuild_flags=None,
+        return_vectors=True,
+        return_distances=True,
+        neighbor_vectors=wp_neighbor_vectors,
+        neighbor_distances=wp_neighbor_distances,
+    )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_batch_naive_neighbor_matrix_pbc_pair",
+    mutates_args=(
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+def _batch_naive_neighbor_matrix_pbc_pair(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    cutoff: float,
+    batch_idx: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
+    shift_range_per_dimension: torch.Tensor,
+    num_shifts_per_system: torch.Tensor,
+    max_shifts_per_system: int,
+    half_fill: bool,
+    max_atoms_per_system: int,
+    wrap_positions: bool,
+) -> None:
+    """PBC batch naive neighbor kernel with pair outputs.
+
+    The warp launcher picks between ``wrap_on_entry`` and ``prewrapped``
+    kernel specializations based on ``wrap_positions``.  Either choice
+    emits shifts consistent with its input positions, so the autograd
+    primitive's reconstruction is correct on both paths.
+    """
+    device = positions.device
+    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
+    wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
+    wp_dtype = get_wp_dtype(positions.dtype)
+    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_shift_range = wp.from_torch(
+        shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_num_shifts_arr = wp.from_torch(
+        num_shifts_per_system, dtype=wp.int32, return_ctype=True
+    )
+    wp_neighbor_matrix = wp.from_torch(
+        neighbor_matrix, dtype=wp.int32, return_ctype=True
+    )
+    wp_neighbor_matrix_shifts = wp.from_torch(
+        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
+    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
+    # Validated by ``_prepare_pair_output_args`` in the launcher -> pass real
+    # Warp arrays (zero-copy views of the torch tensors), not ctype structs.
+    wp_neighbor_vectors = wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype)
+    wp_neighbor_distances = wp.from_torch(neighbor_distances, dtype=wp_dtype)
+    batch_naive_neighbor_matrix_pbc(
+        positions=wp_positions,
+        cell=wp_cell,
+        cutoff=cutoff,
+        batch_ptr=wp_batch_ptr,
+        batch_idx=wp_batch_idx,
+        shift_range=wp_shift_range,
+        num_shifts_arr=wp_num_shifts_arr,
+        max_shifts_per_system=max_shifts_per_system,
+        neighbor_matrix=wp_neighbor_matrix,
+        neighbor_matrix_shifts=wp_neighbor_matrix_shifts,
+        num_neighbors=wp_num_neighbors,
+        wp_dtype=wp_dtype,
+        device=str(device),
+        max_atoms_per_system=max_atoms_per_system,
+        half_fill=half_fill,
+        rebuild_flags=None,
+        wrap_positions=wrap_positions,
+        return_vectors=True,
+        return_distances=True,
+        neighbor_vectors=wp_neighbor_vectors,
+        neighbor_distances=wp_neighbor_distances,
+    )
+
+
+def _batch_naive_pair_outputs_forward(
+    positions: torch.Tensor,
+    cell: torch.Tensor | None,
+    *,
+    cutoff: float,
+    pbc: torch.Tensor | None,
+    batch_idx: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor | None,
+    num_neighbors: torch.Tensor,
+    neighbor_vectors: torch.Tensor,
+    neighbor_distances: torch.Tensor,
+    half_fill: bool,
+    shift_range_per_dimension: torch.Tensor | None,
+    num_shifts_per_system: torch.Tensor | None,
+    max_shifts_per_system: int | None,
+    max_atoms_per_system: int | None,
+    wrap_positions: bool,
+) -> _NeighborForwardOutput:
+    """Forward closure for the torch batch_naive autograd path."""
+    if pbc is None:
+        _batch_naive_neighbor_matrix_no_pbc_pair(
+            positions=positions.detach(),
+            cutoff=cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            half_fill=half_fill,
+        )
+    else:
+        _batch_naive_neighbor_matrix_pbc_pair(
+            positions=positions.detach(),
+            cell=cell.detach(),
+            cutoff=cutoff,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            num_neighbors=num_neighbors,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            shift_range_per_dimension=shift_range_per_dimension,
+            num_shifts_per_system=num_shifts_per_system,
+            max_shifts_per_system=int(max_shifts_per_system),
+            half_fill=half_fill,
+            max_atoms_per_system=int(max_atoms_per_system),
+            wrap_positions=wrap_positions,
+        )
+    shifts_arg = (
+        neighbor_matrix_shifts
+        if neighbor_matrix_shifts is not None
+        else torch.zeros(
+            (*neighbor_matrix.shape, 3),
+            dtype=torch.int32,
+            device=neighbor_matrix.device,
+        )
+    )
+    i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
+        neighbor_matrix,
+        num_neighbors,
+        shifts_arg,
+        batch_idx=batch_idx,
+    )
+    K, M = neighbor_matrix.shape
+    return _NeighborForwardOutput(
+        distances=neighbor_distances,
+        vectors=neighbor_vectors,
+        extra_outputs=(neighbor_matrix, num_neighbors, shifts_arg),
+        i_idx_flat=i_idx,
+        j_idx_flat=j_idx,
+        shifts_flat=shifts_flat,
+        batch_idx_flat=batch_idx_flat,
+        active_mask=mask,
+        matrix_shape=(K, M),
     )
 
 
@@ -259,6 +504,14 @@ def batch_naive_neighbor_list(
     max_atoms_per_system: int | None = None,
     rebuild_flags: torch.Tensor | None = None,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
+    *,
+    return_distances: bool = False,
+    return_vectors: bool = False,
+    neighbor_vectors: torch.Tensor | None = None,
+    neighbor_distances: torch.Tensor | None = None,
 ) -> (
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
     | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -415,6 +668,10 @@ def batch_naive_neighbor_list(
             or num_shifts_per_system is None
             or shift_range_per_dimension is None
         ):
+            # compute_naive_num_shifts emits int32 outputs (shift_range,
+            # num_shifts); the warp launch is not part of the torch autograd
+            # graph even when ``cell.requires_grad`` is True, so no explicit
+            # detach is required here.
             shift_range_per_dimension, num_shifts_per_system, max_shifts_per_system = (
                 compute_naive_num_shifts(cell, cutoff, pbc)
             )
@@ -433,6 +690,69 @@ def batch_naive_neighbor_list(
             f"batch_idx length ({batch_idx.shape[0]}) does not match "
             f"num_atoms ({total_atoms}). batch_idx must have one entry per atom."
         )
+
+    has_pair_outputs = (
+        bool(return_distances)
+        or bool(return_vectors)
+        or neighbor_vectors is not None
+        or neighbor_distances is not None
+    )
+    if has_pair_outputs:
+        if half_fill or rebuild_flags is not None or return_neighbor_list:
+            raise NotImplementedError(
+                "return_distances / return_vectors on the torch batch_naive "
+                "binding require half_fill=False, no rebuild_flags, and "
+                "return_neighbor_list=False.",
+            )
+        if neighbor_distances is None:
+            neighbor_distances = torch.zeros(
+                (total_atoms, max_neighbors),
+                dtype=positions.dtype,
+                device=positions.device,
+            )
+        if neighbor_vectors is None:
+            neighbor_vectors = torch.zeros(
+                (total_atoms, max_neighbors, 3),
+                dtype=positions.dtype,
+                device=positions.device,
+            )
+        if pbc is not None and max_atoms_per_system is None:
+            # ``.item()`` is a CPU sync; it works in eager but triggers a
+            # graph break under ``torch.compile``.  Pass max_atoms_per_system
+            # explicitly to keep the autograd path graph-clean under compile.
+            max_atoms_per_system = int((batch_ptr[1:] - batch_ptr[:-1]).max().item())
+        forward_kwargs = {
+            "cutoff": cutoff,
+            "pbc": pbc,
+            "batch_idx": batch_idx,
+            "batch_ptr": batch_ptr,
+            "neighbor_matrix": neighbor_matrix,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            "num_neighbors": num_neighbors,
+            "neighbor_vectors": neighbor_vectors,
+            "neighbor_distances": neighbor_distances,
+            "half_fill": half_fill,
+            "shift_range_per_dimension": shift_range_per_dimension,
+            "num_shifts_per_system": num_shifts_per_system,
+            "max_shifts_per_system": max_shifts_per_system,
+            "max_atoms_per_system": max_atoms_per_system,
+            "wrap_positions": wrap_positions,
+        }
+        distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
+            positions,
+            cell,
+            _batch_naive_pair_outputs_forward,
+            forward_kwargs,
+        )
+        if pbc is not None:
+            base = (nm_out, nn_out, shifts_out)
+        else:
+            base = (nm_out, nn_out)
+        if return_distances and return_vectors:
+            return (*base, distances_out, vectors_out)
+        if return_distances:
+            return (*base, distances_out)
+        return (*base, vectors_out)
 
     if pbc is None:
         _batch_naive_neighbor_matrix_no_pbc(
@@ -471,6 +791,9 @@ def batch_naive_neighbor_list(
             max_atoms_per_system=max_atoms_per_system,
             rebuild_flags=rebuild_flags,
             wrap_positions=wrap_positions,
+            positions_wrapped_buffer=positions_wrapped_buffer,
+            per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+            inv_cell_buffer=inv_cell_buffer,
         )
         if return_neighbor_list:
             neighbor_list, neighbor_ptr, neighbor_list_shifts = (

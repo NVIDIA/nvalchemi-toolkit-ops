@@ -909,3 +909,388 @@ class TestCellListPreallocatedBufferReuse:
         for i in range(N):
             k = int(nn_ref[i])
             assert jnp.array_equal(jnp.sort(nm[i, :k]), jnp.sort(nm_ref[i, :k]))
+
+
+# ---------------------------------------------------------------------------
+# JAX autograd primitive — exercises the `_attach_neighbor_pair_grads`
+# custom_vjp in nvalchemiops.jax.neighbors._autograd via a pure-JAX forward
+# closure.  Validates the autograd math and JIT compatibility without
+# requiring the warp-side `jax_callable` plumbing to be in place.
+#
+# Once `cell_list` (the JAX wrapper) is wired to produce its own
+# `_NeighborForwardOutput`, replace ``_pure_jax_pair_forward`` below with the
+# real wrapper call.  The autograd primitive itself stays unchanged.
+# ---------------------------------------------------------------------------
+
+
+class TestJaxAutograd:
+    """End-to-end checks for the JAX autograd primitive.
+
+    Forward is a pure-JAX builder (no Warp) so the test runs on any device
+    where JAX is available.  The same primitive is what the per-family
+    wrappers will route through once wired.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _enable_x64(self):
+        jax.config.update("jax_enable_x64", True)
+
+    @staticmethod
+    def _pure_jax_pair_forward(positions, cell, *, cutoff=1.5, M=4):
+        """Per-pair (d, r) plus integer indices, computed entirely in JAX.
+
+        Provides the same NamedTuple contract as the wrapper forward closure
+        will, once landed.  Distances/vectors are functions of positions and
+        cell; the integer indices/shifts are constants from the autograd
+        perspective.
+        """
+        from nvalchemiops.jax.neighbors._autograd import (
+            _build_index_residuals,
+            _NeighborForwardOutput,
+        )
+
+        N = positions.shape[0]
+        diffs = positions[:, None, :] - positions[None, :, :]
+        dist = jnp.linalg.norm(diffs, axis=-1)
+        within = (dist < cutoff) & (dist > 0)
+        sort_keys = -within.astype(jnp.float32) * (1e8 - dist)
+        sorted_j = jnp.argsort(sort_keys, axis=1)[:, :M].astype(jnp.int32)
+        nn = within.sum(axis=1).astype(jnp.int32).clip(max=M)
+        col_idx = jnp.arange(M, dtype=jnp.int32)
+        active_mask = col_idx[None, :] < nn[:, None]
+        nm = jnp.where(active_mask, sorted_j, jnp.int32(N))
+        shifts = jnp.zeros((N, M, 3), dtype=jnp.int32)
+        pos_padded = jnp.concatenate(
+            [positions, jnp.zeros((1, 3), dtype=positions.dtype)],
+            axis=0,
+        )
+        j_safe = jnp.where(active_mask, nm, jnp.int32(N))
+        r_full = pos_padded[j_safe] - positions[:, None, :]
+        d_full = jnp.linalg.norm(r_full, axis=-1)
+        r_full = jnp.where(active_mask[:, :, None], r_full, 0.0)
+        d_full = jnp.where(active_mask, d_full, 0.0)
+        i_idx, j_idx, shifts_ret, batch_idx, mask_ = _build_index_residuals(
+            nm,
+            nn,
+            shifts,
+        )
+        return _NeighborForwardOutput(
+            distances=d_full,
+            vectors=r_full,
+            extra_outputs=(nm, nn, shifts),
+            i_idx=i_idx,
+            j_idx=j_idx,
+            shifts=shifts_ret,
+            batch_idx=batch_idx,
+            active_mask=mask_,
+            matrix_shape=(N, M),
+        )
+
+    def _make_system(self):
+        key = jax.random.key(0)
+        positions = jax.random.normal(key, (6, 3), dtype=jnp.float64) * 0.3
+        cell = (jnp.eye(3, dtype=jnp.float64) * 4.0)[None]
+        return positions, cell
+
+    def test_forward_returns_differentiable_outputs(self):
+        from nvalchemiops.jax.neighbors._autograd import _route_pair_outputs
+
+        positions, cell = self._make_system()
+        d, v, nm, nn, shifts = _route_pair_outputs(
+            positions,
+            cell,
+            self._pure_jax_pair_forward,
+            {"cutoff": 1.5, "M": 4},
+        )
+        assert d.shape == (6, 4)
+        assert v.shape == (6, 4, 3)
+        assert jnp.isfinite(d).all() and jnp.isfinite(v).all()
+
+    def test_check_grads_first_order_positions(self):
+        from jax.test_util import check_grads
+
+        from nvalchemiops.jax.neighbors._autograd import _route_pair_outputs
+
+        positions, cell = self._make_system()
+
+        def loss(p):
+            d, *_ = _route_pair_outputs(
+                p,
+                cell,
+                self._pure_jax_pair_forward,
+                {"cutoff": 1.5, "M": 4},
+            )
+            return d.sum()
+
+        check_grads(loss, (positions,), order=1, atol=1e-5, rtol=1e-5, modes=["rev"])
+
+    def test_check_grads_first_order_cell(self):
+        from jax.test_util import check_grads
+
+        from nvalchemiops.jax.neighbors._autograd import _route_pair_outputs
+
+        positions, cell = self._make_system()
+
+        def loss(c):
+            d, *_ = _route_pair_outputs(
+                positions,
+                c,
+                self._pure_jax_pair_forward,
+                {"cutoff": 1.5, "M": 4},
+            )
+            return d.sum()
+
+        check_grads(loss, (cell,), order=1, atol=1e-5, rtol=1e-5, modes=["rev"])
+
+    def test_check_grads_second_order(self):
+        """Reverse-mode second-order autograd via reconstruction in bwd."""
+        from jax.test_util import check_grads
+
+        from nvalchemiops.jax.neighbors._autograd import _route_pair_outputs
+
+        positions, cell = self._make_system()
+
+        def loss(p):
+            d, *_ = _route_pair_outputs(
+                p,
+                cell,
+                self._pure_jax_pair_forward,
+                {"cutoff": 1.5, "M": 4},
+            )
+            # Non-linear in d so the second derivative is non-trivial.
+            return (d**2).sum()
+
+        check_grads(loss, (positions,), order=2, atol=1e-3, rtol=1e-3, modes=["rev"])
+
+    def test_vectors_gradient(self):
+        from jax.test_util import check_grads
+
+        from nvalchemiops.jax.neighbors._autograd import _route_pair_outputs
+
+        positions, cell = self._make_system()
+
+        def loss(p):
+            _, v, *_ = _route_pair_outputs(
+                p,
+                cell,
+                self._pure_jax_pair_forward,
+                {"cutoff": 1.5, "M": 4},
+            )
+            return v.sum()
+
+        check_grads(loss, (positions,), order=1, atol=1e-5, rtol=1e-5, modes=["rev"])
+
+    def test_jit_grad_compatibility(self):
+        """jax.jit(jax.grad(loss)) must compile and return finite grads."""
+        from nvalchemiops.jax.neighbors._autograd import _route_pair_outputs
+
+        positions, cell = self._make_system()
+
+        def loss(p):
+            d, *_ = _route_pair_outputs(
+                p,
+                cell,
+                self._pure_jax_pair_forward,
+                {"cutoff": 1.5, "M": 4},
+            )
+            return d.sum()
+
+        grad_jit = jax.jit(jax.grad(loss))(positions)
+        assert grad_jit.shape == positions.shape
+        assert jnp.isfinite(grad_jit).all()
+
+    def test_no_grad_path_unchanged(self):
+        """Calling the route helper without jax.grad returns plain arrays
+        numerically equal to running the forward closure directly."""
+        from nvalchemiops.jax.neighbors._autograd import _route_pair_outputs
+
+        positions, cell = self._make_system()
+        d_direct = self._pure_jax_pair_forward(
+            positions,
+            cell,
+            cutoff=1.5,
+            M=4,
+        ).distances
+        d_routed, *_ = _route_pair_outputs(
+            positions,
+            cell,
+            self._pure_jax_pair_forward,
+            {"cutoff": 1.5, "M": 4},
+        )
+        assert jnp.allclose(d_direct, d_routed)
+
+
+class TestJaxCellListAutograd:
+    """End-to-end autograd through the real JAX ``cell_list`` wrapper.
+
+    These tests exercise the full pair-output path: the wrapper runs the
+    warp ``build_cell_list`` and pair-output query kernels (with
+    ``stop_gradient`` on the inputs going into the kernels) and routes
+    through ``_attach_neighbor_pair_grads`` for the analytical backward.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _enable_x64(self):
+        jax.config.update("jax_enable_x64", True)
+
+    def _make_system(self):
+        key = jax.random.key(0)
+        positions = jax.random.normal(key, (6, 3), dtype=jnp.float64) * 0.3
+        cell = (jnp.eye(3, dtype=jnp.float64) * 4.0)[None]
+        pbc = jnp.array([[True, True, True]])
+        return positions, cell, pbc
+
+    def test_forward_returns_distances_and_vectors(self):
+        positions, cell, pbc = self._make_system()
+        out = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out) == 5
+        nm, nn, shifts, d, v = out
+        assert d.shape == (6, nm.shape[1])
+        assert v.shape == (6, nm.shape[1], 3)
+        assert jnp.isfinite(d).all() and jnp.isfinite(v).all()
+
+    def test_return_tuple_shape_extends_with_flags(self):
+        """0.3.1-compat: tuple stays at 3 elements when flags off."""
+        positions, cell, pbc = self._make_system()
+        out_default = cell_list(positions, 1.5, cell, pbc)
+        assert len(out_default) == 3
+
+        out_d = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+        )
+        assert len(out_d) == 4
+
+        out_v = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_vectors=True,
+        )
+        assert len(out_v) == 4
+
+        out_dv = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out_dv) == 5
+
+    def test_grad_positions_finite(self):
+        positions, cell, pbc = self._make_system()
+
+        def loss(p):
+            *_, d, _ = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        grad_pos = jax.grad(loss)(positions)
+        assert grad_pos.shape == positions.shape
+        assert jnp.isfinite(grad_pos).all()
+
+    def test_grad_cell_finite(self):
+        positions, cell, pbc = self._make_system()
+
+        def loss(c):
+            *_, d, _ = cell_list(
+                positions,
+                1.5,
+                c,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        grad_cell = jax.grad(loss)(cell)
+        assert grad_cell.shape == cell.shape
+        assert jnp.isfinite(grad_cell).all()
+
+    def test_check_grads_against_finite_differences(self):
+        """jax.test_util.check_grads compares analytical vs FD gradient."""
+        from jax.test_util import check_grads
+
+        positions, cell, pbc = self._make_system()
+
+        def loss(p):
+            *_, d, _ = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        check_grads(loss, (positions,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"])
+
+    def test_hessian_vector_product_smoke(self):
+        """Second-order autograd: HVP runs and stays finite.
+
+        See TestJaxNaiveAutograd.test_hessian_vector_product_smoke for
+        why we prefer HVP over ``check_grads(order=2)``.
+        """
+        positions, cell, pbc = self._make_system()
+        v = jax.random.normal(jax.random.key(1), positions.shape, dtype=positions.dtype)
+
+        def loss(p):
+            *_, d, _ = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        hvp = jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(positions)
+        assert jnp.isfinite(hvp).all().item()
+        assert hvp.shape == positions.shape
+
+    def test_pair_fn_rejected_with_clear_message(self):
+        """pair_fn / target_indices remain rejected (out of scope this pass)."""
+        positions, cell, pbc = self._make_system()
+        with pytest.raises(NotImplementedError, match="pair_fn"):
+            cell_list(
+                positions,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                pair_fn=object(),  # any non-None
+            )
+
+    def test_graph_mode_warp_rejected_with_pair_outputs(self):
+        """graph_mode='warp' with pair outputs raises (CUDA-graph follow-up)."""
+        positions, cell, pbc = self._make_system()
+        with pytest.raises(NotImplementedError, match="graph_mode='none'"):
+            cell_list(
+                positions,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                graph_mode="warp",
+            )

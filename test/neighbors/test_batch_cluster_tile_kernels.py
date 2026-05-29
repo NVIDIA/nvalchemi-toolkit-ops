@@ -13,30 +13,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for individual batched tile_warp kernel launchers.
+"""Tests for individual batched cluster_tile kernel launchers.
 
 The torch-binding suite at
-``test/neighbors/bindings/torch/test_batch_tile_warp.py`` exercises the
-end-to-end pipeline; this file targets the public Warp launchers
-(``build_batch_tile_neighbor_list``, ``batch_tile_to_matrix``,
-``batch_tile_to_coo``) directly with ``wp.array`` inputs.
+``test/neighbors/bindings/torch/test_batch_cluster_tile.py`` exercises
+the end-to-end pipeline; this file targets the public Warp launchers
+(``batch_build_cluster_tile_list``, ``batch_query_cluster_tile``,
+``batch_query_cluster_tile_coo``) directly with ``wp.array`` inputs.
 """
 
 import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.tile_batch_warp import (
+from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
-    batch_tile_to_matrix,
-    build_batch_tile_neighbor_list,
+    batch_build_cluster_tile_list,
+    batch_query_cluster_tile,
 )
 
 
 @pytest.fixture
 def device():
     if not torch.cuda.is_available():
-        pytest.skip("tile_warp kernels require CUDA")
+        pytest.skip("cluster_tile kernels require CUDA")
     return "cuda:0"
 
 
@@ -152,7 +152,7 @@ class TestBuildBatchTileNeighborListLauncher:
         tile_col_group = torch.zeros(max_tiles, dtype=torch.int32, device=device)
         tile_system = torch.zeros(max_tiles, dtype=torch.int32, device=device)
 
-        build_batch_tile_neighbor_list(
+        batch_build_cluster_tile_list(
             sorted_pos_x=wp.from_torch(
                 sorted_pos_x, dtype=wp.float32, return_ctype=True
             ),
@@ -169,12 +169,24 @@ class TestBuildBatchTileNeighborListLauncher:
                 inv_cell_batch, dtype=wp.mat33f, return_ctype=True
             ),
             cutoff=cutoff,
-            group_ctr_x=wp.from_torch(group_ctr_x, dtype=wp.float32, return_ctype=True),
-            group_ctr_y=wp.from_torch(group_ctr_y, dtype=wp.float32, return_ctype=True),
-            group_ctr_z=wp.from_torch(group_ctr_z, dtype=wp.float32, return_ctype=True),
-            group_ext_x=wp.from_torch(group_ext_x, dtype=wp.float32, return_ctype=True),
-            group_ext_y=wp.from_torch(group_ext_y, dtype=wp.float32, return_ctype=True),
-            group_ext_z=wp.from_torch(group_ext_z, dtype=wp.float32, return_ctype=True),
+            group_ctr_x_buffer=wp.from_torch(
+                group_ctr_x, dtype=wp.float32, return_ctype=True
+            ),
+            group_ctr_y_buffer=wp.from_torch(
+                group_ctr_y, dtype=wp.float32, return_ctype=True
+            ),
+            group_ctr_z_buffer=wp.from_torch(
+                group_ctr_z, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_x_buffer=wp.from_torch(
+                group_ext_x, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_y_buffer=wp.from_torch(
+                group_ext_y, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_z_buffer=wp.from_torch(
+                group_ext_z, dtype=wp.float32, return_ctype=True
+            ),
             num_tiles=wp.from_torch(num_tiles, dtype=wp.int32, return_ctype=True),
             tile_row_group=wp.from_torch(
                 tile_row_group, dtype=wp.int32, return_ctype=True
@@ -195,11 +207,11 @@ class TestBuildBatchTileNeighborListLauncher:
         assert int(sys_indices.max().item()) < 2
 
     def test_dtype_other_than_float32_raises(self, device):
-        """``build_batch_tile_neighbor_list`` only supports ``wp.float32``."""
-        with pytest.raises(NotImplementedError):
+        """``batch_build_cluster_tile_list`` only supports ``wp.float32``."""
+        with pytest.raises(ValueError, match="float32-only"):
             # Minimal call with the f64 dtype switch; arrays are not read
             # because the dtype check fires first.
-            build_batch_tile_neighbor_list(
+            batch_build_cluster_tile_list(
                 sorted_pos_x=wp.zeros(0, dtype=wp.float32, device=device),
                 sorted_pos_y=wp.zeros(0, dtype=wp.float32, device=device),
                 sorted_pos_z=wp.zeros(0, dtype=wp.float32, device=device),
@@ -208,12 +220,12 @@ class TestBuildBatchTileNeighborListLauncher:
                 cell_batch=wp.zeros(0, dtype=wp.mat33f, device=device),
                 inv_cell_batch=wp.zeros(0, dtype=wp.mat33f, device=device),
                 cutoff=1.0,
-                group_ctr_x=wp.zeros(0, dtype=wp.float32, device=device),
-                group_ctr_y=wp.zeros(0, dtype=wp.float32, device=device),
-                group_ctr_z=wp.zeros(0, dtype=wp.float32, device=device),
-                group_ext_x=wp.zeros(0, dtype=wp.float32, device=device),
-                group_ext_y=wp.zeros(0, dtype=wp.float32, device=device),
-                group_ext_z=wp.zeros(0, dtype=wp.float32, device=device),
+                group_ctr_x_buffer=wp.zeros(0, dtype=wp.float32, device=device),
+                group_ctr_y_buffer=wp.zeros(0, dtype=wp.float32, device=device),
+                group_ctr_z_buffer=wp.zeros(0, dtype=wp.float32, device=device),
+                group_ext_x_buffer=wp.zeros(0, dtype=wp.float32, device=device),
+                group_ext_y_buffer=wp.zeros(0, dtype=wp.float32, device=device),
+                group_ext_z_buffer=wp.zeros(0, dtype=wp.float32, device=device),
                 num_tiles=wp.zeros(1, dtype=wp.int32, device=device),
                 tile_row_group=wp.zeros(0, dtype=wp.int32, device=device),
                 tile_col_group=wp.zeros(0, dtype=wp.int32, device=device),
@@ -264,7 +276,7 @@ class TestBatchTileToMatrixLauncher:
         ) = _morton_sort_per_system(positions, batch_ptr, inv_cell_batch, device)
 
         # Track the sort permutation so we can pass sorted_atom_index to
-        # batch_tile_to_matrix.  Recompute here (cheap for small N).
+        # batch_query_cluster_tile.  Recompute here (cheap for small N).
         n_padded = int(sorted_pos_x.shape[0])
         sorted_atom_index = torch.full((n_padded,), N, dtype=torch.int32, device=device)
         write = 0
@@ -312,7 +324,7 @@ class TestBatchTileToMatrixLauncher:
         tile_col_group = torch.zeros(max_tiles, dtype=torch.int32, device=device)
         tile_system = torch.zeros(max_tiles, dtype=torch.int32, device=device)
 
-        build_batch_tile_neighbor_list(
+        batch_build_cluster_tile_list(
             sorted_pos_x=wp.from_torch(
                 sorted_pos_x, dtype=wp.float32, return_ctype=True
             ),
@@ -329,12 +341,24 @@ class TestBatchTileToMatrixLauncher:
                 inv_cell_batch, dtype=wp.mat33f, return_ctype=True
             ),
             cutoff=cutoff,
-            group_ctr_x=wp.from_torch(group_ctr_x, dtype=wp.float32, return_ctype=True),
-            group_ctr_y=wp.from_torch(group_ctr_y, dtype=wp.float32, return_ctype=True),
-            group_ctr_z=wp.from_torch(group_ctr_z, dtype=wp.float32, return_ctype=True),
-            group_ext_x=wp.from_torch(group_ext_x, dtype=wp.float32, return_ctype=True),
-            group_ext_y=wp.from_torch(group_ext_y, dtype=wp.float32, return_ctype=True),
-            group_ext_z=wp.from_torch(group_ext_z, dtype=wp.float32, return_ctype=True),
+            group_ctr_x_buffer=wp.from_torch(
+                group_ctr_x, dtype=wp.float32, return_ctype=True
+            ),
+            group_ctr_y_buffer=wp.from_torch(
+                group_ctr_y, dtype=wp.float32, return_ctype=True
+            ),
+            group_ctr_z_buffer=wp.from_torch(
+                group_ctr_z, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_x_buffer=wp.from_torch(
+                group_ext_x, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_y_buffer=wp.from_torch(
+                group_ext_y, dtype=wp.float32, return_ctype=True
+            ),
+            group_ext_z_buffer=wp.from_torch(
+                group_ext_z, dtype=wp.float32, return_ctype=True
+            ),
             num_tiles=wp.from_torch(num_tiles, dtype=wp.int32, return_ctype=True),
             tile_row_group=wp.from_torch(
                 tile_row_group, dtype=wp.int32, return_ctype=True
@@ -359,7 +383,7 @@ class TestBatchTileToMatrixLauncher:
         )
         num_neighbors = torch.zeros(N, dtype=torch.int32, device=device)
 
-        batch_tile_to_matrix(
+        batch_query_cluster_tile(
             sorted_atom_index=wp.from_torch(
                 sorted_atom_index, dtype=wp.int32, return_ctype=True
             ),
@@ -386,7 +410,6 @@ class TestBatchTileToMatrixLauncher:
             tile_system=wp.from_torch(tile_system, dtype=wp.int32, return_ctype=True),
             cutoff=cutoff,
             natom=N,
-            n_tiles=n_tiles,
             neighbor_matrix=wp.from_torch(
                 neighbor_matrix, dtype=wp.int32, return_ctype=True
             ),

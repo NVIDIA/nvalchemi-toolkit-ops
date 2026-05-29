@@ -607,3 +607,171 @@ class TestBatchCellListSelectiveRebuildFlags:
         assert jnp.all(nn2 == nn_ref), (
             "num_neighbors should match full rebuild when all flags=True"
         )
+
+
+class TestJaxBatchCellListAutograd:
+    """Differentiable per-pair distances/vectors via ``return_distances`` /
+    ``return_vectors`` flags.  Exercises the autograd primitive in
+    :mod:`nvalchemiops.jax.neighbors._autograd`.
+    """
+
+    def _make_two_systems(self, dtype=jnp.float64, n_per=6, box=5.0, scale=0.6):
+        key = jax.random.key(0)
+        pos = jax.random.normal(key, (2 * n_per, 3), dtype=dtype) * scale
+        batch_idx = jnp.concatenate(
+            [jnp.zeros(n_per, dtype=jnp.int32), jnp.ones(n_per, dtype=jnp.int32)]
+        )
+        cell = jnp.tile(jnp.eye(3, dtype=dtype)[None] * box, (2, 1, 1))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+        return pos, cell, pbc, batch_idx
+
+    def test_forward_returns_distances_and_vectors(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+        out = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out) == 5  # nm, nn, shifts, d, v
+        nm, nn, shifts, d, v = out
+        assert d.shape == (pos.shape[0], nm.shape[1])
+        assert v.shape == (pos.shape[0], nm.shape[1], 3)
+        assert d.dtype == pos.dtype
+        assert v.dtype == pos.dtype
+
+    def test_return_tuple_shape_extends_with_flags(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+        base = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+        )
+        assert len(base) == 3
+        plus_d = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_distances=True,
+        )
+        assert len(plus_d) == 4
+        plus_v = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_vectors=True,
+        )
+        assert len(plus_v) == 4
+        plus_both = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(plus_both) == 5
+
+    def test_grad_positions_finite(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+
+        def loss(p):
+            *_, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        g = jax.grad(loss)(pos)
+        assert g.shape == pos.shape
+        assert jnp.isfinite(g).all().item()
+
+    def test_grad_cell_finite(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+
+        def loss(c):
+            *_, d, _ = batch_cell_list(
+                pos,
+                1.5,
+                cell=c,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        g = jax.grad(loss)(cell)
+        assert g.shape == cell.shape
+        assert jnp.isfinite(g).all().item()
+
+    def test_check_grads_against_finite_differences(self):
+        from jax.test_util import check_grads
+
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+
+        def loss(p):
+            *_, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        check_grads(loss, (pos,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"])
+
+    def test_hessian_vector_product_smoke(self):
+        """Second-order HVP smoke — see TestJaxNaiveAutograd."""
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+        v = jax.random.normal(jax.random.key(1), pos.shape, dtype=pos.dtype)
+
+        def loss(p):
+            *_, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        hvp = jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos)
+        assert jnp.isfinite(hvp).all().item()
+        assert hvp.shape == pos.shape
+
+    def test_pair_fn_rejected_with_clear_message(self):
+        """pair_fn remains rejected — only return_distances/return_vectors
+        are wired through the JAX bindings.
+        """
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+        with pytest.raises(NotImplementedError, match="pair_fn"):
+            batch_cell_list(
+                pos,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                pair_fn=object(),  # any non-None sentinel
+            )

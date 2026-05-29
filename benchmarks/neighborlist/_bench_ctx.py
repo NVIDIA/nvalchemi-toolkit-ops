@@ -44,14 +44,40 @@ from nvalchemiops.neighbors.batch_naive import (
     batch_naive_neighbor_matrix_pbc as wp_batch_naive_pbc_tiled,
 )
 from nvalchemiops.neighbors.cell_list import (
-    _compute_pair_centric_n_outer,
-    query_cell_list_pair_centric_sorted,
-)
-from nvalchemiops.neighbors.cell_list import (
     build_cell_list as wp_build_cell_list,
 )
 from nvalchemiops.neighbors.cell_list import (
+    compute_batch_pair_centric_n_outer,
+    get_cell_list_gather_kernel,
+    query_cell_list_pair_centric_sorted,
+)
+from nvalchemiops.neighbors.cell_list import (
     query_cell_list as wp_query_cell_list,
+)
+
+# Cluster-tile warp launchers (renamed from the pre-refactor ``tile_warp`` /
+# ``tile_batch_warp`` modules).  Aliased to the historical benchmark names so
+# the timed pipelines below stay close to the original speed-of-light layout.
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    _compute_morton as wp_compute_morton,
+)
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    _permute_gather_soa as wp_permute_gather_soa,
+)
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    _tile_sort_pairs as wp_tile_sort_pairs,
+)
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    batch_build_cluster_tile_list as wp_build_batch_tile_neighbor_list,
+)
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    batch_query_cluster_tile as wp_batch_tile_to_matrix,
+)
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    build_cluster_tile_list as wp_build_tile_neighbor_list,
+)
+from nvalchemiops.neighbors.cluster_tile.launchers import (
+    query_cluster_tile as wp_tile_to_matrix,
 )
 from nvalchemiops.neighbors.naive import (
     naive_neighbor_matrix as wp_naive_tiled,
@@ -62,42 +88,27 @@ from nvalchemiops.neighbors.naive import (
 from nvalchemiops.neighbors.neighbor_utils import (
     fill_neighbor_matrix_tail as wp_fill_neighbor_matrix_tail,
 )
-from nvalchemiops.neighbors.neighbor_utils import gather_fused_overload
-from nvalchemiops.neighbors.tile_batch_warp import (
-    batch_tile_to_matrix as wp_batch_tile_to_matrix,
-)
-from nvalchemiops.neighbors.tile_batch_warp import (
-    build_batch_tile_neighbor_list as wp_build_batch_tile_neighbor_list,
-)
-from nvalchemiops.neighbors.tile_warp import (
-    _permute_gather_soa_kernel,
-)
-from nvalchemiops.neighbors.tile_warp import (
-    build_tile_neighbor_list as wp_build_tile_neighbor_list,
-)
-from nvalchemiops.neighbors.tile_warp import (
-    compute_morton as wp_compute_morton,
-)
-from nvalchemiops.neighbors.tile_warp import (
-    tile_to_matrix as wp_tile_to_matrix,
-)
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     estimate_batch_cell_list_sizes,
 )
-from nvalchemiops.torch.neighbors.batch_tile_warp import (
+from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     _batched_morton_sort_padded,
-    allocate_batch_tile_neighbor_list,
+)
+from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+    allocate_batch_cluster_tile_list as allocate_batch_tile_neighbor_list,
 )
 from nvalchemiops.torch.neighbors.cell_list import (
     estimate_cell_list_sizes,
 )
-from nvalchemiops.torch.neighbors.neighbor_utils import (
-    compute_naive_num_shifts,
-)
-from nvalchemiops.torch.neighbors.tile_warp import (
+from nvalchemiops.torch.neighbors.cluster_tile import (
     _cell_invcell_from_cell,
     _mat33f_from_torch,
-    allocate_tile_neighbor_list,
+)
+from nvalchemiops.torch.neighbors.cluster_tile import (
+    allocate_cluster_tile_list as allocate_tile_neighbor_list,
+)
+from nvalchemiops.torch.neighbors.neighbor_utils import (
+    compute_naive_num_shifts,
 )
 
 TILE_GROUP_SIZE = 32
@@ -209,11 +220,14 @@ def _setup_cluster_tile_single(positions, cutoff, cell, n, max_nb, device):
         radix_indices[:n].copy_(sorted_atom_index)
         wp.utils.radix_sort_pairs(wp_radix_keys, wp_radix_indices, int(n))
         sorted_atom_index.copy_(radix_indices[:n])
-        wp.launch(
-            kernel=_permute_gather_soa_kernel,
-            dim=n,
-            inputs=[wp_positions_vec3, wp_sorted_atom_index, n, wp_spx, wp_spy, wp_spz],
-            device=wp_device,
+        wp_permute_gather_soa(
+            wp_positions_vec3,
+            wp_sorted_atom_index,
+            n,
+            wp_spx,
+            wp_spy,
+            wp_spz,
+            wp_device,
         )
         wp_build_tile_neighbor_list(
             sorted_pos_x=wp_spx,
@@ -222,21 +236,20 @@ def _setup_cluster_tile_single(positions, cutoff, cell, n, max_nb, device):
             cell=wp_cell,
             inv_cell=wp_inv_cell,
             cutoff=float(cutoff),
-            group_ctr_x=wp_gcx,
-            group_ctr_y=wp_gcy,
-            group_ctr_z=wp_gcz,
-            group_ext_x=wp_gex,
-            group_ext_y=wp_gey,
-            group_ext_z=wp_gez,
             num_tiles=wp_num_tiles,
             tile_row_group=wp_tile_row_group,
             tile_col_group=wp_tile_col_group,
             wp_dtype=wp.float32,
             device=wp_device,
+            group_ctr_x_buffer=wp_gcx,
+            group_ctr_y_buffer=wp_gcy,
+            group_ctr_z_buffer=wp_gcz,
+            group_ext_x_buffer=wp_gex,
+            group_ext_y_buffer=wp_gey,
+            group_ext_z_buffer=wp_gez,
         )
 
     _build()
-    n_tiles_cached = int(num_tiles.item())
 
     def step():
         _build()
@@ -252,7 +265,6 @@ def _setup_cluster_tile_single(positions, cutoff, cell, n, max_nb, device):
             inv_cell=wp_inv_cell,
             cutoff=float(cutoff),
             natom=int(n),
-            n_tiles=n_tiles_cached,
             neighbor_matrix=wp_nm,
             num_neighbors=wp_nn,
             neighbor_matrix_shifts=wp_nms,
@@ -282,9 +294,10 @@ def _setup_cluster_tile_graph_single(
     """Pure-Warp cluster-tile with Warp graph capture.
 
     Uses owned ``wp.array`` storage for every input + scratch and
-    captures ``step()`` into a Warp graph.  ``num_tiles_cached`` is
-    baked into the graph at capture time — re-capture is required if
-    atom count or cutoff changes.  Every ``wp.array`` touched by the
+    captures ``step()`` into a Warp graph.  The query reads ``num_tiles[0]``
+    on-device, so the launch dimension is the allocated tile capacity and no
+    host-side tile count is baked into the graph; re-capture is still required
+    if the atom count or cutoff changes.  Every ``wp.array`` touched by the
     captured graph must be held by the returned closure (``_keepalive``);
     otherwise replay hits ``cudaErrorIllegalAddress``.
     """
@@ -331,10 +344,6 @@ def _setup_cluster_tile_graph_single(
     # INSIDE the captured graph — CUB's `wp.utils.radix_sort_pairs` survives
     # capture + sync-between-replays at every size we tested (previously
     # diagnosed as a CUB issue was actually a missing-keepalive bug).
-    from nvalchemiops.neighbors.tile_warp import tile_sort_pairs_warp
-
-    _use_tile_sort = int(n) in (1024, 2048)
-
     def _do_morton_and_sort():
         wp_compute_morton(
             positions_wp,
@@ -346,20 +355,25 @@ def _setup_cluster_tile_graph_single(
             num_tiles,
             wp_device,
         )
-        if _use_tile_sort:
-            tile_sort_pairs_warp(morton_codes, sorted_atom_index, n, wp_device)
-        else:
+        # ``_tile_sort_pairs`` launches a tile-sort specialization for the
+        # supported fixed sizes (1024 / 2048) and returns False otherwise, so
+        # we fall back to CUB radix sort. Either path lives inside the captured
+        # graph.
+        if not wp_tile_sort_pairs(morton_codes, sorted_atom_index, n, wp_device):
             wp.utils.radix_sort_pairs(morton_codes, sorted_atom_index, n)
 
-    def _run_pipeline(n_tiles):
-        """Whole pipeline (morton+sort → gather → build → to_matrix_v4 →
-        fill_tail) captured into one graph; step() is a single replay."""
+    def _run_pipeline():
+        """Whole pipeline (morton+sort → gather → build → to_matrix →
+        fill_tail) captured into one graph; step() is a single replay.
+
+        The query launches over the allocated tile-buffer capacity and the
+        kernel reads ``num_tiles[0]`` on-device, so no host-side tile count is
+        needed (unlike the pre-refactor ``tile_to_matrix`` which took
+        ``n_tiles``).
+        """
         _do_morton_and_sort()
-        wp.launch(
-            kernel=_permute_gather_soa_kernel,
-            dim=n,
-            inputs=[positions_wp, sorted_atom_index, n, spx, spy, spz],
-            device=wp_device,
+        wp_permute_gather_soa(
+            positions_wp, sorted_atom_index, n, spx, spy, spz, wp_device
         )
         wp_build_tile_neighbor_list(
             sorted_pos_x=spx,
@@ -368,17 +382,17 @@ def _setup_cluster_tile_graph_single(
             cell=wp_cell,
             inv_cell=wp_inv_cell,
             cutoff=cutoff_f,
-            group_ctr_x=gcx,
-            group_ctr_y=gcy,
-            group_ctr_z=gcz,
-            group_ext_x=gex,
-            group_ext_y=gey,
-            group_ext_z=gez,
             num_tiles=num_tiles,
             tile_row_group=tile_row_group,
             tile_col_group=tile_col_group,
             wp_dtype=wp.float32,
             device=wp_device,
+            group_ctr_x_buffer=gcx,
+            group_ctr_y_buffer=gcy,
+            group_ctr_z_buffer=gcz,
+            group_ext_x_buffer=gex,
+            group_ext_y_buffer=gey,
+            group_ext_z_buffer=gez,
         )
         wp_tile_to_matrix(
             sorted_atom_index=sorted_atom_index,
@@ -392,7 +406,6 @@ def _setup_cluster_tile_graph_single(
             inv_cell=wp_inv_cell,
             cutoff=cutoff_f,
             natom=n,
-            n_tiles=n_tiles,
             neighbor_matrix=nm,
             num_neighbors=nn_arr,
             neighbor_matrix_shifts=nms,
@@ -401,48 +414,18 @@ def _setup_cluster_tile_graph_single(
         )
         wp_fill_neighbor_matrix_tail(nn_arr, n, max_nb, n, nm, wp_device)
 
-    # Prime: run the build phase once to read num_tiles[0] (one CPU sync).
-    _do_morton_and_sort()
-    wp.launch(
-        kernel=_permute_gather_soa_kernel,
-        dim=n,
-        inputs=[positions_wp, sorted_atom_index, n, spx, spy, spz],
-        device=wp_device,
-    )
-    wp_build_tile_neighbor_list(
-        sorted_pos_x=spx,
-        sorted_pos_y=spy,
-        sorted_pos_z=spz,
-        cell=wp_cell,
-        inv_cell=wp_inv_cell,
-        cutoff=cutoff_f,
-        group_ctr_x=gcx,
-        group_ctr_y=gcy,
-        group_ctr_z=gcz,
-        group_ext_x=gex,
-        group_ext_y=gey,
-        group_ext_z=gez,
-        num_tiles=num_tiles,
-        tile_row_group=tile_row_group,
-        tile_col_group=tile_col_group,
-        wp_dtype=wp.float32,
-        device=wp_device,
-    )
-    wp.synchronize()
-    num_tiles_cached = int(num_tiles.numpy()[0])
-
     # Warm up the full pipeline (incl. sort) so any one-shot JIT compile
     # happens before capture.
     for _ in range(5):
-        _run_pipeline(num_tiles_cached)
+        _run_pipeline()
     wp.synchronize()
 
     # Capture the whole pipeline (morton+sort → gather → build →
-    # to_matrix_v4 → fill_tail) into a single Warp graph.  step() is one
+    # to_matrix → fill_tail) into a single Warp graph.  step() is one
     # ``wp.capture_launch`` per call.
     stream = wp.get_stream(wp_device_obj)
     wp.capture_begin(wp_device_obj, stream)
-    _run_pipeline(num_tiles_cached)
+    _run_pipeline()
     graph = wp.capture_end(wp_device_obj, stream)
 
     # Keep references to every wp.array that the captured graph points into.
@@ -520,7 +503,7 @@ def _setup_cell_list_pair_centric_single(
         Rx, Ry, Rz = int(nsr[0].item()), int(nsr[1].item()), int(nsr[2].item())
     else:
         Rx, Ry, Rz = int(nsr[0]), int(nsr[1]), int(nsr[2])
-    n_outer = _compute_pair_centric_n_outer((Rx, Ry, Rz), True)
+    n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), True)
 
     # Cell-list scratch tensors (build outputs).
     cpd = torch.empty(3, dtype=torch.int32, device=device)
@@ -608,7 +591,7 @@ def _setup_cell_list_pair_centric_single(
                 # writes casi[1:].
                 torch.cumsum(apcc[:-1], dim=0, out=casi[1:])
         wp.launch(
-            gather_fused_overload[wp.float32],
+            get_cell_list_gather_kernel(wp.float32),
             dim=n,
             inputs=[
                 wp_positions,
@@ -1044,22 +1027,21 @@ def _setup_cluster_tile_batch(
             cell_batch=wp_cell_batch,
             inv_cell_batch=wp_inv_cell_batch,
             cutoff=float(cutoff),
-            group_ctr_x=wp_gcx,
-            group_ctr_y=wp_gcy,
-            group_ctr_z=wp_gcz,
-            group_ext_x=wp_gex,
-            group_ext_y=wp_gey,
-            group_ext_z=wp_gez,
             num_tiles=wp_num_tiles,
             tile_row_group=wp_tile_row_group,
             tile_col_group=wp_tile_col_group,
             tile_system=wp_tile_system,
             wp_dtype=wp.float32,
             device=wp_device,
+            group_ctr_x_buffer=wp_gcx,
+            group_ctr_y_buffer=wp_gcy,
+            group_ctr_z_buffer=wp_gcz,
+            group_ext_x_buffer=wp_gex,
+            group_ext_y_buffer=wp_gey,
+            group_ext_z_buffer=wp_gez,
         )
 
     _build()
-    n_tiles_cached = int(num_tiles.item())
 
     def step():
         _build()
@@ -1076,7 +1058,6 @@ def _setup_cluster_tile_batch(
             tile_system=wp_tile_system,
             cutoff=float(cutoff),
             natom=int(n),
-            n_tiles=n_tiles_cached,
             neighbor_matrix=wp_nm,
             num_neighbors=wp_nn,
             neighbor_matrix_shifts=wp_nms,

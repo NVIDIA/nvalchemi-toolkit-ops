@@ -21,12 +21,11 @@ import torch
 import warp as wp
 
 from nvalchemiops.neighbors.cell_list import (
-    _cell_list_bin_atoms_overload,
-    _cell_list_construct_bin_size_overload,
-    _cell_list_count_atoms_per_bin_overload,
     build_cell_list,
+    get_build_cell_list_kernel,
     query_cell_list,
 )
+from nvalchemiops.neighbors.neighbor_utils import empty_sentinel as _empty_sentinel
 from nvalchemiops.torch.neighbors.cell_list import (
     estimate_cell_list_sizes,
 )
@@ -68,13 +67,15 @@ class TestCellListKernels:
 
         # Launch kernel
         wp.launch(
-            _cell_list_construct_bin_size_overload[wp_dtype],
+            get_build_cell_list_kernel("construct_bin_size", wp_dtype),
             dim=1,
             device=wp_device,
             inputs=(
                 wp_cell,
                 wp_pbc,
+                _empty_sentinel(2, wp.bool, wp_device),
                 wp_cell_counts,
+                _empty_sentinel(1, wp.vec3i, wp_device),
                 wp_dtype(cutoff),
                 max_nbins,
             ),
@@ -123,14 +124,18 @@ class TestCellListKernels:
 
         # Launch kernel
         wp.launch(
-            _cell_list_count_atoms_per_bin_overload[wp_dtype],
+            get_build_cell_list_kernel("count_atoms", wp_dtype),
             dim=positions.shape[0],
             device=wp_device,
             inputs=(
                 wp_positions,
                 wp_cell,
                 wp_pbc,
+                _empty_sentinel(2, wp.bool, wp_device),
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cell_counts,
+                _empty_sentinel(1, wp.vec3i, wp_device),
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cell_atom_counts,
                 wp_cell_shifts,
             ),
@@ -199,14 +204,18 @@ class TestCellListKernels:
         wp_cell_shifts = wp.from_torch(cell_shifts, dtype=wp.vec3i, return_ctype=True)
 
         wp.launch(
-            _cell_list_count_atoms_per_bin_overload[wp_dtype],
+            get_build_cell_list_kernel("count_atoms", wp_dtype),
             dim=positions.shape[0],
             device=wp_device,
             inputs=(
                 wp_positions,
                 wp_cell,
                 wp_pbc,
+                _empty_sentinel(2, wp.bool, wp_device),
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cell_counts,
+                _empty_sentinel(1, wp.vec3i, wp_device),
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cell_atom_counts,
                 wp_cell_shifts,
             ),
@@ -241,14 +250,18 @@ class TestCellListKernels:
 
         # Launch bin_atoms kernel
         wp.launch(
-            _cell_list_bin_atoms_overload[wp_dtype],
+            get_build_cell_list_kernel("bin_atoms", wp_dtype),
             dim=positions.shape[0],
             device=wp_device,
             inputs=(
                 wp_positions,
                 wp_cell,
                 wp_pbc,
+                _empty_sentinel(2, wp.bool, wp_device),
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_cell_counts,
+                _empty_sentinel(1, wp.vec3i, wp_device),
+                _empty_sentinel(1, wp.int32, wp_device),
                 wp_atom_cell_indices,
                 wp_cell_atom_counts,
                 wp_cell_offsets,
@@ -762,7 +775,7 @@ class TestCellListPairCentric:
 
     The pair-centric kernel is dispatched automatically by the torch wrapper
     based on a sync-free heuristic; these tests force it via the
-    ``algorithm=`` parameter and compare its output against the atom-centric
+    ``strategy=`` parameter and compare its output against the atom-centric
     reference.
     """
 
@@ -771,7 +784,7 @@ class TestCellListPairCentric:
         from nvalchemiops.torch.neighbors.cell_list import cell_list
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA blockIdx/threadIdx")
+            pytest.skip("pair-centric kernel uses CUDA block scheduling")
 
         # 4×4×4 simple cubic, lattice spacing 0.5 → box=2.0, cutoff=0.6
         # captures only nearest-neighbor pairs (1 lattice spacing).
@@ -787,7 +800,7 @@ class TestCellListPairCentric:
             cell,
             pbc,
             half_fill=True,
-            algorithm="atom_centric",
+            strategy="atom_centric",
         )
         nm_p, nn_p, _ = cell_list(
             positions,
@@ -795,7 +808,7 @@ class TestCellListPairCentric:
             cell,
             pbc,
             half_fill=True,
-            algorithm="pair_centric",
+            strategy="pair_centric",
         )
 
         assert torch.equal(nn_a, nn_p), (
@@ -806,31 +819,31 @@ class TestCellListPairCentric:
         ), "Pair sets must match between kernels (row order may differ)"
 
     def test_dispatch_threshold_env(self, device, dtype, monkeypatch):
-        """``_dispatch_algorithm`` and ``NVALCHEMI_NEIGHLIST_ALGO`` env override."""
+        """``select_cell_list_strategy`` and env override."""
         del device, dtype  # not used; fixture present for parametrization
-        from nvalchemiops.torch.neighbors.cell_list import _dispatch_algorithm
+        from nvalchemiops.torch.neighbors.cell_list import select_cell_list_strategy
 
         # Default rule: clause 1 (cutoff >= 8 AND N <= 65536) → pair_centric.
-        assert _dispatch_algorithm(4096, 12.0) == "pair_centric"
+        assert select_cell_list_strategy(4096, 12.0) == "pair_centric"
         # Outside every clause → atom_centric.
-        assert _dispatch_algorithm(131072, 12.0) == "atom_centric"
+        assert select_cell_list_strategy(131072, 12.0) == "atom_centric"
         # Clause 2 (cutoff >= 6 AND N <= 8192) → pair_centric.
-        assert _dispatch_algorithm(2048, 6.0) == "pair_centric"
+        assert select_cell_list_strategy(2048, 6.0) == "pair_centric"
         # Clause 3 (cutoff >= 4 AND N <= 1024) → pair_centric.
-        assert _dispatch_algorithm(1024, 4.0) == "pair_centric"
+        assert select_cell_list_strategy(1024, 4.0) == "pair_centric"
 
-        # Env override pins to a specific algorithm regardless of rule.
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_ALGO", "atom_centric")
-        assert _dispatch_algorithm(1024, 12.0) == "atom_centric"
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_ALGO", "pair_centric")
-        assert _dispatch_algorithm(131072, 4.0) == "pair_centric"
+        # Env override pins to a specific strategy regardless of rule.
+        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "atom_centric")
+        assert select_cell_list_strategy(1024, 12.0) == "atom_centric"
+        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "pair_centric")
+        assert select_cell_list_strategy(131072, 4.0) == "pair_centric"
 
     def test_pair_centric_with_rebuild_flag_false(self, device, dtype):
         """rebuild_flags=False with pair-centric must preserve outputs."""
         from nvalchemiops.torch.neighbors.cell_list import cell_list
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA blockIdx/threadIdx")
+            pytest.skip("pair-centric kernel uses CUDA block scheduling")
 
         positions, cell, pbc = create_simple_cubic_system(
             num_atoms=64, cell_size=2.0, dtype=dtype, device=device
@@ -844,7 +857,7 @@ class TestCellListPairCentric:
             cell,
             pbc,
             half_fill=True,
-            algorithm="pair_centric",
+            strategy="pair_centric",
         )
         saved_nm = nm.clone()
         saved_nn = nn.clone()
@@ -857,7 +870,7 @@ class TestCellListPairCentric:
             cell,
             pbc,
             half_fill=True,
-            algorithm="pair_centric",
+            strategy="pair_centric",
             neighbor_matrix=nm,
             neighbor_matrix_shifts=nms,
             num_neighbors=nn,
@@ -878,10 +891,10 @@ class TestCellListPairCentric:
 def _make_query_cell_list_kwargs(device, dtype, *, half_fill=True):
     """Build a fully-allocated kwargs dict for ``query_cell_list``.
 
-    Used by the error-path tests below: the algorithm-validation block
+    Used by the error-path tests below: the strategy-validation block
     runs before any kernel launch, so the inner contents need not be
     correct — only the shapes/dtypes need to satisfy the warp-array
-    binding so the launcher reaches the algorithm check.
+    binding so the launcher reaches the strategy check.
     """
     positions, cell, pbc = create_simple_cubic_system(
         num_atoms=8, cell_size=2.0, dtype=dtype, device=device
@@ -972,39 +985,39 @@ class TestQueryCellListErrorPaths:
             pytest.skip("CPU-only error path")
         kwargs = _make_query_cell_list_kwargs(device, dtype)
         with pytest.raises(ValueError, match="not supported on CPU"):
-            query_cell_list(**kwargs, algorithm="pair_centric")
+            query_cell_list(**kwargs, strategy="pair_centric")
 
     def test_pair_centric_missing_n_outer_raises(self, device, dtype):
         if str(device) == "cpu":
-            pytest.skip("requires CUDA (pair_centric uses raw blockIdx)")
+            pytest.skip("requires CUDA (pair_centric uses CUDA block scheduling)")
         kwargs = _make_query_cell_list_kwargs(device, dtype)
         with pytest.raises(ValueError, match="n_outer"):
-            query_cell_list(**kwargs, algorithm="pair_centric", n_outer=None)
+            query_cell_list(**kwargs, strategy="pair_centric", n_outer=None)
 
-    def test_unknown_algorithm_raises(self, device, dtype):
+    def test_unknown_strategy_raises(self, device, dtype):
         kwargs = _make_query_cell_list_kwargs(device, dtype)
         with pytest.raises(ValueError, match="atom_centric"):
-            query_cell_list(**kwargs, algorithm="bogus")
+            query_cell_list(**kwargs, strategy="bogus")
 
     def test_dispatch_log_env_prints(self, device, dtype, monkeypatch, capsys):
         kwargs = _make_query_cell_list_kwargs(device, dtype)
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_DISPATCH_LOG", "1")
-        query_cell_list(**kwargs, algorithm="atom_centric")
+        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY_LOG", "1")
+        query_cell_list(**kwargs, strategy="atom_centric")
         out = capsys.readouterr().out
-        assert "[neighlist-dispatch] (wp.launcher)" in out
+        assert "[neighlist-strategy] (wp.launcher)" in out
         assert "atom_centric_local_count_sorted" in out
 
     def test_pair_centric_success_path(self, device, dtype):
-        """Valid ``algorithm='pair_centric'`` + ``n_outer`` exercises the
+        """Valid ``strategy='pair_centric'`` + ``n_outer`` exercises the
         ``chosen = 'pair_centric'`` assignment and the corresponding
         ``query_cell_list_pair_centric_sorted`` launch inside the warp
         launcher (lines 1542 + 1576 of cell_list.py)."""
         from nvalchemiops.neighbors.cell_list import (
-            _compute_pair_centric_n_outer,
+            compute_batch_pair_centric_n_outer,
         )
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA blockIdx/threadIdx")
+            pytest.skip("pair-centric kernel uses CUDA block scheduling")
         # Recompute the per-axis neighbor_search_radius the helper used so we
         # can derive n_outer.  Cheaper than reading back from the wp.array.
         _, cell, pbc = create_simple_cubic_system(
@@ -1013,37 +1026,172 @@ class TestQueryCellListErrorPaths:
         pbc = pbc.squeeze(0)
         _, nsr_t = estimate_cell_list_sizes(cell, pbc, 1.1)
         nsr = tuple(int(x) for x in nsr_t.cpu().tolist())
-        n_outer = _compute_pair_centric_n_outer(nsr, half_fill=True)
+        n_outer = compute_batch_pair_centric_n_outer(nsr, half_fill=True)
         kwargs = _make_query_cell_list_kwargs(device, dtype, half_fill=True)
-        query_cell_list(**kwargs, algorithm="pair_centric", n_outer=n_outer)
+        query_cell_list(**kwargs, strategy="pair_centric", n_outer=n_outer)
         # Kernel wrote into num_neighbors via wp.from_torch — sanity check.
         assert kwargs["num_neighbors"] is not None
 
 
-class TestMakeOuterNeighOffsets:
-    """Unit tests for the public ``make_outer_neigh_offsets`` helper."""
+# ---------------------------------------------------------------------------
+# Isolated pair-output kwargs on the cell-list query launcher.  Mirrors the
+# naive coverage; verifies that ``return_vectors`` / ``return_distances`` /
+# ``target_indices`` work end-to-end through the cell-list dispatch.
+# ---------------------------------------------------------------------------
 
-    def test_radius_1_returns_13_offsets(self):
-        from nvalchemiops.neighbors.cell_list import make_outer_neigh_offsets
 
-        offs = make_outer_neigh_offsets(1)
-        assert len(offs) == 13
-        assert (0, 0, 0) not in offs
-        # half-shell invariant: each offset satisfies the lex-order rule.
-        for dx, dy, dz in offs:
-            assert dx > 0 or (dx == 0 and dy > 0) or (dx == 0 and dy == 0 and dz > 0)
-        # Complement set has the same size (one cell from each unordered pair).
-        complements = {(-dx, -dy, -dz) for (dx, dy, dz) in offs}
-        assert complements.isdisjoint(set(offs))
+def _make_cell_list_pair_output_setup(device, dtype):
+    """Return ``(query_kwargs, output_tensors)`` where ``output_tensors``
+    keeps torch handles for verification (the helper uses ``return_ctype=True``
+    which precludes ``wp.to_torch``).
+    """
+    positions, cell, pbc = create_simple_cubic_system(
+        num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+    )
+    pbc = pbc.squeeze(0)
+    cutoff = 1.1
+    max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, cutoff)
+    cl_cache = allocate_cell_list(
+        positions.shape[0], max_cells, neighbor_search_radius, device
+    )
+    wp_dtype = get_wp_dtype(dtype)
+    wp_vec = get_wp_vec_dtype(dtype)
+    wp_mat = get_wp_mat_dtype(dtype)
+    wp_positions = wp.from_torch(positions, dtype=wp_vec)
+    wp_cell = wp.from_torch(cell, dtype=wp_mat)
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool)
+    wp_cpd = wp.from_torch(cl_cache[0], dtype=wp.int32)
+    wp_nsr = wp.from_torch(cl_cache[1], dtype=wp.int32)
+    wp_aps = wp.from_torch(cl_cache[2], dtype=wp.vec3i)
+    wp_atc = wp.from_torch(cl_cache[3], dtype=wp.vec3i)
+    wp_apcc = wp.from_torch(cl_cache[4], dtype=wp.int32)
+    wp_casi = wp.from_torch(cl_cache[5], dtype=wp.int32)
+    wp_cal = wp.from_torch(cl_cache[6], dtype=wp.int32)
+    build_cell_list(
+        wp_positions,
+        wp_cell,
+        wp_pbc,
+        cutoff,
+        wp_cpd,
+        wp_aps,
+        wp_atc,
+        wp_apcc,
+        wp_casi,
+        wp_cal,
+        wp_dtype,
+        str(device),
+    )
+    N = positions.shape[0]
+    max_neighbors = 16
+    nm_t = torch.full((N, max_neighbors), -1, dtype=torch.int32, device=device)
+    nms_t = torch.zeros((N, max_neighbors, 3), dtype=torch.int32, device=device)
+    nn_t = torch.zeros((N,), dtype=torch.int32, device=device)
+    return dict(
+        positions=wp_positions,
+        cell=wp_cell,
+        pbc=wp_pbc,
+        cutoff=cutoff,
+        cells_per_dimension=wp_cpd,
+        neighbor_search_radius=wp_nsr,
+        atom_periodic_shifts=wp_aps,
+        atom_to_cell_mapping=wp_atc,
+        atoms_per_cell_count=wp_apcc,
+        cell_atom_start_indices=wp_casi,
+        cell_atom_list=wp_cal,
+        neighbor_matrix=wp.from_torch(nm_t, dtype=wp.int32),
+        neighbor_matrix_shifts=wp.from_torch(nms_t, dtype=wp.vec3i),
+        num_neighbors=wp.from_torch(nn_t, dtype=wp.int32),
+        wp_dtype=wp_dtype,
+        device=str(device),
+    ), dict(
+        positions=positions,
+        N=N,
+        max_neighbors=max_neighbors,
+        nm=nm_t,
+        nms=nms_t,
+        nn=nn_t,
+        cutoff=cutoff,
+    )
 
-    def test_radius_2_returns_62_offsets(self):
-        from nvalchemiops.neighbors.cell_list import make_outer_neigh_offsets
 
-        offs = make_outer_neigh_offsets(2)
-        # (2R+1)^3 - 1 = 124 total non-self cells; half-shell picks 62.
-        assert len(offs) == 62
-        assert (0, 0, 0) not in offs
-        assert all(
-            dx > 0 or (dx == 0 and dy > 0) or (dx == 0 and dy == 0 and dz > 0)
-            for (dx, dy, dz) in offs
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+@pytest.mark.parametrize("dtype", [torch.float32])
+class TestCellListPairOutputsIsolated:
+    """Each pair-output kwarg verified in isolation."""
+
+    def test_return_distances_only(self, device, dtype):
+        kwargs, out = _make_cell_list_pair_output_setup(device, dtype)
+        distances = torch.zeros(
+            (out["N"], out["max_neighbors"]), dtype=dtype, device=device
         )
+        query_cell_list(
+            **kwargs,
+            half_fill=False,
+            strategy="atom_centric",
+            return_distances=True,
+            neighbor_distances=wp.from_torch(distances, dtype=wp.float32),
+        )
+        for i in range(out["N"]):
+            n = int(out["nn"][i].item())
+            for slot in range(n):
+                d = float(distances[i, slot].item())
+                assert 0.0 < d <= out["cutoff"] + 1e-4, (
+                    f"distance {d} at i={i} slot={slot} outside (0, cutoff]"
+                )
+
+    def test_return_vectors_only(self, device, dtype):
+        kwargs, out = _make_cell_list_pair_output_setup(device, dtype)
+        vectors = torch.zeros(
+            (out["N"], out["max_neighbors"], 3), dtype=dtype, device=device
+        )
+        query_cell_list(
+            **kwargs,
+            half_fill=False,
+            strategy="atom_centric",
+            return_vectors=True,
+            neighbor_vectors=wp.from_torch(vectors, dtype=wp.vec3f),
+        )
+        for i in range(out["N"]):
+            n = int(out["nn"][i].item())
+            for slot in range(n):
+                d = float(torch.linalg.norm(vectors[i, slot]))
+                assert 0.0 < d <= out["cutoff"] + 1e-4, (
+                    f"|r| {d} at i={i} slot={slot} outside (0, cutoff]"
+                )
+
+    def test_target_indices_only(self, device, dtype):
+        """Partial rows match the corresponding full-build rows."""
+        # Full reference.
+        kwargs_full, out_full = _make_cell_list_pair_output_setup(device, dtype)
+        query_cell_list(**kwargs_full, half_fill=False, strategy="atom_centric")
+        full_nn = out_full["nn"].clone()
+        full_nm = out_full["nm"].clone()
+
+        # Partial: pick 3 atoms; allocate compact (K, max_n) output.
+        target_idx = torch.tensor([0, 3, 5], dtype=torch.int32, device=device)
+        K = int(target_idx.shape[0])
+        kwargs_p, out_p = _make_cell_list_pair_output_setup(device, dtype)
+        partial_nm = torch.full(
+            (K, out_p["max_neighbors"]), -1, dtype=torch.int32, device=device
+        )
+        partial_nms = torch.zeros(
+            (K, out_p["max_neighbors"], 3), dtype=torch.int32, device=device
+        )
+        partial_nn = torch.zeros((K,), dtype=torch.int32, device=device)
+        kwargs_p["neighbor_matrix"] = wp.from_torch(partial_nm, dtype=wp.int32)
+        kwargs_p["neighbor_matrix_shifts"] = wp.from_torch(partial_nms, dtype=wp.vec3i)
+        kwargs_p["num_neighbors"] = wp.from_torch(partial_nn, dtype=wp.int32)
+        query_cell_list(
+            **kwargs_p,
+            half_fill=False,
+            strategy="atom_centric",
+            target_indices=wp.from_torch(target_idx, dtype=wp.int32),
+        )
+        for row, src in enumerate(target_idx.tolist()):
+            assert int(partial_nn[row].item()) == int(full_nn[src].item()), (
+                f"target row {row} count mismatch (atom {src})"
+            )
+            n = int(full_nn[src].item())
+            assert set(partial_nm[row, :n].tolist()) == set(
+                full_nm[src, :n].tolist()
+            ), f"neighbor sets differ for target row {row} (atom {src})"

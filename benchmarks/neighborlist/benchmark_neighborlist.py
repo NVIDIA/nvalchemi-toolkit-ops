@@ -31,8 +31,8 @@ Usage:
 The config file specifies which methods to benchmark and their parameters.
 ``parameters.cutoff`` accepts either a single float or a list of floats;
 each cutoff is swept across the method's ``(atom_counts × batch_sizes)``
-grid and stamped into the output rows.  ``tile_warp`` and
-``batch_tile_warp`` are recognized as explicit ``method=`` values
+grid and stamped into the output rows.  ``cluster_tile`` and
+``batch_cluster_tile`` are recognized as explicit ``method=`` values
 alongside the cell_list / naive families.
 
 A per-cutoff memory cap prevents OOM at high cutoffs (e.g. cutoff=20
@@ -65,11 +65,14 @@ try:
     from nvalchemiops.torch.neighbors.batch_cell_list import (
         estimate_batch_cell_list_sizes as torch_estimate_batch_cell_list_sizes,
     )
-    from nvalchemiops.torch.neighbors.batch_tile_warp import (
-        allocate_batch_tile_neighbor_list as torch_allocate_batch_tile_neighbor_list,
+    from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+        allocate_batch_cluster_tile_list as torch_allocate_batch_tile_neighbor_list,
     )
     from nvalchemiops.torch.neighbors.cell_list import (
         estimate_cell_list_sizes as torch_estimate_cell_list_sizes,
+    )
+    from nvalchemiops.torch.neighbors.cluster_tile import (
+        allocate_cluster_tile_list as torch_allocate_tile_neighbor_list,
     )
     from nvalchemiops.torch.neighbors.neighbor_utils import (
         allocate_cell_list as torch_allocate_cell_list,
@@ -79,9 +82,6 @@ try:
     )
     from nvalchemiops.torch.neighbors.neighbor_utils import (
         estimate_max_neighbors as torch_estimate_max_neighbors,
-    )
-    from nvalchemiops.torch.neighbors.tile_warp import (
-        allocate_tile_neighbor_list as torch_allocate_tile_neighbor_list,
     )
 
     TORCH_AVAILABLE = True
@@ -667,9 +667,9 @@ def prepare_inputs(
             inputs["atoms_per_cell_count"] = cell_list_cache[4]
             inputs["cell_atom_start_indices"] = cell_list_cache[5]
             inputs["cell_atom_list"] = cell_list_cache[6]
-        elif "tile_warp" in method:
+        elif "cluster_tile" in method:
             # Pre-allocate the 19 scratch buffers consumed by
-            # ``batch_tile_neighbor_list`` so the timed region only
+            # ``batch_cluster_tile_list`` so the timed region only
             # measures Morton-sort + Warp launches + the conv kernel,
             # not the per-step scratch malloc.  Mirrors the cell_list
             # pre-allocation block above.  ``batch_ptr`` is required
@@ -706,9 +706,9 @@ def prepare_inputs(
                         inputs["tile_system"],
                     ) = tile_cache
                 case "jax":
-                    # No JAX implementation of tile_warp; nothing to
+                    # No JAX implementation of cluster_tile; nothing to
                     # pre-allocate.  ``_resolve_method_backends`` should
-                    # already restrict tile_warp runs to ``[torch]``.
+                    # already restrict cluster_tile runs to ``[torch]``.
                     pass
 
         return inputs
@@ -833,9 +833,9 @@ def prepare_inputs(
             inputs["atoms_per_cell_count"] = cell_list_cache[4]
             inputs["cell_atom_start_indices"] = cell_list_cache[5]
             inputs["cell_atom_list"] = cell_list_cache[6]
-        elif "tile_warp" in method:
+        elif "cluster_tile" in method:
             # Pre-allocate the 14 scratch buffers consumed by
-            # ``tile_neighbor_list`` so the timed region only measures
+            # ``cluster_tile_list`` so the timed region only measures
             # the Morton sort + warp launches + conv kernel, not the
             # per-step scratch malloc.  Mirrors the cell_list block
             # above.

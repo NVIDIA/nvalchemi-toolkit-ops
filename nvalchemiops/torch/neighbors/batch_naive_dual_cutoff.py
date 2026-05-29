@@ -20,7 +20,7 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.batch_naive_dual_cutoff import (
+from nvalchemiops.neighbors.naive import (
     batch_naive_neighbor_matrix_dual_cutoff,
     batch_naive_neighbor_matrix_pbc_dual_cutoff,
 )
@@ -129,6 +129,9 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     half_fill: bool = False,
     max_atoms_per_system: int | None = None,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
 ) -> None:
     """Compute batch neighbor matrices with PBC using dual cutoffs.
 
@@ -172,6 +175,22 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     if max_atoms_per_system is None:
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
 
+    wp_positions_wrapped = (
+        wp.from_torch(positions_wrapped_buffer, dtype=wp_vec_dtype, return_ctype=True)
+        if positions_wrapped_buffer is not None
+        else None
+    )
+    wp_per_atom_cell_offsets = (
+        wp.from_torch(per_atom_cell_offsets_buffer, dtype=wp.vec3i, return_ctype=True)
+        if per_atom_cell_offsets_buffer is not None
+        else None
+    )
+    wp_inv_cell = (
+        wp.from_torch(inv_cell_buffer, dtype=wp_mat_dtype, return_ctype=True)
+        if inv_cell_buffer is not None
+        else None
+    )
+
     batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions=wp_positions,
         cell=wp_cell,
@@ -193,6 +212,9 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
         max_atoms_per_system=max_atoms_per_system,
         half_fill=half_fill,
         wrap_positions=wrap_positions,
+        positions_wrapped_buffer=wp_positions_wrapped,
+        per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
+        inv_cell_buffer=wp_inv_cell,
     )
 
 
@@ -294,6 +316,9 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     half_fill: bool = False,
     max_atoms_per_system: int | None = None,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
 ) -> None:
     """Selective batched naive dual cutoff PBC neighbor matrix custom op.
 
@@ -336,6 +361,21 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     wp_num_neighbors1 = wp.from_torch(num_neighbors1, dtype=wp.int32, return_ctype=True)
     wp_num_neighbors2 = wp.from_torch(num_neighbors2, dtype=wp.int32, return_ctype=True)
     wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool, return_ctype=True)
+    wp_positions_wrapped = (
+        wp.from_torch(positions_wrapped_buffer, dtype=wp_vec_dtype, return_ctype=True)
+        if positions_wrapped_buffer is not None
+        else None
+    )
+    wp_per_atom_cell_offsets = (
+        wp.from_torch(per_atom_cell_offsets_buffer, dtype=wp.vec3i, return_ctype=True)
+        if per_atom_cell_offsets_buffer is not None
+        else None
+    )
+    wp_inv_cell = (
+        wp.from_torch(inv_cell_buffer, dtype=wp_mat_dtype, return_ctype=True)
+        if inv_cell_buffer is not None
+        else None
+    )
 
     if max_atoms_per_system is None:
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
@@ -362,6 +402,9 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
         half_fill=half_fill,
         rebuild_flags=wp_rebuild_flags,
         wrap_positions=wrap_positions,
+        positions_wrapped_buffer=wp_positions_wrapped,
+        per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
+        inv_cell_buffer=wp_inv_cell,
     )
 
 
@@ -390,6 +433,9 @@ def batch_naive_neighbor_list_dual_cutoff(
     max_atoms_per_system: int | None = None,
     rebuild_flags: torch.Tensor | None = None,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: torch.Tensor | None = None,
+    per_atom_cell_offsets_buffer: torch.Tensor | None = None,
+    inv_cell_buffer: torch.Tensor | None = None,
 ) -> (
     tuple[
         torch.Tensor,
@@ -593,6 +639,9 @@ def batch_naive_neighbor_list_dual_cutoff(
                 half_fill=half_fill,
                 max_atoms_per_system=max_atoms_per_system,
                 wrap_positions=wrap_positions,
+                positions_wrapped_buffer=positions_wrapped_buffer,
+                per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+                inv_cell_buffer=inv_cell_buffer,
             )
         else:
             _batch_naive_neighbor_matrix_pbc_dual_cutoff(
@@ -614,6 +663,9 @@ def batch_naive_neighbor_list_dual_cutoff(
                 half_fill=half_fill,
                 max_atoms_per_system=max_atoms_per_system,
                 wrap_positions=wrap_positions,
+                positions_wrapped_buffer=positions_wrapped_buffer,
+                per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
+                inv_cell_buffer=inv_cell_buffer,
             )
         if return_neighbor_list:
             neighbor_list1, neighbor_ptr1, unit_shifts1 = (

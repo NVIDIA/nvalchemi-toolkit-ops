@@ -32,6 +32,17 @@ from nvalchemiops.jax.neighbors.batch_cell_list import (
     estimate_batch_cell_list_sizes,
 )
 
+# Batched cluster-pair tile neighbor list
+from nvalchemiops.jax.neighbors.batch_cluster_tile import (
+    allocate_batch_cluster_tile_list,
+    batch_build_cluster_tile_list,
+    batch_cluster_tile_neighbor_list,
+    batch_query_cluster_tile,
+    batch_query_cluster_tile_coo,
+    estimate_batch_cluster_tile_list_sizes,
+    estimate_batch_cluster_tile_segments,
+)
+
 # Batch naive functions
 from nvalchemiops.jax.neighbors.batch_naive import (
     batch_naive_neighbor_list,
@@ -42,21 +53,21 @@ from nvalchemiops.jax.neighbors.batch_naive_dual_cutoff import (
     batch_naive_neighbor_list_dual_cutoff,
 )
 
-# Batched cluster-pair tile neighbor list
-from nvalchemiops.jax.neighbors.batch_tile_warp import (
-    batch_tile_neighbor_list,
-    batch_tile_to_coo,
-    batch_tile_to_matrix,
-    build_batch_tile_neighbor_list,
-    estimate_batch_tile_neighbor_list_sizes,
-)
-
 # Unbatched cell list functions
 from nvalchemiops.jax.neighbors.cell_list import (
     build_cell_list,
     cell_list,
     estimate_cell_list_sizes,
     query_cell_list,
+)
+
+# Single-system cluster-pair tile neighbor list
+from nvalchemiops.jax.neighbors.cluster_tile import (
+    build_cluster_tile_list,
+    cluster_tile_neighbor_list,
+    estimate_cluster_tile_list_sizes,
+    query_cluster_tile,
+    query_cluster_tile_coo,
 )
 
 # Unbatched naive functions
@@ -91,14 +102,124 @@ from nvalchemiops.jax.neighbors.rebuild_detection import (
     neighbor_list_needs_rebuild,
 )
 
-# Single-system cluster-pair tile neighbor list
-from nvalchemiops.jax.neighbors.tile_warp import (
-    build_tile_neighbor_list,
-    estimate_tile_neighbor_list_sizes,
-    tile_neighbor_list,
-    tile_to_coo,
-    tile_to_matrix,
-)
+_CLUSTER_TILE_AUTO_BLOCKED_KWARGS = {
+    "cutoff2",
+    "format",
+    "max_pairs",
+    "neighbor_distances",
+    "neighbor_list",
+    "neighbor_list_shifts",
+    "neighbor_vectors",
+    "pair_counter",
+    "pair_energies",
+    "pair_fn",
+    "pair_forces",
+    "pair_params",
+    "return_distances",
+    "return_vectors",
+    "target_indices",
+}
+
+
+def _has_active_cluster_tile_blocker(kwargs: dict) -> bool:
+    """Return True when kwargs request behavior outside safe auto-dispatch."""
+    for name in _CLUSTER_TILE_AUTO_BLOCKED_KWARGS:
+        value = kwargs.get(name)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            if value:
+                return True
+            continue
+        return True
+    return False
+
+
+def _reject_unsupported_cluster_tile_combo(
+    pbc: jax.Array | None,
+    half_fill: bool,
+) -> None:
+    """Raise NotImplementedError for combos cluster_tile cannot honor.
+
+    Cluster-tile is fundamentally PBC-implicit (it enumerates tile pairs
+    inside a periodic shift range) and tile-level upper-triangular
+    (atom-level full-fill within tiles, but no per-pair half-fill).
+    Honoring non-periodic boundaries or ``half_fill=True`` would require
+    post-processing passes that change the algorithm's identity, so the
+    dispatcher rejects them explicitly instead of silently dropping.
+    """
+    if pbc is None:
+        raise NotImplementedError(
+            "method='cluster_tile' / 'batch_cluster_tile' is "
+            "fundamentally PBC-implicit; non-periodic systems (pbc=None) "
+            "are not supported.  Use method='naive' or 'cell_list', "
+            "or pass a cell with fully periodic pbc."
+        )
+    try:
+        all_periodic = bool(jax.device_get(jnp.all(pbc)))
+    except RuntimeError:
+        all_periodic = True
+    if not all_periodic:
+        raise NotImplementedError(
+            "method='cluster_tile' / 'batch_cluster_tile' is "
+            "fundamentally PBC-implicit; pbc with any False entry "
+            "is not supported.  Use method='naive' or 'cell_list'."
+        )
+    if half_fill:
+        raise NotImplementedError(
+            "method='cluster_tile' / 'batch_cluster_tile' uses "
+            "tile-level upper-triangular iteration; atom-level "
+            "half_fill=True is not supported.  Use method='naive' or "
+            "'cell_list' for half-fill output."
+        )
+
+
+def _jax_array_is_gpu(array: jax.Array) -> bool:
+    """Return True when any shard of ``array`` is on a GPU backend."""
+    try:
+        devices = array.devices()
+    except AttributeError:
+        device = getattr(array, "device", None)
+        if callable(device):
+            device = device()
+        devices = {device} if device is not None else set()
+    return any(getattr(device, "platform", "") in {"cuda", "gpu"} for device in devices)
+
+
+def _pbc_all_true(pbc: jax.Array | None) -> bool:
+    """Return True when all provided PBC flags are enabled."""
+    if pbc is None:
+        return False
+    try:
+        return bool(jax.device_get(jnp.all(pbc)))
+    except RuntimeError:
+        return False
+
+
+def _cluster_tile_auto_eligible(
+    positions: jax.Array,
+    cell: jax.Array | None,
+    pbc: jax.Array | None,
+    cutoff2: float | None,
+    half_fill: bool,
+    kwargs: dict,
+) -> bool:
+    """Return True when ``method=None`` may safely select cluster-pair tile.
+
+    Cluster-tile is PBC-implicit and tile-level upper-triangular, so
+    auto-dispatch never picks it when ``pbc`` has any False entry or
+    ``half_fill=True`` (those raise ``NotImplementedError`` for an explicit
+    ``method='cluster_tile'``); auto callers fall back to ``cell_list`` instead.
+    """
+    if cutoff2 is not None:
+        return False
+    if half_fill:
+        return False
+    if positions.dtype != jnp.float32 or not _jax_array_is_gpu(positions):
+        return False
+    if cell is None or not _pbc_all_true(pbc):
+        return False
+    return not _has_active_cluster_tile_blocker(kwargs)
 
 
 def neighbor_list(
@@ -155,9 +276,13 @@ def neighbor_list(
         and only convert to a neighbor list format if absolutely necessary.
     method : str | None, optional
         Method to use for neighbor list computation.
-        Choices: "naive", "cell_list", "batch_naive", "batch_cell_list", "naive_dual_cutoff", "batch_naive_dual_cutoff".
+        Choices: "naive", "cell_list", "cluster_tile", "batch_naive",
+        "batch_cell_list", "batch_cluster_tile", "naive_dual_cutoff",
+        "batch_naive_dual_cutoff".  For large fully periodic GPU float32
+        single-cutoff systems, ``method=None`` may select ``cluster_tile`` /
+        ``batch_cluster_tile`` when no partial or pair-output kwargs are active.
         If None, a default method will be chosen based on average atoms per
-        system (cell_list when >= 2000, naive otherwise). When only
+        system (cluster_tile/cell_list when >= 2000, naive otherwise). When only
         ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
         auto-selection reads ``batch_idx[-1]`` which triggers a
         device-to-host synchronization. To avoid this, pass ``batch_ptr``,
@@ -290,8 +415,10 @@ def neighbor_list(
     --------
     naive_neighbor_list : Direct access to naive O(N²) algorithm
     cell_list : Direct access to cell list O(N) algorithm
+    cluster_tile_neighbor_list : Direct access to cluster-pair tile algorithm
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
+    batch_cluster_tile_neighbor_list : Batched cluster-pair tile algorithm
     """
     if method is None:
         total_atoms = positions.shape[0]
@@ -308,6 +435,15 @@ def neighbor_list(
         if cutoff2 is not None:
             method = "naive_dual_cutoff"
 
+        elif avg_atoms >= 2000 and _cluster_tile_auto_eligible(
+            positions,
+            cell,
+            pbc,
+            cutoff2,
+            half_fill,
+            kwargs,
+        ):
+            method = "cluster_tile"
         elif avg_atoms >= 2000:
             method = "cell_list"
             if cell is None or pbc is None:
@@ -373,6 +509,40 @@ def neighbor_list(
                 return_neighbor_list=return_neighbor_list,
                 **kwargs,
             )
+        case "cluster_tile":
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            if cell is None:
+                cell = jnp.eye(3, dtype=positions.dtype).reshape(1, 3, 3)
+            return cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                fill_value=fill_value,
+                format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
+                **kwargs,
+            )
+        case "batch_cluster_tile":
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            if batch_idx is None or batch_ptr is None:
+                batch_idx, batch_ptr = prepare_batch_idx_ptr(
+                    batch_idx, batch_ptr, positions.shape[0]
+                )
+            if cell is None:
+                raise ValueError("cell is required for method=batch_cluster_tile")
+            if cell.ndim == 2:
+                num_systems = batch_ptr.shape[0] - 1
+                cell = jnp.broadcast_to(cell, (num_systems, 3, 3))
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                batch_ptr,
+                fill_value=fill_value,
+                format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
+                **kwargs,
+            )
         case "naive_dual_cutoff":
             if cutoff2 is None:
                 raise ValueError(
@@ -423,11 +593,11 @@ __all__ = [
     "build_cell_list",
     "query_cell_list",
     "cell_list",
-    "estimate_tile_neighbor_list_sizes",
-    "build_tile_neighbor_list",
-    "tile_to_matrix",
-    "tile_to_coo",
-    "tile_neighbor_list",
+    "estimate_cluster_tile_list_sizes",
+    "build_cluster_tile_list",
+    "query_cluster_tile",
+    "query_cluster_tile_coo",
+    "cluster_tile_neighbor_list",
     # Batched neighbor list
     "batch_naive_neighbor_list",
     "batch_naive_neighbor_list_dual_cutoff",
@@ -435,11 +605,13 @@ __all__ = [
     "batch_build_cell_list",
     "batch_query_cell_list",
     "batch_cell_list",
-    "estimate_batch_tile_neighbor_list_sizes",
-    "build_batch_tile_neighbor_list",
-    "batch_tile_to_matrix",
-    "batch_tile_to_coo",
-    "batch_tile_neighbor_list",
+    "estimate_batch_cluster_tile_list_sizes",
+    "estimate_batch_cluster_tile_segments",
+    "allocate_batch_cluster_tile_list",
+    "batch_build_cluster_tile_list",
+    "batch_query_cluster_tile",
+    "batch_query_cluster_tile_coo",
+    "batch_cluster_tile_neighbor_list",
     # Rebuild detection
     "cell_list_needs_rebuild",
     "neighbor_list_needs_rebuild",

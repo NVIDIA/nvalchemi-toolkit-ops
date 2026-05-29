@@ -1467,19 +1467,23 @@ _total_inner_products_vec_tile_overloads = register_overloads(
 
 _segmented_inner_products_overloads = register_overloads(
     _segmented_inner_products_scalar_kernel,
-    lambda t: [wp.array(dtype=t)] * 2
-    + [wp.array(dtype=wp.int32)]
-    + [wp.array(dtype=t)] * 3
-    + [wp.int32, wp.int32],
+    lambda t: (
+        [wp.array(dtype=t)] * 2
+        + [wp.array(dtype=wp.int32)]
+        + [wp.array(dtype=t)] * 3
+        + [wp.int32, wp.int32]
+    ),
     dtypes=_SCALAR_TYPES,
 )
 _segmented_inner_products_overloads.update(
     register_overloads(
         _segmented_inner_products_vec_kernel,
-        lambda v, s: [wp.array(dtype=v)] * 2
-        + [wp.array(dtype=wp.int32)]
-        + [wp.array(dtype=s)] * 3
-        + [wp.int32, wp.int32],
+        lambda v, s: (
+            [wp.array(dtype=v)] * 2
+            + [wp.array(dtype=wp.int32)]
+            + [wp.array(dtype=s)] * 3
+            + [wp.int32, wp.int32]
+        ),
         dtype_pairs=_VEC_SCALAR_PAIRS,
     )
 )

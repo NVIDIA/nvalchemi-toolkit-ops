@@ -28,6 +28,11 @@ from nvalchemiops.torch.neighbors.batch_cell_list import (
     estimate_batch_cell_list_sizes,
 )
 
+# Batched cluster-pair tile functions
+from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+    batch_cluster_tile_neighbor_list,
+)
+
 # Batch naive functions
 from nvalchemiops.torch.neighbors.batch_naive import (
     batch_naive_neighbor_list,
@@ -38,15 +43,15 @@ from nvalchemiops.torch.neighbors.batch_naive_dual_cutoff import (
     batch_naive_neighbor_list_dual_cutoff,
 )
 
-# Batched cluster-pair tile (tile_warp) functions
-from nvalchemiops.torch.neighbors.batch_tile_warp import (
-    batch_tile_neighbor_list,
-)
-
 # Unbatched cell list functions
 from nvalchemiops.torch.neighbors.cell_list import (
     cell_list,
     estimate_cell_list_sizes,
+)
+
+# Unbatched cluster-pair tile functions
+from nvalchemiops.torch.neighbors.cluster_tile import (
+    cluster_tile_neighbor_list,
 )
 
 # Unbatched naive functions
@@ -66,10 +71,106 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     synthesize_cell_for_ss,
 )
 
-# Unbatched cluster-pair tile (tile_warp) functions
-from nvalchemiops.torch.neighbors.tile_warp import (
-    tile_neighbor_list,
-)
+_CLUSTER_TILE_AUTO_BLOCKED_KWARGS = {
+    "cutoff2",
+    "format",
+    "max_pairs",
+    "neighbor_distances",
+    "neighbor_list",
+    "neighbor_list_shifts",
+    "neighbor_vectors",
+    "pair_counter",
+    "pair_energies",
+    "pair_fn",
+    "pair_forces",
+    "pair_params",
+    "return_distances",
+    "return_vectors",
+    "target_indices",
+}
+
+
+def _has_active_cluster_tile_blocker(kwargs: dict) -> bool:
+    """Return True when kwargs request behavior outside safe auto-dispatch."""
+    for name in _CLUSTER_TILE_AUTO_BLOCKED_KWARGS:
+        value = kwargs.get(name)
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            if value:
+                return True
+            continue
+        return True
+    return False
+
+
+def _reject_unsupported_cluster_tile_combo(
+    pbc: torch.Tensor | None,
+    half_fill: bool,
+) -> None:
+    """Raise NotImplementedError for combos cluster_tile cannot honor.
+
+    Cluster-tile is fundamentally PBC-implicit (it enumerates tile pairs
+    inside a periodic shift range) and tile-level upper-triangular
+    (atom-level full-fill within tiles, but no per-pair half-fill).
+    Honoring non-periodic boundaries or ``half_fill=True`` would require
+    post-processing passes that change the algorithm's identity, so the
+    dispatcher rejects them explicitly instead of silently dropping.
+    """
+    if pbc is None:
+        raise NotImplementedError(
+            "method='cluster_tile' / 'batch_cluster_tile' is "
+            "fundamentally PBC-implicit; non-periodic systems (pbc=None) "
+            "are not supported.  Use method='naive' or 'cell_list', "
+            "or pass a cell with fully periodic pbc."
+        )
+    try:
+        all_periodic = bool(pbc.all().item())
+    except RuntimeError:
+        all_periodic = True  # let downstream handle malformed pbc
+    if not all_periodic:
+        raise NotImplementedError(
+            "method='cluster_tile' / 'batch_cluster_tile' is "
+            "fundamentally PBC-implicit; pbc with any False entry "
+            "is not supported.  Use method='naive' or 'cell_list'."
+        )
+    if half_fill:
+        raise NotImplementedError(
+            "method='cluster_tile' / 'batch_cluster_tile' uses "
+            "tile-level upper-triangular iteration; atom-level "
+            "half_fill=True is not supported.  Use method='naive' or "
+            "'cell_list' for half-fill output."
+        )
+
+
+def _cluster_tile_auto_eligible(
+    positions: torch.Tensor,
+    cell: torch.Tensor | None,
+    pbc: torch.Tensor | None,
+    cutoff2: float | None,
+    half_fill: bool,
+    kwargs: dict,
+) -> bool:
+    """Return True when ``method=None`` may safely select cluster-pair tile.
+
+    Cluster-tile is PBC-implicit and tile-level upper-triangular, so
+    auto-dispatch never picks it when ``pbc`` has any False entry or
+    ``half_fill=True``.  Explicit ``method='cluster_tile'`` callers get
+    a clear ``NotImplementedError`` in those cases (see the dispatcher
+    match branch below).
+    """
+    if cutoff2 is not None:
+        return False
+    if half_fill:
+        return False
+    if positions.dtype != torch.float32 or positions.device.type != "cuda":
+        return False
+    if cell is None or pbc is None or _has_active_cluster_tile_blocker(kwargs):
+        return False
+    try:
+        return bool(pbc.to(device=positions.device).all().item())
+    except RuntimeError:
+        return False
 
 
 def neighbor_list(
@@ -108,7 +209,12 @@ def neighbor_list(
     pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=torch.bool, optional
         Periodic boundary condition flags for each dimension.
     batch_idx : torch.Tensor, shape (total_atoms,), dtype=torch.int32, optional
-        System index for each atom.
+        System index for each atom.  Must be **sorted by system** (i.e.,
+        atoms in system 0 first, then system 1, and so on).  Interleaved
+        layouts are not supported by ``cluster_tile`` / ``batch_cluster_tile``
+        and will silently emit cross-system pairs.  For ``cell_list`` /
+        ``naive`` methods, interleaved layouts work but ``batch_ptr``
+        will still be derived assuming a contiguous layout.
     batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=torch.int32, optional
         Cumulative atom counts defining system boundaries.
     cutoff2 : float, optional
@@ -126,13 +232,13 @@ def neighbor_list(
         and only convert to a neighbor list format if absolutely necessary.
     method : str | None, optional
         Method to use for neighbor list computation.
-        Choices: "naive", "cell_list", "tile_warp", "batch_naive",
-        "batch_cell_list", "batch_tile_warp", "naive_dual_cutoff",
-        "batch_naive_dual_cutoff".  The ``tile_warp`` / ``batch_tile_warp``
-        cluster-pair tile path is currently opt-in (not picked by the
-        ``method=None`` auto-rule); set it explicitly when you want it.
+        Choices: "naive", "cell_list", "cluster_tile", "batch_naive",
+        "batch_cell_list", "batch_cluster_tile", "naive_dual_cutoff",
+        "batch_naive_dual_cutoff".  For large fully periodic CUDA float32
+        single-cutoff systems, ``method=None`` may select ``cluster_tile`` /
+        ``batch_cluster_tile`` when no partial or pair-output kwargs are active.
         If None, a default method will be chosen based on average atoms per
-        system (cell_list when >= 2000, naive otherwise). When only
+        system (cluster_tile/cell_list when >= 2000, naive otherwise). When only
         ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
         auto-selection reads ``batch_idx[-1]`` which triggers a
         device-to-host synchronization. To avoid this, pass ``batch_ptr``,
@@ -295,6 +401,15 @@ def neighbor_list(
         if cutoff2 is not None:
             method = "naive_dual_cutoff"
 
+        elif avg_atoms >= 2000 and _cluster_tile_auto_eligible(
+            positions,
+            cell,
+            pbc,
+            cutoff2,
+            half_fill,
+            kwargs,
+        ):
+            method = "cluster_tile"
         elif avg_atoms >= 2000:
             method = "cell_list"
         else:
@@ -365,34 +480,43 @@ def neighbor_list(
                 return_neighbor_list=return_neighbor_list,
                 **kwargs,
             )
-        case "tile_warp":
-            # format="tile" is reachable only via tile_neighbor_list directly.
+        case "cluster_tile":
+            # format="tile" is reachable only via cluster_tile_neighbor_list directly.
             if cell is None:
-                positions, cell, _pbc = synthesize_cell_for_ss(positions, cutoff)
-            return tile_neighbor_list(
+                positions, cell, pbc = synthesize_cell_for_ss(positions, cutoff)
+                pbc = torch.ones(3, dtype=torch.bool, device=positions.device)
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            return cluster_tile_neighbor_list(
                 positions,
                 cutoff,
                 cell,
                 fill_value=fill_value,
                 format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
                 **kwargs,
             )
-        case "batch_tile_warp":
+        case "batch_cluster_tile":
             if batch_idx is None or batch_ptr is None:
                 batch_idx, batch_ptr = prepare_batch_idx_ptr(
                     batch_idx, batch_ptr, positions.shape[0], positions.device
                 )
             if cell is None:
-                positions, cell, _pbc = synthesize_cell_for_batch(
+                positions, cell, pbc = synthesize_cell_for_batch(
                     positions, batch_idx, batch_ptr, cutoff
                 )
-            return batch_tile_neighbor_list(
+                num_systems = batch_ptr.shape[0] - 1
+                pbc = torch.ones(
+                    (num_systems, 3), dtype=torch.bool, device=positions.device
+                )
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            return batch_cluster_tile_neighbor_list(
                 positions,
                 cutoff,
                 cell,
                 batch_ptr,
                 fill_value=fill_value,
                 format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
                 **kwargs,
             )
         case "naive_dual_cutoff":
@@ -434,12 +558,12 @@ __all__ = [
     "cell_list",
     "naive_neighbor_list",
     "naive_neighbor_list_dual_cutoff",
-    "tile_neighbor_list",
+    "cluster_tile_neighbor_list",
     "estimate_cell_list_sizes",
     # Batched algorithms
     "batch_cell_list",
     "batch_naive_neighbor_list",
     "batch_naive_neighbor_list_dual_cutoff",
-    "batch_tile_neighbor_list",
+    "batch_cluster_tile_neighbor_list",
     "estimate_batch_cell_list_sizes",
 ]

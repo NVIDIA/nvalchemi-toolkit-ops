@@ -29,8 +29,8 @@ from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
-    _compute_naive_num_shifts_overload,
     estimate_max_neighbors,
+    get_compute_naive_num_shifts_kernel,
 )
 
 __all__ = [
@@ -41,6 +41,51 @@ __all__ = [
     "estimate_max_neighbors",
     "NeighborOverflowError",
 ]
+
+
+def build_naive_kernel_tables(
+    operation: Literal["single_cutoff", "dual_cutoff"],
+    *,
+    batched: bool,
+    dtypes: tuple[type, ...],
+) -> tuple[dict, dict, dict, dict, dict, dict]:
+    """Build the six naive Warp kernel tables the JAX wrappers need.
+
+    Returns per-dtype kernel tables for, in order:
+
+    1. no-PBC,
+    2. no-PBC selective-rebuild,
+    3. wrap-on-entry PBC,
+    4. wrap-on-entry PBC selective-rebuild,
+    5. prewrapped PBC,
+    6. prewrapped PBC selective-rebuild.
+    """
+    from nvalchemiops.neighbors.naive import (
+        get_naive_neighbor_matrix_dual_cutoff_kernel,
+        get_naive_neighbor_matrix_kernel,
+    )
+
+    if operation == "single_cutoff":
+        getter = get_naive_neighbor_matrix_kernel
+    elif operation == "dual_cutoff":
+        getter = get_naive_neighbor_matrix_dual_cutoff_kernel
+    else:
+        raise ValueError("operation must be 'single_cutoff' or 'dual_cutoff'")
+
+    def _table(pbc_mode: str, selective: bool) -> dict:
+        return {
+            t: getter(t, pbc_mode=pbc_mode, batched=batched, selective=selective)
+            for t in dtypes
+        }
+
+    return (
+        _table("none", False),
+        _table("none", True),
+        _table("wrap_on_entry", False),
+        _table("wrap_on_entry", True),
+        _table("prewrapped", False),
+        _table("prewrapped", True),
+    )
 
 
 def _validate_graph_mode(graph_mode: str) -> Literal["none", "warp"]:
@@ -70,17 +115,17 @@ def _validate_graph_mode(graph_mode: str) -> Literal["none", "warp"]:
 # JAX Kernel Wrappers
 # ==============================================================================
 
-# Wrap the original kernel overloads with jax_kernel
+# Wrap the original kernels with jax_kernel
 # jax_kernel handles the bool-to-int conversion internally
 _jax_compute_naive_num_shifts_f32 = jax_kernel(
-    _compute_naive_num_shifts_overload[wp.float32],
+    get_compute_naive_num_shifts_kernel(wp.float32),
     num_outputs=2,
     in_out_argnames=["num_shifts", "shift_range"],
     enable_backward=False,
 )
 
 _jax_compute_naive_num_shifts_f64 = jax_kernel(
-    _compute_naive_num_shifts_overload[wp.float64],
+    get_compute_naive_num_shifts_kernel(wp.float64),
     num_outputs=2,
     in_out_argnames=["num_shifts", "shift_range"],
     enable_backward=False,
@@ -127,7 +172,7 @@ def compute_naive_num_shifts(
 
     See Also
     --------
-    nvalchemiops.neighbors.neighbor_utils._compute_naive_num_shifts : Warp kernel
+    nvalchemiops.neighbors.neighbor_utils.get_compute_naive_num_shifts_kernel : Warp kernel factory
 
     Notes
     -----

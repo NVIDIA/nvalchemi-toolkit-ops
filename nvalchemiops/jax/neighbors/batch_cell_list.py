@@ -22,20 +22,26 @@ import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
 
+from nvalchemiops.jax.neighbors._autograd import (
+    _build_index_residuals,
+    _NeighborForwardOutput,
+    _route_pair_outputs,
+)
 from nvalchemiops.jax.neighbors.neighbor_utils import (
     allocate_cell_list,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
-from nvalchemiops.neighbors.batch_cell_list import (
-    _batch_cell_list_bin_atoms_overload,
-    _batch_cell_list_build_neighbor_matrix_local_count_sorted_overload,
-    _batch_cell_list_construct_bin_size_overload,
-    _batch_cell_list_count_atoms_per_bin_overload,
-    _compute_cells_per_system,
-    _gather_positions_by_cell_overload,
+from nvalchemiops.neighbors.cell_list import (
+    get_build_cell_list_kernel,
+    get_cell_list_cells_per_system_kernel,
+    get_cell_list_gather_kernel,
+    get_query_cell_list_kernel,
 )
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
+from nvalchemiops.neighbors.output_args import (
+    _has_partial_or_pair_outputs,
+)
 
 # ==============================================================================
 # JAX Kernel Wrappers
@@ -43,21 +49,21 @@ from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 
 # Build step 1: Construct bin sizes (per system)
 _jax_batch_construct_bin_size_f32 = jax_kernel(
-    _batch_cell_list_construct_bin_size_overload[wp.float32],
+    get_build_cell_list_kernel("construct_bin_size", wp.float32, batched=True),
     num_outputs=1,
-    in_out_argnames=["cells_per_dimension"],
+    in_out_argnames=["cells_per_dimension_batch"],
     enable_backward=False,
 )
 _jax_batch_construct_bin_size_f64 = jax_kernel(
-    _batch_cell_list_construct_bin_size_overload[wp.float64],
+    get_build_cell_list_kernel("construct_bin_size", wp.float64, batched=True),
     num_outputs=1,
-    in_out_argnames=["cells_per_dimension"],
+    in_out_argnames=["cells_per_dimension_batch"],
     enable_backward=False,
 )
 
 # Helper: Compute cells per system
 _jax_compute_cells_per_system = jax_kernel(
-    _compute_cells_per_system,
+    get_cell_list_cells_per_system_kernel(),
     num_outputs=1,
     in_out_argnames=["cells_per_system"],
     enable_backward=False,
@@ -65,13 +71,13 @@ _jax_compute_cells_per_system = jax_kernel(
 
 # Build step 2: Count atoms per bin
 _jax_batch_count_atoms_per_bin_f32 = jax_kernel(
-    _batch_cell_list_count_atoms_per_bin_overload[wp.float32],
+    get_build_cell_list_kernel("count_atoms", wp.float32, batched=True),
     num_outputs=2,
     in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
     enable_backward=False,
 )
 _jax_batch_count_atoms_per_bin_f64 = jax_kernel(
-    _batch_cell_list_count_atoms_per_bin_overload[wp.float64],
+    get_build_cell_list_kernel("count_atoms", wp.float64, batched=True),
     num_outputs=2,
     in_out_argnames=["atoms_per_cell_count", "atom_periodic_shifts"],
     enable_backward=False,
@@ -79,13 +85,13 @@ _jax_batch_count_atoms_per_bin_f64 = jax_kernel(
 
 # Build step 3: Bin atoms into cells
 _jax_batch_bin_atoms_f32 = jax_kernel(
-    _batch_cell_list_bin_atoms_overload[wp.float32],
+    get_build_cell_list_kernel("bin_atoms", wp.float32, batched=True),
     num_outputs=3,
     in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
     enable_backward=False,
 )
 _jax_batch_bin_atoms_f64 = jax_kernel(
-    _batch_cell_list_bin_atoms_overload[wp.float64],
+    get_build_cell_list_kernel("bin_atoms", wp.float64, batched=True),
     num_outputs=3,
     in_out_argnames=["atom_to_cell_mapping", "atoms_per_cell_count", "cell_atom_list"],
     enable_backward=False,
@@ -94,13 +100,13 @@ _jax_batch_bin_atoms_f64 = jax_kernel(
 # Gather: pack positions + atom_periodic_shifts into per-cell-contiguous layout
 # (cell_atom_list permutation) for coalesced reads by the sorted-build kernel.
 _jax_batch_gather_positions_by_cell_f32 = jax_kernel(
-    _gather_positions_by_cell_overload[wp.float32],
+    get_cell_list_gather_kernel(wp.float32),
     num_outputs=2,
     in_out_argnames=["sorted_positions", "sorted_shifts"],
     enable_backward=False,
 )
 _jax_batch_gather_positions_by_cell_f64 = jax_kernel(
-    _gather_positions_by_cell_overload[wp.float64],
+    get_cell_list_gather_kernel(wp.float64),
     num_outputs=2,
     in_out_argnames=["sorted_positions", "sorted_shifts"],
     enable_backward=False,
@@ -110,15 +116,80 @@ _jax_batch_gather_positions_by_cell_f64 = jax_kernel(
 # kernel handles selective and non-selective callers via the ``rebuild_flags``
 # array (always-True for non-selective; per-system bool array otherwise).
 _jax_batch_build_neighbor_matrix_local_count_sorted_f32 = jax_kernel(
-    _batch_cell_list_build_neighbor_matrix_local_count_sorted_overload[wp.float32],
+    get_query_cell_list_kernel(
+        wp.float32,
+        strategy="atom_centric",
+        batched=True,
+        selective=True,
+        partial=False,
+        return_vectors=False,
+        return_distances=False,
+        pair_fn=None,
+    ),
     num_outputs=3,
     in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
     enable_backward=False,
 )
 _jax_batch_build_neighbor_matrix_local_count_sorted_f64 = jax_kernel(
-    _batch_cell_list_build_neighbor_matrix_local_count_sorted_overload[wp.float64],
+    get_query_cell_list_kernel(
+        wp.float64,
+        strategy="atom_centric",
+        batched=True,
+        selective=True,
+        partial=False,
+        return_vectors=False,
+        return_distances=False,
+        pair_fn=None,
+    ),
     num_outputs=3,
     in_out_argnames=["neighbor_matrix", "neighbor_matrix_shifts", "num_neighbors"],
+    enable_backward=False,
+)
+
+# Pair-output variants — consumed by the autograd path when
+# ``return_distances`` / ``return_vectors`` is set.  The bytes written into
+# ``neighbor_vectors`` / ``neighbor_distances`` are differentiable via the
+# JAX autograd primitive in :mod:`nvalchemiops.jax.neighbors._autograd`.
+_jax_batch_build_neighbor_matrix_local_count_sorted_pair_f32 = jax_kernel(
+    get_query_cell_list_kernel(
+        wp.float32,
+        strategy="atom_centric",
+        batched=True,
+        selective=True,
+        partial=False,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=None,
+    ),
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_batch_build_neighbor_matrix_local_count_sorted_pair_f64 = jax_kernel(
+    get_query_cell_list_kernel(
+        wp.float64,
+        strategy="atom_centric",
+        batched=True,
+        selective=True,
+        partial=False,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=None,
+    ),
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
     enable_backward=False,
 )
 
@@ -231,6 +302,15 @@ def batch_build_cell_list(
     pbc: jax.Array | None = None,
     cutoff: float = 5.0,
     max_total_cells: int | None = None,
+    target_indices: jax.Array | None = None,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+    pair_params: jax.Array | None = None,
+    neighbor_vectors: jax.Array | None = None,
+    neighbor_distances: jax.Array | None = None,
+    pair_energies: jax.Array | None = None,
+    pair_forces: jax.Array | None = None,
 ) -> tuple[
     jax.Array,
     jax.Array,
@@ -284,6 +364,24 @@ def batch_build_cell_list(
     When calling inside ``jax.jit``, ``max_total_cells`` **must** be provided
     to avoid calling ``estimate_batch_cell_list_sizes``, which is not JIT-compatible.
     """
+    if _has_partial_or_pair_outputs(
+        target_indices=target_indices,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    ):
+        raise NotImplementedError(
+            "batch_build_cell_list does not accept return_distances / "
+            "return_vectors / target_indices / pair_fn-related kwargs.  "
+            "Use the top-level batch_cell_list() wrapper, which routes "
+            "pair outputs through the JAX autograd path, or call the "
+            "warp factory directly for low-level access.",
+        )
 
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
@@ -337,13 +435,17 @@ def batch_build_cell_list(
         pbc_bool = pbc.astype(jnp.bool_)
     else:
         pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+    empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
+    empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
 
     total_atoms = positions.shape[0]
 
     # Step 1: Construct bin sizes (one thread per system)
     (cells_per_dimension,) = _construct(
         cell,
+        empty_bool1d,
         pbc_bool,
+        empty_i32,
         cells_per_dimension,
         float(cutoff),
         int(max_total_cells),
@@ -368,8 +470,10 @@ def batch_build_cell_list(
     atoms_per_cell_count, atom_periodic_shifts = _count(
         positions,
         cell,
+        empty_bool1d,
         pbc_bool,
         batch_idx,
+        empty_i32,
         cells_per_dimension,
         cell_offsets,
         atoms_per_cell_count,
@@ -392,8 +496,10 @@ def batch_build_cell_list(
     atom_to_cell_mapping, atoms_per_cell_count, cell_atom_list = _bin(
         positions,
         cell,
+        empty_bool1d,
         pbc_bool,
         batch_idx,
+        empty_i32,
         cells_per_dimension,
         cell_offsets,
         atom_to_cell_mapping,
@@ -436,6 +542,15 @@ def batch_query_cell_list(
     num_neighbors: jax.Array | None = None,
     neighbor_matrix_shifts: jax.Array | None = None,
     rebuild_flags: jax.Array | None = None,
+    target_indices: jax.Array | None = None,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+    pair_params: jax.Array | None = None,
+    neighbor_vectors: jax.Array | None = None,
+    neighbor_distances: jax.Array | None = None,
+    pair_energies: jax.Array | None = None,
+    pair_forces: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Query batch cell lists to find neighbors.
 
@@ -486,6 +601,26 @@ def batch_query_cell_list(
     neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32
         Periodic shifts for each neighbor relationship.
     """
+
+    if _has_partial_or_pair_outputs(
+        target_indices=target_indices,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    ):
+        raise NotImplementedError(
+            "batch_query_cell_list does not accept return_distances / "
+            "return_vectors / target_indices / pair_fn-related kwargs.  "
+            "Use the top-level batch_cell_list() wrapper, which routes "
+            "pair outputs through the JAX autograd path, or call the "
+            "warp factory directly for low-level access.",
+        )
+
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(cutoff)
 
@@ -528,6 +663,10 @@ def batch_query_cell_list(
         pbc_bool = pbc.astype(jnp.bool_)
     else:
         pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+    empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
+    empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
+    empty_scalar2d = jnp.zeros((0, 0), dtype=positions.dtype)
+    empty_vec_matrix = jnp.zeros((0, 0, 3), dtype=positions.dtype)
 
     total_atoms = positions.shape[0]
 
@@ -575,28 +714,148 @@ def batch_query_cell_list(
     )
 
     neighbor_matrix, neighbor_matrix_shifts, num_neighbors = _sorted_build_kernel(
+        positions,
+        atom_periodic_shifts,
         sorted_positions,
         sorted_atom_periodic_shifts,
         cell,
+        empty_bool1d,
         pbc_bool,
         batch_idx_i32,
         float(cutoff),
+        empty_i32,
         cells_per_dimension,
+        empty_i32,
         neighbor_search_radius,
         atom_to_cell_mapping,
         atoms_per_cell_count,
         cell_atom_start_indices,
         cell_atom_list,
         cell_offsets,
+        empty_i32,
         neighbor_matrix,
         neighbor_matrix_shifts,
         num_neighbors,
+        empty_vec_matrix,
+        empty_scalar2d,
+        empty_scalar2d,
+        empty_scalar2d,
+        empty_vec_matrix,
         False,  # half_fill
         rf,
         launch_dims=(total_atoms,),
     )
 
     return neighbor_matrix, num_neighbors, neighbor_matrix_shifts
+
+
+def _batch_cell_list_pair_outputs_forward(
+    positions: jax.Array,
+    cell: jax.Array,
+    *,
+    pbc_bool: jax.Array,
+    batch_idx_i32: jax.Array,
+    cells_per_dimension: jax.Array,
+    atom_periodic_shifts: jax.Array,
+    atom_to_cell_mapping: jax.Array,
+    atoms_per_cell_count: jax.Array,
+    cell_atom_start_indices: jax.Array,
+    cell_atom_list: jax.Array,
+    cell_offsets: jax.Array,
+    neighbor_search_radius: jax.Array,
+    neighbor_matrix: jax.Array,
+    neighbor_matrix_shifts: jax.Array,
+    num_neighbors: jax.Array,
+    neighbor_vectors: jax.Array,
+    neighbor_distances: jax.Array,
+    cutoff: float,
+) -> _NeighborForwardOutput:
+    """Forward closure consumed by ``_route_pair_outputs``.
+
+    Runs the gather + batched pair-output kernel.  The Warp launches do not
+    propagate gradients across the JAX boundary, so positions/cell are
+    detached here; the autograd primitive's reconstruction backward receives
+    the live tensors separately.
+    """
+    positions = jax.lax.stop_gradient(positions)
+    cell = jax.lax.stop_gradient(cell)
+
+    if positions.dtype == jnp.float64:
+        gather_kernel = _jax_batch_gather_positions_by_cell_f64
+        pair_kernel = _jax_batch_build_neighbor_matrix_local_count_sorted_pair_f64
+    else:
+        gather_kernel = _jax_batch_gather_positions_by_cell_f32
+        pair_kernel = _jax_batch_build_neighbor_matrix_local_count_sorted_pair_f32
+
+    total_atoms = positions.shape[0]
+    num_systems = pbc_bool.shape[0]
+    sorted_positions = jnp.zeros((total_atoms, 3), dtype=positions.dtype)
+    sorted_atom_periodic_shifts = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+    sorted_positions, sorted_atom_periodic_shifts = gather_kernel(
+        positions,
+        atom_periodic_shifts,
+        cell_atom_list,
+        sorted_positions,
+        sorted_atom_periodic_shifts,
+        launch_dims=(total_atoms,),
+    )
+
+    empty_bool1d = jnp.zeros((0,), dtype=jnp.bool_)
+    empty_i32 = jnp.zeros((0,), dtype=jnp.int32)
+    empty_scalar2d = jnp.zeros((0, 0), dtype=positions.dtype)
+    empty_vec_matrix = jnp.zeros((0, 0, 3), dtype=positions.dtype)
+    rf = jnp.ones((num_systems,), dtype=jnp.bool_)
+
+    nm_out, nms_out, nn_out, nv_out, nd_out = pair_kernel(
+        positions,
+        atom_periodic_shifts,
+        sorted_positions,
+        sorted_atom_periodic_shifts,
+        cell,
+        empty_bool1d,
+        pbc_bool,
+        batch_idx_i32,
+        float(cutoff),
+        empty_i32,
+        cells_per_dimension,
+        empty_i32,
+        neighbor_search_radius,
+        atom_to_cell_mapping,
+        atoms_per_cell_count,
+        cell_atom_start_indices,
+        cell_atom_list,
+        cell_offsets,
+        empty_i32,  # target_indices
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        neighbor_vectors,
+        neighbor_distances,
+        empty_scalar2d,  # pair_params
+        empty_scalar2d,  # pair_energies
+        empty_vec_matrix,  # pair_forces
+        False,  # half_fill
+        rf,
+        launch_dims=(total_atoms,),
+    )
+
+    i_idx, j_idx, shifts_ret, _, mask_ = _build_index_residuals(
+        nm_out,
+        nn_out,
+        nms_out,
+    )
+    K, M = nm_out.shape
+    return _NeighborForwardOutput(
+        distances=nd_out,
+        vectors=nv_out,
+        extra_outputs=(nm_out, nn_out, nms_out),
+        i_idx=i_idx,
+        j_idx=j_idx,
+        shifts=shifts_ret,
+        batch_idx=batch_idx_i32,
+        active_mask=mask_,
+        matrix_shape=(K, M),
+    )
 
 
 def batch_cell_list(
@@ -610,6 +869,15 @@ def batch_cell_list(
     max_total_cells: int | None = None,
     neighbor_matrix_shifts: jax.Array | None = None,
     return_neighbor_list: bool = False,
+    target_indices: jax.Array | None = None,
+    return_vectors: bool = False,
+    return_distances: bool = False,
+    pair_fn: wp.Function | None = None,
+    pair_params: jax.Array | None = None,
+    neighbor_vectors: jax.Array | None = None,
+    neighbor_distances: jax.Array | None = None,
+    pair_energies: jax.Array | None = None,
+    pair_forces: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array] | tuple[jax.Array, jax.Array, tuple]:
     """Build and query spatial cell lists for batch of systems.
 
@@ -664,6 +932,40 @@ def batch_cell_list(
     batch_naive_neighbor_list : Naive O(N^2) method
     """
 
+    has_pair_outputs = _has_partial_or_pair_outputs(
+        target_indices=target_indices,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=pair_energies,
+        pair_forces=pair_forces,
+    )
+    if has_pair_outputs and (
+        pair_fn is not None
+        or pair_params is not None
+        or pair_energies is not None
+        or pair_forces is not None
+        or target_indices is not None
+    ):
+        raise NotImplementedError(
+            "pair_fn / pair_params / pair_energies / pair_forces / "
+            "target_indices are not yet wired through the JAX "
+            "batch_cell_list binding.  Only return_distances and "
+            "return_vectors are supported in this pass.",
+        )
+
+    # Preserve LIVE positions/cell for the autograd primitive; the warp
+    # kernels are non-differentiable across the JAX boundary so we detach
+    # them for the cell-list build.
+    positions_for_grad = positions
+    cell_for_grad = cell
+    if has_pair_outputs:
+        positions = jax.lax.stop_gradient(positions)
+        cell = jax.lax.stop_gradient(cell)
+
     # Prepare batch info
     batch_idx, batch_ptr = prepare_batch_idx_ptr(
         batch_idx, batch_ptr, positions.shape[0]
@@ -688,6 +990,85 @@ def batch_cell_list(
         cutoff=cutoff,
         max_total_cells=max_total_cells,
     )
+
+    if has_pair_outputs:
+        num_systems = batch_ptr.shape[0] - 1
+        if pbc is not None:
+            pbc_bool = pbc.astype(jnp.bool_)
+        else:
+            pbc_bool = jnp.ones((num_systems, 3), dtype=jnp.bool_)
+        if max_neighbors is None:
+            max_neighbors = estimate_max_neighbors(cutoff)
+        total_atoms = positions.shape[0]
+        if neighbor_matrix_shifts is None:
+            neighbor_matrix_shifts = jnp.zeros(
+                (total_atoms, max_neighbors, 3), dtype=jnp.int32
+            )
+        nm = jnp.full((total_atoms, max_neighbors), total_atoms, dtype=jnp.int32)
+        nn = jnp.zeros(total_atoms, dtype=jnp.int32)
+        if return_distances and neighbor_distances is None:
+            neighbor_distances = jnp.zeros(
+                (total_atoms, max_neighbors), dtype=positions.dtype
+            )
+        if return_vectors and neighbor_vectors is None:
+            neighbor_vectors = jnp.zeros(
+                (total_atoms, max_neighbors, 3), dtype=positions.dtype
+            )
+        if neighbor_distances is None:
+            neighbor_distances = jnp.zeros(
+                (total_atoms, max_neighbors), dtype=positions.dtype
+            )
+        if neighbor_vectors is None:
+            neighbor_vectors = jnp.zeros(
+                (total_atoms, max_neighbors, 3), dtype=positions.dtype
+            )
+        cells_per_system = jnp.prod(cells_per_dimension, axis=1)
+        cell_offsets = jnp.concatenate(
+            [
+                jnp.array([0], dtype=jnp.int32),
+                jnp.cumsum(cells_per_system[:-1], dtype=jnp.int32),
+            ]
+        )
+        batch_idx_i32 = batch_idx.astype(jnp.int32)
+        forward_kwargs = {
+            "pbc_bool": pbc_bool,
+            "batch_idx_i32": batch_idx_i32,
+            "cells_per_dimension": cells_per_dimension,
+            "atom_periodic_shifts": atom_periodic_shifts,
+            "atom_to_cell_mapping": atom_to_cell_mapping,
+            "atoms_per_cell_count": atoms_per_cell_count,
+            "cell_atom_start_indices": cell_atom_start_indices,
+            "cell_atom_list": cell_atom_list,
+            "cell_offsets": cell_offsets,
+            "neighbor_search_radius": neighbor_search_radius,
+            "neighbor_matrix": nm,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            "num_neighbors": nn,
+            "neighbor_vectors": neighbor_vectors,
+            "neighbor_distances": neighbor_distances,
+            "cutoff": cutoff,
+        }
+        distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
+            positions_for_grad,
+            cell_for_grad,
+            _batch_cell_list_pair_outputs_forward,
+            forward_kwargs,
+        )
+        if return_neighbor_list:
+            nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
+                nm_out,
+                num_neighbors=nn_out,
+                neighbor_shift_matrix=shifts_out,
+                fill_value=total_atoms,
+            )
+            base = (nl, nptr, nl_shifts)
+        else:
+            base = (nm_out, nn_out, shifts_out)
+        if return_distances and return_vectors:
+            return (*base, distances_out, vectors_out)
+        if return_distances:
+            return (*base, distances_out)
+        return (*base, vectors_out)
 
     # Query cell list
     neighbor_matrix, num_neighbors, neighbor_matrix_shifts = batch_query_cell_list(

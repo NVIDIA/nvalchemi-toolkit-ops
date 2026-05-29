@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors import (
+    _cluster_tile_auto_eligible,
     batch_naive_neighbor_list_dual_cutoff,
     cell_list,
     naive_neighbor_list,
@@ -572,6 +573,48 @@ class TestNeighborListHalfFill:
             reverse_pairs = set(zip(targets, sources))
             overlap = pairs.intersection(reverse_pairs)
             assert len(overlap) == 0, "Half-fill should not have reciprocal pairs"
+
+
+class TestNeighborListHalfFillAutoDispatch:
+    """``method=None`` auto-dispatch must not pick cluster_tile for half_fill.
+
+    Regression for the jax/torch asymmetry where the jax auto-dispatcher lacked
+    the ``half_fill`` gate that torch has: an otherwise-cluster_tile-eligible
+    call with ``half_fill=True`` auto-selected cluster_tile and then hard-raised
+    ``NotImplementedError`` instead of falling back to cell_list.
+    """
+
+    def test_auto_dispatch_half_fill_falls_back(self):
+        # Eligible for cluster_tile EXCEPT for half_fill: float32, GPU (module
+        # is requires_gpu), periodic all-True, avg_atoms >= 2000.
+        key = jax.random.PRNGKey(0)
+        positions = jax.random.uniform(key, (2048, 3), dtype=jnp.float32) * 30.0
+        cell = (jnp.eye(3, dtype=jnp.float32) * 30.0).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+
+        # Must not raise NotImplementedError; falls back to cell_list (3-tuple).
+        result = neighbor_list(
+            positions,
+            3.0,
+            cell=cell,
+            pbc=pbc,
+            method=None,
+            half_fill=True,
+            return_neighbor_list=True,
+        )
+        assert len(result) == 3
+
+    def test_auto_eligible_gates_on_half_fill(self):
+        # On a GPU float32 periodic input, eligibility flips solely on half_fill.
+        positions = jnp.zeros((8, 3), dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+        assert (
+            _cluster_tile_auto_eligible(positions, cell, pbc, None, False, {}) is True
+        )
+        assert (
+            _cluster_tile_auto_eligible(positions, cell, pbc, None, True, {}) is False
+        )
 
 
 # ==============================================================================

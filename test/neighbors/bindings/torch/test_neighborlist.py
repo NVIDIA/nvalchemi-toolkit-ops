@@ -365,15 +365,15 @@ class TestNeighborListAutoSelection:
             neighbor_list(positions, cutoff=2.0, cell=cell)
 
     @pytest.mark.parametrize("dtype", [torch.float32])
-    def test_explicit_tile_warp_no_cell_synthesizes(self, dtype):
-        """method='tile_warp' + cell=None triggers synthesize_cell_for_ss."""
+    def test_explicit_cluster_tile_no_cell_synthesizes(self, dtype):
+        """method='cluster_tile' + cell=None triggers synthesize_cell_for_ss."""
         if not torch.cuda.is_available():
-            pytest.skip("tile_warp requires CUDA")
+            pytest.skip("cluster_tile requires CUDA")
         positions = torch.randn(256, 3, dtype=dtype, device="cuda") * 5.0
         result = neighbor_list(
             positions,
             cutoff=2.0,
-            method="tile_warp",
+            method="cluster_tile",
             return_neighbor_list=True,
         )
         # format='coo' → 2-tuple (no pbc info from synthesized cell)
@@ -382,23 +382,100 @@ class TestNeighborListAutoSelection:
         assert nlist.shape[0] == 2
 
     @pytest.mark.parametrize("dtype", [torch.float32])
-    def test_explicit_batch_tile_warp_no_cell_batch_ptr_only(self, dtype):
-        """method='batch_tile_warp' + cell=None + batch_ptr-only triggers
+    def test_explicit_batch_cluster_tile_no_cell_batch_ptr_only(self, dtype):
+        """method='batch_cluster_tile' + cell=None + batch_ptr-only triggers
         prepare_batch_idx_ptr (fills batch_idx) + synthesize_cell_for_batch."""
         if not torch.cuda.is_available():
-            pytest.skip("batch_tile_warp requires CUDA")
+            pytest.skip("batch_cluster_tile requires CUDA")
         positions = torch.randn(256, 3, dtype=dtype, device="cuda") * 5.0
         batch_ptr = torch.tensor([0, 128, 256], dtype=torch.int32, device="cuda")
         result = neighbor_list(
             positions,
             cutoff=2.0,
-            method="batch_tile_warp",
+            method="batch_cluster_tile",
             batch_ptr=batch_ptr,
             return_neighbor_list=True,
         )
         assert isinstance(result, tuple)
         nlist = result[0]
         assert nlist.shape[0] == 2
+
+    @pytest.mark.parametrize("dtype", [torch.float32])
+    def test_explicit_cluster_tile_accepts_cutoff2(self, dtype):
+        """method='cluster_tile' accepts cutoff2 on matrix output."""
+        if not torch.cuda.is_available():
+            pytest.skip("cluster_tile requires CUDA")
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.8, 0.0, 0.0], [1.4, 0.0, 0.0]],
+            dtype=dtype,
+            device="cuda",
+        )
+        cell = torch.eye(3, dtype=dtype, device="cuda") * 5.0
+        pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+        result = neighbor_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            method="cluster_tile",
+            cutoff2=1.6,
+            max_neighbors=8,
+            return_neighbor_list=False,
+        )
+        assert len(result) == 6
+
+    @pytest.mark.parametrize("dtype", [torch.float32])
+    def test_explicit_batch_cluster_tile_accepts_cutoff2(self, dtype):
+        """method='batch_cluster_tile' accepts cutoff2 on matrix output."""
+        if not torch.cuda.is_available():
+            pytest.skip("batch_cluster_tile requires CUDA")
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.8, 0.0, 0.0],
+                [1.4, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.8, 0.0, 0.0],
+                [1.4, 0.0, 0.0],
+            ],
+            dtype=dtype,
+            device="cuda",
+        )
+        cell = torch.eye(3, dtype=dtype, device="cuda").repeat(2, 1, 1) * 5.0
+        pbc = torch.ones((2, 3), dtype=torch.bool, device="cuda")
+        batch_ptr = torch.tensor([0, 3, 6], dtype=torch.int32, device="cuda")
+        result = neighbor_list(
+            positions,
+            cutoff=1.0,
+            cell=cell,
+            pbc=pbc,
+            method="batch_cluster_tile",
+            batch_ptr=batch_ptr,
+            cutoff2=1.6,
+            max_neighbors=8,
+            return_neighbor_list=False,
+        )
+        assert len(result) == 6
+
+    @pytest.mark.parametrize("dtype", [torch.float32])
+    def test_explicit_cluster_tile_rebuild_flags_raise_clear_state_error(self, dtype):
+        """method='cluster_tile' exposes rebuild_flags without TypeError."""
+        if not torch.cuda.is_available():
+            pytest.skip("cluster_tile requires CUDA")
+        positions = torch.randn(64, 3, dtype=dtype, device="cuda") * 5.0
+        cell = torch.eye(3, dtype=dtype, device="cuda") * 10.0
+        pbc = torch.ones(3, dtype=torch.bool, device="cuda")
+        with pytest.raises(ValueError, match="previous cluster_tile state"):
+            neighbor_list(
+                positions,
+                cutoff=2.0,
+                cell=cell,
+                pbc=pbc,
+                method="cluster_tile",
+                max_neighbors=32,
+                rebuild_flags=torch.tensor([True], dtype=torch.bool, device="cuda"),
+                return_neighbor_list=False,
+            )
 
 
 class TestNeighborListExplicitMethod:

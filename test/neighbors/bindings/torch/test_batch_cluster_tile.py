@@ -18,13 +18,14 @@
 import pytest
 import torch
 
-from nvalchemiops.torch.neighbors.batch_tile_warp import (
+from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
+from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
-    allocate_batch_tile_neighbor_list,
-    batch_tile_neighbor_list,
-    batch_tile_to_matrix,
-    build_batch_tile_neighbor_list,
-    estimate_batch_tile_neighbor_list_sizes,
+    allocate_batch_cluster_tile_list,
+    batch_build_cluster_tile_list,
+    batch_cluster_tile_neighbor_list,
+    batch_query_cluster_tile,
+    estimate_batch_cluster_tile_list_sizes,
 )
 
 from ...test_utils import (
@@ -33,14 +34,14 @@ from ...test_utils import (
 )
 from .conftest import requires_vesin
 
-# batch_tile_warp is CUDA + float32 only; override the conftest
+# batch_cluster_tile is CUDA + float32 only; override the conftest
 # device/dtype fixtures to restrict the parametrize matrix.
 
 
 @pytest.fixture(params=["cuda:0"], ids=lambda d: d.replace(":", "_"))
 def device(request):
     if not torch.cuda.is_available():
-        pytest.skip("tile_warp kernels require CUDA")
+        pytest.skip("cluster_tile kernels require CUDA")
     return request.param
 
 
@@ -70,15 +71,18 @@ def _make_batch(
     return positions, cell_batch, batch_ptr
 
 
-def _canonicalize_matrix_half_fill(
+def _canonicalize_matrix_full(
     neighbor_matrix: torch.Tensor,
     num_neighbors: torch.Tensor,
     shifts: torch.Tensor,
     atom_system: list[int],
     natom: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Flatten per-system matrix output to canonical (i, j, shift) half-fill
-    (``i < j``, shift negated on swap)."""
+    """Flatten per-system matrix output to ALL directed (i, j, shift) triples.
+
+    cluster_tile is full-fill, so each unordered pair appears in both rows;
+    this matches vesin's ``full_list=True`` reference directly.
+    """
     device = neighbor_matrix.device
     i_list, j_list, u_list = [], [], []
     nm_cpu = neighbor_matrix.cpu()
@@ -93,14 +97,9 @@ def _canonicalize_matrix_half_fill(
                     f"cross-system pair i={i} j={j}"
                 )
                 sh = tuple(int(x) for x in s_cpu[i, k])
-                if i < j:
-                    i_list.append(i)
-                    j_list.append(j)
-                    u_list.append(sh)
-                else:
-                    i_list.append(j)
-                    j_list.append(i)
-                    u_list.append((-sh[0], -sh[1], -sh[2]))
+                i_list.append(i)
+                j_list.append(j)
+                u_list.append(sh)
     i_t = torch.tensor(i_list, dtype=torch.int32, device=device)
     j_t = torch.tensor(j_list, dtype=torch.int32, device=device)
     if u_list:
@@ -116,7 +115,7 @@ def _reference_pairs_per_system(
     batch_ptr: torch.Tensor,
     cutoff: float,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Brute-force per-system half-fill reference (global indices)."""
+    """Brute-force per-system full-fill reference (global indices)."""
     S = cell_batch.shape[0]
     i_all, j_all, u_all = [], [], []
     for s in range(S):
@@ -126,10 +125,9 @@ def _reference_pairs_per_system(
         cell_s = cell_batch[s].unsqueeze(0)
         pbc_s = torch.tensor([True, True, True], device=positions.device)
         i_s, j_s, u_s, _ = brute_force_neighbors(sub, cell_s, pbc_s, cutoff)
-        mask = i_s < j_s
-        i_all.append(i_s[mask].to(torch.int64) + a)
-        j_all.append(j_s[mask].to(torch.int64) + a)
-        u_all.append(u_s[mask])
+        i_all.append(i_s.to(torch.int64) + a)
+        j_all.append(j_s.to(torch.int64) + a)
+        u_all.append(u_s)
     if i_all:
         i_t = torch.cat(i_all).to(torch.int32)
         j_t = torch.cat(j_all).to(torch.int32)
@@ -157,7 +155,7 @@ class TestBatchTileNeighborListCorrectness:
             seed=1,
         )
         cutoff = 3.0
-        nm, nn, nms = batch_tile_neighbor_list(
+        nm, nn, nms = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -165,7 +163,7 @@ class TestBatchTileNeighborListCorrectness:
             max_neighbors=64,
         )
         atom_system = [0] * positions.shape[0]
-        i_got, j_got, u_got = _canonicalize_matrix_half_fill(
+        i_got, j_got, u_got = _canonicalize_matrix_full(
             nm,
             nn,
             nms,
@@ -191,7 +189,7 @@ class TestBatchTileNeighborListCorrectness:
             seed=2,
         )
         cutoff = 3.0
-        nm, nn, nms = batch_tile_neighbor_list(
+        nm, nn, nms = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -199,7 +197,7 @@ class TestBatchTileNeighborListCorrectness:
             max_neighbors=64,
         )
         atom_system = sum(([s] * sz for s, sz in enumerate([64, 64, 64])), [])
-        i_got, j_got, u_got = _canonicalize_matrix_half_fill(
+        i_got, j_got, u_got = _canonicalize_matrix_full(
             nm,
             nn,
             nms,
@@ -226,7 +224,7 @@ class TestBatchTileNeighborListCorrectness:
             seed=3,
         )
         cutoff = 2.5
-        nm, nn, nms = batch_tile_neighbor_list(
+        nm, nn, nms = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -234,7 +232,7 @@ class TestBatchTileNeighborListCorrectness:
             max_neighbors=128,
         )
         atom_system = sum(([s] * sz for s, sz in enumerate(sizes)), [])
-        i_got, j_got, u_got = _canonicalize_matrix_half_fill(
+        i_got, j_got, u_got = _canonicalize_matrix_full(
             nm,
             nn,
             nms,
@@ -264,7 +262,7 @@ class TestBatchTileNeighborListCorrectness:
         cell_batch = cell.unsqueeze(0).contiguous()
         batch_ptr = torch.tensor([0, N], dtype=torch.int32, device=device)
         cutoff = 2.5
-        nm, nn, nms = batch_tile_neighbor_list(
+        nm, nn, nms = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -272,7 +270,7 @@ class TestBatchTileNeighborListCorrectness:
             max_neighbors=128,
         )
         atom_system = [0] * N
-        i_got, j_got, u_got = _canonicalize_matrix_half_fill(
+        i_got, j_got, u_got = _canonicalize_matrix_full(
             nm,
             nn,
             nms,
@@ -300,7 +298,7 @@ class TestBatchTileNeighborListCorrectness:
         cutoff = 2.5
         N = positions.shape[0]
 
-        nm1, nn1, _nms1 = batch_tile_neighbor_list(
+        nm1, nn1, _nms1 = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -328,12 +326,12 @@ class TestBatchTileNeighborListCorrectness:
             tile_row_group,
             tile_col_group,
             tile_system,
-        ) = allocate_batch_tile_neighbor_list(
+        ) = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=dtype,
         )
-        build_batch_tile_neighbor_list(
+        batch_build_cluster_tile_list(
             positions,
             cutoff,
             cell_batch,
@@ -361,7 +359,7 @@ class TestBatchTileNeighborListCorrectness:
         nm2 = torch.full((N, 64), N, dtype=torch.int32, device=device)
         nn2 = torch.zeros(N, dtype=torch.int32, device=device)
         nms2 = torch.zeros((N, 64, 3), dtype=torch.int32, device=device)
-        batch_tile_to_matrix(
+        batch_query_cluster_tile(
             sorted_atom_index,
             sorted_pos_x,
             sorted_pos_y,
@@ -385,6 +383,84 @@ class TestBatchTileNeighborListCorrectness:
             s2 = {int(x.item()) for x in nm2[i, :n_i]}
             assert s1 == s2, f"atom {i} neighbor set mismatch"
 
+    def test_tile_buffer_overflow_raises(self, device, dtype):
+        """A too-small batch tile buffer must raise, not silently truncate."""
+        positions, cell_batch, batch_ptr = _make_batch(
+            [256, 256], [8.0, 8.0], device=device, dtype=dtype, seed=9
+        )
+        cutoff = 4.0
+        N = positions.shape[0]
+        scratch = allocate_batch_cluster_tile_list(
+            batch_ptr, torch.device(device), dtype=dtype, max_tiles_per_group=1
+        )
+        (
+            sorted_atom_index,
+            sort_inv,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            batch_idx_sorted,
+            batch_ptr_padded,
+            group_system,
+            group_ptr,
+            group_ctr_x,
+            group_ctr_y,
+            group_ctr_z,
+            group_ext_x,
+            group_ext_y,
+            group_ext_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+        ) = scratch
+        batch_build_cluster_tile_list(
+            positions,
+            cutoff,
+            cell_batch,
+            batch_ptr,
+            sorted_atom_index,
+            sort_inv,
+            sorted_pos_x,
+            sorted_pos_y,
+            sorted_pos_z,
+            batch_idx_sorted,
+            batch_ptr_padded,
+            group_system,
+            group_ptr,
+            group_ctr_x,
+            group_ctr_y,
+            group_ctr_z,
+            group_ext_x,
+            group_ext_y,
+            group_ext_z,
+            num_tiles,
+            tile_row_group,
+            tile_col_group,
+            tile_system,
+        )
+        assert int(num_tiles.item()) > int(tile_row_group.shape[0])
+        nm = torch.empty((N, 64), dtype=torch.int32, device=device)
+        nn = torch.zeros(N, dtype=torch.int32, device=device)
+        nms = torch.empty((N, 64, 3), dtype=torch.int32, device=device)
+        with pytest.raises(NeighborOverflowError):
+            batch_query_cluster_tile(
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                cell_batch,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                tile_system,
+                cutoff,
+                N,
+                nm,
+                nn,
+                nms,
+            )
+
 
 # =============================================================================
 # Edge cases
@@ -398,7 +474,7 @@ class TestBatchTileNeighborListEdgeCases:
             dtype=dtype,
             seed=6,
         )
-        nm, nn, _nms = batch_tile_neighbor_list(
+        nm, nn, _nms = batch_cluster_tile_neighbor_list(
             positions,
             1e-6,
             cell_batch,
@@ -414,7 +490,7 @@ class TestBatchTileNeighborListEdgeCases:
             device=device,
         )
         n_padded, ngroup, ngroup_padded, max_tiles, S = (
-            estimate_batch_tile_neighbor_list_sizes(batch_ptr)
+            estimate_batch_cluster_tile_list_sizes(batch_ptr)
         )
         assert S == 3
         assert n_padded >= 198
@@ -429,7 +505,7 @@ class TestBatchTileNeighborListEdgeCases:
 # =============================================================================
 class TestBatchTileNeighborListFormats:
     """Cover the ``format="tile"`` and ``format="coo"`` return paths of
-    ``batch_tile_neighbor_list`` (lines 875-940 in batch_tile_warp.py)."""
+    ``batch_cluster_tile_neighbor_list`` (lines 875-940 in batch_cluster_tile.py)."""
 
     def test_format_tile_returns_eleven_tuple(self, device, dtype):
         sizes = [64, 96]
@@ -440,7 +516,7 @@ class TestBatchTileNeighborListFormats:
             dtype=dtype,
             seed=10,
         )
-        result = batch_tile_neighbor_list(
+        result = batch_cluster_tile_neighbor_list(
             positions,
             3.0,
             cell_batch,
@@ -484,7 +560,7 @@ class TestBatchTileNeighborListFormats:
         )
         cutoff = 3.0
         # matrix-format reference for pair count
-        nm, nn, _ = batch_tile_neighbor_list(
+        nm, nn, _ = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -493,7 +569,7 @@ class TestBatchTileNeighborListFormats:
         )
         expected_pairs = int(nn.sum().item())
 
-        nl, neighbor_ptr, nls = batch_tile_neighbor_list(
+        nl, neighbor_ptr, nls = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -537,7 +613,7 @@ class TestBatchTileNeighborListFormats:
             device=device,
         )
         pair_counter_buf = torch.zeros(1, dtype=torch.int32, device=device)
-        nl, neighbor_ptr, nls = batch_tile_neighbor_list(
+        nl, neighbor_ptr, nls = batch_cluster_tile_neighbor_list(
             positions,
             cutoff,
             cell_batch,
@@ -562,7 +638,7 @@ class TestBatchTileNeighborListFormats:
             seed=13,
         )
         with pytest.raises(ValueError, match="format"):
-            batch_tile_neighbor_list(
+            batch_cluster_tile_neighbor_list(
                 positions,
                 2.5,
                 cell_batch,
@@ -585,7 +661,7 @@ class TestBatchTileNeighborListErrors:
         )
         positions = positions.to(torch.float64)
         with pytest.raises(TypeError):
-            batch_tile_neighbor_list(
+            batch_cluster_tile_neighbor_list(
                 positions,
                 2.5,
                 cell_batch,
@@ -604,7 +680,7 @@ class TestBatchTileNeighborListErrors:
         # batch_ptr claims a larger total than positions provides.
         bad_bp = torch.tensor([0, 64], dtype=torch.int32, device=device)
         with pytest.raises(ValueError, match="batch_ptr"):
-            batch_tile_neighbor_list(
+            batch_cluster_tile_neighbor_list(
                 positions,
                 2.5,
                 cell_batch,
@@ -616,16 +692,16 @@ class TestBatchTileNeighborListErrors:
 # =============================================================================
 # torch.compile compatibility
 # =============================================================================
-class TestBatchTileWarpCompile:
+class TestBatchClusterTileCompile:
     """Tests for ``torch.compile`` compatibility of the batched cluster-pair
     tile path.  Verifies that the ``@torch.library.custom_op``-decorated
-    component shells (``_build_batch_tile_neighbor_list``,
-    ``_batch_tile_to_matrix``, ``_batch_tile_to_coo``) survive a
+    component shells (``_batch_build_cluster_tile_list``,
+    ``_batch_query_cluster_tile``, ``_batch_query_cluster_tile_coo``) survive a
     ``torch.compile`` round-trip.
     """
 
-    def test_batch_tile_neighbor_list_compile(self, device, dtype):
-        """``batch_tile_neighbor_list`` should be compatible with ``torch.compile``."""
+    def test_batch_cluster_tile_neighbor_list_compile(self, device, dtype):
+        """``batch_cluster_tile_neighbor_list`` should be compatible with ``torch.compile``."""
         sizes = [64, 96]
         positions, cell_batch, batch_ptr = _make_batch(
             sizes,
@@ -636,17 +712,21 @@ class TestBatchTileWarpCompile:
         )
         cutoff = 2.5
 
-        nm_uncompiled, nn_uncompiled, _nms_uncompiled = batch_tile_neighbor_list(
-            positions,
-            cutoff,
-            cell_batch,
-            batch_ptr,
-            max_neighbors=64,
+        nm_uncompiled, nn_uncompiled, _nms_uncompiled = (
+            batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=64,
+            )
         )
 
         @torch.compile
-        def compiled_batch_tile_neighbor_list(positions, cutoff, cell_batch, batch_ptr):
-            return batch_tile_neighbor_list(
+        def compiled_batch_cluster_tile_neighbor_list(
+            positions, cutoff, cell_batch, batch_ptr
+        ):
+            return batch_cluster_tile_neighbor_list(
                 positions,
                 cutoff,
                 cell_batch,
@@ -654,8 +734,10 @@ class TestBatchTileWarpCompile:
                 max_neighbors=64,
             )
 
-        nm_compiled, nn_compiled, _nms_compiled = compiled_batch_tile_neighbor_list(
-            positions, cutoff, cell_batch, batch_ptr
+        nm_compiled, nn_compiled, _nms_compiled = (
+            compiled_batch_cluster_tile_neighbor_list(
+                positions, cutoff, cell_batch, batch_ptr
+            )
         )
 
         assert torch.equal(nn_uncompiled, nn_compiled)
@@ -672,7 +754,7 @@ class TestBatchTileWarpCompile:
 # =============================================================================
 # Components API
 # =============================================================================
-class TestBatchTileWarpComponentsAPI:
+class TestBatchClusterTileComponentsAPI:
     """Tests for the modular batched tile API functions (allocate + build +
     convert), exercised independently of the convenience wrapper.
     """
@@ -692,12 +774,12 @@ class TestBatchTileWarpComponentsAPI:
         cutoff = 2.5
         N = positions.shape[0]
 
-        state = allocate_batch_tile_neighbor_list(
+        state = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=dtype,
         )
-        build_batch_tile_neighbor_list(
+        batch_build_cluster_tile_list(
             positions,
             cutoff,
             cell_batch,
@@ -707,7 +789,7 @@ class TestBatchTileWarpComponentsAPI:
         nm_a = torch.full((N, 32), N, dtype=torch.int32, device=device)
         nn_a = torch.zeros(N, dtype=torch.int32, device=device)
         nms_a = torch.zeros((N, 32, 3), dtype=torch.int32, device=device)
-        batch_tile_to_matrix(
+        batch_query_cluster_tile(
             state[0],  # sorted_atom_index
             state[2],  # sorted_pos_x
             state[3],  # sorted_pos_y
@@ -728,7 +810,7 @@ class TestBatchTileWarpComponentsAPI:
         nm_b = torch.full((N, 32), N, dtype=torch.int32, device=device)
         nn_b = torch.zeros(N, dtype=torch.int32, device=device)
         nms_b = torch.zeros((N, 32, 3), dtype=torch.int32, device=device)
-        batch_tile_to_matrix(
+        batch_query_cluster_tile(
             state[0],
             state[2],
             state[3],
@@ -753,8 +835,8 @@ class TestBatchTileWarpComponentsAPI:
             assert s_a == s_b, f"atom {i} re-conversion mismatch"
 
     def test_allocate_sizes_consistent_with_estimate(self, device, dtype):
-        """The shapes returned by ``allocate_batch_tile_neighbor_list`` should
-        match what ``estimate_batch_tile_neighbor_list_sizes`` advertises.
+        """The shapes returned by ``allocate_batch_cluster_tile_list`` should
+        match what ``estimate_batch_cluster_tile_list_sizes`` advertises.
         """
         sizes = [48, 80, 40]
         positions, cell_batch, batch_ptr = _make_batch(
@@ -766,9 +848,9 @@ class TestBatchTileWarpComponentsAPI:
         )
         del positions, cell_batch  # unused — only batch_ptr shape matters here
         n_padded, ngroup, ngroup_padded, max_tiles, num_systems = (
-            estimate_batch_tile_neighbor_list_sizes(batch_ptr)
+            estimate_batch_cluster_tile_list_sizes(batch_ptr)
         )
-        state = allocate_batch_tile_neighbor_list(
+        state = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=dtype,
@@ -797,13 +879,13 @@ class TestBatchTileWarpComponentsAPI:
             dtype=torch.float32,
             seed=20,
         )
-        state = allocate_batch_tile_neighbor_list(
+        state = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=torch.float32,
         )
         with pytest.raises(TypeError, match="float32"):
-            build_batch_tile_neighbor_list(
+            batch_build_cluster_tile_list(
                 positions.to(torch.float64),
                 2.5,
                 cell_batch,
@@ -819,7 +901,7 @@ class TestBatchTileWarpComponentsAPI:
             dtype=dtype,
             seed=21,
         )
-        state = allocate_batch_tile_neighbor_list(
+        state = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=dtype,
@@ -827,7 +909,7 @@ class TestBatchTileWarpComponentsAPI:
         # cell_batch as 2D (3,3) instead of (S, 3, 3) → ValueError
         bad_cell = cell_batch.squeeze(0)
         with pytest.raises(ValueError, match="cell_batch"):
-            build_batch_tile_neighbor_list(
+            batch_build_cluster_tile_list(
                 positions,
                 2.5,
                 bad_cell,
@@ -843,13 +925,13 @@ class TestBatchTileWarpComponentsAPI:
             dtype=dtype,
             seed=22,
         )
-        state = allocate_batch_tile_neighbor_list(
+        state = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=dtype,
         )
         with pytest.raises(ValueError, match="batch_ptr"):
-            build_batch_tile_neighbor_list(
+            batch_build_cluster_tile_list(
                 positions,
                 2.5,
                 cell_batch,
@@ -865,7 +947,7 @@ class TestBatchTileWarpComponentsAPI:
             dtype=dtype,
             seed=23,
         )
-        state = allocate_batch_tile_neighbor_list(
+        state = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=dtype,
@@ -873,7 +955,7 @@ class TestBatchTileWarpComponentsAPI:
         # cell_batch has 2 systems but batch_ptr claims 3 → ValueError.
         bad_bp = torch.tensor([0, 16, 32, 64], dtype=torch.int32, device=device)
         with pytest.raises(ValueError, match="batch_ptr length"):
-            build_batch_tile_neighbor_list(
+            batch_build_cluster_tile_list(
                 positions,
                 2.5,
                 cell_batch,
@@ -890,18 +972,177 @@ class TestBatchTileWarpComponentsAPI:
             dtype=dtype,
             seed=24,
         )
-        state = allocate_batch_tile_neighbor_list(
+        state = allocate_batch_cluster_tile_list(
             batch_ptr,
             torch.device(device),
             dtype=dtype,
         )
         inv_cell_batch = torch.linalg.inv(cell_batch).contiguous()
         # Should run without error when inv_cell_batch is provided.
-        build_batch_tile_neighbor_list(
+        batch_build_cluster_tile_list(
             positions,
             2.5,
             cell_batch,
             batch_ptr,
             *state,
             inv_cell_batch=inv_cell_batch,
+        )
+
+
+class TestBatchClusterTileAutograd:
+    """Differentiable per-pair distances/vectors for batch_cluster_tile_neighbor_list."""
+
+    def _make_batch(self, device, n_per=32, box=5.0):
+        torch.manual_seed(0)
+        pos = torch.randn(2 * n_per, 3, dtype=torch.float32, device=device) * 0.5
+        batch_ptr = torch.tensor(
+            [0, n_per, 2 * n_per], dtype=torch.int32, device=device
+        )
+        cell_batch = (
+            torch.eye(3, dtype=torch.float32, device=device)
+            .unsqueeze(0)
+            .repeat(2, 1, 1)
+            * box
+        )
+        return pos, cell_batch, batch_ptr
+
+    def test_forward_returns_differentiable(self, device):
+        pos, cell_batch, batch_ptr = self._make_batch(device)
+        pos.requires_grad_(True)
+        nm, nn, shifts, d, v = batch_cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell_batch,
+            batch_ptr,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert d.requires_grad and v.requires_grad
+
+    def test_grad_positions_finite(self, device):
+        pos, cell_batch, batch_ptr = self._make_batch(device)
+        pos.requires_grad_(True)
+        _, _, _, d, _ = batch_cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell_batch,
+            batch_ptr,
+            return_distances=True,
+            return_vectors=True,
+        )
+        d.sum().backward()
+        assert torch.isfinite(pos.grad).all()
+
+    def test_grad_cell_finite(self, device):
+        pos, _, batch_ptr = self._make_batch(device)
+        cell_batch = (
+            torch.eye(3, dtype=torch.float32, device=device)
+            .unsqueeze(0)
+            .repeat(2, 1, 1)
+            * 5.0
+        )
+        cell_batch.requires_grad_(True)
+        _, _, _, d, _ = batch_cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell_batch,
+            batch_ptr,
+            return_distances=True,
+            return_vectors=True,
+        )
+        d.sum().backward()
+        assert torch.isfinite(cell_batch.grad).all()
+
+    def test_hessian_vector_product_smoke(self, device):
+        """fp32 second-order HVP smoke — see TestClusterTileAutograd."""
+        pos, cell_batch, batch_ptr = self._make_batch(device)
+        pos.requires_grad_(True)
+
+        def loss(p):
+            *_, d, _ = batch_cluster_tile_neighbor_list(
+                p,
+                1.5,
+                cell_batch,
+                batch_ptr,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        g = torch.autograd.grad(loss(pos), pos, create_graph=True)[0]
+        v = torch.randn_like(pos)
+        hvp = torch.autograd.grad((g * v).sum(), pos)[0]
+        assert torch.isfinite(hvp).all()
+        assert hvp.shape == pos.shape
+
+    def test_no_grad_path_unchanged(self, device):
+        pos, cell_batch, batch_ptr = self._make_batch(device)
+        nm_a, nn_a, sh_a = batch_cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell_batch,
+            batch_ptr,
+        )
+        nm_b, nn_b, sh_b, d_b, v_b = batch_cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell_batch,
+            batch_ptr,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert not d_b.requires_grad and not v_b.requires_grad
+        assert torch.equal(nn_a, nn_b)
+        for i in range(nm_a.shape[0]):
+            n = nn_a[i].item()
+            row_a = sorted(nm_a[i, :n].tolist())
+            row_b = sorted(nm_b[i, :n].tolist())
+            assert row_a == row_b
+
+    def test_grad_matches_fd_spot_check(self, device):
+        """fp32 spot-check on a tight per-system cluster.  See the
+        single-system class for the rationale on why we don't use
+        ``gradcheck`` here.
+        """
+        torch.manual_seed(0)
+        n_per = 4
+        data = torch.randn(2 * n_per, 3, dtype=torch.float32, device=device) * 0.15
+        batch_ptr = torch.tensor(
+            [0, n_per, 2 * n_per], dtype=torch.int32, device=device
+        )
+        cell_batch = (
+            torch.eye(3, dtype=torch.float32, device=device)
+            .unsqueeze(0)
+            .repeat(2, 1, 1)
+            * 20.0
+        )
+        eps = 1e-3
+
+        def fn(p):
+            *_, d, _ = batch_cluster_tile_neighbor_list(
+                p,
+                5.0,
+                cell_batch,
+                batch_ptr,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        pos = data.clone().requires_grad_(True)
+        ana = torch.autograd.grad(fn(pos), pos)[0]
+        fd = torch.zeros_like(ana)
+        for i in range(2 * n_per):
+            for j in range(3):
+                pp = data.clone().requires_grad_(False)
+                pp[i, j] += eps
+                f_p = fn(pp).item()
+                pm = data.clone().requires_grad_(False)
+                pm[i, j] -= eps
+                f_m = fn(pm).item()
+                fd[i, j] = (f_p - f_m) / (2 * eps)
+        max_abs_diff = (ana - fd).abs().max().item()
+        max_ref = max(ana.abs().max().item(), fd.abs().max().item(), 1.0)
+        assert max_abs_diff / max_ref < 5e-2, (
+            f"analytical vs FD relative disagreement {max_abs_diff / max_ref:.3e}"
         )

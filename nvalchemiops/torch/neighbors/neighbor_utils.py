@@ -347,7 +347,7 @@ def synthesize_cell_for_batch(
     """Per-system bounding-box cells around ``positions`` for batched inputs.
 
     Companion to :func:`synthesize_cell_for_ss` for the batched
-    entry points (``batch_cell_list``, ``batch_tile_neighbor_list``).
+    entry points (``batch_cell_list``, ``batch_cluster_tile_neighbor_list``).
     For each system, computes the tight ``(min, max)`` bbox via
     ``scatter_reduce`` and synthesizes an orthorhombic non-PBC cell
     with ``padding_fraction * cutoff`` of slack on each side.
