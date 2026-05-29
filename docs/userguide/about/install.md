@@ -31,9 +31,8 @@ When running on CUDA-capable NVIDIA GPUs, we recommend:
 
 Blackwell GPUs require **CUDA 13**. The default PyPI `warp-lang` package ships
 with CUDA 12 and needs a CUDA 13 variant. `torch>=2.11.0` and `jax[cuda13]`
-publish CUDA 13 wheels on the default PyPI index for x86; on Arm platforms
-(e.g. NVIDIA DGX Spark), an extra index URL is required for PyTorch. See
-[CUDA 13 Installation](#cuda-13-installation) below for detailed steps.
+publish CUDA 13 wheels on the default PyPI index for Linux x86_64 and aarch64.
+See [CUDA 13 Installation](#cuda-13-installation) below for detailed steps.
 
 ## Installation Methods
 
@@ -54,7 +53,9 @@ page found [here](https://docs.astral.sh/uv/getting-started/installation/).
 ### Backend Extras
 
 ALCHEMI Toolkit-Ops provides optional extras for framework-specific bindings.
-Install the extra matching your deep learning backend:
+Install the extra matching your deep learning backend. The plain `torch` and
+`jax` extras use CUDA 13 by default; use `torch-cu12` or `jax-cu12` when a
+CUDA 12 environment is required.
 
 ::::{tab-set}
 
@@ -80,7 +81,7 @@ $ python -c "from nvalchemiops.torch import neighbors; print('PyTorch bindings a
 $ pip install 'nvalchemi-toolkit-ops[jax]'
 ```
 
-This installs JAX with CUDA 12 support. Verify the JAX bindings are available:
+This installs JAX with CUDA 13 support. Verify the JAX bindings are available:
 
 ```bash
 $ python -c "from nvalchemiops.jax import neighbors; print('JAX bindings available')"
@@ -128,12 +129,16 @@ This method is recommended for local development and testing.
 $ git clone git@github.com/NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync
-# include torch backend
+# include torch backend with the default CUDA 13 version
 $ uv sync --extra torch
-# include jax backend
+# include jax backend with the default CUDA 13 version
 $ uv sync --extra jax
-# include both backends
-$ uv sync --all-extras
+# include both backends with the default CUDA 13 version
+$ uv sync --extra torch --extra jax
+# include both backends with CUDA 12
+$ uv sync --extra torch-cu12 --extra jax-cu12
+# equivalently, request CUDA 13 explicitly
+$ uv sync --extra torch-cu13 --extra jax-cu13
 ```
 
 </details>
@@ -185,9 +190,9 @@ $ uv add nvalchemi-toolkit-ops
 
 ## CUDA 13 Installation
 
-Blackwell GPUs require packages/dependencies that are build for CUDA 13, which
-includes `warp-lang`, `jax`, and `torch`; currently only `torch>=2.11.0` provides
-x86 + CUDA 13 wheels without needing to specify via the default PyPI index.
+Blackwell GPUs require packages/dependencies that are built for CUDA 13, which
+includes `warp-lang`, `jax`, and `torch`. `torch>=2.11.0` and `jax[cuda13]`
+provide CUDA 13 wheels from the default PyPI index on Linux x86_64 and aarch64.
 
 ### Warp
 
@@ -214,15 +219,13 @@ for full details on installing specific versions from GitHub releases. The
 ### PyTorch
 
 Starting with version **2.11.0**, PyTorch publishes CUDA 13 (`cu130`) wheels on
-the default PyPI index for **x86** platforms:
+the default PyPI index for Linux x86_64 and aarch64:
 
 ```bash
 $ uv pip install torch==2.11.0
 ```
 
-On **Arm** platforms (e.g. DGX Spark), `cu130` wheels are not on the default
-index and must be pulled from the PyTorch wheel repository. PyTorch versions
-**2.9.0**, **2.9.1**, **2.10.0**, and **2.11.0** provide Arm `cu130` wheels:
+Use the PyTorch CUDA index directly when installing an explicit `+cu130` wheel:
 
 ```bash
 $ uv pip install torch==2.11.0+cu130 \
@@ -231,8 +234,8 @@ $ uv pip install torch==2.11.0+cu130 \
 
 ### JAX
 
-`jax[cuda13]` resolves from the default PyPI index on both x86 and Arm
-platforms:
+`jax[cuda13]` resolves from the default PyPI index on Linux x86_64 and
+aarch64:
 
 ```bash
 $ uv pip install 'jax[cuda13]'
@@ -248,8 +251,10 @@ $ uv pip install 'jax[cuda13]'
 
 ```bash
 $ uv venv --seed --python 3.12
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl"
 $ uv pip install nvalchemi-toolkit-ops \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl \
+    "$WARP_CU13_WHEEL" \
     torch==2.11.0 \
     'jax[cuda13]'
 ```
@@ -260,11 +265,12 @@ $ uv pip install nvalchemi-toolkit-ops \
 
 ```bash
 $ uv venv --seed --python 3.12
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl"
 $ uv pip install nvalchemi-toolkit-ops \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl \
-    torch==2.11.0+cu130 \
-    'jax[cuda13]' \
-    --extra-index-url https://download.pytorch.org/whl/cu130
+    "$WARP_CU13_WHEEL" \
+    torch==2.11.0 \
+    'jax[cuda13]'
 ```
 
 :::
@@ -281,9 +287,10 @@ $ uv pip install nvalchemi-toolkit-ops \
 $ git clone git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync --group dev
-# Replace the default CUDA 12 wheels with CUDA 13 builds
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl"
 $ uv pip install \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_x86_64.whl \
+    "$WARP_CU13_WHEEL" \
     torch==2.11.0 \
     'jax[cuda13]' \
     --force-reinstall
@@ -297,15 +304,13 @@ $ uv pip install \
 $ git clone git@github.com:NVIDIA/nvalchemi-toolkit-ops.git
 $ cd nvalchemi-toolkit-ops
 $ uv sync --group dev
-# Replace the default CUDA 12 wheels with CUDA 13 builds
+$ WARP_CU13_WHEEL="https://github.com/NVIDIA/warp/releases/download/v1.12.1/\
+warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl"
 $ uv pip install \
-    https://github.com/NVIDIA/warp/releases/download/v1.12.1/warp_lang-1.12.1+cu13-py3-none-manylinux_2_34_aarch64.whl \
-    torch==2.11.0+cu130 \
+    "$WARP_CU13_WHEEL" \
+    torch==2.11.0 \
     'jax[cuda13]' \
-    --force-reinstall \
-    --extra-index-url https://download.pytorch.org/whl/cu130
-# Remove the CUDA 12 JAX plugins to avoid a plugin conflict
-$ uv pip uninstall jax-cuda12-pjrt jax-cuda12-plugin
+    --force-reinstall
 ```
 
 :::
@@ -314,17 +319,17 @@ $ uv pip uninstall jax-cuda12-pjrt jax-cuda12-plugin
 
 ```{note}
 The `--force-reinstall` flag is needed in the developer flow because `uv sync`
-will have already installed default CUDA 12 wheels. On x86, `torch>=2.11.0` and `jax[cuda13]` resolve from the default PyPI index.
-On Arm, the `--extra-index-url` is required for PyTorch; versions 2.9.0, 2.9.1,
-2.10.0, and 2.11.0 provide Arm `cu130` wheels. `jax[cuda13]` resolves from the
-default index on both architectures.
+will have already installed the default PyPI `warp-lang` wheel. `torch>=2.11.0`
+and `jax[cuda13]` resolve from the default PyPI index on Linux x86_64 and
+aarch64.
 
-The `jax` extra in `pyproject.toml` pulls in `jax[cuda12]`, so `uv sync
---all-extras` installs the CUDA 12 PJRT plugin and shared library. These must
-be removed after installing `jax[cuda13]`, otherwise JAX will error with
-`ALREADY_EXISTS: PJRT_Api already exists for device type cuda` at import time.
-This only applies to the developer flow — a clean venv (as in the "without
-cloning" path) does not have the CUDA 12 plugins and does not need this step.
+The `jax` and `torch` extras in `pyproject.toml` target CUDA 13 and are
+equivalent to the explicit `jax-cu13` and `torch-cu13` extras. PyTorch CUDA 13
+uses the `cu130` index; the CUDA 12 fallback uses the `cu126` index. Use
+`jax-cu12`/`torch-cu12` when a CUDA 12 environment is required. Do not sync CUDA
+12 and CUDA 13 extras into the same environment; JAX will error with
+`ALREADY_EXISTS: PJRT_Api already exists for device type cuda` when both CUDA
+plugins are present.
 ```
 
 ## Installation with Conda & Mamba
