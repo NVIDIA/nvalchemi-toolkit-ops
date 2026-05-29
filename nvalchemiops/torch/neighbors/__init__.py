@@ -482,10 +482,12 @@ def neighbor_list(
             )
         case "cluster_tile":
             # format="tile" is reachable only via cluster_tile_neighbor_list directly.
-            if cell is None:
-                positions, cell, pbc = synthesize_cell_for_ss(positions, cutoff)
-                pbc = torch.ones(3, dtype=torch.bool, device=positions.device)
+            # Reject before any cell handling (mirrors the JAX dispatch): cluster_tile is
+            # PBC-implicit, so a missing cell / non-periodic input must error rather than
+            # synthesize a tiny box and force PBC (which would emit spurious wrap-around pairs).
             _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            if cell is None:
+                raise ValueError("cell is required for method='cluster_tile'")
             return cluster_tile_neighbor_list(
                 positions,
                 cutoff,
@@ -496,19 +498,15 @@ def neighbor_list(
                 **kwargs,
             )
         case "batch_cluster_tile":
+            # Reject before any cell handling (mirrors the JAX dispatch); see the
+            # single-system case above for why cluster_tile must not synthesize a cell.
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
             if batch_idx is None or batch_ptr is None:
                 batch_idx, batch_ptr = prepare_batch_idx_ptr(
                     batch_idx, batch_ptr, positions.shape[0], positions.device
                 )
             if cell is None:
-                positions, cell, pbc = synthesize_cell_for_batch(
-                    positions, batch_idx, batch_ptr, cutoff
-                )
-                num_systems = batch_ptr.shape[0] - 1
-                pbc = torch.ones(
-                    (num_systems, 3), dtype=torch.bool, device=positions.device
-                )
-            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+                raise ValueError("cell is required for method='batch_cluster_tile'")
             return batch_cluster_tile_neighbor_list(
                 positions,
                 cutoff,

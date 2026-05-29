@@ -512,7 +512,7 @@ def neighbor_list(
         case "cluster_tile":
             _reject_unsupported_cluster_tile_combo(pbc, half_fill)
             if cell is None:
-                cell = jnp.eye(3, dtype=positions.dtype).reshape(1, 3, 3)
+                raise ValueError("cell is required for method='cluster_tile'")
             return cluster_tile_neighbor_list(
                 positions,
                 cutoff,

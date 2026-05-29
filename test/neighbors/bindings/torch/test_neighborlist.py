@@ -365,40 +365,35 @@ class TestNeighborListAutoSelection:
             neighbor_list(positions, cutoff=2.0, cell=cell)
 
     @pytest.mark.parametrize("dtype", [torch.float32])
-    def test_explicit_cluster_tile_no_cell_synthesizes(self, dtype):
-        """method='cluster_tile' + cell=None triggers synthesize_cell_for_ss."""
-        if not torch.cuda.is_available():
-            pytest.skip("cluster_tile requires CUDA")
-        positions = torch.randn(256, 3, dtype=dtype, device="cuda") * 5.0
-        result = neighbor_list(
-            positions,
-            cutoff=2.0,
-            method="cluster_tile",
-            return_neighbor_list=True,
-        )
-        # format='coo' → 2-tuple (no pbc info from synthesized cell)
-        assert isinstance(result, tuple)
-        nlist = result[0]
-        assert nlist.shape[0] == 2
+    def test_explicit_cluster_tile_no_cell_raises(self, dtype):
+        """method='cluster_tile' without a cell must raise, not synthesize a box.
+
+        cluster_tile is PBC-implicit; synthesizing a bounding-box cell and forcing
+        PBC would emit spurious wrap-around pairs.  No cell/pbc -> pbc=None ->
+        ``_reject_unsupported_cluster_tile_combo`` raises before any cell handling.
+        """
+        positions = torch.randn(256, 3, dtype=dtype) * 5.0
+        with pytest.raises(NotImplementedError):
+            neighbor_list(
+                positions,
+                cutoff=2.0,
+                method="cluster_tile",
+                return_neighbor_list=True,
+            )
 
     @pytest.mark.parametrize("dtype", [torch.float32])
-    def test_explicit_batch_cluster_tile_no_cell_batch_ptr_only(self, dtype):
-        """method='batch_cluster_tile' + cell=None + batch_ptr-only triggers
-        prepare_batch_idx_ptr (fills batch_idx) + synthesize_cell_for_batch."""
-        if not torch.cuda.is_available():
-            pytest.skip("batch_cluster_tile requires CUDA")
-        positions = torch.randn(256, 3, dtype=dtype, device="cuda") * 5.0
-        batch_ptr = torch.tensor([0, 128, 256], dtype=torch.int32, device="cuda")
-        result = neighbor_list(
-            positions,
-            cutoff=2.0,
-            method="batch_cluster_tile",
-            batch_ptr=batch_ptr,
-            return_neighbor_list=True,
-        )
-        assert isinstance(result, tuple)
-        nlist = result[0]
-        assert nlist.shape[0] == 2
+    def test_explicit_batch_cluster_tile_no_cell_raises(self, dtype):
+        """method='batch_cluster_tile' without a cell must raise (see single-system)."""
+        positions = torch.randn(256, 3, dtype=dtype) * 5.0
+        batch_ptr = torch.tensor([0, 128, 256], dtype=torch.int32)
+        with pytest.raises(NotImplementedError):
+            neighbor_list(
+                positions,
+                cutoff=2.0,
+                method="batch_cluster_tile",
+                batch_ptr=batch_ptr,
+                return_neighbor_list=True,
+            )
 
     @pytest.mark.parametrize("dtype", [torch.float32])
     def test_explicit_cluster_tile_accepts_cutoff2(self, dtype):
