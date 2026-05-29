@@ -1264,19 +1264,46 @@ class TestPMESlabIntegration:
         assert charge_grads.dtype == torch.float64
         assert virial.dtype == dtype
 
-    def test_full_pme_slab_output_subsets(self, device):
-        """PME slab output tuple ordering follows enabled output flags."""
+    @pytest.mark.parametrize(
+        (
+            "compute_forces",
+            "compute_charge_gradients",
+            "compute_virial",
+            "output_names",
+        ),
+        [
+            (False, False, False, ("energies",)),
+            (True, False, False, ("energies", "forces")),
+            (False, True, False, ("energies", "charge_grads")),
+            (False, False, True, ("energies", "virial")),
+            (True, True, False, ("energies", "forces", "charge_grads")),
+            (True, False, True, ("energies", "forces", "virial")),
+            (False, True, True, ("energies", "charge_grads", "virial")),
+            (True, True, True, ("energies", "forces", "charge_grads", "virial")),
+        ],
+    )
+    def test_full_pme_slab_output_subsets(
+        self,
+        device,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+        output_names,
+    ):
+        """PME slab output tuple ordering and values follow enabled output flags."""
         dtype = torch.float64
+        mesh_dimensions = (16, 16, 16)
 
         positions, charges, cell, pbc, nl, ptr, shifts = _make_cscl_ewald_inputs(
             dtype, device
         )
+        alpha = torch.tensor([EWALD_ALPHA], dtype=dtype, device=device)
         common_kwargs = {
             "positions": positions,
             "charges": charges,
             "cell": cell,
-            "alpha": EWALD_ALPHA,
-            "mesh_dimensions": (16, 16, 16),
+            "alpha": alpha,
+            "mesh_dimensions": mesh_dimensions,
             "neighbor_list": nl,
             "neighbor_ptr": ptr,
             "neighbor_shifts": shifts,
@@ -1284,34 +1311,64 @@ class TestPMESlabIntegration:
             "slab_correction": True,
         }
 
-        energy = particle_mesh_ewald(**common_kwargs)
-        assert isinstance(energy, torch.Tensor)
-        assert energy.shape == (positions.shape[0],)
-
-        energy_forces = particle_mesh_ewald(**common_kwargs, compute_forces=True)
-        assert isinstance(energy_forces, tuple)
-        assert len(energy_forces) == 2
-        assert energy_forces[0].shape == (positions.shape[0],)
-        assert energy_forces[1].shape == positions.shape
-
-        energy_virial = particle_mesh_ewald(**common_kwargs, compute_virial=True)
-        assert isinstance(energy_virial, tuple)
-        assert len(energy_virial) == 2
-        assert energy_virial[0].shape == (positions.shape[0],)
-        assert energy_virial[1].shape == (1, 3, 3)
-
-        all_outputs = particle_mesh_ewald(
+        result = particle_mesh_ewald(
             **common_kwargs,
+            compute_forces=compute_forces,
+            compute_charge_gradients=compute_charge_gradients,
+            compute_virial=compute_virial,
+        )
+        if len(output_names) == 1:
+            assert isinstance(result, torch.Tensor)
+        else:
+            assert isinstance(result, tuple)
+        result_tuple = result if isinstance(result, tuple) else (result,)
+
+        real = ewald_real_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list=nl,
+            neighbor_ptr=ptr,
+            neighbor_shifts=shifts,
             compute_forces=True,
             compute_charge_gradients=True,
             compute_virial=True,
         )
-        assert isinstance(all_outputs, tuple)
-        assert len(all_outputs) == 4
-        assert all_outputs[0].shape == (positions.shape[0],)
-        assert all_outputs[1].shape == positions.shape
-        assert all_outputs[2].shape == (positions.shape[0],)
-        assert all_outputs[3].shape == (1, 3, 3)
+        reciprocal = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            mesh_dimensions=mesh_dimensions,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+        slab = apply_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+        expected_by_name = {
+            "energies": real[0] + reciprocal[0] + slab[0],
+            "forces": real[1] + reciprocal[1] + slab[1],
+            "charge_grads": real[2] + reciprocal[2] + slab[2],
+            "virial": real[3] + reciprocal[3] + slab[3],
+        }
+
+        assert len(result_tuple) == len(output_names)
+        for output, name in zip(result_tuple, output_names, strict=True):
+            torch.testing.assert_close(
+                output,
+                expected_by_name[name],
+                rtol=SLAB_STRICT_RTOL,
+                atol=SLAB_STRICT_ATOL,
+            )
 
     @pytest.mark.skipif(not HAS_TORCHPME, reason="torch-pme not installed")
     def test_full_pme_slab_matches_torchpme(self, device):
@@ -1376,6 +1433,74 @@ class TestPMESlabIntegration:
                 neighbor_list=nl,
                 neighbor_ptr=ptr,
                 neighbor_shifts=shifts,
+                slab_correction=True,
+            )
+
+    def test_full_pme_slab_pbc_single_system_1d_matches_2d(self, device):
+        """PME slab wrapper accepts equivalent (3,) and (1, 3) pbc tensors."""
+        dtype = torch.float64
+
+        positions, charges, cell, pbc_1d, nl, ptr, shifts = _make_cscl_ewald_inputs(
+            dtype, device
+        )
+        pbc_2d = pbc_1d.unsqueeze(0)
+        common_kwargs = {
+            "alpha": EWALD_ALPHA,
+            "mesh_dimensions": (16, 16, 16),
+            "neighbor_list": nl,
+            "neighbor_ptr": ptr,
+            "neighbor_shifts": shifts,
+            "compute_forces": True,
+            "compute_charge_gradients": True,
+            "compute_virial": True,
+            "slab_correction": True,
+        }
+
+        out_1d = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            pbc=pbc_1d,
+            **common_kwargs,
+        )
+        out_2d = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            pbc=pbc_2d,
+            **common_kwargs,
+        )
+
+        for actual, expected in zip(out_1d, out_2d, strict=True):
+            torch.testing.assert_close(
+                actual,
+                expected,
+                rtol=SLAB_STRICT_RTOL,
+                atol=SLAB_STRICT_ATOL,
+            )
+
+    def test_full_pme_slab_pbc_batched_requires_per_system_pbc(self, device):
+        """PME slab wrapper rejects (3,) pbc for batched systems."""
+        dtype = torch.float64
+
+        positions_a, charges_a, cell_a, pbc_1d = _make_cscl_slab_system(dtype, device)
+        positions_b = positions_a + torch.tensor(
+            [0.2, -0.1, 0.3], dtype=dtype, device=device
+        )
+        positions = torch.cat([positions_a, positions_b], dim=0)
+        charges = torch.cat([charges_a, charges_a], dim=0)
+        cell = torch.cat([cell_a, cell_a], dim=0)
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        with pytest.raises(ValueError, match="requires `pbc` shape"):
+            particle_mesh_ewald(
+                positions,
+                charges,
+                cell,
+                alpha=EWALD_ALPHA,
+                mesh_dimensions=(16, 16, 16),
+                batch_idx=batch_idx,
+                pbc=pbc_1d,
                 slab_correction=True,
             )
 

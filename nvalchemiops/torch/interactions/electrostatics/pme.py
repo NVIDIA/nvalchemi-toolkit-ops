@@ -179,8 +179,12 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
-from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
+from nvalchemiops.torch.interactions.electrostatics._util import (
+    _InjectChargeGrad,
+    _sum_charge_gradients,
+)
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
+    _prepare_pbc_for_slab,
     apply_slab_correction,
     ewald_real_space,
 )
@@ -2288,6 +2292,9 @@ def particle_mesh_ewald(
     # Prepare cell
     cell, num_systems = _prepare_cell(cell)
 
+    if slab_correction:
+        pbc = _prepare_pbc_for_slab(pbc, num_systems, positions.device)
+
     # Estimate parameters if not provided
     if alpha is None:
         params = estimate_pme_parameters(positions, cell, batch_idx, accuracy)
@@ -2359,22 +2366,19 @@ def particle_mesh_ewald(
                 compute_virial=compute_virial,
             )
             slab_raw = slab_out if isinstance(slab_out, tuple) else (slab_out,)
-            slab_index = 0
 
-            slab_energies = slab_raw[slab_index]
-            slab_index += 1
-
-            slab_forces = None
-            if compute_forces:
-                slab_forces = slab_raw[slab_index]
-                slab_index += 1
-
-            slab_charge_grads = slab_raw[slab_index]
-            slab_index += 1
-
-            slab_virial = None
-            if compute_virial:
-                slab_virial = slab_raw[slab_index]
+            if compute_forces and compute_virial:
+                slab_energies, slab_forces, slab_charge_grads, slab_virial = slab_raw
+            elif compute_forces:
+                slab_energies, slab_forces, slab_charge_grads = slab_raw
+                slab_virial = None
+            elif compute_virial:
+                slab_energies, slab_charge_grads, slab_virial = slab_raw
+                slab_forces = None
+            else:
+                slab_energies, slab_charge_grads = slab_raw
+                slab_forces = None
+                slab_virial = None
 
             if charges.requires_grad:
                 slab_energies = _InjectChargeGrad.apply(
@@ -2421,7 +2425,14 @@ def particle_mesh_ewald(
         tuple_index += 1
 
     if compute_charge_gradients:
-        charge_grads = rs_tuple[tuple_index] + rec_tuple[tuple_index]
+        real_charge_grads = rs_tuple[tuple_index]
+        reciprocal_charge_grads = rec_tuple[tuple_index]
+        if torch.compiler.is_compiling():
+            charge_grads = _sum_charge_gradients(
+                real_charge_grads, reciprocal_charge_grads
+            )
+        else:
+            charge_grads = real_charge_grads + reciprocal_charge_grads
         if slab_tuple is not None:
             charge_grads = charge_grads + slab_tuple[tuple_index]
         results += (charge_grads,)

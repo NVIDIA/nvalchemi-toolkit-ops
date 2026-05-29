@@ -110,7 +110,10 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
-from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
+from nvalchemiops.torch.interactions.electrostatics._util import (
+    _InjectChargeGrad,
+    _sum_charge_gradients,
+)
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
@@ -191,15 +194,6 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
     return cell, cell.shape[0]
-
-
-@torch.compiler.disable
-def _sum_charge_gradients(
-    real_space_charge_grads: torch.Tensor,
-    reciprocal_charge_grads: torch.Tensor,
-) -> torch.Tensor:
-    """Sum Ewald charge gradients eagerly on compiled paths."""
-    return real_space_charge_grads + reciprocal_charge_grads
 
 
 ###########################################################################################
@@ -3795,22 +3789,19 @@ def ewald_summation(
                 compute_virial=compute_virial,
             )
             slab_raw = slab_out if isinstance(slab_out, tuple) else (slab_out,)
-            slab_index = 0
 
-            slab_energies = slab_raw[slab_index]
-            slab_index += 1
-
-            slab_forces = None
-            if compute_forces:
-                slab_forces = slab_raw[slab_index]
-                slab_index += 1
-
-            slab_charge_grads = slab_raw[slab_index]
-            slab_index += 1
-
-            slab_virial = None
-            if compute_virial:
-                slab_virial = slab_raw[slab_index]
+            if compute_forces and compute_virial:
+                slab_energies, slab_forces, slab_charge_grads, slab_virial = slab_raw
+            elif compute_forces:
+                slab_energies, slab_forces, slab_charge_grads = slab_raw
+                slab_virial = None
+            elif compute_virial:
+                slab_energies, slab_charge_grads, slab_virial = slab_raw
+                slab_forces = None
+            else:
+                slab_energies, slab_charge_grads = slab_raw
+                slab_forces = None
+                slab_virial = None
 
             if charges.requires_grad:
                 slab_energies = _InjectChargeGrad.apply(

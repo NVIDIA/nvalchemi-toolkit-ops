@@ -19,7 +19,16 @@ from __future__ import annotations
 
 import torch
 
-__all__ = ["_InjectChargeGrad"]
+__all__ = ["_InjectChargeGrad", "_sum_charge_gradients"]
+
+
+@torch.compiler.disable
+def _sum_charge_gradients(
+    real_space_charge_grads: torch.Tensor,
+    reciprocal_charge_grads: torch.Tensor,
+) -> torch.Tensor:
+    """Sum electrostatic charge gradients eagerly on compiled paths."""
+    return real_space_charge_grads + reciprocal_charge_grads
 
 
 class _InjectChargeGrad(torch.autograd.Function):
