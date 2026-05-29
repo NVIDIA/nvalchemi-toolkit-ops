@@ -233,9 +233,14 @@ Features planned for upcoming releases:
 
 ## Contributions & Disclaimers
 
-Currently, NVIDIA ALCHEMI Toolkit-Ops is undergoing a public beta, where we are
-soliciting feedback from the community. During this time, direct code contributions are
-not accepted as our first priority will be to define and provide a stable API, which
-is/will be subject to change. Feature requests, discussions, and general feedback are
+Feature requests, discussions, and general feedback are
 welcome and encouraged via
-[Github Issues](https://www.github.com/NVIDIA/nvalchemi-toolkit-ops).
+[Github Issues](https://www.github.com/NVIDIA/nvalchemi-toolkit-ops). Before submitting a
+pull request, we highly encourage you to create an issue to discuss
+with developers first so we can understand your use case and collaborate
+on features and bug fixes. Contributors must read [CONTRIBUTING.md](./CONTRIBUTING.md) to
+understand and follow the development workflow and logistics.
+
+NVIDIA ALCHEMI Toolkit-Ops is under active development; while we strive to
+ensure public facing APIs do not break, they are subject to change as we
+are trying to continuously improve performance and user experience.
