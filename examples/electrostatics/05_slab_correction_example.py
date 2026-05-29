@@ -30,7 +30,7 @@ In this example you will learn:
 - How to pass slab periodicity with a boolean ``pbc`` tensor
 - How to compute the standalone slab correction with ``apply_slab_correction``
 - How the standalone correction equals the integrated Ewald energy/force delta
-- How to manually compose Ewald and PME component workflows with slab
+- How to compose total Ewald and PME component workflows with slab
 - How triclinic slab cells use the normal to the periodic plane
 
 .. important::
@@ -43,7 +43,7 @@ In this example you will learn:
 # -----------------
 # The slab correction is available through the high-level Ewald and PME APIs,
 # and as a standalone helper. The standalone helper is useful for debugging,
-# validation, and adding the correction when manually composing components.
+# validation, and adding the correction when composing total component workflows.
 
 from __future__ import annotations
 
@@ -229,8 +229,8 @@ print(f"  Max charge-gradient delta error: {charge_grad_delta_error.item():.2e}"
 print(f"  Max virial delta error: {virial_delta_error.item():.2e}")
 
 # %%
-# Manual Ewald Component Composition
-# ----------------------------------
+# Total Ewald Component Composition
+# ---------------------------------
 # If you need the Ewald real-space, Ewald reciprocal-space, and slab terms
 # separately, compute the three pieces explicitly and add matching outputs.
 
@@ -263,23 +263,23 @@ ewald_component_slab_energy, ewald_component_slab_forces = apply_slab_correction
     compute_forces=True,
 )
 
-manual_ewald_energy = (
+total_ewald_energy = (
     ewald_component_real_energy
     + ewald_component_reciprocal_energy
     + ewald_component_slab_energy
 )
-manual_ewald_forces = (
+total_ewald_forces = (
     ewald_component_real_forces
     + ewald_component_reciprocal_forces
     + ewald_component_slab_forces
 )
 
-print("\nManual Ewald composition:")
+print("\nTotal Ewald composition from components:")
 print(
-    f"  Max energy error: {torch.max(torch.abs(manual_ewald_energy - energies_slab)).item():.2e}"
+    f"  Max energy error: {torch.max(torch.abs(total_ewald_energy - energies_slab)).item():.2e}"
 )
 print(
-    f"  Max force error: {torch.max(torch.abs(manual_ewald_forces - forces_slab)).item():.2e}"
+    f"  Max force error: {torch.max(torch.abs(total_ewald_forces - forces_slab)).item():.2e}"
 )
 
 # %%
@@ -322,8 +322,8 @@ print(f"  Energy delta: {(pme_slab_energy - pme_3d_energy).sum().item(): .8f}")
 print(f"  Max force magnitude: {pme_slab_forces.norm(dim=1).max().item(): .8f}")
 
 # %%
-# Manual PME Component Composition
-# --------------------------------
+# Total PME Component Composition
+# -------------------------------
 # If you need real-space, PME reciprocal-space, and slab terms separately,
 # compute the three pieces explicitly and add matching outputs.
 
@@ -345,7 +345,7 @@ reciprocal_energy, reciprocal_forces = pme_reciprocal_space(
     mesh_dimensions=mesh_dimensions,
     compute_forces=True,
 )
-manual_slab_energy, manual_slab_forces = apply_slab_correction(
+slab_energy_correction, slab_forces_correction = apply_slab_correction(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -353,15 +353,15 @@ manual_slab_energy, manual_slab_forces = apply_slab_correction(
     compute_forces=True,
 )
 
-manual_pme_energy = real_energy + reciprocal_energy + manual_slab_energy
-manual_pme_forces = real_forces + reciprocal_forces + manual_slab_forces
+total_pme_energy = real_energy + reciprocal_energy + slab_energy_correction
+total_pme_forces = real_forces + reciprocal_forces + slab_forces_correction
 
-print("\nManual PME composition:")
+print("\nTotal PME composition from components:")
 print(
-    f"  Max energy error: {torch.max(torch.abs(manual_pme_energy - pme_slab_energy)).item():.2e}"
+    f"  Max energy error: {torch.max(torch.abs(total_pme_energy - pme_slab_energy)).item():.2e}"
 )
 print(
-    f"  Max force error: {torch.max(torch.abs(manual_pme_forces - pme_slab_forces)).item():.2e}"
+    f"  Max force error: {torch.max(torch.abs(total_pme_forces - pme_slab_forces)).item():.2e}"
 )
 
 # %%
@@ -398,7 +398,7 @@ print(f"  Forces:\n{triclinic_forces.cpu().numpy()}")
 # Use ``ewald_summation(..., slab_correction=True, pbc=pbc_slab)`` or
 # ``particle_mesh_ewald(..., slab_correction=True, pbc=pbc_slab)`` when you want
 # the correction included in the total outputs. Use ``apply_slab_correction``
-# directly when you need the correction term alone or when manually composing
+# directly when you need the correction term alone or when composing
 # ``ewald_real_space`` with ``ewald_reciprocal_space`` or
 # ``pme_reciprocal_space``.
 #

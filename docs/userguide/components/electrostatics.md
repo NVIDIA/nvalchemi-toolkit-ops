@@ -490,8 +490,8 @@ Refer to the [Parameter Estimation](parameter-estimation) section for API usage.
 
 For slab-like systems with two periodic directions and one non-periodic direction,
 PyTorch Ewald can add the Yeh-Berkowitz / Ballenegger-Arnold-Cerdà slab
-correction. Pass `slab_correction=True` and a boolean `pbc` tensor whose `False`
-entry marks the non-periodic axis:
+correction. Pass `slab_correction=True` and a boolean `pbc` tensor with exactly
+one `False` entry; that entry marks the non-periodic axis:
 
 ```python
 import torch
@@ -826,7 +826,7 @@ computational requirements.
 
 For slab-like systems with two periodic directions, full PyTorch PME supports the
 same slab correction as Ewald. Pass `slab_correction=True` and a boolean `pbc`
-tensor whose `False` entry marks the non-periodic axis:
+tensor with exactly one `False` entry; that entry marks the non-periodic axis:
 
 ```python
 import torch
