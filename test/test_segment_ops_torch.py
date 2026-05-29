@@ -895,3 +895,153 @@ class TestDirectFunctionInvocation:
         assert grad_g_out.shape == g_out.shape
         assert grad_v_extra.shape == v.shape and grad_m_extra.shape == m.shape
         assert all(r is None for r in rest)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: binding vs pure-torch scatter implementation.
+#
+# For each op, run forward + backward through both the binding and the
+# canonical torch (``index_add_`` / ``einsum`` / broadcast) implementation
+# on the same inputs, then assert both the forward outputs and the per-leaf
+# ``.grad`` tensors match to dtype-appropriate tolerance.
+#
+# ``float32`` / ``float64`` should pass.  ``float16`` / ``bfloat16`` are
+# marked xfail: the binding's dtype dispatch only knows about
+# ``float32``/``float64``, so a low-precision input raises ``KeyError`` at
+# dispatch time.  ``strict=False`` is used because some low-precision
+# variants may happen to succeed on certain devices.
+# ---------------------------------------------------------------------------
+
+
+_REGRESSION_DTYPES = [
+    torch.float32,
+    torch.float64,
+    pytest.param(
+        torch.float16,
+        marks=pytest.mark.xfail(
+            reason="binding dispatch supports float32/float64 only",
+            strict=False,
+        ),
+    ),
+    pytest.param(
+        torch.bfloat16,
+        marks=pytest.mark.xfail(
+            reason="binding dispatch supports float32/float64 only",
+            strict=False,
+        ),
+    ),
+]
+
+
+class TestRegressionVsTorchScatter:
+    """End-to-end (forward + ``.grad``) parity with pure-torch references."""
+
+    @pytest.mark.parametrize("dtype", _REGRESSION_DTYPES)
+    def test_sum_regression(self, device, dtype):
+        idx = _make_idx(device)
+        x_data = torch.randn(N, 3, dtype=dtype, device=device)
+        # Binding path
+        x_b = x_data.clone().detach().requires_grad_(True)
+        out_b = segmented_sum(x_b, idx, M)
+        out_b.pow(2).sum().backward()
+        # Pure-torch reference: scatter-add via index_add_
+        x_r = x_data.clone().detach().requires_grad_(True)
+        out_r = torch.zeros(M, 3, dtype=dtype, device=device).index_add_(
+            0, idx.long(), x_r
+        )
+        out_r.pow(2).sum().backward()
+        torch.testing.assert_close(out_b.detach(), out_r.detach(), **_tols(dtype))
+        torch.testing.assert_close(x_b.grad, x_r.grad, **_tols(dtype))
+
+    @pytest.mark.parametrize("dtype", _REGRESSION_DTYPES)
+    def test_dot_regression(self, device, dtype):
+        idx = _make_idx(device)
+        x_data = torch.randn(N, 3, dtype=dtype, device=device)
+        y_data = torch.randn(N, 3, dtype=dtype, device=device)
+        x_b = x_data.clone().detach().requires_grad_(True)
+        y_b = y_data.clone().detach().requires_grad_(True)
+        out_b = segmented_dot(x_b, y_b, idx, M)
+        out_b.pow(2).sum().backward()
+        x_r = x_data.clone().detach().requires_grad_(True)
+        y_r = y_data.clone().detach().requires_grad_(True)
+        out_r = torch.zeros(M, dtype=dtype, device=device).index_add_(
+            0, idx.long(), (x_r * y_r).sum(dim=1)
+        )
+        out_r.pow(2).sum().backward()
+        torch.testing.assert_close(out_b.detach(), out_r.detach(), **_tols(dtype))
+        torch.testing.assert_close(x_b.grad, x_r.grad, **_tols(dtype))
+        torch.testing.assert_close(y_b.grad, y_r.grad, **_tols(dtype))
+
+    @pytest.mark.parametrize("dtype", _REGRESSION_DTYPES)
+    def test_mul_regression(self, device, dtype):
+        idx = _make_idx(device)
+        x_data = torch.randn(N, 3, dtype=dtype, device=device)
+        y_data = torch.randn(M, dtype=dtype, device=device)
+        x_b = x_data.clone().detach().requires_grad_(True)
+        y_b = y_data.clone().detach().requires_grad_(True)
+        out_b = segmented_mul(x_b, y_b, idx, M)
+        out_b.pow(2).sum().backward()
+        x_r = x_data.clone().detach().requires_grad_(True)
+        y_r = y_data.clone().detach().requires_grad_(True)
+        # Pure-torch reference: gather + broadcast multiply
+        out_r = x_r * y_r[idx.long(), None]
+        out_r.pow(2).sum().backward()
+        torch.testing.assert_close(out_b.detach(), out_r.detach(), **_tols(dtype))
+        torch.testing.assert_close(x_b.grad, x_r.grad, **_tols(dtype))
+        torch.testing.assert_close(y_b.grad, y_r.grad, **_tols(dtype))
+
+    @pytest.mark.parametrize("dtype", _REGRESSION_DTYPES)
+    def test_mean_regression(self, device, dtype):
+        idx = _make_idx(device)
+        x_data = torch.randn(N, 3, dtype=dtype, device=device)
+        x_b = x_data.clone().detach().requires_grad_(True)
+        out_b = segmented_mean(x_b, idx, M)
+        out_b.pow(2).sum().backward()
+        # Pure-torch reference: sum / count, with count from bincount
+        x_r = x_data.clone().detach().requires_grad_(True)
+        sums = torch.zeros(M, 3, dtype=dtype, device=device).index_add_(
+            0, idx.long(), x_r
+        )
+        counts = torch.bincount(idx.long(), minlength=M).to(dtype)
+        out_r = sums / counts.unsqueeze(-1)
+        out_r.pow(2).sum().backward()
+        torch.testing.assert_close(out_b.detach(), out_r.detach(), **_tols(dtype))
+        torch.testing.assert_close(x_b.grad, x_r.grad, **_tols(dtype))
+
+    @pytest.mark.parametrize("dtype", _REGRESSION_DTYPES)
+    def test_rms_norm_regression(self, device, dtype):
+        idx = _make_idx(device)
+        # Bias away from zero so the inverse-norm singularity stays well-conditioned.
+        x_data = torch.randn(N, 3, dtype=dtype, device=device) + 2.0
+        x_b = x_data.clone().detach().requires_grad_(True)
+        out_b = segmented_rms_norm(x_b, idx, M)
+        out_b.pow(2).sum().backward()
+        # Pure-torch reference: sqrt(mean of squared norms per segment)
+        x_r = x_data.clone().detach().requires_grad_(True)
+        sum_sq = torch.zeros(M, dtype=dtype, device=device).index_add_(
+            0, idx.long(), (x_r * x_r).sum(dim=1)
+        )
+        counts = torch.bincount(idx.long(), minlength=M).to(dtype).clamp(min=1)
+        out_r = torch.sqrt(sum_sq / counts)
+        out_r.pow(2).sum().backward()
+        torch.testing.assert_close(out_b.detach(), out_r.detach(), **_tols(dtype))
+        torch.testing.assert_close(x_b.grad, x_r.grad, **_tols(dtype))
+
+    @pytest.mark.parametrize("dtype", _REGRESSION_DTYPES)
+    def test_matvec_regression(self, device, dtype):
+        idx = _make_idx(device)
+        v_data = torch.randn(N, 3, dtype=dtype, device=device)
+        m_data = torch.randn(M, 3, 3, dtype=dtype, device=device)
+        v_b = v_data.clone().detach().requires_grad_(True)
+        m_b = m_data.clone().detach().requires_grad_(True)
+        out_b = segmented_matvec(v_b, m_b, idx, M)
+        out_b.pow(2).sum().backward()
+        # Pure-torch reference: gather + einsum.  Forward computes
+        # out[i] = M[idx[i]]^T @ v[i] — matches the binding's transpose convention.
+        v_r = v_data.clone().detach().requires_grad_(True)
+        m_r = m_data.clone().detach().requires_grad_(True)
+        out_r = torch.einsum("nji,nj->ni", m_r[idx.long()], v_r)
+        out_r.pow(2).sum().backward()
+        torch.testing.assert_close(out_b.detach(), out_r.detach(), **_tols(dtype))
+        torch.testing.assert_close(v_b.grad, v_r.grad, **_tols(dtype))
+        torch.testing.assert_close(m_b.grad, m_r.grad, **_tols(dtype))
