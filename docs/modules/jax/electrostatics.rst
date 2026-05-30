@@ -46,6 +46,16 @@ Individual components of the Particle Mesh Ewald method.
 .. autofunction:: pme_energy_corrections
 .. autofunction:: pme_energy_corrections_with_charge_grad
 
+Slab Correction
+---------------
+
+Explicit-output Yeh-Berkowitz/Ballenegger slab correction for systems with two
+periodic directions. JAX slab bindings are forward-only; request energies,
+forces, charge gradients, and virials with the same flags used by the Ewald and
+PME wrappers.
+
+.. autofunction:: compute_slab_correction
+
 K-Vector Generation
 -------------------
 
