@@ -447,3 +447,72 @@ class TestShapeVariety:
             order=1,
             modes=["rev"],
         )
+
+
+# ---------------------------------------------------------------------------
+# Hard-coded regression: pin specific binding outputs (and gradients) to
+# literal values, matching the torch suite's ``TestHardcoded``.  Catches
+# silent numerical regressions that equivalence-based checks would let pass.
+# ---------------------------------------------------------------------------
+
+
+class TestHardcoded:
+    """Bytewise-pinned regression tests against hand-computed expectations."""
+
+    def test_sum_vec3_forward_pinned(self):
+        """``segmented_sum`` forward against a hand-computed result.
+
+        Same construction as the torch suite's hard-coded test::
+
+            x = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+            idx = [0, 0, 1]
+            => out = [[5, 7, 9], [7, 8, 9]]
+        """
+        x = jnp.array(
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=jnp.float64
+        )
+        idx = jnp.array([0, 0, 1], dtype=jnp.int32)
+        out = so.segmented_sum(x, idx, 2)
+        expected = np.array([[5.0, 7.0, 9.0], [7.0, 8.0, 9.0]], dtype=np.float64)
+        np.testing.assert_array_equal(np.asarray(out), expected)
+
+    def test_dot_grad_pinned(self):
+        """``segmented_dot`` forward and ``jax.grad`` against hand-computed values.
+
+        Matches the torch suite's hard-coded test setup::
+
+            x = [[1, 0, 0], [0, 2, 0], [0, 0, 3], [4, 0, 0]]
+            y = [[2, 3, 4], [5, 6, 7], [8, 9, 10], [11, 12, 13]]
+            idx = [0, 0, 1, 1]
+            => out = [14, 74]
+
+        With loss = out.sum() (``g_out = [1, 1]``)::
+
+            d/dx_i = g_out[s] * y_i = y      (so grad_x == y)
+            d/dy_i = g_out[s] * x_i = x      (so grad_y == x)
+        """
+        x_np = np.array(
+            [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0], [4.0, 0.0, 0.0]],
+            dtype=np.float64,
+        )
+        y_np = np.array(
+            [
+                [2.0, 3.0, 4.0],
+                [5.0, 6.0, 7.0],
+                [8.0, 9.0, 10.0],
+                [11.0, 12.0, 13.0],
+            ],
+            dtype=np.float64,
+        )
+        x = jnp.array(x_np)
+        y = jnp.array(y_np)
+        idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        out = so.segmented_dot(x, y, idx, 2)
+        np.testing.assert_array_equal(
+            np.asarray(out), np.array([14.0, 74.0], dtype=np.float64)
+        )
+        grad_x, grad_y = jax.grad(
+            lambda a, b: so.segmented_dot(a, b, idx, 2).sum(), argnums=(0, 1)
+        )(x, y)
+        np.testing.assert_array_equal(np.asarray(grad_x), y_np)
+        np.testing.assert_array_equal(np.asarray(grad_y), x_np)

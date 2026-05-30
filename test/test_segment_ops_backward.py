@@ -1272,3 +1272,43 @@ class TestEdgeCases:
         out = wp.array([5.0, 6.0], dtype=wp.float32, device=device)
         _launch_segmented_sum_double_backward(gg_x, idx, 2, out)
         np.testing.assert_array_equal(_np(out), np.zeros(2, dtype=np.float32))
+
+
+# ---------------------------------------------------------------------------
+# Hard-coded regression: pin specific kernel outputs to literal values.
+#
+# Unlike the parametrised tests above (which compare against numpy/torch
+# references and accept any equivalent answer), these tests fail if the
+# kernels start producing different *numerical* values than the original
+# implementation — catching silent regressions that the equivalence-based
+# tests would let through.
+# ---------------------------------------------------------------------------
+
+
+class TestHardcoded:
+    """Bytewise-pinned regression tests against hand-computed expectations."""
+
+    def test_sum_backward_pinned(self, device):
+        """``segmented_sum_backward`` is a gather: grad_x[i] = g_out[idx[i]]."""
+        # Three elements; segment 0 contains element 0; segment 1 contains
+        # elements 1 and 2.  Upstream gradient ``g_out`` is [3.5, -1.25].
+        # Expected gather → ``grad_x = [3.5, -1.25, -1.25]``.
+        idx = wp.array(np.array([0, 1, 1], dtype=np.int32), device=device)
+        g_out = wp.array(np.array([3.5, -1.25], dtype=np.float32), device=device)
+        grad_x = wp.zeros(3, dtype=wp.float32, device=device)
+        _launch_segmented_sum_backward(g_out, idx, grad_x)
+        np.testing.assert_array_equal(
+            _np(grad_x), np.array([3.5, -1.25, -1.25], dtype=np.float32)
+        )
+
+    def test_sum_double_backward_pinned(self, device):
+        """``segmented_sum_double_backward`` is a scatter-sum: same as fwd."""
+        # gg_x = [1, 2, 3, 4]; idx sends elements (0,1) to segment 0 and (2,3) to segment 1.
+        # Expected scatter-sum → ``grad_g_out = [1+2, 3+4] = [3, 7]``.
+        idx = wp.array(np.array([0, 0, 1, 1], dtype=np.int32), device=device)
+        gg_x = wp.array(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32), device=device)
+        grad_g_out = wp.zeros(2, dtype=wp.float32, device=device)
+        _launch_segmented_sum_double_backward(gg_x, idx, 2, grad_g_out)
+        np.testing.assert_array_equal(
+            _np(grad_g_out), np.array([3.0, 7.0], dtype=np.float32)
+        )

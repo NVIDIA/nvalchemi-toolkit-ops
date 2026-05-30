@@ -1302,3 +1302,76 @@ class TestShapeVariety:
             eps=1e-6,
             atol=1e-5,
         )
+
+
+# ---------------------------------------------------------------------------
+# Hard-coded regression: pin specific binding outputs (and gradients) to
+# literal values.  Unlike the equivalence-based tests above (which compare
+# against ``index_add_`` / ``einsum`` references and accept any equivalent
+# answer), these tests fail if the bindings start producing different
+# *numerical* values than the original implementation.
+# ---------------------------------------------------------------------------
+
+
+class TestHardcoded:
+    """Bytewise-pinned regression tests against hand-computed expectations."""
+
+    def test_sum_vec3_forward_pinned(self, device):
+        """``segmented_sum`` forward against a hand-computed result.
+
+        Three elements partitioned as (0,0) -> segment 0, (1) -> segment 1::
+
+            x = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+            idx = [0, 0, 1]
+            => out = [[1+4, 2+5, 3+6], [7, 8, 9]] = [[5, 7, 9], [7, 8, 9]]
+        """
+        x = torch.tensor(
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        idx = torch.tensor([0, 0, 1], dtype=torch.int32, device=device)
+        out = segmented_sum(x, idx, 2)
+        expected = torch.tensor(
+            [[5.0, 7.0, 9.0], [7.0, 8.0, 9.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        torch.testing.assert_close(out, expected, rtol=0, atol=0)
+
+    def test_dot_backward_pinned(self, device):
+        """``segmented_dot`` forward + ``.backward()`` against hand-computed grads.
+
+        Four elements partitioned (0,0) -> seg 0, (1,1) -> seg 1::
+
+            x = [[1, 0, 0], [0, 2, 0], [0, 0, 3], [4, 0, 0]]
+            y = [[2, 3, 4], [5, 6, 7], [8, 9, 10], [11, 12, 13]]
+            out[0] = dot(x[0], y[0]) + dot(x[1], y[1]) = 2 + 12 = 14
+            out[1] = dot(x[2], y[2]) + dot(x[3], y[3]) = 30 + 44 = 74
+
+        Loss = out.sum() = 88; ``grad_x[i] = g_out[s] * y[i]``, ``g_out = [1, 1]`` ->
+        ``grad_x = y``.  Same for ``grad_y = x``.
+        """
+        x = torch.tensor(
+            [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0], [4.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        y = torch.tensor(
+            [[2.0, 3.0, 4.0], [5.0, 6.0, 7.0], [8.0, 9.0, 10.0], [11.0, 12.0, 13.0]],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        out = segmented_dot(x, y, idx, 2)
+        torch.testing.assert_close(
+            out,
+            torch.tensor([14.0, 74.0], dtype=torch.float64, device=device),
+            rtol=0,
+            atol=0,
+        )
+        out.sum().backward()
+        torch.testing.assert_close(x.grad, y.detach(), rtol=0, atol=0)
+        torch.testing.assert_close(y.grad, x.detach(), rtol=0, atol=0)
