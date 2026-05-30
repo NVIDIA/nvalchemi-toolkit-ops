@@ -79,6 +79,18 @@ N, M = 12, 4
 # Precisions and matching tolerances used in forward parity checks.
 _DTYPES = [torch.float32, torch.float64]
 
+# Representative ``(N, M)`` shapes for ``TestShapeVariety``: covers a small
+# balanced baseline, a medium case with longer segments (large L = N/M), a
+# moderate-sized case, and the singleton edge case where every segment has
+# exactly one element (N == M).  Together they exercise short, long, and
+# unit-length segments without blowing up the test count.
+_SHAPES = [
+    (12, 4),  # baseline (also the value of N, M above)
+    (64, 8),  # medium, L = 8
+    (100, 5),  # large with few long segments, L = 20
+    (24, 24),  # singletons, every segment has exactly one element
+]
+
 
 def _tols(dtype: torch.dtype) -> dict:
     if dtype is torch.float64:
@@ -1188,3 +1200,105 @@ class TestRegressionVsTorchScatter:
         torch.testing.assert_close(out_b.detach(), out_r.detach(), **_tols(dtype))
         torch.testing.assert_close(v_b.grad, v_r.grad, **_tols(dtype))
         torch.testing.assert_close(m_b.grad, m_r.grad, **_tols(dtype))
+
+
+# ---------------------------------------------------------------------------
+# Shape variety: every op exercised against four ``(N, M)`` tuples covering
+# short, long, and unit-length segments so we don't rely on a single size.
+#
+# Each test does a forward parity check against the torch-scatter reference
+# *plus* a first-order ``gradcheck`` to confirm the autograd path holds up
+# across shapes.  Tolerances follow the float64 defaults of ``_tols``.
+# ---------------------------------------------------------------------------
+
+
+class TestShapeVariety:
+    """Run each op across a small variety of ``(N, M)`` shapes."""
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_sum_vec3(self, device, n, m):
+        idx = _make_idx(device, n=n, m=m)
+        x = _leaf((n, 3), device)
+        out = segmented_sum(x, idx, m)
+        ref = torch.zeros(m, 3, dtype=x.dtype, device=device).index_add_(
+            0, idx.long(), x.detach()
+        )
+        torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        assert torch.autograd.gradcheck(
+            lambda v: segmented_sum(v, idx, m), (x,), eps=1e-6, atol=1e-5
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_dot_vec3(self, device, n, m):
+        idx = _make_idx(device, n=n, m=m)
+        x = _leaf((n, 3), device)
+        y = _leaf((n, 3), device)
+        out = segmented_dot(x, y, idx, m)
+        ref = torch.zeros(m, dtype=x.dtype, device=device).index_add_(
+            0, idx.long(), (x.detach() * y.detach()).sum(dim=1)
+        )
+        torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        assert torch.autograd.gradcheck(
+            lambda a, b: segmented_dot(a, b, idx, m), (x, y), eps=1e-6, atol=1e-5
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_mul_vec3(self, device, n, m):
+        idx = _make_idx(device, n=n, m=m)
+        x = _leaf((n, 3), device)
+        y = _leaf((m,), device)
+        out = segmented_mul(x, y, idx, m)
+        ref = x.detach() * y.detach()[idx.long(), None]
+        torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        assert torch.autograd.gradcheck(
+            lambda a, b: segmented_mul(a, b, idx, m), (x, y), eps=1e-6, atol=1e-5
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_mean_vec3(self, device, n, m):
+        idx = _make_idx(device, n=n, m=m)
+        x = _leaf((n, 3), device)
+        out = segmented_mean(x, idx, m)
+        idx_long = idx.long()
+        counts = torch.bincount(idx_long, minlength=m).to(x.dtype)
+        sums = torch.zeros(m, 3, dtype=x.dtype, device=device).index_add_(
+            0, idx_long, x.detach()
+        )
+        ref = sums / counts.unsqueeze(-1)
+        torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        assert torch.autograd.gradcheck(
+            lambda v: segmented_mean(v, idx, m), (x,), eps=1e-6, atol=1e-5
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_rms_norm_vec3(self, device, n, m):
+        idx = _make_idx(device, n=n, m=m)
+        # Bias x away from zero so the inverse-norm divisor stays well-conditioned.
+        x = _leaf((n, 3), device) + 2.0
+        x = x.detach().clone().requires_grad_(True)
+        out = segmented_rms_norm(x, idx, m)
+        idx_long = idx.long()
+        counts = torch.bincount(idx_long, minlength=m).to(x.dtype)
+        sum_sq = torch.zeros(m, dtype=x.dtype, device=device).index_add_(
+            0, idx_long, (x.detach() * x.detach()).sum(dim=1)
+        )
+        ref = torch.sqrt(sum_sq / counts.clamp(min=1))
+        torch.testing.assert_close(out.detach(), ref, **_tols(x.dtype))
+        assert torch.autograd.gradcheck(
+            lambda v: segmented_rms_norm(v, idx, m), (x,), eps=1e-6, atol=1e-5
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_matvec(self, device, n, m):
+        idx = _make_idx(device, n=n, m=m)
+        v = _leaf((n, 3), device)
+        mat = _leaf((m, 3, 3), device)
+        out = segmented_matvec(v, mat, idx, m)
+        ref = torch.einsum("nji,nj->ni", mat.detach()[idx.long()], v.detach())
+        torch.testing.assert_close(out.detach(), ref, **_tols(v.dtype))
+        assert torch.autograd.gradcheck(
+            lambda a, b: segmented_matvec(a, b, idx, m),
+            (v, mat),
+            eps=1e-6,
+            atol=1e-5,
+        )

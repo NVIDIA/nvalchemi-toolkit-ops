@@ -49,6 +49,17 @@ from nvalchemiops.jax import segment_ops as so  # noqa: E402
 
 N, M = 12, 4
 
+# Representative ``(N, M)`` shapes for ``TestShapeVariety`` — kept in sync
+# with the torch suite so both bindings exercise the same regimes: a small
+# balanced baseline, a medium case with longer segments, a large case with
+# few long segments, and the singleton edge case where N == M.
+_SHAPES = [
+    (12, 4),
+    (64, 8),
+    (100, 5),
+    (24, 24),
+]
+
 
 def _make_idx(seed: int = 0, n: int = N, m: int = M) -> jnp.ndarray:
     """Sorted int32 idx with every segment non-empty (required for mean/rms_norm)."""
@@ -329,3 +340,110 @@ class TestEdgeCases:
         val = f(x)
         ref = float(np.asarray(so.segmented_sum(x, idx, M)).sum())
         np.testing.assert_allclose(float(val), ref, rtol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Shape variety: every op exercised against four ``(N, M)`` tuples covering
+# short, long, and unit-length segments.  Mirrors ``TestShapeVariety`` in the
+# torch suite so both bindings have parity coverage on segment-length regimes.
+#
+# Each test does a forward parity check against a NumPy reference *plus* a
+# first-order ``check_grads`` to confirm the autograd path holds up across
+# shapes.  (Second-order ``check_grads`` is already exhaustively covered at
+# the baseline shape in the per-op classes above.)
+# ---------------------------------------------------------------------------
+
+
+class TestShapeVariety:
+    """Run each op across a small variety of ``(N, M)`` shapes."""
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_sum(self, n, m):
+        idx = _make_idx(seed=80, n=n, m=m)
+        x = _randn((n, 3), seed=81)
+        out = so.segmented_sum(x, idx, m)
+        ref = np.zeros((m, 3), dtype=np.float64)
+        np.add.at(ref, np.asarray(idx), np.asarray(x))
+        np.testing.assert_allclose(np.asarray(out), ref, rtol=1e-10)
+        check_grads(lambda v: so.segmented_sum(v, idx, m), (x,), order=1, modes=["rev"])
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_dot(self, n, m):
+        idx = _make_idx(seed=82, n=n, m=m)
+        x = _randn((n, 3), seed=83)
+        y = _randn((n, 3), seed=84)
+        out = so.segmented_dot(x, y, idx, m)
+        ref = np.zeros(m, dtype=np.float64)
+        np.add.at(ref, np.asarray(idx), (np.asarray(x) * np.asarray(y)).sum(axis=1))
+        np.testing.assert_allclose(np.asarray(out), ref, rtol=1e-10)
+        check_grads(
+            lambda a, b: so.segmented_dot(a, b, idx, m),
+            (x, y),
+            order=1,
+            modes=["rev"],
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_mul(self, n, m):
+        idx = _make_idx(seed=85, n=n, m=m)
+        x = _randn((n, 3), seed=86)
+        y = _randn((m,), seed=87)
+        out = so.segmented_mul(x, y, idx, m)
+        ref = np.asarray(x) * np.asarray(y)[np.asarray(idx), None]
+        np.testing.assert_allclose(np.asarray(out), ref, rtol=1e-10)
+        check_grads(
+            lambda a, b: so.segmented_mul(a, b, idx, m),
+            (x, y),
+            order=1,
+            modes=["rev"],
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_mean(self, n, m):
+        idx = _make_idx(seed=88, n=n, m=m)
+        x = _randn((n, 3), seed=89)
+        out = so.segmented_mean(x, idx, m)
+        idx_np = np.asarray(idx)
+        counts = np.bincount(idx_np, minlength=m).astype(np.float64)
+        sums = np.zeros((m, 3), dtype=np.float64)
+        np.add.at(sums, idx_np, np.asarray(x))
+        ref = sums / counts[:, None]
+        np.testing.assert_allclose(np.asarray(out), ref, rtol=1e-10)
+        check_grads(
+            lambda v: so.segmented_mean(v, idx, m), (x,), order=1, modes=["rev"]
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_rms_norm(self, n, m):
+        idx = _make_idx(seed=90, n=n, m=m)
+        # Bias away from zero so the inverse-norm divisor stays well-conditioned.
+        x = _randn((n, 3), seed=91, offset=2.0)
+        out = so.segmented_rms_norm(x, idx, m)
+        idx_np = np.asarray(idx)
+        x_np = np.asarray(x)
+        counts = np.bincount(idx_np, minlength=m).astype(np.float64)
+        sum_sq = np.zeros(m, dtype=np.float64)
+        np.add.at(sum_sq, idx_np, (x_np * x_np).sum(axis=1))
+        ref = np.sqrt(sum_sq / np.maximum(counts, 1))
+        np.testing.assert_allclose(np.asarray(out), ref, rtol=1e-10)
+        check_grads(
+            lambda v: so.segmented_rms_norm(v, idx, m), (x,), order=1, modes=["rev"]
+        )
+
+    @pytest.mark.parametrize("n,m", _SHAPES)
+    def test_matvec(self, n, m):
+        idx = _make_idx(seed=92, n=n, m=m)
+        v = _randn((n, 3), seed=93)
+        mat = _randn((m, 3, 3), seed=94)
+        out = so.segmented_matvec(v, mat, idx, m)
+        idx_np = np.asarray(idx)
+        v_np = np.asarray(v)
+        m_np = np.asarray(mat)
+        ref = np.stack([m_np[idx_np[i]].T @ v_np[i] for i in range(n)], axis=0)
+        np.testing.assert_allclose(np.asarray(out), ref, rtol=1e-10, atol=1e-12)
+        check_grads(
+            lambda a, b: so.segmented_matvec(a, b, idx, m),
+            (v, mat),
+            order=1,
+            modes=["rev"],
+        )
