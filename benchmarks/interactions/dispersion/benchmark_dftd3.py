@@ -667,17 +667,22 @@ def run_dftd3_nvalchemiops_benchmark(
         total_neighbors = system_data["total_neighbors"]
         batch_idx = system_data["batch_idx"]
         cell = system_data["cell"]
+        cell_bohr = cell * ANGSTROM_TO_BOHR
+        if cell_bohr.ndim == 2:
+            cell_bohr = cell_bohr.unsqueeze(0)
+        neighbor_format = "list" if return_neighbor_list else "matrix"
 
         # Define the function to benchmark
         if return_neighbor_list:
             neighbor_list_data = system_data["neighbor_data"]  # (2, num_pairs)
             neighbor_ptr = system_data["num_neighbor_data"]  # (N+1,)
-            unit_shifts = system_data["unit_shifts"] if compute_virial else None
+            unit_shifts = system_data["unit_shifts"]
             if unit_shifts is not None and unit_shifts.ndim != 2:
                 raise ValueError(
                     "unit_shifts must be [num_pairs, 3] for the neighbor list path; "
                     "got a 3-D tensor, which indicates return_neighbor_list=False data was used here"
                 )
+            pbc_cell = cell_bohr if unit_shifts is not None else None
 
             def dftd3_call():
                 return torch_dftd3(
@@ -687,7 +692,7 @@ def run_dftd3_nvalchemiops_benchmark(
                     neighbor_list=neighbor_list_data,
                     neighbor_ptr=neighbor_ptr,
                     unit_shifts=unit_shifts,
-                    cell=cell if compute_virial else None,
+                    cell=pbc_cell,
                     a1=dftd3_config["a1"],
                     a2=dftd3_config["a2"],
                     s6=dftd3_config["s6"],
@@ -702,14 +707,13 @@ def run_dftd3_nvalchemiops_benchmark(
                 )
         else:
             neighbor_matrix = system_data["neighbor_data"]
-            neighbor_matrix_shifts = (
-                system_data["unit_shifts"] if compute_virial else None
-            )
+            neighbor_matrix_shifts = system_data["unit_shifts"]
             if neighbor_matrix_shifts is not None and neighbor_matrix_shifts.ndim != 3:
                 raise ValueError(
                     "unit_shifts must be [num_atoms, max_neighbors, 3] for the matrix path; "
                     "got a 2-D tensor, which indicates return_neighbor_list=True data was used here"
                 )
+            pbc_cell = cell_bohr if neighbor_matrix_shifts is not None else None
 
             def dftd3_call():
                 return torch_dftd3(
@@ -719,7 +723,7 @@ def run_dftd3_nvalchemiops_benchmark(
                     neighbor_matrix=neighbor_matrix,
                     neighbor_matrix_shifts=neighbor_matrix_shifts,
                     fill_value=total_atoms,
-                    cell=cell if compute_virial else None,
+                    cell=pbc_cell,
                     a1=dftd3_config["a1"],
                     a2=dftd3_config["a2"],
                     s6=dftd3_config["s6"],
@@ -741,6 +745,8 @@ def run_dftd3_nvalchemiops_benchmark(
                 "total_atoms": total_atoms,
                 "batch_size": batch_size,
                 "supercell_size": supercell_size,
+                "neighbor_format": neighbor_format,
+                "compute_virial": compute_virial,
                 "total_neighbors": 0,
                 "median_time_ms": float("inf"),
                 "peak_memory_mb": timing_results.get("peak_memory_mb"),
@@ -757,6 +763,8 @@ def run_dftd3_nvalchemiops_benchmark(
             "total_atoms": total_atoms,
             "batch_size": batch_size,
             "supercell_size": supercell_size,
+            "neighbor_format": neighbor_format,
+            "compute_virial": compute_virial,
             "total_neighbors": total_neighbors,
             "median_time_ms": float(median_time_ms),
             "peak_memory_mb": peak_memory_mb,
@@ -770,6 +778,8 @@ def run_dftd3_nvalchemiops_benchmark(
             "total_atoms": total_atoms,
             "batch_size": batch_size,
             "supercell_size": supercell_size,
+            "neighbor_format": "list" if return_neighbor_list else "matrix",
+            "compute_virial": compute_virial,
             "total_neighbors": 0,
             "median_time_ms": float("inf"),
             "peak_memory_mb": None,
@@ -1175,6 +1185,10 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.backend != "torch" and (args.neighbor_format != "matrix" or args.virial):
+        parser.error(
+            "--neighbor-format and --virial are only supported with --backend torch"
+        )
 
     # Configure JAX allocator and import JAX (env vars must precede import)
     if args.backend == "jax":
@@ -1245,6 +1259,9 @@ def main():
     print(f"Dtype: {dtype}")
     print(f"Warmup iterations: {warmup}")
     print(f"Timing iterations: {timing}")
+    if args.backend == "torch":
+        print(f"Neighbor format: {args.neighbor_format}")
+        print(f"Virial: {args.virial}")
     if args.backend == "jax":
         print(f"JAX allocator mode: {args.jax_allocator}")
     print(f"Output directory: {output_dir}")
@@ -1381,7 +1398,14 @@ def main():
 
         # Save non-batched results
         if non_batched_results:
-            output_file = output_dir / f"dftd3_benchmark_{args.backend}_{gpu_sku}.csv"
+            torch_mode_suffix = ""
+            if args.backend == "torch":
+                virial_mode = "virial" if args.virial else "novirial"
+                torch_mode_suffix = f"_{args.neighbor_format}_{virial_mode}"
+            output_file = (
+                output_dir
+                / f"dftd3_benchmark_{args.backend}{torch_mode_suffix}_{gpu_sku}.csv"
+            )
             with open(output_file, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=non_batched_results[0].keys())
                 writer.writeheader()
@@ -1396,8 +1420,13 @@ def main():
 
         # Save batched results (all batch sizes in one file)
         if batched_results:
+            torch_mode_suffix = ""
+            if args.backend == "torch":
+                virial_mode = "virial" if args.virial else "novirial"
+                torch_mode_suffix = f"_{args.neighbor_format}_{virial_mode}"
             output_file = (
-                output_dir / f"dftd3_benchmark_batch_{args.backend}_{gpu_sku}.csv"
+                output_dir
+                / f"dftd3_benchmark_batch_{args.backend}{torch_mode_suffix}_{gpu_sku}.csv"
             )
             with open(output_file, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=batched_results[0].keys())

@@ -1450,7 +1450,7 @@ def _compute_cartesian_shifts(
     Launch with dim=(num_atoms, DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE),
     block_dim=DFTD3_NL_CARTESIAN_SHIFTS_BLOCK_SIZE. One block per atom; all threads
     stride through the atom's CSR edge range with step=block_stride. Each thread
-    writes its own cartesian_shifts entries independently..
+    writes its own cartesian_shifts entries independently.
 
     See Also
     --------

@@ -142,6 +142,23 @@ def _make_jax_kernels(
     }
 
 
+def _launch_kwargs_for_positions(
+    positions: jax.Array, kwargs: dict[str, object]
+) -> dict[str, object]:
+    """Validate or create the fixed JAX DFT-D3 launch dimensions."""
+    expected = (positions.shape[0], JAX_DFTD3_BLOCK_DIM)
+    launch_dims = kwargs.pop("launch_dims", expected)
+    try:
+        normalized = tuple(launch_dims)
+    except TypeError:
+        raise ValueError(
+            f"launch_dims must be {expected}; got {launch_dims!r}"
+        ) from None
+    if normalized != expected:
+        raise ValueError(f"launch_dims must be {expected}; got {normalized}")
+    return {"launch_dims": expected, **kwargs}
+
+
 # --- Pass 0: Cartesian Shift Computation ---
 
 _compute_cartesian_shifts_nm = _make_jax_kernels(
@@ -182,8 +199,26 @@ _direct_forces_kernel_nl_virial = _make_jax_kernels(
     num_outputs=4,
     in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
 )
-direct_forces_kernel_nm_virial = _direct_forces_kernel_nm_virial[jnp.float32]
-direct_forces_kernel_nl_virial = _direct_forces_kernel_nl_virial[jnp.float32]
+
+
+def direct_forces_kernel_nm_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-matrix direct-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _direct_forces_kernel_nm_virial[kernel_dtype](*args, **launch_kwargs)
+
+
+def direct_forces_kernel_nl_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-list direct-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _direct_forces_kernel_nl_virial[kernel_dtype](*args, **launch_kwargs)
 
 
 def direct_forces_kernel_nm(
@@ -215,8 +250,7 @@ def direct_forces_kernel_nm(
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Compatibility wrapper for the exported neighbor-matrix direct-force kernel."""
     kernel_dtype = _normalize_dtype(positions.dtype)
-    kwargs.pop("launch_dims", None)
-    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _direct_forces_kernel_nm_virial[kernel_dtype](
             positions,
@@ -304,8 +338,7 @@ def direct_forces_kernel_nl(
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Compatibility wrapper for the exported neighbor-list direct-force kernel."""
     kernel_dtype = _normalize_dtype(positions.dtype)
-    kwargs.pop("launch_dims", None)
-    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _direct_forces_kernel_nl_virial[kernel_dtype](
             positions,
@@ -386,8 +419,26 @@ _cn_forces_contrib_nl_virial = _make_jax_kernels(
     num_outputs=2,
     in_out_argnames=["forces", "virial"],
 )
-cn_forces_contrib_nm_virial = _cn_forces_contrib_nm_virial[jnp.float32]
-cn_forces_contrib_nl_virial = _cn_forces_contrib_nl_virial[jnp.float32]
+
+
+def cn_forces_contrib_nm_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-matrix CN-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _cn_forces_contrib_nm_virial[kernel_dtype](*args, **launch_kwargs)
+
+
+def cn_forces_contrib_nl_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-list CN-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _cn_forces_contrib_nl_virial[kernel_dtype](*args, **launch_kwargs)
 
 
 def cn_forces_contrib_nm(
@@ -408,8 +459,7 @@ def cn_forces_contrib_nm(
 ) -> tuple[jax.Array, jax.Array]:
     """Compatibility wrapper for the exported neighbor-matrix CN force kernel."""
     kernel_dtype = _normalize_dtype(positions.dtype)
-    kwargs.pop("launch_dims", None)
-    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _cn_forces_contrib_nm_virial[kernel_dtype](
             positions,
@@ -463,8 +513,7 @@ def cn_forces_contrib_nl(
 ) -> tuple[jax.Array, jax.Array]:
     """Compatibility wrapper for the exported neighbor-list CN force kernel."""
     kernel_dtype = _normalize_dtype(positions.dtype)
-    kwargs.pop("launch_dims", None)
-    launch_kwargs = {"launch_dims": (positions.shape[0], JAX_DFTD3_BLOCK_DIM), **kwargs}
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
         return _cn_forces_contrib_nl_virial[kernel_dtype](
             positions,
