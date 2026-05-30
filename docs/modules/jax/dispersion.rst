@@ -57,3 +57,16 @@ Neighbor List Implementation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autofunction:: nvalchemiops.jax.interactions.dispersion._dftd3._dftd3_nl_impl
+
+Pairwise Dispersion and Dispersion PME (LJ-PME)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+JAX bindings for the geometric-rule dispersion (:math:`r^{-6}`) interactions,
+mirroring the PyTorch API.
+
+.. autofunction:: nvalchemiops.jax.interactions.dispersion.lj_dispersion_energy
+.. autofunction:: nvalchemiops.jax.interactions.dispersion.lj_dispersion_forces
+.. autofunction:: nvalchemiops.jax.interactions.dispersion.lj_dispersion_energy_forces
+.. autofunction:: nvalchemiops.jax.interactions.dispersion.dispersion_reciprocal_space
+.. autofunction:: nvalchemiops.jax.interactions.dispersion.dispersion_pme
+.. autofunction:: nvalchemiops.jax.interactions.dispersion.estimate_dispersion_pme_parameters

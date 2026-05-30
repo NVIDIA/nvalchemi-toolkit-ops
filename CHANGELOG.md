@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Added
+
+- **Pairwise dispersion (r⁻⁶) and Dispersion PME (LJ-PME)**: new long-range
+  van der Waals dispersion using the geometric C6 combination rule
+  (`C6_ij = √(C6_i·C6_j)`, separable into a per-atom dispersion charge
+  `b_i = √(C6_i) = 2√(ε_i)·σ_i³`), so the reciprocal-space term is a single
+  scalar mesh channel. Mirrors the electrostatics architecture; the mesh
+  (B-spline spread/gather, FFT, k-vectors) and neighbor machinery are reused
+  unchanged, with a dispersion influence function
+  `G(k) = −(π^{3/2}α³/6V)·f(k/2α)`, `f(b)=(1−2b²)e^{−b²}+2√π b³ erfc(b)`, a
+  dispersion self-energy `+(α⁶/12)·C6_i`, and a non-zero k=0 background term
+  (produced by the mesh DC component).
+  - Warp kernels: `interactions/dispersion/lj_real_kernels.py` (direct +
+    β-damped real-space `r⁻⁶`) and `lj_pme_kernels.py` (reciprocal convolve
+    forward/backward + energy corrections, single + batch, float32/float64).
+  - PyTorch: `torch.interactions.dispersion.lj_dispersion_energy/forces/
+    energy_forces`, `dispersion_reciprocal_space`, `dispersion_pme`,
+    `estimate_dispersion_pme_parameters` / `DispersionPMEParameters`. Forces,
+    virial/stress, batching (`batch_idx`), CSR + dense neighbor formats, and
+    autograd w.r.t. positions, σ/ε, and cell.
+  - JAX: mirror bindings with torch↔JAX parity tests.
+  - Per-atom σ/ε input API (internal conversion to C6); energies accumulated in
+    float64. Geometric combination only (Lorentz–Berthelot is future work);
+    the repulsive r⁻¹² term stays in `interactions/lj.py`.
+  - `benchmarks/interactions/dispersion/benchmark_dispersion.py` (scaling +
+    batched sweeps, CSV output).
+
 ### Fixed
 
 - **MTK NPT/NPH cell propagation**: kernels wrote `V·(P − P_ext)/W`

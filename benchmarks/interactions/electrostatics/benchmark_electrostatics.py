@@ -2420,7 +2420,7 @@ def main():
         accuracy = float(params.get("accuracy", 1e-4))
 
     # Skip neighbor-list construction when only reciprocal space is requested.
-    build_neighbors = set(components) != {"reciprocal"}
+    need_neighbors = set(components) != {"reciprocal"}
 
     # DSF-specific parameters (hardcoded defaults)
     dsf_cutoff = 12.0
@@ -2519,7 +2519,7 @@ def main():
                                         real_space_cutoff=real_space_cutoff,
                                         accuracy=accuracy,
                                     )
-                                    if build_neighbors:
+                                    if need_neighbors:
                                         (
                                             nl_matrix,
                                             nl_num_neighbors,
@@ -2610,7 +2610,7 @@ def main():
                                             dtype,
                                             real_space_cutoff=real_space_cutoff,
                                             accuracy=accuracy,
-                                            build_neighbors=build_neighbors,
+                                            build_neighbors=need_neighbors,
                                         )
                                     )
                             except Exception as e:
@@ -2738,7 +2738,7 @@ def main():
                                         real_space_cutoff=real_space_cutoff,
                                         accuracy=accuracy,
                                     )
-                                    if build_neighbors:
+                                    if need_neighbors:
                                         (
                                             nl_matrix,
                                             nl_num_neighbors,
@@ -2786,7 +2786,7 @@ def main():
                                             dtype,
                                             real_space_cutoff=real_space_cutoff,
                                             accuracy=accuracy,
-                                            build_neighbors=build_neighbors,
+                                            build_neighbors=need_neighbors,
                                         )
                                     )
                             except Exception as e:

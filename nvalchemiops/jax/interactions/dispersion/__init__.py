@@ -21,8 +21,30 @@ This module provides JAX bindings for dispersion corrections (DFT-D3).
 from __future__ import annotations
 
 from nvalchemiops.jax.interactions.dispersion._dftd3 import D3Parameters, dftd3
+from nvalchemiops.jax.interactions.dispersion.lj_dispersion import (
+    lj_dispersion_energy,
+    lj_dispersion_energy_forces,
+    lj_dispersion_forces,
+    sigma_epsilon_to_dispersion_charge,
+)
+from nvalchemiops.jax.interactions.dispersion.lj_pme import (
+    dispersion_pme,
+    dispersion_reciprocal_space,
+)
+from nvalchemiops.jax.interactions.dispersion.parameters import (
+    DispersionPMEParameters,
+    estimate_dispersion_pme_parameters,
+)
 
 __all__ = [
     "dftd3",
     "D3Parameters",
+    "lj_dispersion_energy",
+    "lj_dispersion_forces",
+    "lj_dispersion_energy_forces",
+    "sigma_epsilon_to_dispersion_charge",
+    "dispersion_pme",
+    "dispersion_reciprocal_space",
+    "DispersionPMEParameters",
+    "estimate_dispersion_pme_parameters",
 ]

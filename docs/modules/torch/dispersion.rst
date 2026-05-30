@@ -59,3 +59,21 @@ Periodic Boundary Conditions (PBC)
 
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_matrix_pbc_op
 .. autofunction:: nvalchemiops.torch.interactions.dispersion._dftd3._dftd3_pbc_op
+
+Pairwise Dispersion and Dispersion PME (LJ-PME)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Long-range van der Waals dispersion (attractive :math:`r^{-6}`) using the
+geometric C6 combination rule. ``lj_dispersion_*`` are the direct pairwise
+analogs of ``coulomb_*``; ``dispersion_pme`` is the mesh-Ewald (LJ-PME) analog
+of ``particle_mesh_ewald``. Inputs are per-atom LJ :math:`\sigma`/:math:`\epsilon`
+(converted internally to :math:`C_6`).
+
+.. autofunction:: nvalchemiops.torch.interactions.dispersion.lj_dispersion_energy
+.. autofunction:: nvalchemiops.torch.interactions.dispersion.lj_dispersion_forces
+.. autofunction:: nvalchemiops.torch.interactions.dispersion.lj_dispersion_energy_forces
+.. autofunction:: nvalchemiops.torch.interactions.dispersion.dispersion_reciprocal_space
+.. autofunction:: nvalchemiops.torch.interactions.dispersion.dispersion_pme
+.. autofunction:: nvalchemiops.torch.interactions.dispersion.estimate_dispersion_pme_parameters
+.. autoclass:: nvalchemiops.torch.interactions.dispersion.DispersionPMEParameters
+    :members:

@@ -30,6 +30,16 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
     dftd3_matrix_pbc,
     dftd3_pbc,
 )
+from nvalchemiops.interactions.dispersion.lj_real_kernels import (
+    batch_lj_dispersion_energy,
+    batch_lj_dispersion_energy_forces,
+    batch_lj_dispersion_energy_forces_matrix,
+    batch_lj_dispersion_energy_matrix,
+    lj_dispersion_energy,
+    lj_dispersion_energy_forces,
+    lj_dispersion_energy_forces_matrix,
+    lj_dispersion_energy_matrix,
+)
 
 
 def __getattr__(name: str):  # pragma: no cover
@@ -102,4 +112,12 @@ __all__ = [
     "dftd3",
     "wp_dftd3",
     "dftd3_pbc",
+    "lj_dispersion_energy",
+    "lj_dispersion_energy_forces",
+    "lj_dispersion_energy_matrix",
+    "lj_dispersion_energy_forces_matrix",
+    "batch_lj_dispersion_energy",
+    "batch_lj_dispersion_energy_forces",
+    "batch_lj_dispersion_energy_matrix",
+    "batch_lj_dispersion_energy_forces_matrix",
 ]

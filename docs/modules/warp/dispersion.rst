@@ -34,3 +34,16 @@ Periodic Boundary Conditions (PBC)
 
 .. autofunction:: nvalchemiops.interactions.dispersion._dftd3.dftd3_matrix_pbc
 .. autofunction:: nvalchemiops.interactions.dispersion._dftd3.dftd3_pbc
+
+Pairwise Dispersion and Dispersion PME (LJ-PME)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Framework-agnostic Warp launchers for the geometric-rule dispersion
+(:math:`r^{-6}`) interactions. The real-space launchers mirror the Coulomb
+launchers; the PME launchers provide the reciprocal-space convolve and energy
+corrections.
+
+.. autofunction:: nvalchemiops.interactions.dispersion.lj_real_kernels.lj_dispersion_energy
+.. autofunction:: nvalchemiops.interactions.dispersion.lj_real_kernels.lj_dispersion_energy_forces
+.. autofunction:: nvalchemiops.interactions.dispersion.lj_pme_kernels.lj_pme_convolve
+.. autofunction:: nvalchemiops.interactions.dispersion.lj_pme_kernels.lj_pme_energy_corrections

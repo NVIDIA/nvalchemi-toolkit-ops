@@ -419,7 +419,9 @@ def register_warp_op_chain(
     # ---- Forward op + register_fake ------------------------------------
     if forward_schema is None:
         forward_schema = _schema_from_callable(forward, forward_return_arity)
-
+    torch.library.custom_op(
+        name, forward, mutates_args=mutates_args, schema=forward_schema
+    )
     if forward_fake is None:
         forward_fake = _default_forward_fake(forward)
     torch.library.register_fake(name, forward_fake)
