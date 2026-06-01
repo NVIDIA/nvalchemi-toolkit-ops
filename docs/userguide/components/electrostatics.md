@@ -485,7 +485,12 @@ k_{\text{cutoff}} = \sqrt{-2 \ln \varepsilon} / \eta
 Refer to the [Parameter Estimation](parameter-estimation) section for API usage.
 ```
 
-#### 2D Slab Correction (PyTorch)
+#### 2D Slab Correction
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 For slab-like systems with two periodic directions and one non-periodic direction,
 PyTorch Ewald can add the Yeh-Berkowitz / Ballenegger-Arnold-Cerdà slab
@@ -526,12 +531,10 @@ energies, forces = ewald_summation(
 )
 ```
 
-```{tip}
-For batched slab simulations, pass `pbc` as an explicit contiguous `(B, 3)`
-tensor so each system carries its own slab geometry.
-```
+:::
 
-#### 2D Slab Correction (JAX)
+:::{tab-item} JAX
+:sync: jax
 
 JAX Ewald supports the same explicit-output slab correction. Pass
 `slab_correction=True` and request forces, charge gradients, or virials with the
@@ -544,6 +547,9 @@ from nvalchemiops.jax.interactions.electrostatics import ewald_summation
 from nvalchemiops.jax.neighbors import neighbor_list
 
 pbc_slab = jnp.array([[True, True, False]], dtype=jnp.bool_)
+
+# The neighbor list controls the real-space 3D Ewald images. For a slab setup,
+# use a cell with enough vacuum in the non-periodic direction.
 pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
@@ -567,6 +573,15 @@ energies, forces, charge_grads = ewald_summation(
     compute_forces=True,
     compute_charge_gradients=True,
 )
+```
+
+:::
+
+::::
+
+```{tip}
+For batched slab simulations, pass `pbc` as an explicit contiguous `(B, 3)`
+tensor so each system carries its own slab geometry.
 ```
 
 For an orthorhombic slab with non-periodic $z$ direction, total charge
@@ -639,9 +654,9 @@ recip_energies, recip_forces = ewald_reciprocal_space(
 :sync: jax
 
 ```python
-import jax
-import jax.numpy as jnp
-from nvalchemiops.jax.interactions.electrostatics import ewald_real_space, ewald_reciprocal_space
+from nvalchemiops.jax.interactions.electrostatics import (
+    ewald_real_space, ewald_reciprocal_space
+)
 
 # Real-space only (short-range, damped Coulomb)
 real_energies, real_forces = ewald_real_space(
@@ -768,8 +783,6 @@ energies, forces = particle_mesh_ewald(
 :sync: jax
 
 ```python
-import jax
-import jax.numpy as jnp
 from nvalchemiops.jax.interactions.electrostatics import particle_mesh_ewald
 
 energies, forces = particle_mesh_ewald(
@@ -888,7 +901,12 @@ the value of `accuracy` the more precise, at the cost of higher
 computational requirements.
 ```
 
-#### 2D Slab Correction with PME (PyTorch)
+#### 2D Slab Correction with PME
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 For slab-like systems with two periodic directions, full PyTorch PME supports the
 same slab correction as Ewald. Pass `slab_correction=True` and a boolean `pbc`
@@ -975,17 +993,24 @@ pme_slab_energies = real_energies + pme_reciprocal_energies + slab_energies
 pme_slab_forces = real_forces + pme_reciprocal_forces + slab_forces
 ```
 
-#### 2D Slab Correction with PME (JAX)
+:::
+
+:::{tab-item} JAX
+:sync: jax
 
 Full JAX PME supports the same slab correction and explicit-output flags:
 
 ```python
+import jax
 import jax.numpy as jnp
 
 from nvalchemiops.jax.interactions.electrostatics import particle_mesh_ewald
 from nvalchemiops.jax.neighbors import neighbor_list
 
 pbc_slab = jnp.array([[True, True, False]], dtype=jnp.bool_)
+
+# The neighbor list controls the real-space 3D images. For a slab setup,
+# use a cell with enough vacuum in the non-periodic direction.
 pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
@@ -1014,6 +1039,10 @@ energies, forces, charge_grads = particle_mesh_ewald(
 The full JAX PME interface adds the same slab correction described in the Ewald
 section; component-wise PME composition uses `compute_slab_correction(...)` in
 the same way as the PyTorch snippet above.
+
+:::
+
+::::
 
 ### PME vs Ewald: When to Use Each
 
