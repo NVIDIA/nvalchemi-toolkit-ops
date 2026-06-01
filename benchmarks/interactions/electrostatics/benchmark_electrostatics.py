@@ -43,6 +43,8 @@ Usage:
     python benchmark_electrostatics.py --config benchmark_config.yaml --backend torchpme --method ewald
     python benchmark_electrostatics.py --config benchmark_config.yaml --backend torch --method ewald_slab
     python benchmark_electrostatics.py --config benchmark_config.yaml --backend torch --method pme_slab
+    python benchmark_electrostatics.py --config benchmark_config.yaml --backend jax --method ewald_slab
+    python benchmark_electrostatics.py --config benchmark_config.yaml --backend jax --method pme_slab
     python benchmark_electrostatics.py --config benchmark_config.yaml --method dsf --backend both
 """
 
@@ -637,6 +639,41 @@ def prepare_batch_system(
     }
 
 
+def prepare_jax_ewald_pme_system(np_data: dict, dtype_str: str) -> dict:
+    """Prepare a JAX system dictionary for Ewald and PME benchmarks."""
+    backend_data = convert_to_backend(np_data, "jax", dtype_str=dtype_str)
+    params_data = compute_electrostatics_params(backend_data, "jax")
+    nl_matrix, nl_num_neighbors, nl_matrix_shifts = compute_neighbor_list(
+        backend_data, "jax", params_data["cutoff"]
+    )
+    pbc_slab = backend_data["pbc"].at[..., 2].set(False)
+
+    system_data = {
+        "positions": backend_data["positions"],
+        "charges": backend_data["charges"],
+        "cell": backend_data["cell"],
+        "pbc": backend_data["pbc"],
+        "pbc_slab": pbc_slab,
+        "neighbor_matrix": nl_matrix,
+        "num_neighbors": nl_num_neighbors,
+        "neighbor_matrix_shifts": nl_matrix_shifts,
+        "total_atoms": backend_data["total_atoms"],
+        "num_atoms_per_system": backend_data["num_atoms_per_system"],
+        "batch_idx": backend_data["batch_idx"],
+        "alpha": params_data["alpha"],
+        "k_cutoff": params_data["k_cutoff"],
+        "cutoff": params_data["cutoff"],
+        "mesh_dimensions": params_data["mesh_dimensions"],
+        "mesh_spacing": params_data["mesh_spacing"],
+        "spline_order": 4,
+        "k_vectors_pme": params_data["k_vectors_pme"],
+        "k_squared_pme": params_data["k_squared_pme"],
+    }
+    if backend_data["batch_idx"] is not None:
+        system_data["batch_size"] = int(backend_data["cell"].shape[0])
+    return system_data
+
+
 # ==============================================================================
 # DSF System Preparation
 # ==============================================================================
@@ -1107,6 +1144,7 @@ def prepare_jax_ewald(
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
     compute_virial: bool = False,
+    slab_correction: bool = False,
 ):
     """Prepare a JIT-compiled Ewald callable for benchmarking.
 
@@ -1124,6 +1162,8 @@ def prepare_jax_ewald(
         Whether to compute forces.
     compute_virial : bool, optional
         Whether to compute virial tensor, by default False.
+    slab_correction : bool, optional
+        Whether to run the full Ewald wrapper with slab correction enabled.
 
     Returns
     -------
@@ -1137,6 +1177,7 @@ def prepare_jax_ewald(
     alpha = system_data.get("alpha")
     k_cutoff = system_data.get("k_cutoff")
     num_atoms_per_system = system_data.get("num_atoms_per_system")
+    pbc_slab = system_data.get("pbc_slab")
 
     neighbor_matrix_data = system_data.get("neighbor_matrix")
     neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
@@ -1148,6 +1189,7 @@ def prepare_jax_ewald(
     _compute_forces = compute_forces
     _compute_virial = compute_virial
     _k_cutoff = k_cutoff
+    _slab_correction = slab_correction
 
     if component == "real":
 
@@ -1217,6 +1259,7 @@ def prepare_jax_ewald(
             neighbor_matrix,
             neighbor_matrix_shifts,
             batch_idx,
+            pbc_slab,
         ):
             return _jax_electrostatics.ewald_summation(
                 positions=positions,
@@ -1232,6 +1275,8 @@ def prepare_jax_ewald(
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=_compute_forces,
                 compute_virial=_compute_virial,
+                pbc=pbc_slab,
+                slab_correction=_slab_correction,
             )
 
         def call():
@@ -1243,6 +1288,7 @@ def prepare_jax_ewald(
                 neighbor_matrix_data,
                 neighbor_matrix_shifts,
                 batch_idx,
+                pbc_slab,
             )
 
     return call
@@ -1253,6 +1299,7 @@ def prepare_jax_pme(
     component: Literal["real", "reciprocal", "full"],
     compute_forces: bool,
     compute_virial: bool = False,
+    slab_correction: bool = False,
 ):
     """Prepare a JIT-compiled PME callable for benchmarking.
 
@@ -1269,6 +1316,8 @@ def prepare_jax_pme(
         Whether to compute forces.
     compute_virial : bool, optional
         Whether to compute virial tensor, by default False.
+    slab_correction : bool, optional
+        Whether to run the full PME wrapper with slab correction enabled.
 
     Returns
     -------
@@ -1282,6 +1331,7 @@ def prepare_jax_pme(
     alpha = system_data.get("alpha")
     mesh_dimensions = system_data.get("mesh_dimensions")
     spline_order = system_data.get("spline_order")
+    pbc_slab = system_data.get("pbc_slab")
 
     neighbor_matrix_data = system_data.get("neighbor_matrix")
     neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
@@ -1290,6 +1340,7 @@ def prepare_jax_pme(
     _compute_virial = compute_virial
     _spline_order = spline_order
     _mesh_dimensions = mesh_dimensions
+    _slab_correction = slab_correction
 
     if component == "real":
 
@@ -1370,6 +1421,7 @@ def prepare_jax_pme(
             neighbor_matrix,
             neighbor_matrix_shifts,
             batch_idx,
+            pbc_slab,
         ):
             return _jax_electrostatics.particle_mesh_ewald(
                 positions=positions,
@@ -1385,6 +1437,8 @@ def prepare_jax_pme(
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
                 compute_forces=_compute_forces,
                 compute_virial=_compute_virial,
+                pbc=pbc_slab,
+                slab_correction=_slab_correction,
             )
 
         def call():
@@ -1396,6 +1450,7 @@ def prepare_jax_pme(
                 neighbor_matrix_data,
                 neighbor_matrix_shifts,
                 batch_idx,
+                pbc_slab,
             )
 
     return call
@@ -1880,12 +1935,13 @@ def run_benchmark(
                         slab_correction=method == "pme_slab",
                     )
         elif backend == "jax":
-            if method == "ewald":
+            if method in ("ewald", "ewald_slab"):
                 bench_fn = prepare_jax_ewald(
                     system_data,
                     component,
                     compute_forces,
                     effective_virial,
+                    slab_correction=method == "ewald_slab",
                 )
             else:  # pme
                 bench_fn = prepare_jax_pme(
@@ -1893,6 +1949,7 @@ def run_benchmark(
                     component,
                     compute_forces,
                     effective_virial,
+                    slab_correction=method == "pme_slab",
                 )
         elif backend == "torchpme":
             if system_data.get("batch_idx") is not None:
@@ -2136,7 +2193,7 @@ def main():
         elif args.backend == "torch":
             return ["torch"]
         elif args.backend == "jax":
-            if method in ("ewald", "pme"):
+            if method in ("ewald", "ewald_slab", "pme", "pme_slab"):
                 return ["jax"]
             return []
         elif args.backend == "torchpme":
@@ -2236,41 +2293,9 @@ def main():
                             try:
                                 if args.backend == "jax":
                                     np_data = prepare_system_numpy(size, batch_size=1)
-                                    backend_data = convert_to_backend(
-                                        np_data, "jax", dtype_str=dtype_str
+                                    system_data_cache["ewald_pme"] = (
+                                        prepare_jax_ewald_pme_system(np_data, dtype_str)
                                     )
-                                    params_data = compute_electrostatics_params(
-                                        backend_data, "jax"
-                                    )
-                                    nl_matrix, nl_num_neighbors, nl_matrix_shifts = (
-                                        compute_neighbor_list(
-                                            backend_data, "jax", params_data["cutoff"]
-                                        )
-                                    )
-                                    system_data_cache["ewald_pme"] = {
-                                        "positions": backend_data["positions"],
-                                        "charges": backend_data["charges"],
-                                        "cell": backend_data["cell"],
-                                        "pbc": backend_data["pbc"],
-                                        "neighbor_matrix": nl_matrix,
-                                        "num_neighbors": nl_num_neighbors,
-                                        "neighbor_matrix_shifts": nl_matrix_shifts,
-                                        "total_atoms": backend_data["total_atoms"],
-                                        "num_atoms_per_system": backend_data[
-                                            "num_atoms_per_system"
-                                        ],
-                                        "batch_idx": None,
-                                        "alpha": params_data["alpha"],
-                                        "k_cutoff": params_data["k_cutoff"],
-                                        "cutoff": params_data["cutoff"],
-                                        "mesh_dimensions": params_data[
-                                            "mesh_dimensions"
-                                        ],
-                                        "mesh_spacing": params_data["mesh_spacing"],
-                                        "spline_order": 4,
-                                        "k_vectors_pme": params_data["k_vectors_pme"],
-                                        "k_squared_pme": params_data["k_squared_pme"],
-                                    }
                                 else:
                                     system_data_cache["ewald_pme"] = (
                                         prepare_single_system(size, device, dtype)
@@ -2394,42 +2419,9 @@ def main():
                                     np_data = prepare_system_numpy(
                                         base_size, batch_size=batch_size
                                     )
-                                    backend_data = convert_to_backend(
-                                        np_data, "jax", dtype_str=dtype_str
+                                    system_data_cache["ewald_pme"] = (
+                                        prepare_jax_ewald_pme_system(np_data, dtype_str)
                                     )
-                                    params_data = compute_electrostatics_params(
-                                        backend_data, "jax"
-                                    )
-                                    nl_matrix, nl_num_neighbors, nl_matrix_shifts = (
-                                        compute_neighbor_list(
-                                            backend_data, "jax", params_data["cutoff"]
-                                        )
-                                    )
-                                    system_data_cache["ewald_pme"] = {
-                                        "positions": backend_data["positions"],
-                                        "charges": backend_data["charges"],
-                                        "cell": backend_data["cell"],
-                                        "pbc": backend_data["pbc"],
-                                        "neighbor_matrix": nl_matrix,
-                                        "num_neighbors": nl_num_neighbors,
-                                        "neighbor_matrix_shifts": nl_matrix_shifts,
-                                        "total_atoms": backend_data["total_atoms"],
-                                        "num_atoms_per_system": backend_data[
-                                            "num_atoms_per_system"
-                                        ],
-                                        "batch_idx": backend_data["batch_idx"],
-                                        "batch_size": batch_size,
-                                        "alpha": params_data["alpha"],
-                                        "k_cutoff": params_data["k_cutoff"],
-                                        "cutoff": params_data["cutoff"],
-                                        "mesh_dimensions": params_data[
-                                            "mesh_dimensions"
-                                        ],
-                                        "mesh_spacing": params_data["mesh_spacing"],
-                                        "spline_order": 4,
-                                        "k_vectors_pme": params_data["k_vectors_pme"],
-                                        "k_squared_pme": params_data["k_squared_pme"],
-                                    }
                                 else:
                                     system_data_cache["ewald_pme"] = (
                                         prepare_batch_system(
