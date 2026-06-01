@@ -7,7 +7,7 @@
 Electrostatic interactions arise from Coulombic forces between charged particles.
 In periodic systems, the $1/r$ potential decays slowly, requiring special techniques
 to handle the conditionally convergent lattice sum. ALCHEMI Toolkit-Ops provides
-GPU-accelerated implementations of Ewald summation, two-dimensional Ewald slab
+GPU-accelerated implementations of Ewald summation, two-dimensional slab
 correction, Particle Mesh Ewald (PME), and Damped Shifted Force (DSF) electrostatics
 via [NVIDIA Warp](https://nvidia.github.io/warp/), with PyTorch and JAX autograd support
 for machine learning applications (Ewald and PME support full position/charge/cell
@@ -23,8 +23,8 @@ For periodic systems, start with
 systems or large-scale simulations, consider approximate
 {func}`~nvalchemiops.torch.interactions.electrostatics.dsf_coulomb` (PyTorch only) which provides $O(N)$ scaling
 with smooth force continuity at the cutoff.
-For slab-like interfaces with two periodic directions, use
-`ewald_summation(..., slab_correction=True, pbc=...)` in PyTorch.
+For slab-like systems with two periodic directions, use Ewald or PME with
+`slab_correction=True` and `pbc=...` in PyTorch.
 ```
 
 ## Overview of Available Methods
@@ -488,10 +488,10 @@ Refer to the [Parameter Estimation](parameter-estimation) section for API usage.
 
 #### 2D Slab Correction (PyTorch)
 
-For interfacial systems with two periodic directions and one non-periodic direction,
-PyTorch Ewald can add the Yeh-Berkowitz / Ballenegger slab correction. Pass
-`slab_correction=True` and a boolean `pbc` tensor whose `False` entry marks the
-non-periodic axis:
+For slab-like systems with two periodic directions and one non-periodic direction,
+PyTorch Ewald can add the Yeh-Berkowitz / Ballenegger-Arnold-Cerdà slab
+correction. Pass `slab_correction=True` and a boolean `pbc` tensor with exactly
+one `False` entry; that entry marks the non-periodic axis:
 
 ```python
 import torch
@@ -531,6 +531,40 @@ energies, forces = ewald_summation(
 For batched slab simulations, pass `pbc` as an explicit contiguous `(B, 3)`
 tensor so each system carries its own slab geometry.
 ```
+
+For an orthorhombic slab with non-periodic $z$ direction, total charge
+$Q = \sum_i q_i$, dipole moment $M_z = \sum_i q_i z_i$, second moment
+$M_{z^2} = \sum_i q_i z_i^2$, box length $L_z$, and volume $V$, the correction is:
+
+```{math}
+E_\mathrm{slab}
+= \frac{2\pi}{V}
+\left(M_z^2 - Q M_{z^2} - \frac{Q^2 L_z^2}{12}\right)
+```
+
+The per-atom contribution used by the PyTorch kernels is:
+
+```{math}
+e_i
+= \frac{2\pi}{V} q_i
+\left[
+z_i M_z
+- \frac{1}{2}\left(M_{z^2} + Q z_i^2\right)
+- \frac{Q L_z^2}{12}
+\right]
+```
+
+with force:
+
+```{math}
+\mathbf{F}_i^\mathrm{slab}
+= -\frac{4\pi}{V} q_i \left(M_z - Q z_i\right)\hat{\mathbf{z}}.
+```
+
+For neutral systems ($Q=0$), this reduces to the Yeh-Berkowitz slab correction,
+$E_\mathrm{slab}=2\pi M_z^2/V$. For triclinic cells, Toolkit-Ops uses the
+normal-following form: replace $z_i$ by the projected coordinate
+$\mathbf{r}_i\cdot\hat{\mathbf{n}}$ and $L_z$ by the projected cell height.
 
 #### Separating real- and reciprocal-space
 
@@ -592,6 +626,25 @@ recip_energies, recip_forces = ewald_reciprocal_space(
 The sum of real and reciprocal components gives the Ewald energy.
 The self-energy and background corrections are embedded within
 the reciprocal energy.
+```
+
+When using the Ewald component functions for slab-like systems, add the slab
+correction explicitly after computing the 3D-periodic real- and reciprocal-space
+parts:
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import compute_slab_correction
+
+slab_energies, slab_forces = compute_slab_correction(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    pbc=pbc_slab,
+    compute_forces=True,
+)
+
+ewald_slab_energies = real_energies + recip_energies + slab_energies
+ewald_slab_forces = real_forces + recip_forces + slab_forces
 ```
 
 ## Particle Mesh Ewald (PME)
@@ -767,6 +820,93 @@ We encourage users to properly benchmark performance gains
 afforded by `accuracy` on their systems of interest. The lower
 the value of `accuracy` the more precise, at the cost of higher
 computational requirements.
+```
+
+#### 2D Slab Correction with PME (PyTorch)
+
+For slab-like systems with two periodic directions, full PyTorch PME supports the
+same slab correction as Ewald. Pass `slab_correction=True` and a boolean `pbc`
+tensor with exactly one `False` entry; that entry marks the non-periodic axis:
+
+```python
+import torch
+
+from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
+from nvalchemiops.torch.neighbors import neighbor_list
+
+pbc_slab = torch.tensor([[True, True, False]], dtype=torch.bool, device=positions.device)
+
+# The neighbor list controls the real-space 3D images. For a slab setup,
+# use a cell with enough vacuum in the non-periodic direction.
+pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=positions.device)
+neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
+    positions,
+    cutoff=5.0,
+    cell=cell,
+    pbc=pbc_neighbor,
+    return_neighbor_list=True,
+)
+
+energies, forces = particle_mesh_ewald(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=0.3,
+    mesh_dimensions=(32, 32, 32),
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    pbc=pbc_slab,
+    slab_correction=True,
+    compute_forces=True,
+)
+```
+
+The full PME interface adds the same slab correction described in the Ewald
+section to the 3D-periodic real-space and PME reciprocal-space terms.
+
+When using the PME reciprocal-space component directly, add the slab correction
+explicitly:
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import (
+    compute_slab_correction,
+    ewald_real_space,
+    pme_reciprocal_space,
+)
+
+alpha = torch.tensor([0.3], dtype=positions.dtype, device=positions.device)
+
+real_energies, real_forces = ewald_real_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
+)
+
+pme_reciprocal_energies, pme_reciprocal_forces = pme_reciprocal_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    mesh_dimensions=(32, 32, 32),
+    compute_forces=True,
+)
+
+slab_energies, slab_forces = compute_slab_correction(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    pbc=pbc_slab,
+    compute_forces=True,
+)
+
+pme_slab_energies = real_energies + pme_reciprocal_energies + slab_energies
+pme_slab_forces = real_forces + pme_reciprocal_forces + slab_forces
 ```
 
 ### PME vs Ewald: When to Use Each
@@ -2049,6 +2189,15 @@ See the unit tests at `test/interactions/electrostatics/` in the repository.
 - Essmann, U.; Perera, L.; Berkowitz, M. L.; Darden, T.; Lee, H.; Pedersen, L. G.
   (1995). "A smooth particle mesh Ewald method." *J. Chem. Phys.* 103, 8577.
   [DOI: 10.1063/1.470117](https://doi.org/10.1063/1.470117)
+
+- Yeh, I.-C.; Berkowitz, M. L. (1999). "Ewald summation for systems with slab
+  geometry." *J. Chem. Phys.* 111, 3155-3162.
+  [DOI: 10.1063/1.479595](https://doi.org/10.1063/1.479595)
+
+- Ballenegger, V.; Arnold, A.; Cerdà, J. J. (2009). "Simulations of non-neutral
+  slab systems with long-range electrostatic interactions in two-dimensional
+  periodic boundary conditions." *J. Chem. Phys.* 131, 094107.
+  [DOI: 10.1063/1.3216473](https://doi.org/10.1063/1.3216473)
 
 - Kolafa, J.; Perram, J. W. (1992). "Cutoff Errors in the Ewald Summation Formulae
   for Point Charge Systems." *Mol. Sim.* 9, 351-368.
