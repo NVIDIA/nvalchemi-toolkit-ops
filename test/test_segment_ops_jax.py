@@ -251,8 +251,14 @@ class TestTorchParity:
     """Identical inputs through the JAX and PyTorch bindings should produce
     the same values and the same gradients."""
 
+    # Skip the entire class if torch is not installed.  ``pytest.importorskip``
+    # at class body level raises ``pytest.skip`` during class creation, which
+    # pytest catches and marks every test on this class as skipped — no need
+    # to repeat the import-or-skip dance in every method.
+    torch = pytest.importorskip("torch")
+
     def test_sum_vec3(self):
-        torch = pytest.importorskip("torch")
+        torch = self.torch
         from nvalchemiops.torch.segment_ops import segmented_sum as t_sum
 
         idx_np = np.asarray(_make_idx(seed=60))
@@ -276,7 +282,7 @@ class TestTorchParity:
         np.testing.assert_allclose(np.asarray(grad_j), x_t.grad.numpy(), rtol=1e-10)
 
     def test_matvec(self):
-        torch = pytest.importorskip("torch")
+        torch = self.torch
         from nvalchemiops.torch.segment_ops import segmented_matvec as t_matvec
 
         idx_np = np.asarray(_make_idx(seed=62))
