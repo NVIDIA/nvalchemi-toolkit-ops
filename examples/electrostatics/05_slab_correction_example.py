@@ -14,20 +14,23 @@
 # limitations under the License.
 
 """
-2D Slab Correction for Ewald Summation
-======================================
+2D Slab Correction for Ewald and PME
+====================================
 
 This example demonstrates how to apply the Yeh-Berkowitz / Ballenegger
-two-dimensional slab correction to Ewald electrostatics. The correction is used
-for slab-like systems with two periodic directions and one non-periodic
-direction, such as interfaces with vacuum padding.
+two-dimensional slab correction to Ewald and Particle Mesh Ewald (PME)
+electrostatics. The correction is used for slab-like systems with two periodic
+directions and one non-periodic direction, such as interfaces with vacuum
+padding.
 
 In this example you will learn:
 
 - How to run ``ewald_summation(..., slab_correction=True)``
+- How to run ``particle_mesh_ewald(..., slab_correction=True)``
 - How to pass slab periodicity with a boolean ``pbc`` tensor
-- How to compute the standalone slab correction with ``apply_slab_correction``
+- How to compute the standalone slab correction with ``compute_slab_correction``
 - How the standalone correction equals the integrated Ewald energy/force delta
+- How to compose total Ewald and PME component workflows with slab
 - How triclinic slab cells use the normal to the periodic plane
 
 .. important::
@@ -38,17 +41,22 @@ In this example you will learn:
 # %%
 # Setup and Imports
 # -----------------
-# The slab correction is available through the high-level Ewald API and as a
-# standalone helper. The standalone helper is useful for debugging, validation,
-# and adding the correction to precomputed 3D Ewald outputs.
+# The slab correction is available through the high-level Ewald and PME APIs,
+# and as a standalone helper. The standalone helper is useful for debugging,
+# validation, and adding the correction when composing total component workflows.
 
 from __future__ import annotations
 
 import torch
 
 from nvalchemiops.torch.interactions.electrostatics import (
-    apply_slab_correction,
+    compute_slab_correction,
+    ewald_real_space,
+    ewald_reciprocal_space,
     ewald_summation,
+    generate_k_vectors_ewald_summation,
+    particle_mesh_ewald,
+    pme_reciprocal_space,
 )
 from nvalchemiops.torch.neighbors import neighbor_list as neighbor_list_fn
 
@@ -114,6 +122,8 @@ print(f"  Total charge: {charges.sum().item():.1f}")
 alpha = 0.3
 real_space_cutoff = 5.0
 k_cutoff = 2.5
+mesh_dimensions = (16, 16, 16)
+alpha_tensor = torch.tensor([alpha], dtype=torch.float64, device=device)
 
 pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
 neighbor_list, neighbor_ptr, neighbor_shifts = neighbor_list_fn(
@@ -191,7 +201,7 @@ print(f"  Virial trace: {torch.trace(virial_slab[0]).item(): .8f}")
 # the difference between the slab-corrected and uncorrected Ewald outputs.
 
 correction_energy, correction_forces, correction_charge_grads, correction_virial = (
-    apply_slab_correction(
+    compute_slab_correction(
         positions=positions,
         charges=charges,
         cell=cell,
@@ -219,6 +229,142 @@ print(f"  Max charge-gradient delta error: {charge_grad_delta_error.item():.2e}"
 print(f"  Max virial delta error: {virial_delta_error.item():.2e}")
 
 # %%
+# Total Ewald Component Composition
+# ---------------------------------
+# If you need the Ewald real-space, Ewald reciprocal-space, and slab terms
+# separately, compute the three pieces explicitly and add matching outputs.
+
+ewald_component_real_energy, ewald_component_real_forces = ewald_real_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha_tensor,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
+)
+ewald_k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff)
+ewald_component_reciprocal_energy, ewald_component_reciprocal_forces = (
+    ewald_reciprocal_space(
+        positions=positions,
+        charges=charges,
+        cell=cell,
+        k_vectors=ewald_k_vectors,
+        alpha=alpha_tensor,
+        compute_forces=True,
+    )
+)
+ewald_component_slab_energy, ewald_component_slab_forces = compute_slab_correction(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    pbc=pbc_slab,
+    compute_forces=True,
+)
+
+total_ewald_energy = (
+    ewald_component_real_energy
+    + ewald_component_reciprocal_energy
+    + ewald_component_slab_energy
+)
+total_ewald_forces = (
+    ewald_component_real_forces
+    + ewald_component_reciprocal_forces
+    + ewald_component_slab_forces
+)
+
+print("\nTotal Ewald composition from components:")
+print(
+    f"  Max energy error: {torch.max(torch.abs(total_ewald_energy - energies_slab)).item():.2e}"
+)
+print(
+    f"  Max force error: {torch.max(torch.abs(total_ewald_forces - forces_slab)).item():.2e}"
+)
+
+# %%
+# PME with Slab Correction
+# ------------------------
+# Full PME accepts the same slab correction arguments as Ewald. The reciprocal
+# PME component itself remains a 3D-periodic reciprocal-space calculation; the
+# slab term is added by the high-level ``particle_mesh_ewald`` wrapper.
+
+pme_3d_energy, pme_3d_forces = particle_mesh_ewald(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    mesh_dimensions=mesh_dimensions,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
+)
+
+pme_slab_energy, pme_slab_forces = particle_mesh_ewald(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    mesh_dimensions=mesh_dimensions,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
+    pbc=pbc_slab,
+    slab_correction=True,
+)
+
+print("\nPME with slab correction:")
+print(f"  Standard PME energy: {pme_3d_energy.sum().item(): .8f}")
+print(f"  Slab PME energy: {pme_slab_energy.sum().item(): .8f}")
+print(f"  Energy delta: {(pme_slab_energy - pme_3d_energy).sum().item(): .8f}")
+print(f"  Max force magnitude: {pme_slab_forces.norm(dim=1).max().item(): .8f}")
+
+# %%
+# Total PME Component Composition
+# -------------------------------
+# If you need real-space, PME reciprocal-space, and slab terms separately,
+# compute the three pieces explicitly and add matching outputs.
+
+real_energy, real_forces = ewald_real_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha_tensor,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
+)
+reciprocal_energy, reciprocal_forces = pme_reciprocal_space(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    mesh_dimensions=mesh_dimensions,
+    compute_forces=True,
+)
+slab_energy_correction, slab_forces_correction = compute_slab_correction(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    pbc=pbc_slab,
+    compute_forces=True,
+)
+
+total_pme_energy = real_energy + reciprocal_energy + slab_energy_correction
+total_pme_forces = real_forces + reciprocal_forces + slab_forces_correction
+
+print("\nTotal PME composition from components:")
+print(
+    f"  Max energy error: {torch.max(torch.abs(total_pme_energy - pme_slab_energy)).item():.2e}"
+)
+print(
+    f"  Max force error: {torch.max(torch.abs(total_pme_forces - pme_slab_forces)).item():.2e}"
+)
+
+# %%
 # Triclinic Slab Cells
 # --------------------
 # Triclinic cells are also supported. The slab normal follows the plane spanned
@@ -233,7 +379,7 @@ triclinic_cell = torch.tensor(
     device=device,
 )
 
-triclinic_energy, triclinic_forces = apply_slab_correction(
+triclinic_energy, triclinic_forces = compute_slab_correction(
     positions=positions,
     charges=charges,
     cell=triclinic_cell,
@@ -249,9 +395,12 @@ print(f"  Forces:\n{triclinic_forces.cpu().numpy()}")
 # %%
 # Summary
 # -------
-# Use ``ewald_summation(..., slab_correction=True, pbc=pbc_slab)`` when you want
-# the correction included in the total Ewald outputs. Use
-# ``apply_slab_correction`` directly when you need the correction term alone.
+# Use ``ewald_summation(..., slab_correction=True, pbc=pbc_slab)`` or
+# ``particle_mesh_ewald(..., slab_correction=True, pbc=pbc_slab)`` when you want
+# the correction included in the total outputs. Use ``compute_slab_correction``
+# directly when you need the correction term alone or when composing
+# ``ewald_real_space`` with ``ewald_reciprocal_space`` or
+# ``pme_reciprocal_space``.
 #
 # For repeated molecular dynamics loops, keep ``pbc_slab`` as a contiguous
 # ``(B, 3)`` tensor on the target device.

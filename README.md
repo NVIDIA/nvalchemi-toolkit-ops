@@ -191,17 +191,21 @@ system_energy = atom_energies.sum()
 ## CUDA 13 Support
 
 CUDA 13 is required for Blackwell GPUs. `torch>=2.11.0` and `jax[cuda13]`
-publish CUDA 13 wheels on the default PyPI index for x86 platforms. On Arm
-platforms (e.g. NVIDIA DGX Spark), an `--extra-index-url` is required for
-PyTorch.
+publish CUDA 13 wheels on the default PyPI index for Linux x86_64 and
+aarch64 platforms.
+
+The `torch` and `jax` extras use CUDA 13 by default and are equivalent to the
+explicit `torch-cu13` and `jax-cu13` extras. Use `torch-cu12` and `jax-cu12`
+when CUDA 12.6 PyTorch wheels or CUDA 12 JAX plugins are required. The PyTorch
+indexes used for explicit CUDA selection are `cu130` for CUDA 13 and `cu126`
+for the CUDA 12 fallback.
 
 ```bash
-# Standalone install (x86)
+# Standalone install
 uv venv --seed --python 3.12
 uv pip install nvalchemi-toolkit-ops torch==2.11.0
 
-# Standalone install (Arm, e.g. DGX Spark)
-uv venv --seed --python 3.12
+# Explicit CUDA 13 PyTorch wheel index
 uv pip install nvalchemi-toolkit-ops \
     torch==2.11.0+cu130 \
     --extra-index-url https://download.pytorch.org/whl/cu130
@@ -229,9 +233,14 @@ Features planned for upcoming releases:
 
 ## Contributions & Disclaimers
 
-Currently, NVIDIA ALCHEMI Toolkit-Ops is undergoing a public beta, where we are
-soliciting feedback from the community. During this time, direct code contributions are
-not accepted as our first priority will be to define and provide a stable API, which
-is/will be subject to change. Feature requests, discussions, and general feedback are
+Feature requests, discussions, and general feedback are
 welcome and encouraged via
-[Github Issues](https://www.github.com/NVIDIA/nvalchemi-toolkit-ops).
+[Github Issues](https://www.github.com/NVIDIA/nvalchemi-toolkit-ops). Before submitting a
+pull request, we highly encourage you to create an issue to discuss
+with developers first so we can understand your use case and collaborate
+on features and bug fixes. Contributors must read [CONTRIBUTING.md](./CONTRIBUTING.md) to
+understand and follow the development workflow and logistics.
+
+NVIDIA ALCHEMI Toolkit-Ops is under active development; while we strive to
+ensure public facing APIs do not break, they are subject to change as we
+are trying to continuously improve performance and user experience.
