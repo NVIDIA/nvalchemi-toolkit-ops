@@ -493,12 +493,11 @@ class TestJaxSlabPbcShapeContracts:
     def test_single_system_pme_accepts_1d_pbc(self, device):  # noqa: ARG002
         """A single-system PME slab call accepts either (3,) or (1, 3) pbc."""
         positions, charges, cell, pbc = _make_slab_system()
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
 
         energies_1d = particle_mesh_ewald(
@@ -587,12 +586,11 @@ class TestJaxSlabPbcShapeContracts:
     def test_single_system_ewald_accepts_1d_pbc(self, device):  # noqa: ARG002
         """A single-system Ewald slab call accepts either (3,) or (1, 3) pbc."""
         positions, charges, cell, pbc = _make_slab_system()
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
         common_kwargs = {
             "alpha": EWALD_ALPHA,
@@ -664,15 +662,65 @@ class TestJaxSlabPbcShapeContracts:
 class TestJaxEwaldSlabIntegration:
     """Full JAX Ewald slab wrapper composition."""
 
+    def test_neighbor_pbc_ttf_matches_ttt_with_vacuum(self, device):  # noqa: ARG002
+        """Ewald slab outputs are unchanged by T/T/F vs T/T/T vacuum neighbors."""
+        positions, charges, cell, pbc = _make_slab_system()
+        pbc_3d = jnp.array([[True, True, True]], dtype=jnp.bool_)
+        neighbor_matrix_slab, _, neighbor_matrix_shifts_slab = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc,
+        )
+        neighbor_matrix_3d, _, neighbor_matrix_shifts_3d = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc_3d,
+        )
+        common_kwargs = {
+            "alpha": EWALD_ALPHA,
+            "k_cutoff": EWALD_K_CUTOFF,
+            "compute_forces": True,
+            "compute_charge_gradients": True,
+            "compute_virial": True,
+            "pbc": pbc,
+            "slab_correction": True,
+        }
+
+        outputs_slab = ewald_summation(
+            positions,
+            charges,
+            cell,
+            neighbor_matrix=neighbor_matrix_slab,
+            neighbor_matrix_shifts=neighbor_matrix_shifts_slab,
+            **common_kwargs,
+        )
+        outputs_3d = ewald_summation(
+            positions,
+            charges,
+            cell,
+            neighbor_matrix=neighbor_matrix_3d,
+            neighbor_matrix_shifts=neighbor_matrix_shifts_3d,
+            **common_kwargs,
+        )
+
+        for actual, expected in zip(outputs_slab, outputs_3d, strict=True):
+            _assert_close(
+                actual,
+                expected,
+                rtol=SLAB_STRICT_RTOL,
+                atol=SLAB_STRICT_ATOL,
+            )
+
     def test_full_ewald_3d_pbc_noop(self, device):  # noqa: ARG002
         """3D periodic Ewald slab mode matches standard Ewald."""
-        positions, charges, cell, _ = _make_slab_system()
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
+        positions, charges, cell, pbc = _make_slab_system()
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
         common_kwargs = {
             "alpha": EWALD_ALPHA,
@@ -721,12 +769,11 @@ class TestJaxEwaldSlabIntegration:
     ):
         """Every Ewald slab flag combination preserves tuple order and values."""
         positions, charges, cell, pbc = _make_slab_system()
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
         k_vectors = generate_k_vectors_ewald_summation(cell, EWALD_K_CUTOFF)
 
@@ -798,12 +845,11 @@ class TestJaxEwaldSlabIntegration:
     def test_full_ewald_slab_output_dtypes(self, dtype, device):  # noqa: ARG002
         """Ewald slab energies/charge gradients are fp64; vectors match input dtype."""
         positions, charges, cell, pbc = _make_slab_system(dtype=dtype)
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
 
         energies, forces, charge_grads, virial = ewald_summation(
@@ -833,6 +879,52 @@ class TestJaxEwaldSlabIntegration:
 class TestJaxPMESlabIntegration:
     """Full JAX PME slab wrapper composition and output order."""
 
+    def test_neighbor_pbc_ttf_matches_ttt_with_vacuum(self, device):  # noqa: ARG002
+        """PME slab outputs are unchanged by T/T/F vs T/T/T vacuum neighbors."""
+        positions, charges, cell, pbc = _make_slab_system()
+        pbc_3d = jnp.array([[True, True, True]], dtype=jnp.bool_)
+        neighbor_matrix_slab, _, neighbor_matrix_shifts_slab = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc,
+        )
+        neighbor_matrix_3d, _, neighbor_matrix_shifts_3d = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc_3d,
+        )
+        common_kwargs = {
+            "alpha": EWALD_ALPHA,
+            "mesh_dimensions": PME_MESH,
+            "compute_forces": True,
+            "compute_charge_gradients": True,
+            "compute_virial": True,
+            "pbc": pbc,
+            "slab_correction": True,
+        }
+
+        outputs_slab = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            neighbor_matrix=neighbor_matrix_slab,
+            neighbor_matrix_shifts=neighbor_matrix_shifts_slab,
+            **common_kwargs,
+        )
+        outputs_3d = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            neighbor_matrix=neighbor_matrix_3d,
+            neighbor_matrix_shifts=neighbor_matrix_shifts_3d,
+            **common_kwargs,
+        )
+
+        for actual, expected in zip(outputs_slab, outputs_3d, strict=True):
+            _assert_close(actual, expected, rtol=1e-9, atol=1e-10)
+
     @pytest.mark.parametrize(
         (
             "compute_forces",
@@ -852,12 +944,11 @@ class TestJaxPMESlabIntegration:
     ):
         """Every PME slab flag combination preserves tuple order and values."""
         positions, charges, cell, pbc = _make_slab_system()
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
 
         full_outputs = particle_mesh_ewald(
@@ -928,12 +1019,11 @@ class TestJaxPMESlabIntegration:
     def test_full_pme_slab_output_dtypes(self, dtype, device):  # noqa: ARG002
         """PME slab energies/charge gradients are fp64; vectors match input dtype."""
         positions, charges, cell, pbc = _make_slab_system(dtype=dtype)
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
 
         energies, forces, charge_grads, virial = particle_mesh_ewald(
@@ -961,13 +1051,12 @@ class TestJaxPMESlabIntegration:
 
     def test_full_pme_slab_3d_pbc_noop(self, device):  # noqa: ARG002
         """3D periodic PME slab mode matches standard PME."""
-        positions, charges, cell, _ = _make_slab_system()
-        pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
+        positions, charges, cell, pbc = _make_slab_system()
         neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
         )
         common_kwargs = {
             "alpha": EWALD_ALPHA,
@@ -995,15 +1084,11 @@ class TestJaxPMESlabIntegration:
     def test_mixed_pbc_batch_matches_component_sum(self, device):  # noqa: ARG002
         """Batched PME slab applies correction only to slab-like systems."""
         positions, charges, cell, batch_idx, pbc = _make_batched_system()
-        pbc_neighbor = jnp.array(
-            [[True, True, True], [True, True, True]],
-            dtype=jnp.bool_,
-        )
         neighbor_matrix, _, neighbor_matrix_shifts = batch_cell_list(
             positions,
             REAL_SPACE_CUTOFF,
             cell,
-            pbc_neighbor,
+            pbc,
             batch_idx=batch_idx,
             max_neighbors=32,
         )

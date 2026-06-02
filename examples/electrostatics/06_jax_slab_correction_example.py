@@ -125,13 +125,8 @@ print(f"  Total charge: {float(charges.sum()):.1f}")
 # %%
 # Build the Real-Space Neighbor List
 # ----------------------------------
-# The slab correction modifies the long-range Ewald result after computing a
-# standard 3D Ewald sum in a cell with vacuum padding. The neighbor list controls
-# the real-space periodic images used by that 3D Ewald calculation.
-#
-# For this demonstration we use full 3D periodicity for the neighbor list and a
-# cutoff smaller than the vacuum gap, so no short-range neighbors cross the slab
-# normal.
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 
 alpha = 0.3
 real_space_cutoff = 5.0
@@ -139,12 +134,11 @@ k_cutoff = 2.5
 mesh_dimensions = (16, 16, 16)
 alpha_array = jnp.array([alpha], dtype=jnp.float64)
 
-pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
 neighbor_list, neighbor_ptr, neighbor_shifts = neighbor_list_fn(
     positions,
     real_space_cutoff,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 
@@ -429,7 +423,6 @@ print("JIT COMPILATION")
 print("=" * 70)
 
 jit_positions, jit_charges, jit_cell, jit_pbc_slab = create_cscl_slab_system()
-jit_pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
 jit_alpha = jnp.array([alpha], dtype=jnp.float64)
 jit_max_neighbors = 16
 jit_mask_value = jit_positions.shape[0]
@@ -437,7 +430,7 @@ jit_mask_value = jit_positions.shape[0]
 shift_range, num_shifts_per_system, max_shifts_per_system = compute_naive_num_shifts(
     jit_cell,
     real_space_cutoff,
-    jit_pbc_neighbor,
+    jit_pbc_slab,
 )
 
 
@@ -446,7 +439,6 @@ def compute_pme_slab_energy_forces(
     charges_in: jax.Array,
     cell_in: jax.Array,
     pbc_slab_in: jax.Array,
-    pbc_neighbor_in: jax.Array,
     alpha_in: jax.Array,
     shift_range_per_dimension: jax.Array = shift_range,
     num_shifts: jax.Array = num_shifts_per_system,
@@ -461,7 +453,7 @@ def compute_pme_slab_energy_forces(
         positions_in,
         cutoff,
         cell=cell_in,
-        pbc=pbc_neighbor_in,
+        pbc=pbc_slab_in,
         max_neighbors=max_neighbors,
         fill_value=mask_value,
         shift_range_per_dimension=shift_range_per_dimension,
@@ -493,7 +485,6 @@ energies_nonjit, forces_nonjit = compute_pme_slab_energy_forces(
     jit_charges,
     jit_cell,
     jit_pbc_slab,
-    jit_pbc_neighbor,
     jit_alpha,
 )
 energies_nonjit.block_until_ready()
@@ -511,7 +502,6 @@ energies_jit, forces_jit = jit_compute_pme_slab_energy_forces(
     jit_charges,
     jit_cell,
     jit_pbc_slab,
-    jit_pbc_neighbor,
     jit_alpha,
 )
 energies_jit.block_until_ready()
