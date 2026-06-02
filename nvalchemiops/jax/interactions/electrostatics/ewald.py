@@ -57,7 +57,6 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     _ewald_subtract_self_energy_kernel_overload,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
-    ElectrostaticOutputs,
     _build_electrostatic_result,
     _combine_electrostatic_outputs,
     _make_jax_kernels,
@@ -702,7 +701,10 @@ def ewald_real_space(
         virial = None
 
     return _build_electrostatic_result(
-        ElectrostaticOutputs(energies, forces, charge_grads, virial),
+        energies,
+        forces,
+        charge_grads,
+        virial,
         compute_forces,
         compute_charge_gradients,
         compute_virial,
@@ -1064,7 +1066,10 @@ def ewald_reciprocal_space(
         charge_grads = None
 
     return _build_electrostatic_result(
-        ElectrostaticOutputs(energies, forces, charge_grads, virial),
+        energies,
+        forces,
+        charge_grads,
+        virial,
         compute_forces,
         compute_charge_gradients,
         compute_virial,

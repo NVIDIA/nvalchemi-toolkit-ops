@@ -54,7 +54,6 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
     _pme_green_structure_factor_kernel_overload,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
-    ElectrostaticOutputs,
     _build_electrostatic_result,
     _combine_electrostatic_outputs,
     _prepare_cell,
@@ -800,7 +799,10 @@ def pme_reciprocal_space(
             else None
         )
         return _build_electrostatic_result(
-            ElectrostaticOutputs(energies, forces, charge_grads, virial),
+            energies,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -942,7 +944,10 @@ def pme_reciprocal_space(
         forces = 2.0 * interpolated_field
 
     return _build_electrostatic_result(
-        ElectrostaticOutputs(energies, forces, charge_grads, virial),
+        energies,
+        forces,
+        charge_grads,
+        virial,
         compute_forces,
         compute_charge_gradients,
         compute_virial,

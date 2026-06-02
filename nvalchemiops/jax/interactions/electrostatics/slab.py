@@ -27,7 +27,6 @@ from nvalchemiops.interactions.electrostatics.slab_kernels import (
     _slab_reduce_moments_kernel_overload,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
-    ElectrostaticOutputs,
     _build_electrostatic_result,
     _make_jax_kernels,
     _normalize_dtype,
@@ -160,20 +159,10 @@ def compute_slab_correction(
 
     if num_atoms == 0:
         return _build_electrostatic_result(
-            ElectrostaticOutputs(
-                energies=jnp.zeros((0,), dtype=jnp.float64),
-                forces=jnp.zeros((0, 3), dtype=dtype) if compute_forces else None,
-                charge_grads=(
-                    jnp.zeros((0,), dtype=jnp.float64)
-                    if compute_charge_gradients
-                    else None
-                ),
-                virial=(
-                    jnp.zeros((num_systems, 3, 3), dtype=dtype)
-                    if compute_virial
-                    else None
-                ),
-            ),
+            jnp.zeros((0,), dtype=jnp.float64),
+            jnp.zeros((0, 3), dtype=dtype) if compute_forces else None,
+            (jnp.zeros((0,), dtype=jnp.float64) if compute_charge_gradients else None),
+            (jnp.zeros((num_systems, 3, 3), dtype=dtype) if compute_virial else None),
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -221,12 +210,10 @@ def compute_slab_correction(
             )
         )
         return _build_electrostatic_result(
-            ElectrostaticOutputs(
-                energies=energy_out,
-                forces=forces,
-                charge_grads=charge_grads,
-                virial=virial,
-            ),
+            energy_out,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -252,12 +239,10 @@ def compute_slab_correction(
             launch_dims=(num_atoms,),
         )
         return _build_electrostatic_result(
-            ElectrostaticOutputs(
-                energies=energy_out,
-                forces=forces,
-                charge_grads=None,
-                virial=virial,
-            ),
+            energy_out,
+            forces,
+            None,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,

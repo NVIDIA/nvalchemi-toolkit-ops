@@ -17,21 +17,10 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
-
 import jax
 import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
-
-
-class ElectrostaticOutputs(NamedTuple):
-    """Named electrostatic outputs used for internal composition."""
-
-    energies: jax.Array
-    forces: jax.Array | None = None
-    charge_grads: jax.Array | None = None
-    virial: jax.Array | None = None
 
 
 def _normalize_dtype(dtype):
@@ -97,19 +86,22 @@ def _prepare_cell(cell: jax.Array) -> tuple[jax.Array, int]:
 
 
 def _build_electrostatic_result(
-    outputs: ElectrostaticOutputs,
+    energies: jax.Array,
+    forces: jax.Array | None,
+    charge_grads: jax.Array | None,
+    virial: jax.Array | None,
     compute_forces: bool,
     compute_charge_gradients: bool,
     compute_virial: bool,
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Build an output tuple in electrostatics API order."""
-    result = [outputs.energies]
-    if compute_forces and outputs.forces is not None:
-        result.append(outputs.forces)
-    if compute_charge_gradients and outputs.charge_grads is not None:
-        result.append(outputs.charge_grads)
-    if compute_virial and outputs.virial is not None:
-        result.append(outputs.virial)
+    result = [energies]
+    if compute_forces and forces is not None:
+        result.append(forces)
+    if compute_charge_gradients and charge_grads is not None:
+        result.append(charge_grads)
+    if compute_virial and virial is not None:
+        result.append(virial)
     return tuple(result) if len(result) > 1 else result[0]
 
 
@@ -118,7 +110,7 @@ def _unpack_electrostatic_outputs(
     compute_forces: bool,
     compute_charge_gradients: bool,
     compute_virial: bool,
-) -> ElectrostaticOutputs:
+) -> tuple[jax.Array, jax.Array | None, jax.Array | None, jax.Array | None]:
     """Unpack electrostatics outputs by flag combination without cursor logic."""
     output_tuple = outputs if isinstance(outputs, tuple) else (outputs,)
 
@@ -151,12 +143,7 @@ def _unpack_electrostatic_outputs(
         charge_grads = None
         virial = None
 
-    return ElectrostaticOutputs(
-        energies=energies,
-        forces=forces,
-        charge_grads=charge_grads,
-        virial=virial,
-    )
+    return energies, forces, charge_grads, virial
 
 
 def _combine_electrostatic_outputs(
@@ -168,78 +155,78 @@ def _combine_electrostatic_outputs(
     compute_virial: bool,
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Combine real, reciprocal, and optional slab outputs by named fields."""
-    real = _unpack_electrostatic_outputs(
-        real_outputs,
-        compute_forces,
-        compute_charge_gradients,
-        compute_virial,
+    real_energies, real_forces, real_charge_grads, real_virial = (
+        _unpack_electrostatic_outputs(
+            real_outputs,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
     )
-    reciprocal = _unpack_electrostatic_outputs(
+    (
+        reciprocal_energies,
+        reciprocal_forces,
+        reciprocal_charge_grads,
+        reciprocal_virial,
+    ) = _unpack_electrostatic_outputs(
         reciprocal_outputs,
         compute_forces,
         compute_charge_gradients,
         compute_virial,
     )
 
-    energies = real.energies + reciprocal.energies
+    energies = real_energies + reciprocal_energies
     forces = (
-        real.forces + reciprocal.forces
-        if compute_forces and real.forces is not None and reciprocal.forces is not None
+        real_forces + reciprocal_forces
+        if compute_forces and real_forces is not None and reciprocal_forces is not None
         else None
     )
     charge_grads = (
-        real.charge_grads + reciprocal.charge_grads
+        real_charge_grads + reciprocal_charge_grads
         if compute_charge_gradients
-        and real.charge_grads is not None
-        and reciprocal.charge_grads is not None
+        and real_charge_grads is not None
+        and reciprocal_charge_grads is not None
         else None
     )
     virial = (
-        real.virial + reciprocal.virial
-        if compute_virial and real.virial is not None and reciprocal.virial is not None
+        real_virial + reciprocal_virial
+        if compute_virial and real_virial is not None and reciprocal_virial is not None
         else None
-    )
-    combined = ElectrostaticOutputs(
-        energies=energies,
-        forces=forces,
-        charge_grads=charge_grads,
-        virial=virial,
     )
 
     if slab_outputs is not None:
-        slab = _unpack_electrostatic_outputs(
-            slab_outputs,
-            compute_forces,
-            compute_charge_gradients,
-            compute_virial,
+        slab_energies, slab_forces, slab_charge_grads, slab_virial = (
+            _unpack_electrostatic_outputs(
+                slab_outputs,
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
         )
-        combined = ElectrostaticOutputs(
-            energies=combined.energies + slab.energies,
-            forces=(
-                combined.forces + slab.forces
-                if compute_forces
-                and combined.forces is not None
-                and slab.forces is not None
-                else combined.forces
-            ),
-            charge_grads=(
-                combined.charge_grads + slab.charge_grads
-                if compute_charge_gradients
-                and combined.charge_grads is not None
-                and slab.charge_grads is not None
-                else combined.charge_grads
-            ),
-            virial=(
-                combined.virial + slab.virial
-                if compute_virial
-                and combined.virial is not None
-                and slab.virial is not None
-                else combined.virial
-            ),
+        energies = energies + slab_energies
+        forces = (
+            forces + slab_forces
+            if compute_forces and forces is not None and slab_forces is not None
+            else forces
+        )
+        charge_grads = (
+            charge_grads + slab_charge_grads
+            if compute_charge_gradients
+            and charge_grads is not None
+            and slab_charge_grads is not None
+            else charge_grads
+        )
+        virial = (
+            virial + slab_virial
+            if compute_virial and virial is not None and slab_virial is not None
+            else virial
         )
 
     return _build_electrostatic_result(
-        combined,
+        energies,
+        forces,
+        charge_grads,
+        virial,
         compute_forces,
         compute_charge_gradients,
         compute_virial,
