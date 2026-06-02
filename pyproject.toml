@@ -39,15 +39,15 @@ dynamic = ["version"]
 [project.optional-dependencies]
 
 torch = [
-    "torch>=2.11.0",
+    "torch>=2.8.0",
 ]
 
 torch-cu12 = [
-    "torch>=2.11.0",
+    "torch>=2.8.0",
 ]
 
 torch-cu13 = [
-    "torch>=2.11.0",
+    "torch>=2.8.0",
 ]
 
 jax = [
@@ -146,12 +146,6 @@ torch = [
     { index = "pytorch-cu130", extra = "torch" },
     { index = "pytorch-cu130", extra = "torch-cu13" },
 ]
-
-[[tool.uv.index]]
-name = "internal-alchemi"
-url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
-publish-url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
-explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu126"
