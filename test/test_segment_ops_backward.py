@@ -1380,3 +1380,83 @@ class TestHardcoded:
         np.testing.assert_array_equal(
             _np(grad_g_out), np.array([3.0, 7.0], dtype=np.float32)
         )
+
+
+# ---------------------------------------------------------------------------
+# Tile fast-path: ``_launch_sum`` switches to a tile-based total-sum kernel
+# (``wp.launch_tiled`` + ``wp.tile_*``) when ``M == 1`` and ``N >= 8192``.
+# The forward suite (``test/test_segment_ops.py``) covers this regime
+# explicitly; these tests pin the same path through the backward launchers
+# that reuse ``_launch_sum`` internally:
+#
+# * ``_launch_segmented_sum_double_backward`` calls ``_launch_sum`` directly.
+# * ``_launch_segmented_broadcast_backward`` is a thin alias of ``_launch_sum``.
+# * ``_launch_segmented_mean_double_backward`` uses ``_launch_sum`` to build
+#   per-segment sums then divides by ``counts``.
+#
+# Each test pairs a multiple-of-``_BLOCK_DIM`` size (pure tile path) with a
+# non-multiple (tile + tail) — matching the forward suite's pattern.
+# ---------------------------------------------------------------------------
+
+
+class TestTilePath:
+    """Pin the M=1, N>=8192 tile fast path through backward launchers."""
+
+    @pytest.mark.parametrize("N_tile", [10240, 8500])  # pure tile, then tile+tail
+    def test_sum_double_backward_tile_scalar(self, device, N_tile):
+        rng = np.random.default_rng(100)
+        gg_x_np = rng.standard_normal(N_tile).astype(np.float32)
+        idx_np = np.zeros(N_tile, dtype=np.int32)  # M = 1
+        gg_x = _wpa(gg_x_np, wp.float32, device)
+        idx = _wpa(idx_np, wp.int32, device)
+        grad_g_out = wp.array([7.5], dtype=wp.float32, device=device)  # seed non-zero
+        _launch_segmented_sum_double_backward(gg_x, idx, 1, grad_g_out)
+        np.testing.assert_allclose(
+            _np(grad_g_out), np.array([gg_x_np.sum()], dtype=np.float32), rtol=1e-5
+        )
+
+    @pytest.mark.parametrize("N_tile", [10240, 8500])
+    def test_sum_double_backward_tile_vec3(self, device, N_tile):
+        rng = np.random.default_rng(101)
+        gg_x_np = rng.standard_normal((N_tile, 3)).astype(np.float32)
+        idx_np = np.zeros(N_tile, dtype=np.int32)
+        gg_x = _wpv(gg_x_np, wp.vec3f, device)
+        idx = _wpa(idx_np, wp.int32, device)
+        grad_g_out = wp.zeros(1, dtype=wp.vec3f, device=device)
+        _launch_segmented_sum_double_backward(gg_x, idx, 1, grad_g_out)
+        np.testing.assert_allclose(
+            _np(grad_g_out),
+            np.array([gg_x_np.sum(axis=0)], dtype=np.float32),
+            rtol=1e-4,
+        )
+
+    @pytest.mark.parametrize("N_tile", [10240, 8500])
+    def test_broadcast_backward_tile_scalar(self, device, N_tile):
+        rng = np.random.default_rng(102)
+        g_out_np = rng.standard_normal(N_tile).astype(np.float32)
+        idx_np = np.zeros(N_tile, dtype=np.int32)
+        g_out = _wpa(g_out_np, wp.float32, device)
+        idx = _wpa(idx_np, wp.int32, device)
+        grad_values = wp.array([-3.2], dtype=wp.float32, device=device)
+        _launch_segmented_broadcast_backward(g_out, idx, 1, grad_values)
+        np.testing.assert_allclose(
+            _np(grad_values), np.array([g_out_np.sum()], dtype=np.float32), rtol=1e-5
+        )
+
+    @pytest.mark.parametrize("N_tile", [10240, 8500])
+    def test_mean_double_backward_tile_scalar(self, device, N_tile):
+        rng = np.random.default_rng(103)
+        gg_x_np = rng.standard_normal(N_tile).astype(np.float32)
+        idx_np = np.zeros(N_tile, dtype=np.int32)
+        counts_np = np.array([N_tile], dtype=np.int32)
+        gg_x = _wpa(gg_x_np, wp.float32, device)
+        idx = _wpa(idx_np, wp.int32, device)
+        counts = _wpa(counts_np, wp.int32, device)
+        grad_g_out = wp.zeros(1, dtype=wp.float32, device=device)
+        _launch_segmented_mean_double_backward(gg_x, counts, idx, grad_g_out)
+        # mean → grad_g_out[s] = sum(gg_x) / count[s]
+        np.testing.assert_allclose(
+            _np(grad_g_out),
+            np.array([gg_x_np.sum() / N_tile], dtype=np.float32),
+            rtol=1e-5,
+        )
