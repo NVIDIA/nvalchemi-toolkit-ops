@@ -104,6 +104,11 @@ except ImportError:
     _jax_neighbors = None
 
 
+SLAB_AXIS = 2
+SLAB_VACUUM_FACTOR = 3.0
+SLAB_METHODS = ("ewald_slab", "pme_slab")
+
+
 def _get_backend_modules(
     backend: str,
 ) -> tuple:
@@ -319,6 +324,24 @@ def prepare_system_numpy(
         }
 
 
+def prepare_slab_system_numpy(
+    supercell_size: int,
+    batch_size: int = 1,
+    vacuum_factor: float = SLAB_VACUUM_FACTOR,
+    slab_axis: int = SLAB_AXIS,
+) -> dict:
+    """Create a slab benchmark system with vacuum and mixed periodicity."""
+    np_data = prepare_system_numpy(supercell_size, batch_size=batch_size)
+
+    cell = np_data["cell"].copy()
+    cell[:, slab_axis, :] *= vacuum_factor
+
+    pbc = np_data["pbc"].copy()
+    pbc[..., slab_axis] = False
+
+    return {**np_data, "cell": cell, "pbc": pbc}
+
+
 def convert_to_backend(
     np_data: dict,
     backend: str,
@@ -501,6 +524,7 @@ def prepare_single_system(
     supercell_size: int,
     device: str,
     dtype: torch.dtype,
+    np_data: dict | None = None,
 ) -> dict:
     """Prepare a single system for benchmarking.
 
@@ -525,7 +549,8 @@ def prepare_single_system(
     """
     dtype_str = str(dtype).split(".")[-1]
 
-    np_data = prepare_system_numpy(supercell_size, batch_size=1)
+    if np_data is None:
+        np_data = prepare_system_numpy(supercell_size, batch_size=1)
 
     backend_data = convert_to_backend(
         np_data, "torch", device=device, dtype_str=dtype_str
@@ -542,7 +567,7 @@ def prepare_single_system(
         pbc = pbc.squeeze(0)
 
     pbc_slab = backend_data["pbc"].clone()
-    pbc_slab[..., 2] = False
+    pbc_slab[..., SLAB_AXIS] = False
 
     mesh_spacing = params["mesh_spacing"]
     if hasattr(mesh_spacing, "tolist"):
@@ -575,6 +600,7 @@ def prepare_batch_system(
     batch_size: int,
     device: str,
     dtype: torch.dtype,
+    np_data: dict | None = None,
 ) -> dict:
     """Prepare a batched system for benchmarking.
 
@@ -601,7 +627,8 @@ def prepare_batch_system(
     """
     dtype_str = str(dtype).split(".")[-1]
 
-    np_data = prepare_system_numpy(supercell_size, batch_size=batch_size)
+    if np_data is None:
+        np_data = prepare_system_numpy(supercell_size, batch_size=batch_size)
 
     backend_data = convert_to_backend(
         np_data, "torch", device=device, dtype_str=dtype_str
@@ -614,7 +641,7 @@ def prepare_batch_system(
     )
 
     pbc_slab = backend_data["pbc"].clone()
-    pbc_slab[..., 2] = False
+    pbc_slab[..., SLAB_AXIS] = False
 
     return {
         "positions": backend_data["positions"],
@@ -646,7 +673,7 @@ def prepare_jax_ewald_pme_system(np_data: dict, dtype_str: str) -> dict:
     nl_matrix, nl_num_neighbors, nl_matrix_shifts = compute_neighbor_list(
         backend_data, "jax", params_data["cutoff"]
     )
-    pbc_slab = backend_data["pbc"].at[..., 2].set(False)
+    pbc_slab = backend_data["pbc"].at[..., SLAB_AXIS].set(False)
 
     system_data = {
         "positions": backend_data["positions"],
@@ -2289,33 +2316,45 @@ def main():
                                 traceback.print_exc()
                                 system_data_cache["dsf"] = None
                     else:
-                        if "ewald_pme" not in system_data_cache:
+                        cache_key = (
+                            "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
+                        )
+                        if cache_key not in system_data_cache:
                             try:
+                                np_data = (
+                                    prepare_slab_system_numpy(size, batch_size=1)
+                                    if method in SLAB_METHODS
+                                    else prepare_system_numpy(size, batch_size=1)
+                                )
                                 if args.backend == "jax":
-                                    np_data = prepare_system_numpy(size, batch_size=1)
-                                    system_data_cache["ewald_pme"] = (
+                                    system_data_cache[cache_key] = (
                                         prepare_jax_ewald_pme_system(np_data, dtype_str)
                                     )
                                 else:
-                                    system_data_cache["ewald_pme"] = (
-                                        prepare_single_system(size, device, dtype)
+                                    system_data_cache[cache_key] = (
+                                        prepare_single_system(
+                                            size, device, dtype, np_data=np_data
+                                        )
                                     )
                             except Exception as e:
                                 print(f"    Failed to prepare system: {e}")
                                 traceback.print_exc()
-                                system_data_cache["ewald_pme"] = None
+                                system_data_cache[cache_key] = None
 
                 for method in methods:
                     backends = get_backends_for_method(method)
+                    cache_key = (
+                        "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
+                    )
                     system_data = system_data_cache.get(
-                        "dsf" if method == "dsf" else "ewald_pme"
+                        "dsf" if method == "dsf" else cache_key
                     )
                     if system_data is None:
                         continue
 
                     method_components = (
                         ["full"]
-                        if method in ("dsf", "ewald_slab", "pme_slab")
+                        if method == "dsf" or method in SLAB_METHODS
                         else components
                     )
                     for backend in backends:
@@ -2413,37 +2452,51 @@ def main():
                                 traceback.print_exc()
                                 system_data_cache["dsf"] = None
                     else:
-                        if "ewald_pme" not in system_data_cache:
+                        cache_key = (
+                            "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
+                        )
+                        if cache_key not in system_data_cache:
                             try:
-                                if args.backend == "jax":
-                                    np_data = prepare_system_numpy(
+                                np_data = (
+                                    prepare_slab_system_numpy(
                                         base_size, batch_size=batch_size
                                     )
-                                    system_data_cache["ewald_pme"] = (
+                                    if method in SLAB_METHODS
+                                    else prepare_system_numpy(
+                                        base_size, batch_size=batch_size
+                                    )
+                                )
+                                if args.backend == "jax":
+                                    system_data_cache[cache_key] = (
                                         prepare_jax_ewald_pme_system(np_data, dtype_str)
                                     )
                                 else:
-                                    system_data_cache["ewald_pme"] = (
-                                        prepare_batch_system(
-                                            base_size, batch_size, device, dtype
-                                        )
+                                    system_data_cache[cache_key] = prepare_batch_system(
+                                        base_size,
+                                        batch_size,
+                                        device,
+                                        dtype,
+                                        np_data=np_data,
                                     )
                             except Exception as e:
                                 print(f"    Failed to prepare system: {e}")
                                 traceback.print_exc()
-                                system_data_cache["ewald_pme"] = None
+                                system_data_cache[cache_key] = None
 
                 for method in methods:
                     backends = get_backends_for_method(method)
+                    cache_key = (
+                        "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
+                    )
                     system_data = system_data_cache.get(
-                        "dsf" if method == "dsf" else "ewald_pme"
+                        "dsf" if method == "dsf" else cache_key
                     )
                     if system_data is None:
                         continue
 
                     method_components = (
                         ["full"]
-                        if method in ("dsf", "ewald_slab", "pme_slab")
+                        if method == "dsf" or method in SLAB_METHODS
                         else components
                     )
                     for backend in backends:
