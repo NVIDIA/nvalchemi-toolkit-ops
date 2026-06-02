@@ -1288,17 +1288,20 @@ def _launch_segmented_add_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``gg_x``
-        OUTPUT: per-element second-order adjoint.  Overwritten by the kernel
-        (no pre-zeroing required).
+        OUTPUT: per-element second-order adjoint.  Zeroed before launch.
 
     Notes
     -----
     One fused element-wise launch with ``dim=N``; no atomics, no scratch.
+    ``grad_g_out`` is zeroed unconditionally before the empty-input guard so
+    callers that pass a re-used buffer never observe stale values on
+    ``N == 0`` segments.
 
     See Also
     --------
     _launch_segmented_add_backward : First-order backward.
     """
+    grad_g_out.zero_()
     N = gg_x.shape[0]
     if N == 0:
         return
@@ -1894,8 +1897,7 @@ def _launch_segmented_axpy_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Overwritten by the
-        fused kernel (no pre-zero needed).
+        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Zeroed before launch.
     grad_x_extra : wp.array, shape ``(N,)``, dtype matches ``g_out``
         OUTPUT: extra second-order adjoint of ``x``.  Zeroed before launch.
     grad_a_extra : wp.array, shape ``(M,)``, dtype matches ``a``
@@ -1906,13 +1908,16 @@ def _launch_segmented_axpy_double_backward(
     Three launches: one fused element-wise kernel writes ``grad_g_out``
     directly (``dim=N``); one element-wise mul writes ``grad_x_extra``
     (``dim=N``); one RLE-EPT segmented_dot reduction (``atomic_add``,
-    ``dim=ceil(N/EPT)``) writes ``grad_a_extra``.
+    ``dim=ceil(N/EPT)``) writes ``grad_a_extra``.  ``grad_g_out`` is zeroed
+    unconditionally before the empty-input guard so callers that pass a
+    re-used buffer never observe stale values on ``N == 0`` segments.
 
     See Also
     --------
     _launch_segmented_axpy_backward : First-order backward.
     _launch_segmented_axpby_double_backward : Two-coefficient variant.
     """
+    grad_g_out.zero_()
     grad_x_extra.zero_()
     grad_a_extra.zero_()
     N = g_out.shape[0]
@@ -2725,8 +2730,7 @@ def _launch_segmented_matvec_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``v``
-        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Overwritten by the
-        fused kernel.
+        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Zeroed before launch.
     grad_v_extra : wp.array, shape ``(N,)``, dtype matches ``v``
         OUTPUT: extra second-order adjoint of ``v``.  Zeroed before launch.
     grad_M_extra : wp.array, shape ``(M,)``, dtype matches ``m``
@@ -2737,12 +2741,15 @@ def _launch_segmented_matvec_double_backward(
     Three launches: one fused element-wise kernel for ``grad_g_out``
     (``dim=N``); one element-wise non-transposed matvec for ``grad_v_extra``
     (``dim=N``); one RLE-EPT outer-product reduction for ``grad_M_extra``
-    (``dim=ceil(N/EPT)`` with ``atomic_add``).
+    (``dim=ceil(N/EPT)`` with ``atomic_add``).  ``grad_g_out`` is zeroed
+    unconditionally before the empty-input guard so callers that pass a
+    re-used buffer never observe stale values on ``N == 0`` segments.
 
     See Also
     --------
     _launch_segmented_matvec_backward : First-order backward.
     """
+    grad_g_out.zero_()
     grad_v_extra.zero_()
     grad_M_extra.zero_()
     N = v.shape[0]

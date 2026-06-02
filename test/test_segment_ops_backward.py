@@ -1273,6 +1273,74 @@ class TestEdgeCases:
         _launch_segmented_sum_double_backward(gg_x, idx, 2, out)
         np.testing.assert_array_equal(_np(out), np.zeros(2, dtype=np.float32))
 
+    def test_empty_fused_double_backward_zeros_grad_g_out(self, device):
+        """Fused-kernel double-backwards must zero ``grad_g_out`` on empty input.
+
+        Three launchers write ``grad_g_out`` via assignment in a single fused
+        kernel (no separate reduction or accumulator), so the empty-input
+        early-return previously skipped output zeroing entirely.  This test
+        pins the contract for all three: a re-used buffer must come back as
+        zeros.
+        """
+        from nvalchemiops.segment_ops_backward import (
+            _launch_segmented_add_double_backward,
+            _launch_segmented_axpy_double_backward,
+            _launch_segmented_matvec_double_backward,
+        )
+
+        # add: grad_g_out[i] = gg_x[i] + gg_y[idx[i]]
+        gg_x = wp.zeros(0, dtype=wp.float32, device=device)
+        gg_y = wp.zeros(2, dtype=wp.float32, device=device)
+        idx0 = wp.zeros(0, dtype=wp.int32, device=device)
+        grad_g_out = wp.array([7.0, 8.0, 9.0], dtype=wp.float32, device=device)
+        _launch_segmented_add_double_backward(gg_x, gg_y, idx0, grad_g_out)
+        np.testing.assert_array_equal(_np(grad_g_out), np.zeros(3, dtype=np.float32))
+
+        # axpy: grad_g_out[i] = gg_gy_in[i] + gg_gx[i]*a[s] + gg_ga[s]*x[i]
+        gg_gy_in = wp.zeros(0, dtype=wp.float32, device=device)
+        gg_gx = wp.zeros(0, dtype=wp.float32, device=device)
+        gg_ga = wp.zeros(2, dtype=wp.float32, device=device)
+        g_out = wp.zeros(0, dtype=wp.float32, device=device)
+        x = wp.zeros(0, dtype=wp.float32, device=device)
+        a = wp.zeros(2, dtype=wp.float32, device=device)
+        grad_g_out = wp.array([1.0, 2.0, 3.0], dtype=wp.float32, device=device)
+        grad_x_extra = wp.zeros(0, dtype=wp.float32, device=device)
+        grad_a_extra = wp.zeros(2, dtype=wp.float32, device=device)
+        _launch_segmented_axpy_double_backward(
+            gg_gy_in,
+            gg_gx,
+            gg_ga,
+            g_out,
+            x,
+            a,
+            idx0,
+            grad_g_out,
+            grad_x_extra,
+            grad_a_extra,
+        )
+        np.testing.assert_array_equal(_np(grad_g_out), np.zeros(3, dtype=np.float32))
+
+        # matvec: grad_g_out[i] = m[s]^T @ gg_gv[i] + gg_gM[s]^T @ v[i]
+        gg_gv = wp.zeros(0, dtype=wp.vec3f, device=device)
+        gg_gM = wp.zeros(2, dtype=wp.mat33f, device=device)
+        g_out_v = wp.zeros(0, dtype=wp.vec3f, device=device)
+        v = wp.zeros(0, dtype=wp.vec3f, device=device)
+        m = wp.zeros(2, dtype=wp.mat33f, device=device)
+        # Seed grad_g_out with non-zero junk so a missed zero is visible.
+        grad_g_out = _wpv(
+            np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32),
+            wp.vec3f,
+            device,
+        )
+        grad_v_extra = wp.zeros(0, dtype=wp.vec3f, device=device)
+        grad_M_extra = wp.zeros(2, dtype=wp.mat33f, device=device)
+        _launch_segmented_matvec_double_backward(
+            gg_gv, gg_gM, g_out_v, v, m, idx0, grad_g_out, grad_v_extra, grad_M_extra
+        )
+        np.testing.assert_array_equal(
+            _np(grad_g_out), np.zeros((2, 3), dtype=np.float32)
+        )
+
 
 # ---------------------------------------------------------------------------
 # Hard-coded regression: pin specific kernel outputs to literal values.
