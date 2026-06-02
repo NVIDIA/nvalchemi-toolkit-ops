@@ -180,7 +180,6 @@ from nvalchemiops.torch.autograd import (
     warp_from_torch,
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
-    ElectrostaticOutputs,
     _build_electrostatic_result,
     _combine_electrostatic_outputs,
     _InjectChargeGrad,
@@ -2372,26 +2371,25 @@ def particle_mesh_ewald(
                 compute_charge_gradients=True,
                 compute_virial=compute_virial,
             )
-            slab = _unpack_electrostatic_outputs(
-                slab_out,
-                compute_forces,
-                compute_charge_gradients=True,
-                compute_virial=compute_virial,
+            slab_energies, slab_forces, slab_charge_grads, slab_virial = (
+                _unpack_electrostatic_outputs(
+                    slab_out,
+                    compute_forces,
+                    compute_charge_gradients=True,
+                    compute_virial=compute_virial,
+                )
             )
-            slab_energies = slab.energies
 
             if charges.requires_grad:
                 slab_energies = _InjectChargeGrad.apply(
-                    slab_energies, charges, slab.charge_grads, batch_idx
+                    slab_energies, charges, slab_charge_grads, batch_idx
                 )
 
             slab_result = _build_electrostatic_result(
-                ElectrostaticOutputs(
-                    slab_energies,
-                    slab.forces,
-                    slab.charge_grads,
-                    slab.virial,
-                ),
+                slab_energies,
+                slab_forces,
+                slab_charge_grads,
+                slab_virial,
                 compute_forces,
                 compute_charge_gradients,
                 compute_virial,

@@ -33,7 +33,6 @@ from nvalchemiops.torch.autograd import (
     warp_from_torch,
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
-    ElectrostaticOutputs,
     _build_electrostatic_result,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
@@ -453,7 +452,10 @@ def compute_slab_correction(
             )
         )
         return _build_electrostatic_result(
-            ElectrostaticOutputs(energies, forces, charge_grads, virial),
+            energies,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -468,8 +470,12 @@ def compute_slab_correction(
             batch_idx,
             compute_virial=compute_virial,
         )
+        charge_grads = None
         return _build_electrostatic_result(
-            ElectrostaticOutputs(energies, forces, virial=virial),
+            energies,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
