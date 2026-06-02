@@ -505,14 +505,13 @@ from nvalchemiops.torch.neighbors import neighbor_list
 
 pbc_slab = torch.tensor([[True, True, False]], dtype=torch.bool, device=positions.device)
 
-# The neighbor list controls the real-space 3D Ewald images. For a slab setup,
-# use a cell with enough vacuum in the non-periodic direction.
-pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=positions.device)
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
     cutoff=5.0,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 
@@ -548,14 +547,13 @@ from nvalchemiops.jax.neighbors import neighbor_list
 
 pbc_slab = jnp.array([[True, True, False]], dtype=jnp.bool_)
 
-# The neighbor list controls the real-space 3D Ewald images. For a slab setup,
-# use a cell with enough vacuum in the non-periodic direction.
-pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
     cutoff=5.0,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 
@@ -920,14 +918,13 @@ from nvalchemiops.torch.neighbors import neighbor_list
 
 pbc_slab = torch.tensor([[True, True, False]], dtype=torch.bool, device=positions.device)
 
-# The neighbor list controls the real-space 3D images. For a slab setup,
-# use a cell with enough vacuum in the non-periodic direction.
-pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=positions.device)
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
     cutoff=5.0,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 
@@ -1009,14 +1006,13 @@ from nvalchemiops.jax.neighbors import neighbor_list
 
 pbc_slab = jnp.array([[True, True, False]], dtype=jnp.bool_)
 
-# The neighbor list controls the real-space 3D images. For a slab setup,
-# use a cell with enough vacuum in the non-periodic direction.
-pbc_neighbor = jnp.array([[True, True, True]], dtype=jnp.bool_)
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
     cutoff=5.0,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 
