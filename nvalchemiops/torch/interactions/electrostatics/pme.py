@@ -179,7 +179,13 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
-from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
+from nvalchemiops.torch.interactions.electrostatics._util import (
+    ElectrostaticOutputs,
+    _build_electrostatic_result,
+    _combine_electrostatic_outputs,
+    _InjectChargeGrad,
+    _unpack_electrostatic_outputs,
+)
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
 )
@@ -190,6 +196,12 @@ from nvalchemiops.torch.interactions.electrostatics.parameters import (
     estimate_pme_mesh_dimensions,
     estimate_pme_parameters,
     mesh_spacing_to_dimensions,
+)
+from nvalchemiops.torch.interactions.electrostatics.slab import (
+    _prepare_pbc_for_slab,
+)
+from nvalchemiops.torch.interactions.electrostatics.slab import (
+    compute_slab_correction as _compute_slab_correction,
 )
 from nvalchemiops.torch.spline import (
     spline_gather,
@@ -2024,6 +2036,8 @@ def particle_mesh_ewald(
     compute_virial: bool = False,
     accuracy: float = 1e-6,
     hybrid_forces: bool = False,
+    pbc: torch.Tensor | None = None,
+    slab_correction: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Complete Particle Mesh Ewald (PME) calculation for long-range electrostatics.
 
@@ -2117,6 +2131,16 @@ def particle_mesh_ewald(
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         See :func:`ewald_real_space` for details.
+    pbc : torch.Tensor, shape (3,) or (B, 3), optional
+        Per-system periodic boundary conditions for slab correction. Required
+        when ``slab_correction=True``. Each row has True for periodic
+        directions and False for the non-periodic slab direction. Batched
+        slab correction requires explicit shape (B, 3).
+    slab_correction : bool, default=False
+        Whether to add the two-dimensional Yeh-Berkowitz / Ballenegger slab
+        correction to the 3D-periodic PME result. This is only available for
+        the full PME interface; use :func:`compute_slab_correction` explicitly
+        when manually composing ``ewald_real_space`` and ``pme_reciprocal_space``.
 
     Returns
     -------
@@ -2163,7 +2187,7 @@ def particle_mesh_ewald(
         ...     positions, charges, cell,
         ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
         ...     spline_order=4, neighbor_list=nl,
-        ... neighbor_shifts=shifts, neighbor_ptr=nptr,
+        ...     neighbor_shifts=shifts, neighbor_ptr=nptr,
         ...     compute_forces=True,
         ... )
 
@@ -2216,6 +2240,19 @@ def particle_mesh_ewald(
         ... )
         >>> # Use charge_grads for training on ∂E/∂q
 
+    PME with slab correction::
+
+        >>> pbc_slab = torch.tensor([[True, True, False]], device=positions.device)
+        >>> energies, forces = particle_mesh_ewald(
+        ...     positions, charges, cell,
+        ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
+        ...     neighbor_list=nl, neighbor_shifts=shifts,
+        ...     neighbor_ptr=nptr,
+        ...     compute_forces=True,
+        ...     pbc=pbc_slab,
+        ...     slab_correction=True,
+        ... )
+
     Using PyTorch autograd::
 
         >>> positions.requires_grad_(True)
@@ -2261,6 +2298,9 @@ def particle_mesh_ewald(
 
     # Prepare cell
     cell, num_systems = _prepare_cell(cell)
+
+    if slab_correction:
+        pbc = _prepare_pbc_for_slab(pbc, num_systems, positions.device)
 
     # Estimate parameters if not provided
     if alpha is None:
@@ -2319,21 +2359,63 @@ def particle_mesh_ewald(
         hybrid_forces=hybrid_forces,
     )
 
-    # Normalize return tuples for easy combination
-    # Both rs and rec return: energies, [forces], [charge_grads], [virial]
-    # where virial is always last if present
-    rs_tuple = rs if isinstance(rs, tuple) else (rs,)
-    rec_tuple = rec if isinstance(rec, tuple) else (rec,)
+    slab_result: torch.Tensor | tuple[torch.Tensor, ...] | None = None
+    if slab_correction:
+        if hybrid_forces:
+            slab_out = _compute_slab_correction(
+                positions.detach(),
+                charges.detach(),
+                cell.detach(),
+                pbc,
+                batch_idx=batch_idx,
+                compute_forces=compute_forces,
+                compute_charge_gradients=True,
+                compute_virial=compute_virial,
+            )
+            slab = _unpack_electrostatic_outputs(
+                slab_out,
+                compute_forces,
+                compute_charge_gradients=True,
+                compute_virial=compute_virial,
+            )
+            slab_energies = slab.energies
 
-    # The number of outputs should match between rs and rec
-    # Combine element-wise
-    results = []
-    for r, s in zip(rs_tuple, rec_tuple):
-        results.append(r + s)
+            if charges.requires_grad:
+                slab_energies = _InjectChargeGrad.apply(
+                    slab_energies, charges, slab.charge_grads, batch_idx
+                )
 
-    if len(results) == 1:
-        return results[0]
-    return tuple(results)
+            slab_result = _build_electrostatic_result(
+                ElectrostaticOutputs(
+                    slab_energies,
+                    slab.forces,
+                    slab.charge_grads,
+                    slab.virial,
+                ),
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
+        else:
+            slab_result = _compute_slab_correction(
+                positions,
+                charges,
+                cell,
+                pbc,
+                batch_idx=batch_idx,
+                compute_forces=compute_forces,
+                compute_charge_gradients=compute_charge_gradients,
+                compute_virial=compute_virial,
+            )
+
+    return _combine_electrostatic_outputs(
+        rs,
+        rec,
+        slab_result,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )
 
 
 __all__ = [

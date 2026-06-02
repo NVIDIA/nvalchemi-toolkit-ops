@@ -28,7 +28,6 @@ from nvalchemiops.torch.interactions.electrostatics.dsf import (
     dsf_coulomb,
 )
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
-    apply_slab_correction,
     ewald_real_space,
     ewald_reciprocal_space,
     ewald_summation,
@@ -52,6 +51,9 @@ from nvalchemiops.torch.interactions.electrostatics.pme import (
     pme_green_structure_factor,
     pme_reciprocal_space,
 )
+from nvalchemiops.torch.interactions.electrostatics.slab import (
+    compute_slab_correction,
+)
 
 __all__ = [
     # Coulomb
@@ -65,7 +67,7 @@ __all__ = [
     "ewald_reciprocal_space",
     "ewald_summation",
     # Slab correction (Yeh-Berkowitz / Ballenegger Eq. 29)
-    "apply_slab_correction",
+    "compute_slab_correction",
     # PME
     "particle_mesh_ewald",
     "pme_reciprocal_space",
