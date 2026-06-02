@@ -1587,7 +1587,7 @@ from nvalchemiops.jax.interactions.electrostatics import ewald_summation
 
 # Define energy function for differentiation
 def energy_fn(positions):
-    energies, _ = ewald_summation(
+    energies = ewald_summation(
         positions, charges, cell, alpha=0.3, k_cutoff=8.0,
         neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
         compute_forces=False,
