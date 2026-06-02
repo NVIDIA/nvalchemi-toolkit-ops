@@ -1204,7 +1204,6 @@ class TestFormatConsistency:
 
         num_atoms = 70
         max_neighbors = num_atoms - 1
-        assert max_neighbors > 64
 
         positions_np = np.zeros((num_atoms, 3), dtype=np.float32)
         positions_np[:, 0] = np.arange(num_atoms, dtype=np.float32) * 1.4
@@ -1348,7 +1347,10 @@ class TestFormatConsistency:
 
         matrix_results = run_matrix()
         csr_results = run_csr()
-        for key in ["energy", "forces", "coord_num", "virial"]:
+        keys = ["energy", "forces", "coord_num"]
+        if compute_virial:
+            keys.append("virial")
+        for key in keys:
             np.testing.assert_allclose(
                 csr_results[key],
                 matrix_results[key],

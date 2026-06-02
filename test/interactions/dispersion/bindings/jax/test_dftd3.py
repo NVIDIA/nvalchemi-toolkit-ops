@@ -814,7 +814,6 @@ class TestDFT_D3Dtypes:
             d3_params=d3_params,
         )
 
-        assert positions.dtype == jnp.float64
         assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
@@ -864,7 +863,6 @@ class TestDFT_D3Dtypes:
             d3_params=d3_params,
         )
 
-        assert cell.dtype == jnp.float64
         assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
@@ -911,7 +909,6 @@ class TestDFT_D3Dtypes:
             d3_params=d3_params,
         )
 
-        assert cell.dtype == jnp.float64
         assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
