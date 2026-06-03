@@ -23,6 +23,17 @@ import numpy as np
 import pytest
 
 from nvalchemiops.jax.interactions.dispersion import D3Parameters, dftd3
+from nvalchemiops.jax.interactions.dispersion._dftd3 import (
+    JAX_DFTD3_BLOCK_DIM,
+    cn_forces_contrib_nl,
+    cn_forces_contrib_nl_virial,
+    cn_forces_contrib_nm,
+    cn_forces_contrib_nm_virial,
+    direct_forces_kernel_nl,
+    direct_forces_kernel_nl_virial,
+    direct_forces_kernel_nm,
+    direct_forces_kernel_nm_virial,
+)
 
 # ==============================================================================
 # Fixtures
@@ -359,6 +370,370 @@ class TestDFT_D3Basic:
 
 
 # ==============================================================================
+# Low-level Kernel Wrapper Compatibility Tests
+# ==============================================================================
+
+
+class TestDFTD3KernelWrapperCompatibility:
+    """Test compatibility of exported low-level JAX kernel wrappers."""
+
+    @staticmethod
+    def _base_buffers(h2_system):
+        positions = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        batch_idx = jnp.zeros(2, dtype=jnp.int32)
+        coord_num = jnp.zeros(2, dtype=jnp.float32)
+        dE_dCN = jnp.zeros(2, dtype=jnp.float32)
+        forces = jnp.zeros((2, 3), dtype=jnp.float32)
+        energy = jnp.zeros(1, dtype=jnp.float32)
+        virial = jnp.full((1, 3, 3), 7.0, dtype=jnp.float32)
+        return positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial
+
+    @pytest.mark.parametrize("compute_virial", [False, True])
+    def test_neighbor_matrix_wrappers_keep_old_output_arity(
+        self,
+        h2_system,
+        functional_params,
+        d3_params,
+        compute_virial,
+        device,
+    ):
+        """Neighbor-matrix wrappers keep the old exported tuple sizes."""
+        positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial = (
+            self._base_buffers(h2_system)
+        )
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+        cartesian_shifts = jnp.zeros(
+            (2, neighbor_matrix.shape[1], 3), dtype=jnp.float32
+        )
+
+        direct_outputs = direct_forces_kernel_nm(
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            coord_num,
+            d3_params.r4r2,
+            d3_params.c6ab,
+            d3_params.cn_ref,
+            functional_params["k3"],
+            functional_params["a1"],
+            functional_params["a2"],
+            functional_params["s6"],
+            functional_params["s8"],
+            1e10,
+            1e10,
+            0.0,
+            2,
+            False,
+            batch_idx,
+            compute_virial,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+        )
+
+        assert len(direct_outputs) == 4
+        assert direct_outputs[0].shape == (2,)
+        assert direct_outputs[1].shape == (2, 3)
+        assert direct_outputs[2].shape == (1,)
+        assert direct_outputs[3].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(direct_outputs[3], virial)
+
+        cn_virial = jnp.full((1, 3, 3), -3.0, dtype=jnp.float32)
+        cn_outputs = cn_forces_contrib_nm(
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            d3_params.rcov,
+            direct_outputs[0],
+            functional_params["k1"],
+            2,
+            False,
+            batch_idx,
+            compute_virial,
+            jnp.zeros_like(forces),
+            cn_virial,
+        )
+
+        assert len(cn_outputs) == 2
+        assert cn_outputs[0].shape == (2, 3)
+        assert cn_outputs[1].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(cn_outputs[1], cn_virial)
+
+    @pytest.mark.parametrize("compute_virial", [False, True])
+    def test_neighbor_list_wrappers_keep_old_output_arity(
+        self,
+        h2_system,
+        functional_params,
+        d3_params,
+        compute_virial,
+        device,
+    ):
+        """Neighbor-list wrappers keep the old exported tuple sizes."""
+        positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial = (
+            self._base_buffers(h2_system)
+        )
+        idx_j = jnp.array([1, 0], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        cartesian_shifts = jnp.zeros((2, 3), dtype=jnp.float32)
+
+        direct_outputs = direct_forces_kernel_nl(
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            coord_num,
+            d3_params.r4r2,
+            d3_params.c6ab,
+            d3_params.cn_ref,
+            functional_params["k3"],
+            functional_params["a1"],
+            functional_params["a2"],
+            functional_params["s6"],
+            functional_params["s8"],
+            1e10,
+            1e10,
+            0.0,
+            False,
+            batch_idx,
+            compute_virial,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+        )
+
+        assert len(direct_outputs) == 4
+        assert direct_outputs[0].shape == (2,)
+        assert direct_outputs[1].shape == (2, 3)
+        assert direct_outputs[2].shape == (1,)
+        assert direct_outputs[3].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(direct_outputs[3], virial)
+
+        cn_virial = jnp.full((1, 3, 3), -3.0, dtype=jnp.float32)
+        cn_outputs = cn_forces_contrib_nl(
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            d3_params.rcov,
+            direct_outputs[0],
+            functional_params["k1"],
+            False,
+            batch_idx,
+            compute_virial,
+            jnp.zeros_like(forces),
+            cn_virial,
+        )
+
+        assert len(cn_outputs) == 2
+        assert cn_outputs[0].shape == (2, 3)
+        assert cn_outputs[1].shape == (1, 3, 3)
+        if not compute_virial:
+            assert jnp.allclose(cn_outputs[1], cn_virial)
+
+    def test_wrapper_accepts_matching_launch_dims(
+        self, h2_system, functional_params, d3_params, device
+    ):
+        """Wrapper accepts explicit launch dimensions that match the fixed JAX launch."""
+        positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial = (
+            self._base_buffers(h2_system)
+        )
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+        cartesian_shifts = jnp.zeros(
+            (2, neighbor_matrix.shape[1], 3), dtype=jnp.float32
+        )
+
+        direct_outputs = direct_forces_kernel_nm(
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            coord_num,
+            d3_params.r4r2,
+            d3_params.c6ab,
+            d3_params.cn_ref,
+            functional_params["k3"],
+            functional_params["a1"],
+            functional_params["a2"],
+            functional_params["s6"],
+            functional_params["s8"],
+            1e10,
+            1e10,
+            0.0,
+            2,
+            False,
+            batch_idx,
+            False,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+            launch_dims=(positions.shape[0], JAX_DFTD3_BLOCK_DIM),
+        )
+
+        assert direct_outputs[0].shape == (2,)
+        assert direct_outputs[1].shape == (2, 3)
+        assert direct_outputs[2].shape == (1,)
+        assert jnp.allclose(direct_outputs[3], virial)
+
+    def test_wrapper_rejects_mismatched_launch_dims(
+        self, h2_system, functional_params, d3_params
+    ):
+        """Wrapper rejects launch dimensions that do not match the fixed JAX launch."""
+        positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial = (
+            self._base_buffers(h2_system)
+        )
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+        cartesian_shifts = jnp.zeros(
+            (2, neighbor_matrix.shape[1], 3), dtype=jnp.float32
+        )
+
+        with pytest.raises(ValueError, match="launch_dims"):
+            direct_forces_kernel_nm(
+                positions,
+                numbers,
+                neighbor_matrix,
+                cartesian_shifts,
+                coord_num,
+                d3_params.r4r2,
+                d3_params.c6ab,
+                d3_params.cn_ref,
+                functional_params["k3"],
+                functional_params["a1"],
+                functional_params["a2"],
+                functional_params["s6"],
+                functional_params["s8"],
+                1e10,
+                1e10,
+                0.0,
+                2,
+                False,
+                batch_idx,
+                False,
+                dE_dCN,
+                forces,
+                energy,
+                virial,
+                launch_dims=(positions.shape[0], JAX_DFTD3_BLOCK_DIM - 1),
+            )
+
+    def test_public_virial_wrappers_dispatch_float64_positions(
+        self, h2_system, functional_params, d3_params, device
+    ):
+        """Public virial wrappers dispatch by float64 position dtype."""
+        positions, numbers, batch_idx, coord_num, dE_dCN, forces, energy, virial = (
+            self._base_buffers(h2_system)
+        )
+        positions = positions.astype(jnp.float64)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+        matrix_shifts = jnp.zeros((2, neighbor_matrix.shape[1], 3), dtype=jnp.float64)
+        idx_j = jnp.array([1, 0], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        list_shifts = jnp.zeros((2, 3), dtype=jnp.float64)
+
+        matrix_direct = direct_forces_kernel_nm_virial(
+            positions,
+            numbers,
+            neighbor_matrix,
+            matrix_shifts,
+            coord_num,
+            d3_params.r4r2,
+            d3_params.c6ab,
+            d3_params.cn_ref,
+            functional_params["k3"],
+            functional_params["a1"],
+            functional_params["a2"],
+            functional_params["s6"],
+            functional_params["s8"],
+            1e10,
+            1e10,
+            0.0,
+            2,
+            JAX_DFTD3_BLOCK_DIM,
+            False,
+            batch_idx,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+            launch_dims=(positions.shape[0], JAX_DFTD3_BLOCK_DIM),
+        )
+        matrix_cn = cn_forces_contrib_nm_virial(
+            positions,
+            numbers,
+            neighbor_matrix,
+            matrix_shifts,
+            d3_params.rcov,
+            matrix_direct[0],
+            functional_params["k1"],
+            2,
+            JAX_DFTD3_BLOCK_DIM,
+            False,
+            batch_idx,
+            jnp.zeros_like(forces),
+            jnp.zeros_like(virial),
+            launch_dims=(positions.shape[0], JAX_DFTD3_BLOCK_DIM),
+        )
+        list_direct = direct_forces_kernel_nl_virial(
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            list_shifts,
+            coord_num,
+            d3_params.r4r2,
+            d3_params.c6ab,
+            d3_params.cn_ref,
+            functional_params["k3"],
+            functional_params["a1"],
+            functional_params["a2"],
+            functional_params["s6"],
+            functional_params["s8"],
+            1e10,
+            1e10,
+            0.0,
+            JAX_DFTD3_BLOCK_DIM,
+            False,
+            batch_idx,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+            launch_dims=(positions.shape[0], JAX_DFTD3_BLOCK_DIM),
+        )
+        list_cn = cn_forces_contrib_nl_virial(
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            list_shifts,
+            d3_params.rcov,
+            list_direct[0],
+            functional_params["k1"],
+            JAX_DFTD3_BLOCK_DIM,
+            False,
+            batch_idx,
+            jnp.zeros_like(forces),
+            jnp.zeros_like(virial),
+            launch_dims=(positions.shape[0], JAX_DFTD3_BLOCK_DIM),
+        )
+
+        assert matrix_direct[1].shape == (2, 3)
+        assert matrix_cn[0].shape == (2, 3)
+        assert list_direct[1].shape == (2, 3)
+        assert list_cn[0].shape == (2, 3)
+
+
+# ==============================================================================
 # Dtype Tests
 # ==============================================================================
 
@@ -408,6 +783,135 @@ class TestDFT_D3Dtypes:
         assert forces.dtype == jnp.float32
         assert energy.dtype == jnp.float32
         assert coord_num.dtype == jnp.float32
+
+    def test_float64_positions_preserve_large_origin_displacement(
+        self, h2_system, functional_params, d3_params, device
+    ):
+        """Test float64 positions preserve small separations far from the origin."""
+        positions = jnp.array(
+            [[1.0e8, 0.0, 0.0], [1.0e8 + 1.4, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+
+        expected_energy, expected_forces, expected_coord_num = dftd3(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            d3_params=d3_params,
+        )
+        energy, forces, coord_num = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            d3_params=d3_params,
+        )
+
+        assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
+
+    def test_float64_cell_preserves_large_shift_cancellation(
+        self, h2_system, functional_params, d3_params, device
+    ):
+        """Test float64 cells preserve PBC shifts that cancel large coordinates."""
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+
+        expected_energy, expected_forces, expected_coord_num = dftd3(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            d3_params=d3_params,
+        )
+
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0e8 + 2.1, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        cell = jnp.array(
+            [[[1.0e8 + 0.7, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        neighbor_matrix_shifts = jnp.array(
+            [
+                [[-1, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]],
+                [[1, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]],
+            ],
+            dtype=jnp.int32,
+        )
+
+        energy, forces, coord_num = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            cell=cell,
+            d3_params=d3_params,
+        )
+
+        assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
+
+    def test_float64_cell_preserves_large_shift_cancellation_csr(
+        self, h2_system, functional_params, d3_params, device
+    ):
+        """Test float64 CSR PBC shifts that cancel large coordinates."""
+        numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
+        neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+
+        expected_energy, expected_forces, expected_coord_num = dftd3(
+            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            d3_params=d3_params,
+        )
+
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0e8 + 2.1, 0.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        cell = jnp.array(
+            [[[1.0e8 + 0.7, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float64,
+        )
+        unit_shifts = jnp.array([[-1, 0, 0], [1, 0, 0]], dtype=jnp.int32)
+
+        energy, forces, coord_num = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            unit_shifts=unit_shifts,
+            cell=cell,
+            d3_params=d3_params,
+        )
+
+        assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
+        assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
 
     def test_float32_float64_consistency(
         self, h2_system, functional_params, d3_params, device
@@ -884,6 +1388,59 @@ class TestDFTD3PBC:
         assert forces.shape == (2, 3)
         assert jnp.all(jnp.isfinite(energy))
         assert jnp.all(jnp.isfinite(forces))
+
+    def test_pbc_neighbor_list_nonzero_shifts_matches_matrix(
+        self, functional_params, d3_params, device
+    ):
+        """CSR PBC virial with nonzero shifts matches matrix format."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [8.6, 0.0, 0.0]], dtype=jnp.float32)
+        numbers = jnp.array([1, 1], dtype=jnp.int32)
+        cell = jnp.array(
+            [[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]],
+            dtype=jnp.float32,
+        )
+        neighbor_matrix = jnp.array([[1, 2, 2, 2, 2], [0, 2, 2, 2, 2]], dtype=jnp.int32)
+        neighbor_matrix_shifts = jnp.zeros((2, 5, 3), dtype=jnp.int32)
+        neighbor_matrix_shifts = neighbor_matrix_shifts.at[0, 0, 0].set(-1)
+        neighbor_matrix_shifts = neighbor_matrix_shifts.at[1, 0, 0].set(1)
+        neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
+        neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        unit_shifts = jnp.array([[-1, 0, 0], [1, 0, 0]], dtype=jnp.int32)
+
+        matrix_result = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            cell=cell,
+            d3_params=d3_params,
+            compute_virial=True,
+        )
+        list_result = dftd3(
+            positions,
+            numbers,
+            a1=functional_params["a1"],
+            a2=functional_params["a2"],
+            s8=functional_params["s8"],
+            k1=functional_params["k1"],
+            k3=functional_params["k3"],
+            s6=functional_params["s6"],
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            unit_shifts=unit_shifts,
+            cell=cell,
+            d3_params=d3_params,
+            compute_virial=True,
+        )
+
+        for matrix_value, list_value in zip(matrix_result, list_result, strict=True):
+            assert jnp.allclose(list_value, matrix_value, rtol=1e-5, atol=1e-6)
 
     def test_pbc_energy_differs_from_nonpbc(self, functional_params, d3_params, device):
         """Periodic energy differs from non-periodic when periodic images contribute."""
