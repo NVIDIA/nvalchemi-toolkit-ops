@@ -98,7 +98,7 @@ def generate_k_vectors_ewald_summation(
 
     where :math:`V = \\mathbf{a} \\cdot (\\mathbf{b} \\times \\mathbf{c})` is the cell volume.
 
-    In matrix form: :math:`\\text{reciprocal_matrix} = 2\\pi \\cdot (\\text{cell}^T)^{-1}`
+    In matrix form: :math:`\\text{reciprocal\\_matrix} = 2\\pi \\cdot (\\text{cell}^T)^{-1}`
 
     Each k-vector is: :math:`\\mathbf{k} = h \\mathbf{a}^* + k \\mathbf{b}^* + l \\mathbf{c}^*`
     where (h, k, l) are Miller indices (integers).

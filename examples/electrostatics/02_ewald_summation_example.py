@@ -563,9 +563,9 @@ for i in range(n_systems):
 #
 # Key equations implemented:
 #
-# - Real-space: :math:`E_{\\text{real}} = \\frac{1}{2} \\sum_{i \\neq j} q_i q_j \\frac{\\mathrm{erfc}(\\alpha r_{ij})}{r_{ij}}`
-# - Reciprocal: :math:`E_{\\text{recip}} = \\frac{1}{2V} \\sum_{\\mathbf{k} \\neq 0} \\frac{4\\pi}{k^2} e^{-k^2/4\\alpha^2} |S(\\mathbf{k})|^2`
-# - Self-energy: :math:`E_{\\text{self}} = \\frac{\\alpha}{\\sqrt{\\pi}} \\sum_i q_i^2`
-# - Charge gradient: :math:`\\frac{\\partial E}{\\partial q_i} = \\phi_i` (electrostatic potential)
+# - Real-space: :math:`E_{\text{real}} = \frac{1}{2} \sum_{i \neq j} q_i q_j \frac{\mathrm{erfc}(\alpha r_{ij})}{r_{ij}}`
+# - Reciprocal: :math:`E_{\text{recip}} = \frac{1}{2V} \sum_{\mathbf{k} \neq 0} \frac{4\pi}{k^2} e^{-k^2/4\alpha^2} |S(\mathbf{k})|^2`
+# - Self-energy: :math:`E_{\text{self}} = \frac{\alpha}{\sqrt{\pi}} \sum_i q_i^2`
+# - Charge gradient: :math:`\frac{\partial E}{\partial q_i} = \phi_i` (electrostatic potential)
 
 print("\nEwald summation example complete!")

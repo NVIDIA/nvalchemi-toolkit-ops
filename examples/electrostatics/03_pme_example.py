@@ -683,9 +683,9 @@ print("\nNote: PME becomes increasingly efficient for larger systems.")
 #
 # Key PME steps:
 #
-# - Charge spreading: :math:`Q(\\mathbf{x}) = \\sum_i q_i M_p(\\mathbf{x} - \\mathbf{r}_i)`
-# - FFT convolution: :math:`\\tilde{\\Phi}(\\mathbf{k}) = G(\\mathbf{k}) \\tilde{Q}(\\mathbf{k})`
+# - Charge spreading: :math:`Q(\mathbf{x}) = \sum_i q_i M_p(\mathbf{x} - \mathbf{r}_i)`
+# - FFT convolution: :math:`\tilde{\Phi}(\mathbf{k}) = G(\mathbf{k}) \tilde{Q}(\mathbf{k})`
 # - Force interpolation from mesh gradients
-# - Charge gradient: :math:`\\frac{\\partial E}{\\partial q_i} = \\phi_i` (electrostatic potential)
+# - Charge gradient: :math:`\frac{\partial E}{\partial q_i} = \phi_i` (electrostatic potential)
 
 print("\nPME example complete!")
