@@ -485,11 +485,19 @@ class TestNeighborListFineGrainedMethodEquivalence:
         cutoff = 5.0
 
         base_res = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method=base,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method=base,
             return_neighbor_list=True,
         )
         fine_res = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method=method,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method=method,
             return_neighbor_list=True,
         )
         assert _canonical_pairs(fine_res) == _canonical_pairs(base_res)
@@ -504,11 +512,19 @@ class TestNeighborListFineGrainedMethodEquivalence:
         name = suggest_neighbor_list_method(batch_ptr, cell, pbc, cutoff)
         base = neighbor_list_strategy_run_args(name)[0]
         suggested_res = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method=name,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method=name,
             return_neighbor_list=True,
         )
         base_res = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method=base,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method=base,
             return_neighbor_list=True,
         )
         assert _canonical_pairs(suggested_res) == _canonical_pairs(base_res)
@@ -530,16 +546,30 @@ class TestNeighborListCellListHalfFillFillValue:
         cutoff = 5.0
 
         cl_full = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
             return_neighbor_list=True,
         )[1]
         cl_half = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
-            half_fill=True, return_neighbor_list=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
+            half_fill=True,
+            return_neighbor_list=True,
         )
         nv_half = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method="naive",
-            half_fill=True, return_neighbor_list=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="naive",
+            half_fill=True,
+            return_neighbor_list=True,
         )
         assert int(cl_half[1][-1]) * 2 == int(cl_full[-1])
         assert _canonical_pairs(cl_half) == _canonical_pairs(nv_half)
@@ -550,10 +580,18 @@ class TestNeighborListCellListHalfFillFillValue:
         cutoff = 5.0
 
         full = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, return_neighbor_list=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            return_neighbor_list=True,
         )[1]
         half = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, half_fill=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            half_fill=True,
             return_neighbor_list=True,
         )[1]
         assert int(half[-1]) * 2 == int(full[-1])
@@ -564,7 +602,11 @@ class TestNeighborListCellListHalfFillFillValue:
         cutoff = 5.0
 
         matrix = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
             fill_value=-1,
         )[0]
         nm = np.asarray(matrix)
@@ -583,21 +625,38 @@ class TestNeighborListPairOutputAndExplicitStrategy:
         pbc = jnp.array([[True, True, True]])
         return positions, cell, pbc
 
-    def test_half_fill_with_pair_outputs_raises(self):
-        """half_fill is unsupported on the JAX cell-list pair-output path."""
+    def test_half_fill_with_pair_outputs(self):
+        """half_fill now combines with the JAX cell-list pair-output path; each
+        emitted pair is self-consistent (``|vec| == dist``)."""
         positions, cell, pbc = self._periodic_float32_system()
-        with pytest.raises(NotImplementedError, match="half_fill"):
-            neighbor_list(
-                positions, 5.0, cell=cell, pbc=pbc, method="cell_list",
-                half_fill=True, return_distances=True,
-            )
+        nm, _nn, _sh, dist, vec = neighbor_list(
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
+            half_fill=True,
+            return_distances=True,
+            return_vectors=True,
+        )
+        active = np.asarray(nm) != positions.shape[0]
+        assert int(active.sum()) > 0
+        d = np.asarray(dist)[active]
+        v = np.asarray(vec)[active]
+        assert np.all(d <= 5.0 + 1e-4)
+        np.testing.assert_allclose(d, np.linalg.norm(v, axis=-1), atol=1e-5, rtol=1e-5)
 
     def test_fill_value_remapped_with_pair_outputs(self):
         """A custom fill_value fills the matrix tail even on the pair-output path."""
         positions, cell, pbc = self._periodic_float32_system()
         out = neighbor_list(
-            positions, 5.0, cell=cell, pbc=pbc, method="cell_list",
-            fill_value=-1, return_distances=True,
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
+            fill_value=-1,
+            return_distances=True,
         )
         nm = np.asarray(out[0])
         assert (nm == -1).any()
@@ -608,8 +667,12 @@ class TestNeighborListPairOutputAndExplicitStrategy:
         positions, cell, pbc = self._periodic_float32_system()
         with pytest.raises(NotImplementedError, match="pair.?centric|half_fill"):
             neighbor_list(
-                positions, 5.0, cell=cell, pbc=pbc,
-                method="cell_list_pair_centric", half_fill=True,
+                positions,
+                5.0,
+                cell=cell,
+                pbc=pbc,
+                method="cell_list_pair_centric",
+                half_fill=True,
             )
 
 
@@ -629,12 +692,23 @@ class TestNeighborListBatchStrategyParity:
     def test_batch_naive_tile_matches_batch_naive(self, dtype):
         positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(dtype)
         base = neighbor_list(
-            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            batch_ptr=batch_ptr, method="batch_naive", return_neighbor_list=True,
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_naive",
+            return_neighbor_list=True,
         )
         tile = neighbor_list(
-            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            batch_ptr=batch_ptr, method="batch_naive_tile",
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_naive_tile",
             return_neighbor_list=True,
         )
         assert _canonical_pairs(tile) == _canonical_pairs(base)
@@ -643,34 +717,62 @@ class TestNeighborListBatchStrategyParity:
     def test_batch_cell_list_pair_centric_matches_atom_centric(self, dtype):
         positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(dtype)
         base = neighbor_list(
-            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            batch_ptr=batch_ptr, method="batch_cell_list_atom_centric",
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list_atom_centric",
             return_neighbor_list=True,
         )
         pc = neighbor_list(
-            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            batch_ptr=batch_ptr, method="batch_cell_list_pair_centric",
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list_pair_centric",
             return_neighbor_list=True,
         )
         assert _canonical_pairs(pc) == _canonical_pairs(base)
 
-    def test_batch_cell_list_half_fill_with_pair_outputs_raises(self):
-        """C (batch): half_fill is unsupported on the pair-output path."""
+    def test_batch_cell_list_half_fill_with_pair_outputs(self):
+        """C (batch): half_fill now combines with the pair-output path."""
         positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(jnp.float32)
-        with pytest.raises(NotImplementedError, match="half_fill"):
-            neighbor_list(
-                positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
-                batch_ptr=batch_ptr, method="batch_cell_list",
-                half_fill=True, return_distances=True,
-            )
+        nm, _nn, _sh, dist, vec = neighbor_list(
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list",
+            half_fill=True,
+            return_distances=True,
+            return_vectors=True,
+        )
+        active = np.asarray(nm) != positions.shape[0]
+        assert int(active.sum()) > 0
+        d = np.asarray(dist)[active]
+        v = np.asarray(vec)[active]
+        assert np.all(d <= 5.0 + 1e-4)
+        np.testing.assert_allclose(d, np.linalg.norm(v, axis=-1), atol=1e-5, rtol=1e-5)
 
     def test_batch_cell_list_fill_value_remapped_with_pair_outputs(self):
         """D (batch): a custom fill_value fills the matrix tail on the pair-output path."""
         positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(jnp.float32)
         out = neighbor_list(
-            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            batch_ptr=batch_ptr, method="batch_cell_list",
-            fill_value=-1, return_distances=True,
+            positions,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_cell_list",
+            fill_value=-1,
+            return_distances=True,
         )
         nm = np.asarray(out[0])
         assert (nm == -1).any()

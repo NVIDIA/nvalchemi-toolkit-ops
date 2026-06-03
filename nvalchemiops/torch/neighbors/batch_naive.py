@@ -510,7 +510,9 @@ def _batch_naive_pair_outputs_forward(
                 positions=wp.from_torch(
                     positions.detach(), dtype=wp_vec_dtype, return_ctype=True
                 ),
-                cell=wp.from_torch(cell.detach(), dtype=wp_mat_dtype, return_ctype=True),
+                cell=wp.from_torch(
+                    cell.detach(), dtype=wp_mat_dtype, return_ctype=True
+                ),
                 cutoff=cutoff,
                 batch_ptr=wp_batch_ptr,
                 batch_idx=wp_batch_idx,
@@ -793,11 +795,9 @@ def batch_naive_neighbor_list(
         or pair_forces is not None
     )
     if has_pair_outputs:
-        if half_fill or rebuild_flags is not None:
+        if rebuild_flags is not None:
             raise NotImplementedError(
-                "Pair outputs (return_distances / return_vectors / pair_fn) on "
-                "the torch batch_naive binding require half_fill=False and no "
-                "rebuild_flags.",
+                "Pair outputs are not supported with rebuild_flags.",
             )
         if neighbor_distances is None:
             neighbor_distances = torch.zeros(

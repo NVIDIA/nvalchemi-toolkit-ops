@@ -246,9 +246,58 @@ _jax_batch_build_neighbor_matrix_local_count_sorted_pair_f64 = jax_kernel(
     enable_backward=False,
 )
 
+# Half-fill specializations of the atom-centric geometry pair-output kernel
+# (selected when ``half_fill=True``; ``half_fill`` is a compile-time constant).
+_jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f32 = jax_kernel(
+    get_query_cell_list_kernel(
+        wp.float32,
+        strategy="atom_centric",
+        batched=True,
+        selective=True,
+        partial=False,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=None,
+        half_fill=True,
+    ),
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f64 = jax_kernel(
+    get_query_cell_list_kernel(
+        wp.float64,
+        strategy="atom_centric",
+        batched=True,
+        selective=True,
+        partial=False,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=None,
+        half_fill=True,
+    ),
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+
 
 @functools.cache
-def _get_jax_batch_cell_list_pair_outputs_kernel(pair_fn, wp_dtype, partial):
+def _get_jax_batch_cell_list_pair_outputs_kernel(
+    pair_fn, wp_dtype, partial, half_fill: bool = False
+):
     """Build (and cache) a ``jax_kernel`` for a batched cell-list atom-centric
     ``sorted`` pair-output kernel.
 
@@ -272,6 +321,7 @@ def _get_jax_batch_cell_list_pair_outputs_kernel(pair_fn, wp_dtype, partial):
         return_vectors=True,
         return_distances=True,
         pair_fn=pair_fn,
+        half_fill=bool(half_fill),
     )
     in_out_argnames = [
         "neighbor_matrix",
@@ -1557,6 +1607,7 @@ def _batch_cell_list_pair_outputs_forward(
     n_outer: int | None = None,
     total_cells: int | None = None,
     r_max: tuple[int, int, int] | None = None,
+    half_fill: bool = False,
 ) -> _NeighborForwardOutput:
     """Forward closure consumed by ``_route_pair_outputs``.
 
@@ -1710,7 +1761,13 @@ def _batch_cell_list_pair_outputs_forward(
     else:
         if has_pair_fn or is_partial:
             pair_kernel = _get_jax_batch_cell_list_pair_outputs_kernel(
-                pair_fn, wp_dtype, is_partial
+                pair_fn, wp_dtype, is_partial, half_fill
+            )
+        elif half_fill:
+            pair_kernel = (
+                _jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f64
+                if f64
+                else _jax_batch_build_neighbor_matrix_local_count_sorted_pair_half_f32
             )
         else:
             pair_kernel = (
@@ -1911,13 +1968,6 @@ def batch_cell_list(
         raise ValueError(
             "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
         )
-    if has_pair_outputs and half_fill:
-        raise NotImplementedError(
-            "half_fill=True with return_vectors / return_distances is not "
-            "supported in the JAX batch_cell_list pair-output path (it uses "
-            "the full-fill pair kernel).  Use half_fill=False, or the matrix / "
-            "COO path without pair outputs.",
-        )
 
     # Validate the sub-strategy options up front.  ``atom_centric_path`` is
     # accepted for parity but never branches (JAX always runs the sorted
@@ -2094,6 +2144,7 @@ def batch_cell_list(
             "n_outer": pc_n_outer,
             "total_cells": pc_total_cells,
             "r_max": pc_r_max,
+            "half_fill": bool(half_fill),
         }
         route_out = _route_pair_outputs(
             positions_for_grad,

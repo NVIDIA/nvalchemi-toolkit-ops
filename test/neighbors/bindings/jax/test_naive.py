@@ -21,6 +21,7 @@ import functools
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors.naive import naive_neighbor_list
@@ -875,9 +876,30 @@ class TestJaxNaiveAutograd:
 
         check_grads(loss, (pos,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"])
 
-    def test_unsupported_combo_rejected(self):
+    def test_half_fill_with_pair_outputs(self):
+        """half_fill=True now combines with per-pair geometry outputs on JAX naive;
+        each emitted pair is self-consistent (``|vec| == dist``)."""
         pos, cell, pbc = self._make_system()
-        with pytest.raises(NotImplementedError, match="return_distances"):
+        nm, _nn, _sh, dist, vec = naive_neighbor_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+            half_fill=True,
+        )
+        active = np.asarray(nm) != pos.shape[0]
+        assert int(active.sum()) > 0
+        d = np.asarray(dist)[active]
+        v = np.asarray(vec)[active]
+        assert np.all(d <= 1.5 + 1e-4)
+        np.testing.assert_allclose(d, np.linalg.norm(v, axis=-1), atol=1e-5, rtol=1e-5)
+
+    def test_pair_outputs_reject_rebuild_flags(self):
+        pos, cell, pbc = self._make_system()
+        with pytest.raises(NotImplementedError, match="rebuild_flags"):
             naive_neighbor_list(
                 pos,
                 1.5,
@@ -885,7 +907,7 @@ class TestJaxNaiveAutograd:
                 pbc=pbc,
                 max_neighbors=8,
                 return_distances=True,
-                half_fill=True,
+                rebuild_flags=jnp.ones((1,), dtype=jnp.bool_),
             )
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64], ids=["f32", "f64"])

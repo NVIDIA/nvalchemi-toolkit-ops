@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
@@ -547,11 +548,36 @@ class TestJaxBatchNaiveAutograd:
 
         check_grads(loss, (pos,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"])
 
-    def test_unsupported_combo_rejected(self):
+    def test_half_fill_with_pair_outputs(self):
+        """half_fill=True now combines with per-pair geometry outputs (JAX batched)."""
         from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
 
         pos, cell, pbc, batch_idx, n_per = self._make_batch()
-        with pytest.raises(NotImplementedError, match="return_distances"):
+        nm, _nn, _sh, dist, vec = batch_naive_neighbor_list(
+            pos,
+            1.5,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_distances=True,
+            return_vectors=True,
+            half_fill=True,
+        )
+        active = np.asarray(nm) != pos.shape[0]
+        assert int(active.sum()) > 0
+        d = np.asarray(dist)[active]
+        v = np.asarray(vec)[active]
+        assert np.all(d <= 1.5 + 1e-4)
+        np.testing.assert_allclose(d, np.linalg.norm(v, axis=-1), atol=1e-5, rtol=1e-5)
+
+    def test_pair_outputs_reject_rebuild_flags(self):
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+        num_systems = int(np.asarray(batch_idx).max()) + 1
+        with pytest.raises(NotImplementedError, match="rebuild_flags"):
             batch_naive_neighbor_list(
                 pos,
                 1.5,
@@ -561,7 +587,7 @@ class TestJaxBatchNaiveAutograd:
                 max_neighbors=8,
                 max_atoms_per_system=n_per,
                 return_distances=True,
-                half_fill=True,
+                rebuild_flags=jnp.ones((num_systems,), dtype=jnp.bool_),
             )
 
     def test_hessian_vector_product_smoke(self):

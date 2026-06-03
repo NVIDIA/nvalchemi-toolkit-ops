@@ -43,7 +43,10 @@ deprecated shims).  New code should import directly from the subpackages.
   Euclidean distances `|r_ij|` alongside the neighbor matrix, avoiding a
   manual recomputation downstream.  With `return_neighbor_list=True`, the
   `naive` / `cell_list` paths return them as flat per-pair COO arrays aligned
-  with the neighbor list.
+  with the neighbor list.  These outputs (and `pair_fn`) combine with
+  `half_fill=True` on the `naive` / `cell_list` Torch and JAX paths, with correct
+  per-pair gradients; they are unsupported with `rebuild_flags` (skipped systems
+  return stale cached geometry).
 - **Cluster-pair tile algorithm.** A new CUDA strategy is available under
   `nvalchemiops.neighbors.cluster_tile`, with framework bindings exposed
   by `nvalchemiops.{jax,torch}.neighbors`. `method=None` can now select it

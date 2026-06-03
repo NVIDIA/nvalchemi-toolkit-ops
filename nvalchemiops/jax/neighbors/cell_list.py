@@ -278,9 +278,58 @@ _jax_build_neighbor_matrix_local_count_sorted_pair_f64 = jax_kernel(
     enable_backward=False,
 )
 
+# Half-fill specializations of the atom-centric geometry pair-output kernel
+# (``half_fill`` is a compile-time constant; selected when ``half_fill=True``).
+_jax_build_neighbor_matrix_local_count_sorted_pair_half_f32 = jax_kernel(
+    get_query_cell_list_kernel(
+        wp.float32,
+        strategy="atom_centric",
+        batched=False,
+        selective=True,
+        partial=False,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=None,
+        half_fill=True,
+    ),
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_build_neighbor_matrix_local_count_sorted_pair_half_f64 = jax_kernel(
+    get_query_cell_list_kernel(
+        wp.float64,
+        strategy="atom_centric",
+        batched=False,
+        selective=True,
+        partial=False,
+        return_vectors=True,
+        return_distances=True,
+        pair_fn=None,
+        half_fill=True,
+    ),
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+
 
 @functools.cache
-def _get_jax_cell_list_pair_outputs_kernel(pair_fn, wp_dtype, partial):
+def _get_jax_cell_list_pair_outputs_kernel(
+    pair_fn, wp_dtype, partial, half_fill: bool = False
+):
     """Build (and cache) a ``jax_kernel`` for a cell-list atom-centric ``sorted``
     pair-output kernel.
 
@@ -304,6 +353,7 @@ def _get_jax_cell_list_pair_outputs_kernel(pair_fn, wp_dtype, partial):
         return_vectors=True,
         return_distances=True,
         pair_fn=pair_fn,
+        half_fill=bool(half_fill),
     )
     in_out_argnames = [
         "neighbor_matrix",
@@ -1660,6 +1710,7 @@ def _cell_list_pair_outputs_forward(
     target_indices: jax.Array | None = None,
     strategy: str = "atom_centric",
     n_outer: int | None = None,
+    half_fill: bool = False,
 ) -> _NeighborForwardOutput:
     """Forward closure consumed by ``_route_pair_outputs``.
 
@@ -1787,7 +1838,13 @@ def _cell_list_pair_outputs_forward(
             # The ``partial`` and/or ``pair_fn`` specialization is not a
             # module-level registration; build (and cache) it at call time.
             pair_kernel = _get_jax_cell_list_pair_outputs_kernel(
-                pair_fn, wp_dtype, is_partial
+                pair_fn, wp_dtype, is_partial, half_fill
+            )
+        elif half_fill:
+            pair_kernel = (
+                _jax_build_neighbor_matrix_local_count_sorted_pair_half_f64
+                if f64
+                else _jax_build_neighbor_matrix_local_count_sorted_pair_half_f32
             )
         else:
             pair_kernel = (
@@ -2693,14 +2750,6 @@ def cell_list(
             "JAX cell_list binding; CUDA-graph capture of the half-fill kernel "
             "is a follow-up.",
         )
-    if has_pair_outputs and half_fill:
-        raise NotImplementedError(
-            "half_fill=True with return_vectors / return_distances is not "
-            "supported in the JAX cell-list pair-output path (it uses the "
-            "full-fill pair kernel).  Use half_fill=False, or the matrix / COO "
-            "path without pair outputs.",
-        )
-
     # Validate the sub-strategy options up front.  ``atom_centric_path`` is
     # forwarded to ``query_cell_list`` (explicit "direct" branches to the
     # gather-skipping kernel there).  ``strategy`` is forwarded to ``query_cell_list``,
@@ -2981,6 +3030,7 @@ def cell_list(
                 "target_indices": target_indices,
                 "strategy": pc_strategy,
                 "n_outer": pc_n_outer,
+                "half_fill": bool(half_fill),
             }
             route_out = _route_pair_outputs(
                 positions_for_grad,

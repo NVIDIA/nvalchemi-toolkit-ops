@@ -985,9 +985,33 @@ class TestBatchNaiveAutograd:
 
         torch.autograd.gradcheck(fn, (cell,), atol=1e-5, eps=1e-6, nondet_tol=1e-7)
 
-    def test_unsupported_combo_rejected(self, device):
+    def test_half_fill_with_pair_outputs(self, device):
+        """half_fill=True now combines with per-pair geometry outputs (batched)."""
         pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
-        with pytest.raises(NotImplementedError, match="return_distances"):
+        nm, _nn, _sh, dist, vec = batch_naive_neighbor_list(
+            pos,
+            5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_distances=True,
+            return_vectors=True,
+            half_fill=True,
+        )
+        active = nm != pos.shape[0]
+        assert int(active.sum()) > 0
+        assert torch.all(dist[active] <= 5.0 + 1e-4)
+        torch.testing.assert_close(
+            dist[active], vec[active].norm(dim=-1), atol=1e-5, rtol=1e-5
+        )
+
+    def test_pair_outputs_reject_rebuild_flags(self, device):
+        """rebuild_flags stays unsupported with pair outputs (stale cached geometry)."""
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        num_systems = int(batch_idx.max().item()) + 1
+        with pytest.raises(NotImplementedError, match="rebuild_flags"):
             batch_naive_neighbor_list(
                 pos,
                 5.0,
@@ -997,7 +1021,7 @@ class TestBatchNaiveAutograd:
                 max_neighbors=8,
                 max_atoms_per_system=n_per,
                 return_distances=True,
-                half_fill=True,
+                rebuild_flags=torch.ones(num_systems, dtype=torch.bool, device=device),
             )
 
     def test_gradgradcheck_second_order(self, device):

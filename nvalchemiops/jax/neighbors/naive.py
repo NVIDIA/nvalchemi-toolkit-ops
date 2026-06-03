@@ -114,6 +114,34 @@ _fill_naive_pbc_pair_kernels = {
     for t in _DTYPE_TO_NAIVE_KERNELS
 }
 
+# Half-fill specializations of the pair-output kernels (``half_fill`` is a
+# compile-time constant in the Warp factory, so honoring it needs a distinct
+# kernel).  Selected by the forward when ``half_fill=True``.
+_fill_naive_pair_half_kernels = {
+    t: _get_naive_kernel(
+        t,
+        pbc_mode="none",
+        batched=False,
+        selective=False,
+        return_vectors=True,
+        return_distances=True,
+        half_fill=True,
+    )
+    for t in _DTYPE_TO_NAIVE_KERNELS
+}
+_fill_naive_pbc_pair_half_kernels = {
+    t: _get_naive_kernel(
+        t,
+        pbc_mode="wrap_on_entry",
+        batched=False,
+        selective=False,
+        return_vectors=True,
+        return_distances=True,
+        half_fill=True,
+    )
+    for t in _DTYPE_TO_NAIVE_KERNELS
+}
+
 __all__ = ["naive_neighbor_list"]
 
 # ==============================================================================
@@ -330,9 +358,59 @@ _jax_fill_naive_pbc_pair_f64 = jax_kernel(
     enable_backward=False,
 )
 
+# Half-fill geometry-only pair-output callables (same I/O as the full-fill ones).
+_jax_fill_naive_pair_half_f32 = jax_kernel(
+    _fill_naive_pair_half_kernels[wp.float32],
+    num_outputs=4,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_fill_naive_pair_half_f64 = jax_kernel(
+    _fill_naive_pair_half_kernels[wp.float64],
+    num_outputs=4,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_fill_naive_pbc_pair_half_f32 = jax_kernel(
+    _fill_naive_pbc_pair_half_kernels[wp.float32],
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "neighbor_matrix_shifts1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+_jax_fill_naive_pbc_pair_half_f64 = jax_kernel(
+    _fill_naive_pbc_pair_half_kernels[wp.float64],
+    num_outputs=5,
+    in_out_argnames=[
+        "neighbor_matrix1",
+        "neighbor_matrix_shifts1",
+        "num_neighbors1",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ],
+    enable_backward=False,
+)
+
 
 @functools.cache
-def _get_jax_naive_pair_fn_kernel(pair_fn, wp_dtype, pbc_mode: str):
+def _get_jax_naive_pair_fn_kernel(
+    pair_fn, wp_dtype, pbc_mode: str, half_fill: bool = False
+):
     """Build (and cache) a ``jax_kernel`` for a ``pair_fn``-specialized naive kernel.
 
     The naive kernel signature always carries ``pair_params`` / ``pair_energies`` /
@@ -355,6 +433,7 @@ def _get_jax_naive_pair_fn_kernel(pair_fn, wp_dtype, pbc_mode: str):
         return_vectors=True,
         return_distances=True,
         pair_fn=pair_fn,
+        half_fill=half_fill,
     )
     if pbc_mode == "none":
         in_out_argnames = [
@@ -1389,6 +1468,7 @@ def _naive_pair_outputs_forward(
     fill_value: int,
     pair_fn=None,
     pair_params: jax.Array | None = None,
+    half_fill: bool = False,
 ) -> _NeighborForwardOutput:
     """Forward closure for the naive autograd path.
 
@@ -1452,7 +1532,11 @@ def _naive_pair_outputs_forward(
 
     if pbc is None:
         if has_pair_fn:
-            kernel = _get_jax_naive_pair_fn_kernel(pair_fn, wp_dtype, "none")
+            kernel = _get_jax_naive_pair_fn_kernel(pair_fn, wp_dtype, "none", half_fill)
+        elif half_fill:
+            kernel = (
+                _jax_fill_naive_pair_half_f64 if f64 else _jax_fill_naive_pair_half_f32
+            )
         else:
             kernel = _jax_fill_naive_pair_f64 if f64 else _jax_fill_naive_pair_f32
         outs = kernel(
@@ -1487,7 +1571,15 @@ def _naive_pair_outputs_forward(
         nms = jnp.zeros((total_atoms, max_neighbors, 3), dtype=jnp.int32)
     else:
         if has_pair_fn:
-            kernel = _get_jax_naive_pair_fn_kernel(pair_fn, wp_dtype, "wrap_on_entry")
+            kernel = _get_jax_naive_pair_fn_kernel(
+                pair_fn, wp_dtype, "wrap_on_entry", half_fill
+            )
+        elif half_fill:
+            kernel = (
+                _jax_fill_naive_pbc_pair_half_f64
+                if f64
+                else _jax_fill_naive_pbc_pair_half_f32
+            )
         else:
             kernel = (
                 _jax_fill_naive_pbc_pair_f64 if f64 else _jax_fill_naive_pbc_pair_f32
@@ -1883,11 +1975,9 @@ def naive_neighbor_list(
         bool(return_distances) or bool(return_vectors) or pair_fn is not None
     )
     if has_pair_outputs:
-        if graph_mode != "none" or half_fill or rebuild_flags is not None:
+        if graph_mode != "none" or rebuild_flags is not None:
             raise NotImplementedError(
-                "return_distances / return_vectors / pair_fn on the JAX naive "
-                "binding require graph_mode='none', half_fill=False, and no "
-                "rebuild_flags.",
+                "Pair outputs require graph_mode='none' and no rebuild_flags.",
             )
         if max_neighbors is None:
             max_neighbors = estimate_max_neighbors(cutoff)
@@ -1909,6 +1999,7 @@ def naive_neighbor_list(
             "fill_value": int(fill_value),
             "pair_fn": pair_fn,
             "pair_params": pair_params,
+            "half_fill": bool(half_fill),
         }
         route_out = _route_pair_outputs(
             positions,

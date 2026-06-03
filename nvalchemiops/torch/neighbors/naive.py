@@ -722,11 +722,9 @@ def naive_neighbor_list(
         or pair_forces is not None
     )
     if has_pair_outputs:
-        if half_fill or rebuild_flags is not None:
+        if rebuild_flags is not None:
             raise NotImplementedError(
-                "Pair outputs (return_distances / return_vectors / pair_fn) on "
-                "the torch naive binding require half_fill=False and no "
-                "rebuild_flags.",
+                "Pair outputs are not supported with rebuild_flags.",
             )
         if max_neighbors is None:
             max_neighbors = estimate_max_neighbors(cutoff)

@@ -1314,9 +1314,9 @@ and `vectors` with shape `(n_atoms, max_neighbors, 3)`, slot-aligned with
 `cell_list` paths repack them into flat per-pair arrays `(num_pairs,)` and
 `(num_pairs, 3)` that index-align with the returned neighbor list. The returned
 `distances` / `vectors` are differentiable with respect to `positions` (and `cell`)
-on both the PyTorch (`autograd`) and JAX (`custom_vjp`) paths, so they can flow
-straight into a loss without re-deriving geometry; gradient support is not combined
-with `half_fill` or `rebuild_flags`.
+on both the PyTorch and JAX paths (each emitted pair's geometry is reconstructed
+live from its indices and shift), so they can flow straight into a loss without
+re-deriving geometry.
 
 ### Inline Pair Potentials with `pair_fn`
 
