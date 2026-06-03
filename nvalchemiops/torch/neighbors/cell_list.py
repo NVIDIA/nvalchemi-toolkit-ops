@@ -1638,9 +1638,7 @@ def cell_list(
             distances_out, vectors_out = coo_pack_pair_geometry(
                 active, distances_out, vectors_out
             )
-            pe_out, pf_out = coo_pack_pair_geometry(
-                active, pair_energies, pair_forces
-            )
+            pe_out, pf_out = coo_pack_pair_geometry(active, pair_energies, pair_forces)
         else:
             base = (nm_out, nn_out, shifts_out)
             pe_out, pf_out = pair_energies, pair_forces

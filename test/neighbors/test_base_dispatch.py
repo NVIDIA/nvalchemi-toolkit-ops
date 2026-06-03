@@ -132,7 +132,9 @@ class TestReportNeighborListCosts:
     def test_naive_viability_bound_excludes_naive_for_huge_systems(self, report):
         """Beyond the candidate-pair bound, naive is dropped from the report."""
         top = report([1_000_000], [1e7], cutoff=15.0)
-        assert all(not name.endswith(("naive_tile", "naive_scalar")) for name in _names(top))
+        assert all(
+            not name.endswith(("naive_tile", "naive_scalar")) for name in _names(top)
+        )
 
     @pytest.mark.parametrize("report", _REPORTERS)
     def test_report_is_sorted_and_suggest_matches_top(self, report):
@@ -165,12 +167,15 @@ class TestReportNeighborListCosts:
         pbc = torch.zeros((1, 3), dtype=torch.bool)
         rep = report_torch(batch_ptr, cell, pbc, 5.0)
         assert suggest_torch(batch_ptr, cell, pbc, 5.0) == rep[0][0]
-        assert suggest_jax(
-            jnp.asarray([0, 20], dtype=jnp.int32),
-            jnp.eye(3, dtype=jnp.float32)[None] * 20.0,
-            jnp.zeros((1, 3), dtype=bool),
-            5.0,
-        ) == _names(_jax_report([20], [8000.0], 5.0))[0]
+        assert (
+            suggest_jax(
+                jnp.asarray([0, 20], dtype=jnp.int32),
+                jnp.eye(3, dtype=jnp.float32)[None] * 20.0,
+                jnp.zeros((1, 3), dtype=bool),
+                5.0,
+            )
+            == _names(_jax_report([20], [8000.0], 5.0))[0]
+        )
 
     def test_target_indices_reduce_estimated_source_work(self):
         """Partial-row requests scale the naive estimate by target count."""

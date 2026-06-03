@@ -352,7 +352,9 @@ def neighbor_list(
     selected_atom_centric_path = explicit_atom_centric_path
     explicit_pair_centric = explicit_cell_strategy == "pair_centric"
 
-    def _apply_auto_suboptions(native_strategy: str, cell_strategy: str, path: str) -> None:
+    def _apply_auto_suboptions(
+        native_strategy: str, cell_strategy: str, path: str
+    ) -> None:
         nonlocal selected_native_strategy, selected_cell_strategy
         nonlocal selected_atom_centric_path
         if selected_native_strategy == "auto" and native_strategy != "auto":
@@ -377,7 +379,9 @@ def neighbor_list(
 
         strategy_name = _auto_method_from_geometry(
             positions,
-            max(float(cutoff), float(cutoff2) if cutoff2 is not None else float(cutoff)),
+            max(
+                float(cutoff), float(cutoff2) if cutoff2 is not None else float(cutoff)
+            ),
             cell,
             pbc,
             batch_idx if has_batch_inputs else None,
@@ -425,7 +429,11 @@ def neighbor_list(
             _apply_auto_suboptions(fg_native, fg_cell, fg_path)
             if fg_cell == "pair_centric":
                 explicit_pair_centric = True
-    if half_fill and selected_cell_strategy == "pair_centric" and not explicit_pair_centric:
+    if (
+        half_fill
+        and selected_cell_strategy == "pair_centric"
+        and not explicit_pair_centric
+    ):
         selected_cell_strategy = "atom_centric"
     match method:
         case "naive":

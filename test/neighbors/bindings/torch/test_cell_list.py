@@ -797,7 +797,9 @@ def _sorted_pairs(neighbor_list_coo):
     """Sort COO (source, target) pairs for order-independent comparison."""
     sources = neighbor_list_coo[0]
     targets = neighbor_list_coo[1]
-    keys = sources.to(torch.int64) * (int(targets.max().item()) + 1 if targets.numel() else 1) + targets.to(torch.int64)
+    keys = sources.to(torch.int64) * (
+        int(targets.max().item()) + 1 if targets.numel() else 1
+    ) + targets.to(torch.int64)
     order = torch.argsort(keys)
     return torch.stack([sources[order], targets[order]], dim=0)
 
@@ -814,18 +816,28 @@ class TestCellListAtomCentricPathEquivalence:
         torch.manual_seed(0)
         device = "cuda"
         positions = torch.rand(300, 3, dtype=torch.float32, device=device) * 20.0
-        cell = (torch.eye(3, dtype=torch.float32, device=device) * 20.0).reshape(1, 3, 3)
+        cell = (torch.eye(3, dtype=torch.float32, device=device) * 20.0).reshape(
+            1, 3, 3
+        )
         pbc = torch.tensor([[True, True, True]], device=device)
         cutoff = 5.0
 
         direct = cell_list(
-            positions, cutoff, cell, pbc,
-            strategy="atom_centric", atom_centric_path="direct",
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            strategy="atom_centric",
+            atom_centric_path="direct",
             return_neighbor_list=True,
         )
         sorted_ = cell_list(
-            positions, cutoff, cell, pbc,
-            strategy="atom_centric", atom_centric_path="sorted",
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            strategy="atom_centric",
+            atom_centric_path="sorted",
             return_neighbor_list=True,
         )
         torch.testing.assert_close(

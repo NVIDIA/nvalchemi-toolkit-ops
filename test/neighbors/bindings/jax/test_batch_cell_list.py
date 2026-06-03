@@ -776,14 +776,25 @@ class TestJaxBatchCellListAutograd:
         mn = 24
 
         pnm, pnn, _ = batch_cell_list(
-            pos, 1.5, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            max_neighbors=mn, target_indices=targets, fill_value=n,
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            max_neighbors=mn,
+            target_indices=targets,
+            fill_value=n,
         )
         assert pnm.shape == (nt, mn) and pnn.shape == (nt,)
 
         fnm, fnn, _ = batch_cell_list(
-            pos, 1.5, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            max_neighbors=mn, fill_value=n,
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            max_neighbors=mn,
+            fill_value=n,
         )
         pnm, pnn, fnm, fnn, tg = (np.asarray(x) for x in (pnm, pnn, fnm, fnn, targets))
 
@@ -794,8 +805,14 @@ class TestJaxBatchCellListAutograd:
             assert row_set(pnm[r], pnn[r]) == row_set(fnm[int(tg[r])], fnn[int(tg[r])])
 
         nl, _nptr, _nls = batch_cell_list(
-            pos, 1.5, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            max_neighbors=mn, target_indices=targets, return_neighbor_list=True,
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            max_neighbors=mn,
+            target_indices=targets,
+            return_neighbor_list=True,
         )
         nl = np.asarray(nl)
         if nl.shape[1] > 0:

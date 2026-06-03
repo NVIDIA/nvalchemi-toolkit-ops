@@ -270,8 +270,7 @@ def zero_array(array: wp.array, device: str) -> None:
         runs on the array's own device.
     """
     warnings.warn(
-        "nvalchemiops.neighbors.zero_array is deprecated; use array.zero_() "
-        "instead.",
+        "nvalchemiops.neighbors.zero_array is deprecated; use array.zero_() instead.",
         DeprecationWarning,
         stacklevel=2,
     )

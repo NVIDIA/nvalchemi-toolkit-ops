@@ -1370,14 +1370,24 @@ class TestJaxCellListAutograd:
 
         # Partial matrix.
         pnm, pnn, _pnms = cell_list(
-            positions, 1.5, cell, pbc, max_neighbors=mn,
-            target_indices=targets, fill_value=n,
+            positions,
+            1.5,
+            cell,
+            pbc,
+            max_neighbors=mn,
+            target_indices=targets,
+            fill_value=n,
         )
         assert pnm.shape == (nt, mn) and pnn.shape == (nt,)
 
         # Full matrix reference, restricted to the target rows.
         fnm, fnn, _fnms = cell_list(
-            positions, 1.5, cell, pbc, max_neighbors=mn, fill_value=n,
+            positions,
+            1.5,
+            cell,
+            pbc,
+            max_neighbors=mn,
+            fill_value=n,
         )
         pnm, pnn, fnm, fnn, tg = (np.asarray(x) for x in (pnm, pnn, fnm, fnn, targets))
 
@@ -1389,8 +1399,13 @@ class TestJaxCellListAutograd:
 
         # COO: compact-row source index, matching torch.
         nl, _nptr, _nls = cell_list(
-            positions, 1.5, cell, pbc, max_neighbors=mn,
-            target_indices=targets, return_neighbor_list=True,
+            positions,
+            1.5,
+            cell,
+            pbc,
+            max_neighbors=mn,
+            target_indices=targets,
+            return_neighbor_list=True,
         )
         nl = np.asarray(nl)
         if nl.shape[1] > 0:

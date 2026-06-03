@@ -358,9 +358,7 @@ def coo_pack_pair_geometry(
     if distances is not None:
         distances = jnp.take(distances.reshape(-1), flat_active, axis=0)
     if vectors is not None:
-        vectors = jnp.take(
-            vectors.reshape(-1, vectors.shape[-1]), flat_active, axis=0
-        )
+        vectors = jnp.take(vectors.reshape(-1, vectors.shape[-1]), flat_active, axis=0)
     return distances, vectors
 
 

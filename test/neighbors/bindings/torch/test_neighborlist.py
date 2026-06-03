@@ -482,7 +482,9 @@ class TestNeighborListAutoSelection:
             del positions, cutoff, cell, kwargs
             return "cluster_tile"
 
-        monkeypatch.setattr(neighbor_module, "_auto_method_from_geometry", fake_auto_method)
+        monkeypatch.setattr(
+            neighbor_module, "_auto_method_from_geometry", fake_auto_method
+        )
         monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fail_naive)
         monkeypatch.setattr(neighbor_module, "cell_list", fail_cell_list)
         monkeypatch.setattr(
@@ -509,7 +511,9 @@ class TestNeighborListAutoSelection:
             del positions, cutoff, cell, batch_ptr, kwargs
             return "batch_cluster_tile"
 
-        monkeypatch.setattr(neighbor_module, "_auto_method_from_geometry", fake_auto_method)
+        monkeypatch.setattr(
+            neighbor_module, "_auto_method_from_geometry", fake_auto_method
+        )
         monkeypatch.setattr(
             neighbor_module, "batch_cluster_tile_neighbor_list", fake_batch_cluster_tile
         )
@@ -1633,11 +1637,19 @@ class TestNeighborListFineGrainedMethodEquivalence:
         cutoff = 5.0
 
         base = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method="naive",
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="naive",
             return_neighbor_list=True,
         )
         fine = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method=method,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method=method,
             return_neighbor_list=True,
         )
         torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
@@ -1660,28 +1672,46 @@ class TestNeighborListFineGrainedMethodEquivalence:
         cutoff = 5.0
 
         base = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
             return_neighbor_list=True,
         )
         fine = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc,
-            method="cell_list_atom_centric", return_neighbor_list=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list_atom_centric",
+            return_neighbor_list=True,
         )
         torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
 
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="pair_centric requires CUDA")
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="pair_centric requires CUDA"
+    )
     def test_cell_list_pair_centric_matches_cell_list(self):
         """``cell_list_pair_centric`` (CUDA-only) matches the base ``cell_list``."""
         positions, cell, pbc = self._periodic_float32_system("cuda")
         cutoff = 5.0
 
         base = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list",
             return_neighbor_list=True,
         )
         fine = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc,
-            method="cell_list_pair_centric", return_neighbor_list=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            method="cell_list_pair_centric",
+            return_neighbor_list=True,
         )
         torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
 
@@ -1703,8 +1733,11 @@ class TestNeighborListFineGrainedMethodEquivalence:
         n1, n2 = 128, 96
         positions = torch.rand(n1 + n2, 3, dtype=torch.float32, device=device) * 20.0
         cell = (
-            torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3)
-            .expand(2, -1, -1).contiguous() * 20.0
+            torch.eye(3, dtype=torch.float32, device=device)
+            .reshape(1, 3, 3)
+            .expand(2, -1, -1)
+            .contiguous()
+            * 20.0
         )
         pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
         batch_idx = torch.cat(
@@ -1717,12 +1750,24 @@ class TestNeighborListFineGrainedMethodEquivalence:
         cutoff = 5.0
 
         base = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            batch_ptr=batch_ptr, method="batch_naive", return_neighbor_list=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_naive",
+            return_neighbor_list=True,
         )
         fine = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, batch_idx=batch_idx,
-            batch_ptr=batch_ptr, method="batch_naive_tile", return_neighbor_list=True,
+            positions,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="batch_naive_tile",
+            return_neighbor_list=True,
         )
         torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
 

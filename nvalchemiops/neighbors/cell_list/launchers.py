@@ -388,8 +388,7 @@ def query_cell_list_atom_centric_sorted(
     partial = target_indices is not None
     if atom_centric_path not in {"direct", "sorted"}:
         raise ValueError(
-            "atom_centric_path must be 'direct' | 'sorted', "
-            f"got {atom_centric_path!r}",
+            f"atom_centric_path must be 'direct' | 'sorted', got {atom_centric_path!r}",
         )
     if (partial or atom_centric_path == "direct") and (
         positions is None or atom_periodic_shifts is None
@@ -853,7 +852,9 @@ def query_cell_list(
                 "or neither - got a mixed state.",
             )
         if sorted_positions is None:
-            sorted_positions = wp.empty(int(total_atoms), dtype=_vec_dtype, device=device)
+            sorted_positions = wp.empty(
+                int(total_atoms), dtype=_vec_dtype, device=device
+            )
         if sorted_atom_periodic_shifts is None:
             sorted_atom_periodic_shifts = wp.empty(
                 int(total_atoms), dtype=wp.vec3i, device=device
@@ -1526,7 +1527,9 @@ def batch_query_cell_list(
                 "or neither - got a mixed state.",
             )
         if sorted_positions is None:
-            sorted_positions = wp.empty(int(total_atoms), dtype=_vec_dtype, device=device)
+            sorted_positions = wp.empty(
+                int(total_atoms), dtype=_vec_dtype, device=device
+            )
         if sorted_atom_periodic_shifts is None:
             sorted_atom_periodic_shifts = wp.empty(
                 int(total_atoms), dtype=wp.vec3i, device=device

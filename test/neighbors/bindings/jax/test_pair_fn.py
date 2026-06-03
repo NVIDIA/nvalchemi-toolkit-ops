@@ -865,9 +865,17 @@ def test_cell_list_target_indices_pair_fn_matrix(dtype):
     nt = int(targets.shape[0])
     w = 32
     nm, nn, _sh, nd, nv, pe, pf = cell_list(
-        positions, 1.1, cell, pbc, max_neighbors=w, target_indices=targets,
-        fill_value=n, return_distances=True, return_vectors=True,
-        pair_fn=_PAIR_FN[dtype], pair_params=pp,
+        positions,
+        1.1,
+        cell,
+        pbc,
+        max_neighbors=w,
+        target_indices=targets,
+        fill_value=n,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[dtype],
+        pair_params=pp,
     )
     assert nm.shape == (nt, w) and pe.shape == (nt, w) and pf.shape == (nt, w, 3)
     _check_partial_pair_matrix(nm, nn, nv, nd, pe, pf, pp, targets)
@@ -885,9 +893,17 @@ def test_cell_list_target_indices_pair_fn_coo(dtype):
     targets = jnp.arange(0, n, 2, dtype=jnp.int32)
     nt = int(targets.shape[0])
     nl, _nptr, _sh, d_coo, v_coo, pe_coo, pf_coo = cell_list(
-        positions, 1.1, cell, pbc, max_neighbors=32, target_indices=targets,
-        return_neighbor_list=True, return_distances=True, return_vectors=True,
-        pair_fn=_PAIR_FN[dtype], pair_params=pp,
+        positions,
+        1.1,
+        cell,
+        pbc,
+        max_neighbors=32,
+        target_indices=targets,
+        return_neighbor_list=True,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[dtype],
+        pair_params=pp,
     )
     nl = np.asarray(nl)
     p = nl.shape[1]
@@ -925,12 +941,22 @@ def test_cell_list_target_indices_pair_fn_matches_torch(dtype):
     nt = int(targets.shape[0])
     w = 64
     pos_np, cell_np, pp_np = (
-        np.asarray(positions), np.asarray(cell).reshape(3, 3), np.asarray(pp)
+        np.asarray(positions),
+        np.asarray(cell).reshape(3, 3),
+        np.asarray(pp),
     )
     nl_j, _p, _s, d_j, _v, pe_j, pf_j = cl_j(
-        positions, 1.1, cell, pbc, max_neighbors=w, target_indices=targets,
-        return_neighbor_list=True, return_distances=True, return_vectors=True,
-        pair_fn=_PAIR_FN[dtype], pair_params=pp,
+        positions,
+        1.1,
+        cell,
+        pbc,
+        max_neighbors=w,
+        target_indices=targets,
+        return_neighbor_list=True,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[dtype],
+        pair_params=pp,
     )
     tgt_t = torch.tensor(np.asarray(targets), dtype=torch.int32, device="cuda")
     nt_t = int(tgt_t.numel())
@@ -942,10 +968,15 @@ def test_cell_list_target_indices_pair_fn_matches_torch(dtype):
         1.1,
         torch.tensor(cell_np, dtype=td, device="cuda"),
         torch.tensor([True, True, True], device="cuda"),
-        max_neighbors=w, fill_value=n,
-        neighbor_matrix=nm_t, neighbor_matrix_shifts=nms_t, num_neighbors=nn_t,
-        target_indices=tgt_t, return_neighbor_list=True,
-        return_distances=True, return_vectors=True,
+        max_neighbors=w,
+        fill_value=n,
+        neighbor_matrix=nm_t,
+        neighbor_matrix_shifts=nms_t,
+        num_neighbors=nn_t,
+        target_indices=tgt_t,
+        return_neighbor_list=True,
+        return_distances=True,
+        return_vectors=True,
         pair_fn=_PAIR_FN[dtype],
         pair_params=torch.tensor(pp_np, dtype=td, device="cuda"),
     )
@@ -1015,10 +1046,12 @@ def test_cell_list_pair_centric_matches_atom_centric(dtype, use_pair_fn):
         _check_pair_matrix(pnm, pnn, pnv, pnd, p[5], p[6], pp)
 
     # COO parity (order-independent).
-    ac = cell_list(pos, 1.1, cell, pbc, strategy="atom_centric",
-                   return_neighbor_list=True, **kw)
-    pc = cell_list(pos, 1.1, cell, pbc, strategy="pair_centric",
-                   return_neighbor_list=True, **kw)
+    ac = cell_list(
+        pos, 1.1, cell, pbc, strategy="atom_centric", return_neighbor_list=True, **kw
+    )
+    pc = cell_list(
+        pos, 1.1, cell, pbc, strategy="pair_centric", return_neighbor_list=True, **kw
+    )
     ai, aj, _ = _canon_coo(ac[0], [ac[3]])
     pi, pj, _ = _canon_coo(pc[0], [pc[3]])
     assert np.array_equal(ai, pi) and np.array_equal(aj, pj)
@@ -1039,9 +1072,16 @@ def test_cell_list_pair_centric_grad_matches_atom_centric(dtype):
     def mkloss(strat):
         def loss(x):
             *_, nd, _nv, pe, _pf = cell_list(
-                x, 1.1, cell, pbc, max_neighbors=64, strategy=strat,
-                return_distances=True, return_vectors=True,
-                pair_fn=_PAIR_FN[dtype], pair_params=pp,
+                x,
+                1.1,
+                cell,
+                pbc,
+                max_neighbors=64,
+                strategy=strat,
+                return_distances=True,
+                return_vectors=True,
+                pair_fn=_PAIR_FN[dtype],
+                pair_params=pp,
             )
             return jnp.sum(nd**2) + jnp.sum(pe)
 
@@ -1062,7 +1102,11 @@ def test_cell_list_pair_centric_target_indices_rejected():
     pos, cell, pbc = _pc_safe_system(jnp.float32)
     with pytest.raises(NotImplementedError, match="target_indices"):
         cell_list(
-            pos, 1.1, cell, pbc, strategy="pair_centric",
+            pos,
+            1.1,
+            cell,
+            pbc,
+            strategy="pair_centric",
             return_distances=True,
             target_indices=jnp.array([0, 1], dtype=jnp.int32),
         )
@@ -1158,10 +1202,18 @@ def test_cluster_tile_pair_fn_coo_matches_matrix():
     npairs = int(mask.sum())
     assert npairs > 0
     # COO arrays are the matrix arrays flattened in row-major active-slot order.
-    np.testing.assert_allclose(np.asarray(nd_c), np.asarray(nd)[mask], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(np.asarray(nv_c), np.asarray(nv)[mask], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(np.asarray(pe_c), np.asarray(pe)[mask], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(np.asarray(pf_c), np.asarray(pf)[mask], rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(nd_c), np.asarray(nd)[mask], rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(nv_c), np.asarray(nv)[mask], rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(pe_c), np.asarray(pe)[mask], rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(pf_c), np.asarray(pf)[mask], rtol=1e-6, atol=1e-6
+    )
     # Topology: pair count and target index agree with the matrix active order.
     assert int(np.asarray(nl).shape[1]) == npairs
     np.testing.assert_array_equal(np.asarray(nl)[1], nm_np[mask])
@@ -1304,9 +1356,19 @@ def test_batch_cell_list_target_indices_pair_fn_matrix(dtype):
     nt = int(targets.shape[0])
     w = 24
     nm, nn, _sh, nd, nv, pe, pf = batch_cell_list(
-        pos, 1.5, cell, pbc, batch_idx=bidx, batch_ptr=bptr, max_neighbors=w,
-        target_indices=targets, fill_value=n, return_distances=True,
-        return_vectors=True, pair_fn=_PAIR_FN[dtype], pair_params=pp,
+        pos,
+        1.5,
+        cell,
+        pbc,
+        batch_idx=bidx,
+        batch_ptr=bptr,
+        max_neighbors=w,
+        target_indices=targets,
+        fill_value=n,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[dtype],
+        pair_params=pp,
     )
     assert nm.shape == (nt, w) and pe.shape == (nt, w) and pf.shape == (nt, w, 3)
     _check_partial_pair_matrix(nm, nn, nv, nd, pe, pf, pp, targets)
@@ -1322,9 +1384,19 @@ def test_batch_cell_list_target_indices_pair_fn_coo(dtype):
     targets = jnp.array([0, 3, n_per, n_per + 2], dtype=jnp.int32)
     nt = int(targets.shape[0])
     nl, _nptr, _sh, d_coo, v_coo, pe_coo, pf_coo = batch_cell_list(
-        pos, 1.5, cell, pbc, batch_idx=bidx, batch_ptr=bptr, max_neighbors=24,
-        target_indices=targets, return_neighbor_list=True, return_distances=True,
-        return_vectors=True, pair_fn=_PAIR_FN[dtype], pair_params=pp,
+        pos,
+        1.5,
+        cell,
+        pbc,
+        batch_idx=bidx,
+        batch_ptr=bptr,
+        max_neighbors=24,
+        target_indices=targets,
+        return_neighbor_list=True,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[dtype],
+        pair_params=pp,
     )
     nl = np.asarray(nl)
     p = nl.shape[1]
@@ -1396,10 +1468,12 @@ def test_batch_cell_list_pair_centric_matches_atom_centric(dtype, use_pair_fn):
     if use_pair_fn:
         _check_pair_matrix(pnm, pnn, pnv, pnd, p[5], p[6], pp)
 
-    ac = batch_cell_list(pos, 1.1, cell, pbc, strategy="atom_centric",
-                         return_neighbor_list=True, **kw)
-    pc = batch_cell_list(pos, 1.1, cell, pbc, strategy="pair_centric",
-                         return_neighbor_list=True, **kw)
+    ac = batch_cell_list(
+        pos, 1.1, cell, pbc, strategy="atom_centric", return_neighbor_list=True, **kw
+    )
+    pc = batch_cell_list(
+        pos, 1.1, cell, pbc, strategy="pair_centric", return_neighbor_list=True, **kw
+    )
     ai, aj, _ = _canon_coo(ac[0], [ac[3]])
     pi, pj, _ = _canon_coo(pc[0], [pc[3]])
     assert np.array_equal(ai, pi) and np.array_equal(aj, pj)
@@ -1420,10 +1494,18 @@ def test_batch_cell_list_pair_centric_grad_matches_atom_centric(dtype):
     def mkloss(strat):
         def loss(x):
             *_, nd, _nv, pe, _pf = batch_cell_list(
-                x, 1.1, cell, pbc, batch_idx=bidx, batch_ptr=bptr,
-                max_neighbors=64, strategy=strat,
-                return_distances=True, return_vectors=True,
-                pair_fn=_PAIR_FN[dtype], pair_params=pp,
+                x,
+                1.1,
+                cell,
+                pbc,
+                batch_idx=bidx,
+                batch_ptr=bptr,
+                max_neighbors=64,
+                strategy=strat,
+                return_distances=True,
+                return_vectors=True,
+                pair_fn=_PAIR_FN[dtype],
+                pair_params=pp,
             )
             return jnp.sum(nd**2) + jnp.sum(pe)
 
@@ -1443,8 +1525,14 @@ def test_batch_cell_list_pair_centric_target_indices_rejected():
     pos, bidx, bptr, cell, pbc = _batch_pc_safe_system(jnp.float32)
     with pytest.raises(NotImplementedError, match="target_indices"):
         batch_cell_list(
-            pos, 1.1, cell, pbc, batch_idx=bidx, batch_ptr=bptr,
-            strategy="pair_centric", return_distances=True,
+            pos,
+            1.1,
+            cell,
+            pbc,
+            batch_idx=bidx,
+            batch_ptr=bptr,
+            strategy="pair_centric",
+            return_distances=True,
             target_indices=jnp.array([0, 1], dtype=jnp.int32),
         )
 
@@ -1469,8 +1557,13 @@ def test_cell_list_pair_centric_mixed_pbc_matches_atom_centric(pbc_vec):
     pbc = jnp.array(pbc_vec)
     n = pos.shape[0]
     pp = _pair_params(n, jnp.float64)
-    kw = dict(max_neighbors=64, return_distances=True, return_vectors=True,
-              pair_fn=_PAIR_FN[jnp.float64], pair_params=pp)
+    kw = dict(
+        max_neighbors=64,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[jnp.float64],
+        pair_params=pp,
+    )
     a = cell_list(pos, 1.1, cell, pbc, strategy="atom_centric", **kw)
     p = cell_list(pos, 1.1, cell, pbc, strategy="pair_centric", **kw)
     aset = _pc_matrix_set(a)
@@ -1495,9 +1588,15 @@ def test_batch_cell_list_pair_centric_uneven_systems_mixed_pbc():
     pbc = jnp.array([[True, True, True], [True, False, True]])
     nb = pos.shape[0]
     pp = _pair_params(nb, dt)
-    kw = dict(batch_idx=bidx, batch_ptr=bptr, max_neighbors=128,
-              return_distances=True, return_vectors=True,
-              pair_fn=_PAIR_FN[dt], pair_params=pp)
+    kw = dict(
+        batch_idx=bidx,
+        batch_ptr=bptr,
+        max_neighbors=128,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[dt],
+        pair_params=pp,
+    )
     a = batch_cell_list(pos, 1.3, cell, pbc, strategy="atom_centric", **kw)
     p = batch_cell_list(pos, 1.3, cell, pbc, strategy="pair_centric", **kw)
     aset = _pc_matrix_set(a)
@@ -1595,10 +1694,18 @@ def test_batch_cluster_tile_pair_fn_coo_matches_matrix():
     mask = nm_np != n  # active slots; default fill_value == total atoms
     npairs = int(mask.sum())
     assert npairs > 0
-    np.testing.assert_allclose(np.asarray(nd_c), np.asarray(nd)[mask], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(np.asarray(nv_c), np.asarray(nv)[mask], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(np.asarray(pe_c), np.asarray(pe)[mask], rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(np.asarray(pf_c), np.asarray(pf)[mask], rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(
+        np.asarray(nd_c), np.asarray(nd)[mask], rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(nv_c), np.asarray(nv)[mask], rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(pe_c), np.asarray(pe)[mask], rtol=1e-6, atol=1e-6
+    )
+    np.testing.assert_allclose(
+        np.asarray(pf_c), np.asarray(pf)[mask], rtol=1e-6, atol=1e-6
+    )
     assert int(np.asarray(nl).shape[1]) == npairs
     np.testing.assert_array_equal(np.asarray(nl)[1], nm_np[mask])
     assert int(np.asarray(nptr)[-1]) == npairs

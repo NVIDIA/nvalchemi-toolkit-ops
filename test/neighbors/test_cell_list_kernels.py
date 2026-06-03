@@ -993,7 +993,6 @@ class TestQueryCellListErrorPaths:
         with pytest.raises(ValueError, match="atom_centric"):
             query_cell_list(**kwargs, strategy="bogus")
 
-
     def test_pair_centric_success_path(self, device, dtype):
         """Valid ``strategy='pair_centric'`` + ``n_outer`` exercises the
         ``chosen = 'pair_centric'`` assignment and the corresponding

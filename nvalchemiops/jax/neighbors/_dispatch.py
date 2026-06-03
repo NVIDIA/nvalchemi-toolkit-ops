@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import jax
 import jax.numpy as jnp
@@ -313,10 +313,15 @@ def estimate_neighbor_list_costs(
     pbc_is_batched = pbc.ndim == 2
     pbc_single = pbc if not pbc_is_batched else jnp.zeros((0,), dtype=jnp.bool_)
     pbc_batch = pbc if pbc_is_batched else jnp.zeros((0, 3), dtype=jnp.bool_)
-    batch_idx_arg = batch_idx if batch_idx is not None else jnp.zeros((0,), dtype=jnp.int32)
+    batch_idx_arg = (
+        batch_idx if batch_idx is not None else jnp.zeros((0,), dtype=jnp.int32)
+    )
     feature_mask = 0
     try:
-        if "gpu" in str(cell.devices()).lower() or "cuda" in str(cell.devices()).lower():
+        if (
+            "gpu" in str(cell.devices()).lower()
+            or "cuda" in str(cell.devices()).lower()
+        ):
             feature_mask |= FEATURE_CUDA
     except (AttributeError, TypeError):
         pass
@@ -383,7 +388,9 @@ def estimate_neighbor_list_costs(
         int(target_count),
         costs,
         flags,
-        launch_dims=(max(num_systems, int(batch_idx.shape[0]) if batch_idx is not None else 0),),
+        launch_dims=(
+            max(num_systems, int(batch_idx.shape[0]) if batch_idx is not None else 0),
+        ),
     )
     strategies = finalize_neighbor_list_method(
         jax.device_get(costs), jax.device_get(flags)

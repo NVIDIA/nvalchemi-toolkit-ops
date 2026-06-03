@@ -286,7 +286,9 @@ print("\nTargeted pair-output statistics:")
 print(f"  Compact output rows: {num_targets}")
 print(f"  Active targeted pairs: {int(valid_slots.sum().item())}")
 print(f"  Average targeted neighbors: {neighbor_counts.float().mean().item():.2f}")
-print(f"  Targeted directed LJ energy sum: {pair_energies[valid_slots].sum().item():.6f} eV")
+print(
+    f"  Targeted directed LJ energy sum: {pair_energies[valid_slots].sum().item():.6f} eV"
+)
 print("  LJ pair energies and forces match the Torch reference")
 
 print("\nFirst targeted LJ pairs:")

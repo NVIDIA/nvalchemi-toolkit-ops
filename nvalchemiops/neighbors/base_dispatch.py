@@ -17,8 +17,9 @@
 """Shared helpers for frontend neighbor-list auto dispatch."""
 
 import os
+from collections.abc import Iterable
 from functools import lru_cache
-from typing import Iterable, Literal
+from typing import Literal
 
 import warp as wp
 
@@ -448,9 +449,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         num_systems = wp.int32(cell.shape[0])
 
         has_cuda = (feature_mask & wp.int32(FEATURE_CUDA)) != wp.int32(0)
-        is_float32 = (
-            feature_mask & wp.int32(FEATURE_POSITIONS_FLOAT32)
-        ) != wp.int32(0)
+        is_float32 = (feature_mask & wp.int32(FEATURE_POSITIONS_FLOAT32)) != wp.int32(0)
         is_batched = (feature_mask & wp.int32(FEATURE_BATCHED)) != wp.int32(0)
 
         has_cutoff2 = (option_mask & wp.int32(_OPTION_CUTOFF2)) != wp.int32(0)
@@ -462,13 +461,13 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
             option_mask & wp.int32(_OPTION_TARGET_INDICES)
         ) != wp.int32(0)
         has_vectors = (option_mask & wp.int32(_OPTION_RETURN_VECTORS)) != wp.int32(0)
-        has_distances = (
-            option_mask & wp.int32(_OPTION_RETURN_DISTANCES)
-        ) != wp.int32(0)
+        has_distances = (option_mask & wp.int32(_OPTION_RETURN_DISTANCES)) != wp.int32(
+            0
+        )
         use_pair_fn = (option_mask & wp.int32(_OPTION_USE_PAIR_FN)) != wp.int32(0)
-        has_rebuild_flags = (
-            option_mask & wp.int32(_OPTION_REBUILD_FLAGS)
-        ) != wp.int32(0)
+        has_rebuild_flags = (option_mask & wp.int32(_OPTION_REBUILD_FLAGS)) != wp.int32(
+            0
+        )
         wrap_positions_false = (
             option_mask & wp.int32(_OPTION_WRAP_POSITIONS_FALSE)
         ) != wp.int32(0)
@@ -543,7 +542,9 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         # all ``n`` atoms, so active_n_work ~ N^2 distance checks. n_pairs_cap =
         # n*(n-1) is the exact upper bound on real pairs.
         active_n_work = active_float * n_float
-        n_pairs_cap = wp.max(n_float * wp.float32(max(n_atoms - wp.int32(1), 0)), wp.float32(0.0))
+        n_pairs_cap = wp.max(
+            n_float * wp.float32(max(n_atoms - wp.int32(1), 0)), wp.float32(0.0)
+        )
 
         if volume <= wp.float32(_EPS):
             wp.atomic_max(flags, 2, wp.int32(1))
@@ -567,7 +568,9 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         face_distance_z = wp.float32(1.0) / wp.float32(
             wp.length(inverse_cell_transpose[2])
         )
-        min_face_distance = wp.min(face_distance_x, wp.min(face_distance_y, face_distance_z))
+        min_face_distance = wp.min(
+            face_distance_x, wp.min(face_distance_y, face_distance_z)
+        )
         if min_face_distance <= wp.float32(_EPS):
             wp.atomic_max(flags, 2, wp.int32(1))
             wp.atomic_max(flags, 4, wp.int32(1))
@@ -649,7 +652,11 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
             + wp.float32(1.5) * expected_pairs
             + naive_setup
         )
-        if (not has_cuda) or has_pair_outputs or (any_pbc and is_batched and wrap_positions_false):
+        if (
+            (not has_cuda)
+            or has_pair_outputs
+            or (any_pbc and is_batched and wrap_positions_false)
+        ):
             wp.atomic_max(flags, 8, wp.int32(1))
         wp.atomic_add(costs, 0, scalar_cost)
         wp.atomic_add(costs, 1, tile_cost)
@@ -718,9 +725,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         # Atom-centric: 2.0 per-candidate distance test + 0.8 output write,
         # over the cell-grid build/sort floor ``setup``.
         cell_atom_cost = (
-            setup
-            + wp.float32(2.0) * grid_work
-            + wp.float32(0.8) * expected_pairs
+            setup + wp.float32(2.0) * grid_work + wp.float32(0.8) * expected_pairs
         )
 
         radius_x = wp.int32(
@@ -736,28 +741,23 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         radius_y = max(radius_y, wp.int32(0))
         radius_z = max(radius_z, wp.int32(0))
         n_outer = (
-            radius_x * (wp.int32(2) * radius_y + wp.int32(1)) * (wp.int32(2) * radius_z + wp.int32(1))
+            radius_x
+            * (wp.int32(2) * radius_y + wp.int32(1))
+            * (wp.int32(2) * radius_z + wp.int32(1))
             + radius_y * (wp.int32(2) * radius_z + wp.int32(1))
             + radius_z
         )
         if not half_fill:
-            n_outer = (
-                (wp.int32(2) * radius_x + wp.int32(1))
-                * (wp.int32(2) * radius_y + wp.int32(1))
-                * (wp.int32(2) * radius_z + wp.int32(1))
-                - wp.int32(1)
-            )
+            n_outer = (wp.int32(2) * radius_x + wp.int32(1)) * (
+                wp.int32(2) * radius_y + wp.int32(1)
+            ) * (wp.int32(2) * radius_z + wp.int32(1)) - wp.int32(1)
         # Pair-centric launches one 64-thread block per (cell, neighbor-offset);
         # n_outer = stencil offsets (forward half only when half_fill).
         # pair_launch ~ total threads; pair_blocks ~ block count.
         pair_launch = (
-            wp.int64(total_cells_i32)
-            * wp.int64(n_outer + wp.int32(1))
-            * wp.int64(64)
+            wp.int64(total_cells_i32) * wp.int64(n_outer + wp.int32(1)) * wp.int64(64)
         )
-        atom_blocks = (
-            wp.int64(max(n_atoms, wp.int32(1)) + wp.int32(63)) // wp.int64(64)
-        )
+        atom_blocks = wp.int64(max(n_atoms, wp.int32(1)) + wp.int32(63)) // wp.int64(64)
         pair_blocks = wp.int64(total_cells_i32) * wp.int64(n_outer + wp.int32(1))
         if (not has_cuda) or pair_launch > max_launch_size or pair_blocks < atom_blocks:
             wp.atomic_max(flags, 7, wp.int32(1))
@@ -805,9 +805,7 @@ def get_select_neighbor_list_method_cost_kernel(wp_dtype: type) -> wp.Kernel:
         # linearly over the large-N range cluster_tile runs in); the
         # 0.35 * expected_pairs term is the tile query output write.
         cluster_cost = (
-            wp.float32(0.35) * expected_pairs
-            + wp.float32(32.0) * n_float
-            + setup
+            wp.float32(0.35) * expected_pairs + wp.float32(32.0) * n_float + setup
         )
         wp.atomic_add(costs, 4, cluster_cost)
 
@@ -969,7 +967,9 @@ def estimate_neighbor_list_costs(
             "optional_outputs"
         )
     target_count_int = 0 if target_count is None else int(target_count)
-    launch_dim = max(num_systems, int(batch_idx.shape[0]) if batch_idx is not None else 0)
+    launch_dim = max(
+        num_systems, int(batch_idx.shape[0]) if batch_idx is not None else 0
+    )
 
     wp.launch(
         get_select_neighbor_list_method_cost_kernel(wp_dtype),
