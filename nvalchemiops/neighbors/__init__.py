@@ -24,6 +24,10 @@ from __future__ import annotations
 import importlib
 import warnings
 
+from nvalchemiops.neighbors.base_dispatch import (
+    estimate_neighbor_list_costs,
+    suggest_neighbor_list_method,
+)
 from nvalchemiops.neighbors.cell_list import (
     batch_build_cell_list,
     batch_query_cell_list,
@@ -53,6 +57,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
     compute_naive_num_shifts,
     estimate_max_neighbors,
+    zero_array,
 )
 from nvalchemiops.neighbors.rebuild import (
     check_batch_cell_list_rebuild,
@@ -144,4 +149,7 @@ __all__ = [
     "query_cell_list",
     "query_cluster_tile",
     "query_cluster_tile_coo",
+    "estimate_neighbor_list_costs",
+    "suggest_neighbor_list_method",
+    "zero_array",
 ]

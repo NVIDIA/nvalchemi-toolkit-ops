@@ -448,7 +448,7 @@ def _make_scalar_kernel(
     BATCHED = bool(batched)
     SELECTIVE = bool(selective)
     PARTIAL = bool(partial)
-    HALF_FILL = bool(half_fill)
+    HALF_FILL = wp.constant(bool(half_fill))
     WRAP_ON_ENTRY = pbc_mode is _PBCMode.WRAP_ON_ENTRY
     RETURN_VECTORS = bool(return_vectors)
     RETURN_DISTANCES = bool(return_distances)
@@ -478,7 +478,6 @@ def _make_scalar_kernel(
         pair_params: wp.array(dtype=wp_dtype, ndim=2),
         pair_energies: wp.array(dtype=wp_dtype, ndim=2),
         pair_forces: wp.array(dtype=vec_dtype, ndim=2),
-        half_fill_arg: wp.bool,
         rebuild_flags: wp.array(dtype=wp.bool),
     ) -> None:
         """Calculate neighbor matrix using naive O(N^2) algorithm
@@ -530,8 +529,6 @@ def _make_scalar_kernel(
             OUTPUT: Pair-function energies. Sentinel when no pair function is active.
         pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*
             OUTPUT: Pair-function forces. Sentinel when no pair function is active.
-        half_fill_arg : wp.bool
-            If True, store only one direction for each unordered pair.
         rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
             Selective rebuild flags. Sentinel for non-selective specializations.
 
@@ -807,32 +804,64 @@ def _make_scalar_kernel(
 
             current_cell = cell[isys]
             atom_i_image = _shifted_position(shift, current_cell, positions[atom_i])
-            stored_shift = shift
+            max_neighbors1 = neighbor_matrix1.shape[1]
+            max_neighbors2 = wp.int32(0)
+            if DUAL_CUTOFF:
+                max_neighbors2 = neighbor_matrix2.shape[1]
             if WRAP_ON_ENTRY:
                 atom_i_offset = per_atom_cell_offsets[atom_i]
 
             for atom_j in range(j_start, j_end):
                 dist_sq = wp.length_sq(atom_i_image - positions[atom_j])
-                if WRAP_ON_ENTRY:
-                    atom_j_offset = per_atom_cell_offsets[atom_j]
-                    stored_shift = _correct_shift(shift, atom_j_offset, atom_i_offset)
-                _store_cutoff_pair(
-                    atom_j,
-                    atom_i,
-                    dist_sq,
-                    cutoff1_sq,
-                    cutoff2_sq,
-                    stored_shift,
-                    neighbor_matrix1,
-                    neighbor_matrix_shifts1,
-                    num_neighbors1,
-                    neighbor_matrix2,
-                    neighbor_matrix_shifts2,
-                    num_neighbors2,
-                    half_fill_arg,
-                    DUAL_CUTOFF,
-                    True,
-                )
+                if DUAL_CUTOFF:
+                    if dist_sq < cutoff2_sq:
+                        stored_shift = shift
+                        if WRAP_ON_ENTRY:
+                            atom_j_offset = per_atom_cell_offsets[atom_j]
+                            stored_shift = _correct_shift(
+                                shift, atom_j_offset, atom_i_offset
+                            )
+                        _update_neighbor_matrix(
+                            atom_j,
+                            atom_i,
+                            neighbor_matrix2,
+                            neighbor_matrix_shifts2,
+                            num_neighbors2,
+                            stored_shift,
+                            max_neighbors2,
+                            HALF_FILL,
+                            True,
+                        )
+                        if dist_sq < cutoff1_sq:
+                            _update_neighbor_matrix(
+                                atom_j,
+                                atom_i,
+                                neighbor_matrix1,
+                                neighbor_matrix_shifts1,
+                                num_neighbors1,
+                                stored_shift,
+                                max_neighbors1,
+                                HALF_FILL,
+                                True,
+                            )
+                elif dist_sq < cutoff1_sq:
+                    stored_shift = shift
+                    if WRAP_ON_ENTRY:
+                        atom_j_offset = per_atom_cell_offsets[atom_j]
+                        stored_shift = _correct_shift(
+                            shift, atom_j_offset, atom_i_offset
+                        )
+                    _update_neighbor_matrix(
+                        atom_j,
+                        atom_i,
+                        neighbor_matrix1,
+                        neighbor_matrix_shifts1,
+                        num_neighbors1,
+                        stored_shift,
+                        max_neighbors1,
+                        HALF_FILL,
+                        True,
+                    )
             return
 
         pos_i = positions[atom_i]
@@ -851,7 +880,7 @@ def _make_scalar_kernel(
                 neighbor_matrix2,
                 neighbor_matrix_shifts2,
                 num_neighbors2,
-                half_fill_arg,
+                HALF_FILL,
                 DUAL_CUTOFF,
                 False,
             )
@@ -864,11 +893,14 @@ def _make_scalar_kernel(
             selective=SELECTIVE,
         ),
         wp_dtype=wp_dtype,
-        features=_pair_output_features(
-            partial=PARTIAL,
-            return_vectors=RETURN_VECTORS,
-            return_distances=RETURN_DISTANCES,
-            pair_fn=pair_fn,
+        features=(
+            "half" if bool(half_fill) else "",
+            *_pair_output_features(
+                partial=PARTIAL,
+                return_vectors=RETURN_VECTORS,
+                return_distances=RETURN_DISTANCES,
+                pair_fn=pair_fn,
+            ),
         ),
     )
     return set_fn_doc(
@@ -882,6 +914,7 @@ def _make_scalar_kernel(
                 ("batched", BATCHED),
                 ("selective", SELECTIVE),
                 ("partial", PARTIAL),
+                ("half_fill", bool(half_fill)),
                 ("dual_cutoff", DUAL_CUTOFF),
                 ("return_vectors", RETURN_VECTORS),
                 ("return_distances", RETURN_DISTANCES),
@@ -897,6 +930,7 @@ def _make_tile_kernel(
     *,
     pbc_mode: _PBCMode,
     batched: bool,
+    half_fill: bool,
     selective: bool,
 ) -> wp.Kernel:
     """Return a cached CUDA tile-cooperative single-cutoff kernel."""
@@ -907,6 +941,7 @@ def _make_tile_kernel(
     vec_dtype, mat_dtype = _DTYPE_INFO[wp_dtype]
     BATCHED = bool(batched)
     SELECTIVE = bool(selective)
+    HALF_FILL = wp.constant(bool(half_fill))
     PBC = pbc_mode is not _PBCMode.NONE
     WRAP_ON_ENTRY = pbc_mode is _PBCMode.WRAP_ON_ENTRY
 
@@ -923,7 +958,6 @@ def _make_tile_kernel(
         neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
         neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
         num_neighbors: wp.array(dtype=wp.int32),
-        half_fill_arg: wp.bool,
         rebuild_flags: wp.array(dtype=wp.bool),
     ) -> None:
         """Calculate neighbor matrix using tile-cooperative naive O(N^2) algorithm
@@ -953,8 +987,6 @@ def _make_tile_kernel(
             OUTPUT: Periodic shift matrix for PBC modes.
         num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
             OUTPUT: Per-atom neighbor counts.
-        half_fill_arg : wp.bool
-            If True, store only one direction for each unordered pair.
         rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
             Selective rebuild flags. Sentinel for non-selective specializations.
 
@@ -1027,7 +1059,7 @@ def _make_tile_kernel(
                         num_neighbors,
                         stored_shift,
                         max_neighbors,
-                        half_fill_arg,
+                        HALF_FILL,
                         True,
                     )
             return
@@ -1047,7 +1079,7 @@ def _make_tile_kernel(
                     num_neighbors,
                     wp.vec3i(0, 0, 0),
                     max_neighbors,
-                    half_fill_arg,
+                    HALF_FILL,
                     False,
                 )
 
@@ -1059,7 +1091,7 @@ def _make_tile_kernel(
             selective=SELECTIVE,
         ),
         wp_dtype=wp_dtype,
-        features=("tile",),
+        features=("tile", "half" if bool(half_fill) else ""),
     )
     return set_fn_doc(
         set_fn_name(_kernel, name),
@@ -1071,6 +1103,7 @@ def _make_tile_kernel(
                 ("strategy", "tile"),
                 ("pbc_mode", pbc_mode.value),
                 ("batched", BATCHED),
+                ("half_fill", bool(half_fill)),
                 ("selective", SELECTIVE),
             ),
         ),
@@ -1106,6 +1139,7 @@ def get_naive_neighbor_matrix_kernel(
             wp_dtype,
             pbc_mode=mode,
             batched=batched,
+            half_fill=half_fill,
             selective=selective,
         )
     return _make_scalar_kernel(

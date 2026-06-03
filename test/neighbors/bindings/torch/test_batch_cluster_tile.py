@@ -18,6 +18,7 @@
 import pytest
 import torch
 
+import nvalchemiops.torch.neighbors.batch_cluster_tile as batch_cluster_tile_module
 from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
@@ -69,6 +70,39 @@ def _make_batch(
         bp.append(bp[-1] + sz)
     batch_ptr = torch.tensor(bp, dtype=torch.int32, device=device)
     return positions, cell_batch, batch_ptr
+
+
+def test_batch_cluster_tile_max_tiles_per_group_bypasses_sizing(monkeypatch):
+    """Explicit max_tiles_per_group skips geometry-aware sizing sync."""
+
+    def fail_sizing(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("_batch_max_tiles_per_group should not be called")
+
+    def fake_allocate(batch_ptr, device, *, dtype, max_tiles_per_group):
+        del batch_ptr, device, dtype
+        assert max_tiles_per_group == 7
+        raise RuntimeError("allocation reached")
+
+    monkeypatch.setattr(
+        batch_cluster_tile_module, "_batch_max_tiles_per_group", fail_sizing
+    )
+    monkeypatch.setattr(
+        batch_cluster_tile_module, "allocate_batch_cluster_tile_list", fake_allocate
+    )
+
+    positions = torch.zeros(64, 3, dtype=torch.float32)
+    cell_batch = torch.stack([torch.eye(3), torch.eye(3)]).to(torch.float32) * 10.0
+    batch_ptr = torch.tensor([0, 32, 64], dtype=torch.int32)
+
+    with pytest.raises(RuntimeError, match="allocation reached"):
+        batch_cluster_tile_module.batch_cluster_tile_neighbor_list(
+            positions,
+            3.0,
+            cell_batch,
+            batch_ptr,
+            max_tiles_per_group=7,
+        )
 
 
 def _canonicalize_matrix_full(

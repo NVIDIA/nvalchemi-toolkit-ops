@@ -106,7 +106,12 @@ __all__ = [
 
 
 @lru_cache(maxsize=None)
-def _make_estimate_cell_list_sizes_kernel(wp_dtype: type, *, batched: bool):
+def _make_estimate_cell_list_sizes_kernel(
+    wp_dtype: type,
+    *,
+    batched: bool,
+    min_cells_per_dimension: int,
+):
     """Build the ``estimate_cell_list_sizes`` kernel for the dtype/mode.
 
     The single-system and batched specializations share one kernel body.
@@ -117,6 +122,7 @@ def _make_estimate_cell_list_sizes_kernel(wp_dtype: type, *, batched: bool):
     _require_supported_dtype(wp_dtype)
     _, mat_dtype = _DTYPE_INFO[wp_dtype]
     BATCHED = wp.constant(bool(batched))
+    MIN_CELLS_PER_DIMENSION = wp.constant(int(min_cells_per_dimension))
 
     @wp.kernel(enable_backward=False)
     def _kernel(
@@ -190,16 +196,27 @@ def _make_estimate_cell_list_sizes_kernel(wp_dtype: type, *, batched: bool):
             )
             cells_per_dimension[dim] = max(wp.int32(face_distance / cell_size), 1)
 
-        ADAPTIVE_MIN_CELLS = wp.int32(4)
         for dim in range(3):
             pbc_dim = pbc_z
             if dim == 0:
                 pbc_dim = pbc_x
             elif dim == 1:
                 pbc_dim = pbc_y
-            if pbc_dim or cells_per_dimension[dim] > 1:
-                while cells_per_dimension[dim] < ADAPTIVE_MIN_CELLS:
+            if MIN_CELLS_PER_DIMENSION > 1 and (
+                pbc_dim or cells_per_dimension[dim] > 1
+            ):
+                while cells_per_dimension[dim] < MIN_CELLS_PER_DIMENSION:
                     cells_per_dimension[dim] = cells_per_dimension[dim] * 2
+
+        total_cells = int(
+            cells_per_dimension[0] * cells_per_dimension[1] * cells_per_dimension[2]
+        )
+        while total_cells > max_nbins:
+            for dim in range(3):
+                cells_per_dimension[dim] = max(cells_per_dimension[dim] // 2, 1)
+            total_cells = int(
+                cells_per_dimension[0] * cells_per_dimension[1] * cells_per_dimension[2]
+            )
 
         search_radius = wp.vec3i(0, 0, 0)
         for dim in range(3):
@@ -222,16 +239,6 @@ def _make_estimate_cell_list_sizes_kernel(wp_dtype: type, *, batched: bool):
                     )
                 )
 
-        total_cells = int(
-            cells_per_dimension[0] * cells_per_dimension[1] * cells_per_dimension[2]
-        )
-        while total_cells > max_nbins:
-            for dim in range(3):
-                cells_per_dimension[dim] = max(cells_per_dimension[dim] // 2, 1)
-            total_cells = int(
-                cells_per_dimension[0] * cells_per_dimension[1] * cells_per_dimension[2]
-            )
-
         number_of_cells[system_idx] = total_cells
         if BATCHED:
             neighbor_search_radius_batch[system_idx] = search_radius
@@ -243,6 +250,7 @@ def _make_estimate_cell_list_sizes_kernel(wp_dtype: type, *, batched: bool):
     name = kernel_specialization_name(
         _cell_list_build_base_name("estimate_sizes", batched=batched),
         wp_dtype=wp_dtype,
+        features=(f"mincells{int(min_cells_per_dimension)}",),
     )
     return set_fn_doc(
         set_fn_name(_kernel, name),
@@ -252,17 +260,24 @@ def _make_estimate_cell_list_sizes_kernel(wp_dtype: type, *, batched: bool):
             entries=(
                 ("stage", "estimate_sizes"),
                 ("batched", bool(batched)),
+                ("min_cells_per_dimension", int(min_cells_per_dimension)),
             ),
         ),
     )
 
 
 @lru_cache(maxsize=None)
-def _make_construct_bin_size_kernel(wp_dtype: type, *, batched: bool):
+def _make_construct_bin_size_kernel(
+    wp_dtype: type,
+    *,
+    batched: bool,
+    min_cells_per_dimension: int,
+):
     """Build the ``construct_bin_size`` kernel for the dtype/mode."""
     _require_supported_dtype(wp_dtype)
     _, mat_dtype = _DTYPE_INFO[wp_dtype]
     BATCHED = wp.constant(bool(batched))
+    MIN_CELLS_PER_DIMENSION = wp.constant(int(min_cells_per_dimension))
 
     @wp.kernel(enable_backward=False)
     def _kernel(
@@ -337,15 +352,16 @@ def _make_construct_bin_size_kernel(wp_dtype: type, *, batched: bool):
                 wp.int32(face_distance / target_cell_size), 1
             )
 
-        ADAPTIVE_MIN_CELLS = wp.int32(4)
         for dim in range(3):
             pbc_dim = pbc_z
             if dim == 0:
                 pbc_dim = pbc_x
             elif dim == 1:
                 pbc_dim = pbc_y
-            if pbc_dim or cells_per_dimension[dim] > 1:
-                while cells_per_dimension[dim] < ADAPTIVE_MIN_CELLS:
+            if MIN_CELLS_PER_DIMENSION > 1 and (
+                pbc_dim or cells_per_dimension[dim] > 1
+            ):
+                while cells_per_dimension[dim] < MIN_CELLS_PER_DIMENSION:
                     cells_per_dimension[dim] = cells_per_dimension[dim] * 2
 
         total_cells = int(
@@ -368,6 +384,7 @@ def _make_construct_bin_size_kernel(wp_dtype: type, *, batched: bool):
     name = kernel_specialization_name(
         _cell_list_build_base_name("construct_bin_size", batched=batched),
         wp_dtype=wp_dtype,
+        features=(f"mincells{int(min_cells_per_dimension)}",),
     )
     return set_fn_doc(
         set_fn_name(_kernel, name),
@@ -377,6 +394,7 @@ def _make_construct_bin_size_kernel(wp_dtype: type, *, batched: bool):
             entries=(
                 ("stage", "construct_bin_size"),
                 ("batched", bool(batched)),
+                ("min_cells_per_dimension", int(min_cells_per_dimension)),
             ),
         ),
     )
@@ -858,9 +876,11 @@ def _make_atom_centric_kernel(
     batched: bool,
     selective: bool,
     partial: bool,
+    half_fill: bool,
     return_vectors: bool,
     return_distances: bool,
     pair_fn: wp.Function | None,
+    atom_centric_path: str,
 ) -> wp.Kernel:
     """Build the atom-centric neighbor-matrix kernel."""
     _require_supported_dtype(wp_dtype)
@@ -868,6 +888,16 @@ def _make_atom_centric_kernel(
     BATCHED = wp.constant(bool(batched))
     SELECTIVE = wp.constant(bool(selective))
     PARTIAL = wp.constant(bool(partial))
+    HALF_FILL = wp.constant(bool(half_fill))
+    ATOM_CENTRIC_DIRECT = wp.constant(atom_centric_path == "direct")
+    SYMMETRIC_FULL_FILL = wp.constant(
+        atom_centric_path == "direct"
+        and not bool(half_fill)
+        and not bool(partial)
+        and not bool(return_vectors)
+        and not bool(return_distances)
+        and pair_fn is None
+    )
     store_neighbor = _make_store_neighbor_fn(
         wp_dtype,
         return_vectors=bool(return_vectors),
@@ -904,7 +934,6 @@ def _make_atom_centric_kernel(
         pair_params: wp.array(dtype=wp_dtype, ndim=2),
         pair_energies: wp.array(dtype=wp_dtype, ndim=2),
         pair_forces: wp.array(dtype=vec_dtype, ndim=2),
-        half_fill: wp.bool,
         rebuild_flags: wp.array(dtype=wp.bool),
     ) -> None:
         """Build cell-list neighbor-matrix rows with one source atom per thread
@@ -965,8 +994,6 @@ def _make_atom_centric_kernel(
             OUTPUT: Optional pair-function energies. Sentinel when disabled.
         pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*
             OUTPUT: Optional pair-function forces. Sentinel when disabled.
-        half_fill : wp.bool
-            If True, store one direction for each unordered pair.
         rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
             Selective rebuild flags. Sentinel for non-selective specializations.
 
@@ -994,6 +1021,11 @@ def _make_atom_centric_kernel(
                 return
             atom_idx = target_indices[row]
             output_row = row
+        elif ATOM_CENTRIC_DIRECT:
+            if row >= positions.shape[0]:
+                return
+            atom_idx = row
+            output_row = atom_idx
         else:
             if row >= sorted_positions.shape[0]:
                 return
@@ -1011,11 +1043,11 @@ def _make_atom_centric_kernel(
             if SELECTIVE and not rebuild_flags[0]:
                 return
 
-        central_atom_position = sorted_positions[row]
-        central_atom_shift = sorted_atom_periodic_shifts[row]
-        if PARTIAL:
-            central_atom_position = positions[atom_idx]
-            central_atom_shift = atom_periodic_shifts[atom_idx]
+        central_atom_position = positions[atom_idx]
+        central_atom_shift = atom_periodic_shifts[atom_idx]
+        if not ATOM_CENTRIC_DIRECT and not PARTIAL:
+            central_atom_position = sorted_positions[row]
+            central_atom_shift = sorted_atom_periodic_shifts[row]
         central_atom_cell_coords = atom_to_cell_mapping[atom_idx]
 
         cutoff_distance_sq = cutoff * cutoff
@@ -1056,7 +1088,7 @@ def _make_atom_centric_kernel(
         cpd_z = s_cells_per_dimension[2]
 
         dx_lo = wp.int32(0)
-        if not half_fill:
+        if not HALF_FILL and not SYMMETRIC_FULL_FILL:
             dx_lo = -s_neighbor_search_radius[0]
 
         n = wp.int32(0)
@@ -1067,7 +1099,7 @@ def _make_atom_centric_kernel(
                 for dz in range(
                     -s_neighbor_search_radius[2], s_neighbor_search_radius[2] + 1
                 ):
-                    if half_fill:
+                    if HALF_FILL or SYMMETRIC_FULL_FILL:
                         if not (
                             dx > 0
                             or (dx == 0 and dy > 0)
@@ -1097,8 +1129,11 @@ def _make_atom_centric_kernel(
                     for cell_atom_idx in range(num_atoms_in_cell):
                         j_slot = cell_start_index + cell_atom_idx
                         neighbor_atom_idx = cell_atom_list[j_slot]
-                        neighbor_atom_shift = sorted_atom_periodic_shifts[j_slot]
-                        neighbor_pos = sorted_positions[j_slot]
+                        neighbor_atom_shift = atom_periodic_shifts[neighbor_atom_idx]
+                        neighbor_pos = positions[neighbor_atom_idx]
+                        if not ATOM_CENTRIC_DIRECT:
+                            neighbor_atom_shift = sorted_atom_periodic_shifts[j_slot]
+                            neighbor_pos = sorted_positions[j_slot]
 
                         shift_x = cs_x
                         shift_y = cs_y
@@ -1117,7 +1152,7 @@ def _make_atom_centric_kernel(
                             shift_z = 0
 
                         if dx == 0 and dy == 0 and dz == 0:
-                            if half_fill:
+                            if HALF_FILL or SYMMETRIC_FULL_FILL:
                                 if neighbor_atom_idx <= atom_idx:
                                     continue
                             else:
@@ -1137,7 +1172,46 @@ def _make_atom_centric_kernel(
                         distance_sq = wp.dot(dr, dr)
 
                         if distance_sq < cutoff_distance_sq:
-                            if n < max_neighbors:
+                            if SYMMETRIC_FULL_FILL:
+                                pos_i = wp.atomic_add(num_neighbors, atom_idx, 1)
+                                if pos_i < max_neighbors:
+                                    store_neighbor(
+                                        atom_idx,
+                                        pos_i,
+                                        atom_idx,
+                                        neighbor_atom_idx,
+                                        wp.vec3i(shift_x, shift_y, shift_z),
+                                        dr,
+                                        distance_sq,
+                                        neighbor_matrix,
+                                        neighbor_matrix_shifts,
+                                        neighbor_vectors,
+                                        neighbor_distances,
+                                        pair_params,
+                                        pair_energies,
+                                        pair_forces,
+                                    )
+                                pos_j = wp.atomic_add(
+                                    num_neighbors, neighbor_atom_idx, 1
+                                )
+                                if pos_j < max_neighbors:
+                                    store_neighbor(
+                                        neighbor_atom_idx,
+                                        pos_j,
+                                        neighbor_atom_idx,
+                                        atom_idx,
+                                        wp.vec3i(-shift_x, -shift_y, -shift_z),
+                                        -dr,
+                                        distance_sq,
+                                        neighbor_matrix,
+                                        neighbor_matrix_shifts,
+                                        neighbor_vectors,
+                                        neighbor_distances,
+                                        pair_params,
+                                        pair_energies,
+                                        pair_forces,
+                                    )
+                            elif n < max_neighbors:
                                 store_neighbor(
                                     output_row,
                                     n,
@@ -1154,9 +1228,11 @@ def _make_atom_centric_kernel(
                                     pair_energies,
                                     pair_forces,
                                 )
-                            n += 1
+                            if not SYMMETRIC_FULL_FILL:
+                                n += 1
 
-        num_neighbors[output_row] = n
+        if not SYMMETRIC_FULL_FILL:
+            num_neighbors[output_row] = n
 
     name = kernel_specialization_name(
         _cell_list_neighbor_base_name(
@@ -1166,6 +1242,21 @@ def _make_atom_centric_kernel(
         wp_dtype=wp_dtype,
         features=(
             "atom_centric",
+            # The default ("sorted") path carries the canonical 0.3.1-style name
+            # (no path token); only the codegen-distinct "direct" path adds a
+            # token so the two kernels keep separate Warp cache keys.
+            "direct" if atom_centric_path == "direct" else "",
+            "symmetric_full"
+            if (
+                atom_centric_path == "direct"
+                and not bool(half_fill)
+                and not bool(partial)
+                and not bool(return_vectors)
+                and not bool(return_distances)
+                and pair_fn is None
+            )
+            else "",
+            "half" if bool(half_fill) else "",
             "partial" if partial else "",
             *_pair_output_features(
                 return_vectors=return_vectors,
@@ -1181,9 +1272,11 @@ def _make_atom_centric_kernel(
             dtype=wp_dtype,
             entries=(
                 ("strategy", "atom_centric"),
+                ("atom_centric_path", atom_centric_path),
                 ("batched", bool(batched)),
                 ("selective", bool(selective)),
                 ("partial", bool(partial)),
+                ("half_fill", bool(half_fill)),
                 ("return_vectors", bool(return_vectors)),
                 ("return_distances", bool(return_distances)),
                 ("pair_fn", pair_fn is not None),
@@ -1199,6 +1292,7 @@ def _make_pair_centric_kernel(
     batched: bool,
     selective: bool,
     partial: bool,
+    half_fill: bool,
     return_vectors: bool,
     return_distances: bool,
     pair_fn: wp.Function | None,
@@ -1209,6 +1303,7 @@ def _make_pair_centric_kernel(
     BATCHED = wp.constant(bool(batched))
     SELECTIVE = wp.constant(bool(selective))
     PARTIAL = wp.constant(bool(partial))
+    HALF_FILL = wp.constant(bool(half_fill))
     store_neighbor = _make_store_neighbor_fn(
         wp_dtype,
         return_vectors=bool(return_vectors),
@@ -1246,7 +1341,6 @@ def _make_pair_centric_kernel(
         total_cells: wp.int32,
         n_offsets: wp.int32,
         max_radius: wp.vec3i,
-        half_fill: wp.bool,
         rebuild_flags: wp.array(dtype=wp.bool),
     ) -> None:
         """Build cell-list neighbor-matrix rows with one block per cell/offset pair
@@ -1309,8 +1403,6 @@ def _make_pair_centric_kernel(
             Number of neighbor-cell offsets encoded in the launch grid.
         max_radius : wp.vec3i
             Maximum search radius used to decode batched offsets.
-        half_fill : wp.bool
-            If True, store one direction for each unordered pair.
         rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
             Selective rebuild flags. Sentinel for non-selective specializations.
 
@@ -1392,7 +1484,7 @@ def _make_pair_centric_kernel(
             decode_radius = s_nsr
 
         offset_vec = wp.vec3i(0, 0, 0)
-        if half_fill:
+        if HALF_FILL:
             offset_vec = _decode_shift_index(offset_idx, decode_radius)
         else:
             if offset_idx == 0:
@@ -1454,7 +1546,7 @@ def _make_pair_centric_kernel(
                     continue
                 j_slot = nbr_start + j_local
                 neighbor_atom_idx = cell_atom_list[j_slot]
-                if is_self and half_fill and neighbor_atom_idx <= atom_idx:
+                if is_self and HALF_FILL and neighbor_atom_idx <= atom_idx:
                     continue
                 neighbor_atom_shift = sorted_atom_periodic_shifts[j_slot]
                 neighbor_pos = sorted_positions[j_slot]
@@ -1519,6 +1611,7 @@ def _make_pair_centric_kernel(
         wp_dtype=wp_dtype,
         features=(
             "pair_centric",
+            "half" if bool(half_fill) else "",
             "partial" if partial else "",
             *_pair_output_features(
                 return_vectors=return_vectors,
@@ -1537,6 +1630,7 @@ def _make_pair_centric_kernel(
                 ("batched", bool(batched)),
                 ("selective", bool(selective)),
                 ("partial", bool(partial)),
+                ("half_fill", bool(half_fill)),
                 ("return_vectors", bool(return_vectors)),
                 ("return_distances", bool(return_distances)),
                 ("pair_fn", pair_fn is not None),
@@ -1552,21 +1646,30 @@ def get_query_cell_list_kernel(
     batched: bool = False,
     selective: bool = False,
     partial: bool = False,
+    half_fill: bool = False,
     return_vectors: bool = False,
     return_distances: bool = False,
     pair_fn: wp.Function | None = None,
+    atom_centric_path: str = "sorted",
 ) -> wp.Kernel:
     """Return a cached cell-list neighbor-matrix kernel."""
     _require_supported_dtype(wp_dtype)
     if strategy == "atom_centric":
+        if atom_centric_path not in {"direct", "sorted"}:
+            raise ValueError(
+                "atom_centric_path must be 'direct' | 'sorted', "
+                f"got {atom_centric_path!r}",
+            )
         return _make_atom_centric_kernel(
             wp_dtype,
             batched=bool(batched),
             selective=bool(selective),
             partial=bool(partial),
+            half_fill=bool(half_fill),
             return_vectors=bool(return_vectors),
             return_distances=bool(return_distances),
             pair_fn=pair_fn,
+            atom_centric_path=atom_centric_path,
         )
     if strategy == "pair_centric":
         return _make_pair_centric_kernel(
@@ -1574,6 +1677,7 @@ def get_query_cell_list_kernel(
             batched=bool(batched),
             selective=bool(selective),
             partial=bool(partial),
+            half_fill=bool(half_fill),
             return_vectors=bool(return_vectors),
             return_distances=bool(return_distances),
             pair_fn=pair_fn,
@@ -1588,6 +1692,7 @@ def get_build_cell_list_kernel(
     wp_dtype: type,
     *,
     batched: bool = False,
+    min_cells_per_dimension: int = 4,
 ) -> wp.Kernel:
     """Return a cached cell-list CSR build kernel.
 
@@ -1599,6 +1704,9 @@ def get_build_cell_list_kernel(
         Warp scalar dtype (``wp.float32`` or ``wp.float64``).
     batched : bool, default False
         Select the batched static specialization.
+    min_cells_per_dimension : int, default 4
+        Lower bound for the per-axis cell count in sizing stages.  Pass 1 for
+        the legacy cell-grid rule.
 
     Returns
     -------
@@ -1611,9 +1719,17 @@ def get_build_cell_list_kernel(
 
     match stage_name:
         case "estimate_sizes":
-            return _make_estimate_cell_list_sizes_kernel(wp_dtype, batched=batched_mode)
+            return _make_estimate_cell_list_sizes_kernel(
+                wp_dtype,
+                batched=batched_mode,
+                min_cells_per_dimension=int(min_cells_per_dimension),
+            )
         case "construct_bin_size":
-            return _make_construct_bin_size_kernel(wp_dtype, batched=batched_mode)
+            return _make_construct_bin_size_kernel(
+                wp_dtype,
+                batched=batched_mode,
+                min_cells_per_dimension=int(min_cells_per_dimension),
+            )
         case "count_atoms":
             return _make_count_atoms_per_bin_kernel(wp_dtype, batched=batched_mode)
         case "bin_atoms":

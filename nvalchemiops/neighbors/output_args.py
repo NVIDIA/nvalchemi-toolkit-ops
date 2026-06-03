@@ -60,7 +60,12 @@ def _reject_present(value: Any | None, name: str, reason: str) -> None:
 
 
 def _validate_pair_params_ndim(pair_params: wp.array) -> None:
-    """Validate the pair-parameter array rank."""
+    """Validate the pair-parameter array rank.
+
+    Only the rank (``ndim == 2``) is checked; the second dimension ``K`` is not
+    validated against ``pair_fn`` (there is no compile-time ``K``), so the caller
+    must size ``pair_params`` to cover every column the functor reads.
+    """
     if _array_ndim(pair_params) != 2:
         raise ValueError("pair_params must have ndim == 2")
 

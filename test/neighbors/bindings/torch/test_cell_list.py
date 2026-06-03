@@ -317,6 +317,99 @@ class TestCellListEdgeCases:
         assert neighbor_search_radius.dtype == torch.int32
         assert neighbor_search_radius.device == torch.device(device)
 
+    def test_estimate_cell_list_sizes_min_cells_one_pbc_shapes(self, device, dtype):
+        """Legacy min-cell sizing should treat (3,) and (1, 3) PBC equally."""
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3) * 11.0
+        pbc_2d = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+        pbc_1d = pbc_2d.reshape(3)
+        cutoff = 20.0
+
+        max_cells_2d, neighbor_search_radius_2d = estimate_cell_list_sizes(
+            cell,
+            pbc_2d,
+            cutoff,
+            min_cells_per_dimension=1,
+        )
+        max_cells_1d, neighbor_search_radius_1d = estimate_cell_list_sizes(
+            cell,
+            pbc_1d,
+            cutoff,
+            min_cells_per_dimension=1,
+        )
+
+        expected_radius = torch.tensor([2, 2, 2], dtype=torch.int32, device=device)
+        assert max_cells_2d == 1
+        assert max_cells_1d == 1
+        assert torch.equal(neighbor_search_radius_2d, expected_radius)
+        assert torch.equal(neighbor_search_radius_1d, expected_radius)
+
+    def test_build_cell_list_min_cells_one_uses_legacy_grid(self, device, dtype):
+        """build_cell_list should expose the legacy one-cell grid policy."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3) * 11.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+        cutoff = 20.0
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff,
+            min_cells_per_dimension=1,
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius,
+            device,
+        )
+
+        build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            *cell_list_cache,
+            min_cells_per_dimension=1,
+        )
+
+        assert torch.equal(
+            cell_list_cache[0],
+            torch.tensor([1, 1, 1], dtype=torch.int32, device=device),
+        )
+
+    def test_atom_centric_cell_list_allocates_legacy_grid(self, device, dtype):
+        """Explicit atom-centric cell_list runs on the legacy single-cell grid.
+
+        With ``cutoff`` larger than the box, the grid collapses to one cell; the
+        atom-centric path must still enumerate the pair correctly.
+        """
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3) * 11.0
+        pbc = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+
+        matrix, num_neighbors, _shifts = cell_list(
+            positions,
+            20.0,
+            cell,
+            pbc,
+            max_neighbors=1024,
+            return_neighbor_list=False,
+            strategy="atom_centric",
+        )
+
+        assert matrix.shape[0] == 2
+        assert num_neighbors.shape == (2,)
+        # Both atoms are within cutoff of each other (and periodic images).
+        assert int(num_neighbors.min()) >= 1
+
     def test_large_cutoff(self, device, dtype, return_neighbor_list):
         """Large cutoff that includes many neighbors should work correctly."""
         positions, cell, pbc = create_random_system(
@@ -698,6 +791,46 @@ class TestCellListOutputFormats:
         )
         for result in results:
             assert result.device == torch.device(device)
+
+
+def _sorted_pairs(neighbor_list_coo):
+    """Sort COO (source, target) pairs for order-independent comparison."""
+    sources = neighbor_list_coo[0]
+    targets = neighbor_list_coo[1]
+    keys = sources.to(torch.int64) * (int(targets.max().item()) + 1 if targets.numel() else 1) + targets.to(torch.int64)
+    order = torch.argsort(keys)
+    return torch.stack([sources[order], targets[order]], dim=0)
+
+
+class TestCellListAtomCentricPathEquivalence:
+    """``atom_centric_path="sorted"`` matches ``"direct"`` (CUDA-only)."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(),
+        reason="atom-centric sorted/direct paths exercise CUDA kernels.",
+    )
+    def test_sorted_matches_direct(self):
+        """Sorted and direct atom-centric paths produce the same pair set."""
+        torch.manual_seed(0)
+        device = "cuda"
+        positions = torch.rand(300, 3, dtype=torch.float32, device=device) * 20.0
+        cell = (torch.eye(3, dtype=torch.float32, device=device) * 20.0).reshape(1, 3, 3)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        cutoff = 5.0
+
+        direct = cell_list(
+            positions, cutoff, cell, pbc,
+            strategy="atom_centric", atom_centric_path="direct",
+            return_neighbor_list=True,
+        )
+        sorted_ = cell_list(
+            positions, cutoff, cell, pbc,
+            strategy="atom_centric", atom_centric_path="sorted",
+            return_neighbor_list=True,
+        )
+        torch.testing.assert_close(
+            _sorted_pairs(sorted_[0]).cpu(), _sorted_pairs(direct[0]).cpu()
+        )
 
 
 class TestCellListCompile:
@@ -1215,6 +1348,116 @@ class TestCellListSelectiveRebuildFlags:
             "num_neighbors should match full rebuild when flag=True"
         )
 
+    @pytest.mark.parametrize("pbc_flag", [[True, True, True], [False, False, False]])
+    def test_nonselective_matches_true_rebuild_flag(self, device, dtype, pbc_flag):
+        """Non-selective query output should match selective flag=True output."""
+        positions, cell, pbc = create_random_system(
+            num_atoms=12,
+            cell_size=6.0,
+            dtype=dtype,
+            device=device,
+            seed=7,
+            pbc_flag=pbc_flag,
+        )
+        cell = cell.reshape(1, 3, 3)
+        pbc = pbc.reshape(3)
+        cutoff = 2.0
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, cutoff)
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0], max_cells, neighbor_search_radius, device
+        )
+        (
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        ) = cell_list_cache
+
+        build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        )
+
+        max_neighbors = 32
+        nm_ref = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        shifts_ref = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_ref = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm_ref,
+            shifts_ref,
+            nn_ref,
+            strategy="atom_centric",
+        )
+
+        nm_sel = torch.full_like(nm_ref, -1)
+        shifts_sel = torch.zeros_like(shifts_ref)
+        nn_sel = torch.full_like(nn_ref, 99)
+        rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm_sel,
+            shifts_sel,
+            nn_sel,
+            rebuild_flags=rebuild_flags,
+            strategy="atom_centric",
+        )
+
+        assert torch.equal(nn_sel, nn_ref)
+        for row_idx, count in enumerate(nn_ref.detach().cpu().tolist()):
+            active_ref = [
+                (
+                    int(nm_ref[row_idx, col].item()),
+                    tuple(int(x) for x in shifts_ref[row_idx, col].cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            active_sel = [
+                (
+                    int(nm_sel[row_idx, col].item()),
+                    tuple(int(x) for x in shifts_sel[row_idx, col].cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            assert sorted(active_sel) == sorted(active_ref)
+
 
 class TestCellListAutograd:
     """Autograd path for per-pair distances and vectors.
@@ -1250,6 +1493,36 @@ class TestCellListAutograd:
         assert dists.requires_grad and vecs.requires_grad
         assert dists.shape == (positions.shape[0], nm.shape[1])
         assert vecs.shape == (positions.shape[0], nm.shape[1], 3)
+
+    def test_coo_distances_vectors_aligned_and_differentiable(self, device):
+        """``return_neighbor_list=True`` repacks per-pair geometry into COO
+        order aligned with the neighbor list and keeps the autograd link."""
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+        nl, _nptr, nl_shifts, dists, vecs = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+            return_distances=True,
+            return_vectors=True,
+        )
+        num_pairs = nl.shape[1]
+        assert dists.shape == (num_pairs,)
+        assert vecs.shape == (num_pairs, 3)
+        # COO geometry must index-align with the neighbor list.
+        i_idx, j_idx = nl[0].long(), nl[1].long()
+        rij = (
+            positions[j_idx]
+            - positions[i_idx]
+            + nl_shifts.to(positions.dtype) @ cell[0]
+        )
+        assert torch.allclose(rij, vecs)
+        assert torch.allclose(rij.norm(dim=1), dists)
+        # Autograd still flows through the COO outputs.
+        dists.pow(2).sum().backward()
+        assert positions.grad is not None and torch.isfinite(positions.grad).all()
 
     def test_return_tuple_shape_extends_with_flags(self, device):
         """Tuple shape changes only when pair-output flags are set; the
@@ -1403,9 +1676,21 @@ class TestCellListAutograd:
         )
         assert not d_b.requires_grad and not v_b.requires_grad
         assert torch.equal(nn_a, nn_b)
-        # Active-slot comparison: build a (N, M) mask from num_neighbors and
-        # gather the active entries from each tensor.
-        col_idx = torch.arange(nm_a.shape[1], device=nm_a.device)
-        active = col_idx[None, :] < nn_a[:, None]
-        assert torch.equal(nm_a[active], nm_b[active])
-        assert torch.equal(sh_a[active], sh_b[active])
+        # Active-slot comparison. The autograd-capable path may emit each row in
+        # a different order, so compare the active (neighbor, shift) tuples.
+        for row_idx, count in enumerate(nn_a.detach().cpu().tolist()):
+            active_a = [
+                (
+                    int(nm_a[row_idx, col].item()),
+                    tuple(int(x) for x in sh_a[row_idx, col].detach().cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            active_b = [
+                (
+                    int(nm_b[row_idx, col].item()),
+                    tuple(int(x) for x in sh_b[row_idx, col].detach().cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            assert sorted(active_a) == sorted(active_b)

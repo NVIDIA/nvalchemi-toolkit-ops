@@ -888,6 +888,89 @@ class TestJaxNaiveAutograd:
                 half_fill=True,
             )
 
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64], ids=["f32", "f64"])
+    @pytest.mark.parametrize("cutoff", [1.5, 2.5], ids=["R1", "multi_image"])
+    def test_hvp_nonlinear_loss_matches_analytic(self, cutoff, dtype):
+        """Regression: the HVP of a loss *nonlinear in distance* must match the
+        exact analytic Hessian.
+
+        ``loss = (distances**2).sum()`` is quadratic in positions, so its HVP is
+        known in closed form.  The previous detached-distance ``custom_vjp`` got
+        this ~45% wrong (it dropped the cotangent's own position-dependence); the
+        live-reconstruction path is exact.  Covers R==1 and the multi-image regime,
+        f32 and f64.
+        """
+        import numpy as np
+
+        from .conftest import analytic_distance_sq_hvp
+
+        pos, cell, pbc = self._make_system(dtype=dtype)
+        v = jax.random.normal(jax.random.key(1), pos.shape, dtype=dtype)
+
+        def loss(p):
+            *_, d, _ = naive_neighbor_list(
+                p,
+                cutoff,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=128,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return (d**2).sum()
+
+        hvp = np.asarray(jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos))
+        nl, *_ = naive_neighbor_list(
+            pos,
+            cutoff,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=128,
+            return_neighbor_list=True,
+        )
+        hvp_true = analytic_distance_sq_hvp(nl, v, pos.shape[0])
+        tol = 1e-4 if dtype == jnp.float32 else 1e-9
+        assert nl.shape[1] > 0
+        assert np.allclose(hvp, hvp_true, atol=tol, rtol=tol)
+
+    def test_coincident_atoms_grad_finite_matches_torch(self):
+        """Two *distinct* atoms at identical coordinates (distance 0, an
+        active kernel-emitted pair) must yield a finite gradient — ``jnp.linalg.norm``
+        has a NaN derivative at ``r == 0``, so the reconstruction masks zero-vector
+        slots.  Matches torch, which returns a finite 0 contribution; one such pair
+        would otherwise NaN-poison the entire gradient.
+        """
+        import numpy as np
+        import torch
+
+        from nvalchemiops.torch.neighbors.naive import naive_neighbor_list as nl_torch
+
+        pos_np = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+
+        def loss_j(p):
+            *_, d, _ = naive_neighbor_list(
+                p, 1.5, max_neighbors=8, return_distances=True, return_vectors=True
+            )
+            return d.sum()
+
+        g_j = np.asarray(jax.grad(loss_j)(jnp.asarray(pos_np, dtype=jnp.float64)))
+        assert np.isfinite(g_j).all()
+
+        if not torch.cuda.is_available():
+            pytest.skip("torch CUDA required for cross-backend check")
+        pos_t = torch.tensor(
+            pos_np, dtype=torch.float64, device="cuda", requires_grad=True
+        )
+
+        def loss_t(p):
+            *_, d, _ = nl_torch(
+                p, 1.5, max_neighbors=8, return_distances=True, return_vectors=True
+            )
+            return d.sum()
+
+        g_t = torch.autograd.grad(loss_t(pos_t), pos_t)[0].detach().cpu().numpy()
+        assert np.allclose(g_j, g_t, atol=1e-9)
+
     def test_hvp_matches_torch_at_machine_precision(self):
         """Cross-backend HVP agreement on identical inputs.
 

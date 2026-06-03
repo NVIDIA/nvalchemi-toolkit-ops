@@ -285,17 +285,28 @@ class TestJaxBatchClusterTileAutograd:
             loss, (pos,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"], eps=1e-3
         )
 
-    def test_pair_fn_rejected_with_clear_message(self):
+    def test_pair_fn_supported(self):
+        """pair_fn is now wired through the JAX batch_cluster_tile binding
+        (matrix and COO; returns per-pair pe/pf).  See test_pair_fn.py for coverage."""
+        from .test_pair_fn import _sum_pair_fn_f32
+
         pos, cell_batch, batch_ptr = self._make_batch()
-        with pytest.raises(NotImplementedError, match="pair_fn"):
-            batch_cluster_tile_neighbor_list(
-                pos,
-                1.5,
-                cell_batch,
-                batch_ptr,
-                return_distances=True,
-                pair_fn=object(),
-            )
+        pp = ((jnp.arange(pos.shape[0], dtype=jnp.float32) + 1.0) * 0.5).reshape(-1, 1)
+        out = batch_cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell_batch,
+            batch_ptr,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn_f32,
+            pair_params=pp,
+        )
+        # nm, nn, shifts, distances, vectors, pe, pf
+        assert len(out) == 7
+        assert out[5].shape == (pos.shape[0], out[0].shape[1])
+        assert out[6].shape == (pos.shape[0], out[0].shape[1], 3)
 
     def test_hessian_vector_product_smoke(self):
         """fp32 second-order HVP smoke — see TestJaxClusterTileAutograd."""

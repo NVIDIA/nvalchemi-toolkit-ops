@@ -760,18 +760,43 @@ class TestJaxBatchCellListAutograd:
         assert jnp.isfinite(hvp).all().item()
         assert hvp.shape == pos.shape
 
-    def test_pair_fn_rejected_with_clear_message(self):
-        """pair_fn remains rejected — only return_distances/return_vectors
-        are wired through the JAX bindings.
-        """
-        pos, cell, pbc, batch_idx = self._make_two_systems()
-        with pytest.raises(NotImplementedError, match="pair_fn"):
-            batch_cell_list(
-                pos,
-                1.5,
-                cell=cell,
-                pbc=pbc,
-                batch_idx=batch_idx,
-                return_distances=True,
-                pair_fn=object(),  # any non-None sentinel
-            )
+    def test_target_indices_partial_matches_full_restricted(self):
+        """``target_indices`` (partial neighbor lists) is wired (task 5).
+
+        The compact output has ``num_targets`` rows (row ``r`` -> atom
+        ``target_indices[r]``); each row's neighbor set must equal the full
+        matrix restricted to that atom.  Targets span both systems, exercising
+        the per-target ``batch_idx`` lookup.  COO source index ``nl[0]`` is the
+        compact row in ``[0, num_targets)`` (matches the torch contract)."""
+        pos, cell, pbc, batch_idx = self._make_two_systems(n_per=6)
+        n = pos.shape[0]
+        # Targets in both systems (0..5 -> system 0, 6..11 -> system 1).
+        targets = jnp.array([0, 2, 7, 9], dtype=jnp.int32)
+        nt = int(targets.shape[0])
+        mn = 24
+
+        pnm, pnn, _ = batch_cell_list(
+            pos, 1.5, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            max_neighbors=mn, target_indices=targets, fill_value=n,
+        )
+        assert pnm.shape == (nt, mn) and pnn.shape == (nt,)
+
+        fnm, fnn, _ = batch_cell_list(
+            pos, 1.5, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            max_neighbors=mn, fill_value=n,
+        )
+        pnm, pnn, fnm, fnn, tg = (np.asarray(x) for x in (pnm, pnn, fnm, fnn, targets))
+
+        def row_set(nm, count):
+            return {int(nm[k]) for k in range(int(count))}
+
+        for r in range(nt):
+            assert row_set(pnm[r], pnn[r]) == row_set(fnm[int(tg[r])], fnn[int(tg[r])])
+
+        nl, _nptr, _nls = batch_cell_list(
+            pos, 1.5, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            max_neighbors=mn, target_indices=targets, return_neighbor_list=True,
+        )
+        nl = np.asarray(nl)
+        if nl.shape[1] > 0:
+            assert int(nl[0].max()) < nt

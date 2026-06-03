@@ -28,6 +28,8 @@ non-32-aligned ``N`` is padded internally).
 
 from __future__ import annotations
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -38,6 +40,10 @@ from nvalchemiops.jax.neighbors._autograd import (
     _build_index_residuals,
     _NeighborForwardOutput,
     _route_pair_outputs,
+)
+from nvalchemiops.jax.neighbors.neighbor_utils import (
+    coo_pack_pair_geometry,
+    get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
@@ -718,6 +724,83 @@ _jax_query_cluster_tile_pair = jax_callable(
     graph_mode=GraphMode.WARP,
 )
 
+
+@functools.cache
+def _get_jax_cluster_tile_pair_fn_callable(pair_fn):
+    """Build (and cache) a ``jax_callable`` that closes over ``pair_fn`` for the
+    cluster-tile pair-output → matrix kernel.
+
+    Same as ``_jax_query_cluster_tile_pair`` but the callback closes over
+    ``pair_fn`` (which cannot cross the JAX trace boundary as data) and adds the
+    ``pair_params`` input + ``pair_energies`` / ``pair_forces`` outputs.  Cached by
+    ``pair_fn`` identity; one recompile per distinct ``pair_fn``.  fp32-only, like
+    the rest of the cluster-tile JAX binding.
+    """
+
+    def _callback(
+        sorted_atom_index: wp.array(dtype=wp.int32),
+        sorted_pos_x: wp.array(dtype=wp.float32),
+        sorted_pos_y: wp.array(dtype=wp.float32),
+        sorted_pos_z: wp.array(dtype=wp.float32),
+        num_tiles: wp.array(dtype=wp.int32),
+        tile_row_group: wp.array(dtype=wp.int32),
+        tile_col_group: wp.array(dtype=wp.int32),
+        cell: wp.array(dtype=wp.mat33f),
+        inv_cell: wp.array(dtype=wp.mat33f),
+        neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+        num_neighbors: wp.array(dtype=wp.int32),
+        neighbor_matrix_shifts: wp.array(dtype=wp.int32, ndim=3),
+        neighbor_vectors: wp.array(dtype=wp.vec3f, ndim=2),
+        neighbor_distances: wp.array(dtype=wp.float32, ndim=2),
+        pair_params: wp.array(dtype=wp.float32, ndim=2),
+        pair_energies: wp.array(dtype=wp.float32, ndim=2),
+        pair_forces: wp.array(dtype=wp.vec3f, ndim=2),
+        cutoff: wp.float32,
+        natom: wp.int32,
+    ) -> None:
+        _warp_query_cluster_tile(
+            sorted_atom_index=sorted_atom_index,
+            sorted_pos_x=sorted_pos_x,
+            sorted_pos_y=sorted_pos_y,
+            sorted_pos_z=sorted_pos_z,
+            num_tiles=num_tiles,
+            tile_row_group=tile_row_group,
+            tile_col_group=tile_col_group,
+            cell=cell,
+            inv_cell=inv_cell,
+            cutoff=float(cutoff),
+            natom=int(natom),
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            wp_dtype=wp.float32,
+            device=str(sorted_pos_x.device),
+            return_vectors=True,
+            return_distances=True,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            pair_fn=pair_fn,
+            pair_params=pair_params,
+            pair_energies=pair_energies,
+            pair_forces=pair_forces,
+        )
+
+    return jax_callable(
+        _callback,
+        num_outputs=7,
+        in_out_argnames=[
+            "neighbor_matrix",
+            "num_neighbors",
+            "neighbor_matrix_shifts",
+            "neighbor_vectors",
+            "neighbor_distances",
+            "pair_energies",
+            "pair_forces",
+        ],
+        graph_mode=GraphMode.WARP,
+    )
+
+
 _jax_query_cluster_tile_coo = jax_callable(
     _query_cluster_tile_coo_callback,
     num_outputs=3,
@@ -736,36 +819,6 @@ _jax_query_cluster_tile_coo_segmented = jax_callable(
 # =============================================================================
 # User-facing JAX entry points
 # =============================================================================
-def _reject_pair_fn_in_jax(
-    pair_fn,
-    pair_params,
-    pair_energies,
-    pair_forces,
-) -> None:
-    """Reject ``pair_fn`` and its associated buffers.
-
-    The cluster-tile JAX binding uses ``jax_callable`` to enter Warp; a
-    callable ``pair_fn`` cannot be carried across the JAX trace boundary,
-    so the energy/force pair-output axes remain unsupported on the JAX
-    side.  ``return_vectors`` / ``return_distances`` are now wired through
-    the autograd path.
-    """
-    if (
-        pair_fn is not None
-        or pair_params is not None
-        or pair_energies is not None
-        or pair_forces is not None
-    ):
-        raise NotImplementedError(
-            "pair_fn / pair_params / pair_energies / pair_forces are "
-            "unsupported by the JAX cluster_tile binding; the "
-            "jax_callable pathway cannot carry a callable pair_fn across "
-            "the trace boundary.  Only return_distances and "
-            "return_vectors are wired here.  Use the torch binding or "
-            "call the warp launcher directly for the other features."
-        )
-
-
 def _normalize_cell(cell: jax.Array, dtype: jnp.dtype) -> jax.Array:
     """Coerce ``(3, 3)`` or ``(1, 3, 3)`` cell to ``(1, 3, 3)`` with given dtype."""
     if cell.ndim == 2:
@@ -1023,8 +1076,13 @@ def query_cluster_tile(
     on Warp arrays.
     """
 
-    _reject_pair_fn_in_jax(pair_fn, pair_params, pair_energies, pair_forces)
-    has_pair_outputs = bool(return_vectors) or bool(return_distances)
+    if pair_fn is not None and pair_params is None:
+        raise ValueError(
+            "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
+        )
+    has_pair_outputs = (
+        bool(return_vectors) or bool(return_distances) or (pair_fn is not None)
+    )
     dual_cutoff = cutoff2 is not None
     selective = rebuild_flags is not None
     if (dual_cutoff or selective) and has_pair_outputs:
@@ -1084,6 +1142,56 @@ def query_cluster_tile(
             neighbor_vectors = jnp.zeros((natom, max_neighbors, 3), dtype=jnp.float32)
         if neighbor_distances is None:
             neighbor_distances = jnp.zeros((natom, max_neighbors), dtype=jnp.float32)
+        if pair_fn is not None:
+            # pair_fn path: auto-allocate energy/force buffers and run the
+            # call-time callable that closes over ``pair_fn`` (returns 7 outputs).
+            if pair_energies is None:
+                pair_energies = jnp.zeros((natom, max_neighbors), dtype=jnp.float32)
+            if pair_forces is None:
+                pair_forces = jnp.zeros((natom, max_neighbors, 3), dtype=jnp.float32)
+            pair_params_arg = jnp.asarray(pair_params, dtype=jnp.float32)
+            pair_callable = _get_jax_cluster_tile_pair_fn_callable(pair_fn)
+            (
+                neighbor_matrix,
+                num_neighbors,
+                neighbor_matrix_shifts,
+                neighbor_vectors,
+                neighbor_distances,
+                pair_energies,
+                pair_forces,
+            ) = pair_callable(
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                cell_n,
+                inv_cell_n,
+                neighbor_matrix,
+                num_neighbors,
+                neighbor_matrix_shifts,
+                neighbor_vectors,
+                neighbor_distances,
+                pair_params_arg,
+                pair_energies,
+                pair_forces,
+                float(cutoff),
+                int(natom),
+            )
+            col_idx = jnp.arange(max_neighbors, dtype=jnp.int32)[jnp.newaxis, :]
+            active = col_idx < num_neighbors[:, jnp.newaxis]
+            neighbor_matrix = jnp.where(active, neighbor_matrix, jnp.int32(fill_value))
+            return (
+                neighbor_matrix,
+                num_neighbors,
+                neighbor_matrix_shifts,
+                neighbor_vectors,
+                neighbor_distances,
+                pair_energies,
+                pair_forces,
+            )
         (
             neighbor_matrix,
             num_neighbors,
@@ -1346,13 +1454,17 @@ def _cluster_tile_pair_outputs_forward(
     cutoff: float,
     max_neighbors: int,
     fill_value: int,
+    pair_fn=None,
+    pair_params: jax.Array | None = None,
 ) -> _NeighborForwardOutput:
     """Forward closure for the cluster_tile autograd path.
 
     Builds the cluster tiles + runs the pair-output query kernel inside a
     single closure.  positions/cell are stop_gradient'd before any Warp
     launch; the autograd primitive's reconstruction backward gets the
-    live tensors separately.
+    live tensors separately.  When ``pair_fn`` is set, ``query_cluster_tile``
+    returns per-pair ``pair_energies`` / ``pair_forces`` which ride along in
+    ``extra_outputs`` (forward-only).
     """
     positions = jax.lax.stop_gradient(positions)
     cell = jax.lax.stop_gradient(cell)
@@ -1374,7 +1486,7 @@ def _cluster_tile_pair_outputs_forward(
         tile_col_group,
     ) = build_cluster_tile_list(positions, cutoff, cell)
 
-    nm, nn, shifts, vec, dist = query_cluster_tile(
+    out = query_cluster_tile(
         sorted_atom_index,
         sorted_pos_x,
         sorted_pos_y,
@@ -1389,7 +1501,14 @@ def _cluster_tile_pair_outputs_forward(
         fill_value=fill_value,
         return_vectors=True,
         return_distances=True,
+        pair_fn=pair_fn,
+        pair_params=pair_params,
     )
+    has_pair_fn = pair_fn is not None
+    if has_pair_fn:
+        nm, nn, shifts, vec, dist, pe, pf = out
+    else:
+        nm, nn, shifts, vec, dist = out
 
     i_idx, j_idx, shifts_ret, _, mask_ = _build_index_residuals(
         nm,
@@ -1397,10 +1516,11 @@ def _cluster_tile_pair_outputs_forward(
         shifts,
     )
     K, M = nm.shape
+    extra_outputs = (nm, nn, shifts, pe, pf) if has_pair_fn else (nm, nn, shifts)
     return _NeighborForwardOutput(
         distances=dist,
         vectors=vec,
-        extra_outputs=(nm, nn, shifts),
+        extra_outputs=extra_outputs,
         i_idx=i_idx,
         j_idx=j_idx,
         shifts=shifts_ret,
@@ -1524,18 +1644,25 @@ def cluster_tile_neighbor_list(
         Lower-level query step.
     """
 
+    if positions.dtype != jnp.float32:
+        raise TypeError("positions must be float32")
     if format not in ("matrix", "coo", "tile"):
         raise ValueError(
             f"format must be 'matrix' | 'coo' | 'tile'; got {format!r}",
         )
-    _reject_pair_fn_in_jax(pair_fn, pair_params, pair_energies, pair_forces)
-    has_pair_outputs = bool(return_vectors) or bool(return_distances)
+    if pair_fn is not None and pair_params is None:
+        raise ValueError(
+            "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
+        )
+    has_pair_outputs = (
+        bool(return_vectors) or bool(return_distances) or (pair_fn is not None)
+    )
     dual_cutoff = cutoff2 is not None
     selective = rebuild_flags is not None
-    if has_pair_outputs and format != "matrix":
+    if has_pair_outputs and format == "tile":
         raise NotImplementedError(
-            "return_distances / return_vectors are only supported with "
-            "format='matrix' on the JAX cluster_tile binding.",
+            "return_distances / return_vectors / pair_fn are not supported with "
+            "format='tile' on the JAX cluster_tile binding; use 'matrix' or 'coo'.",
         )
     if dual_cutoff and format != "matrix":
         raise NotImplementedError(
@@ -1603,11 +1730,24 @@ def cluster_tile_neighbor_list(
         nn0 = jnp.empty(0, dtype=jnp.int32)
         ns0 = jnp.empty((0, int(max_neighbors), 3), dtype=jnp.int32)
         if format == "coo":
-            return (
+            coo_base = (
                 jnp.empty((2, 0), dtype=jnp.int32),
                 jnp.zeros(1, dtype=jnp.int32),
                 jnp.empty((0, 3), dtype=jnp.int32),
             )
+            coo_tail: list = []
+            if return_distances:
+                coo_tail.append(jnp.empty(0, dtype=positions.dtype))
+            if return_vectors:
+                coo_tail.append(jnp.empty((0, 3), dtype=positions.dtype))
+            if pair_fn is not None:
+                coo_tail.extend(
+                    (
+                        jnp.empty(0, dtype=positions.dtype),
+                        jnp.empty((0, 3), dtype=positions.dtype),
+                    )
+                )
+            return (*coo_base, *coo_tail)
         if format == "tile":
             # 7-tuple matching the non-empty ``"tile"`` branch shape.
             empty_i32 = jnp.empty(0, dtype=jnp.int32)
@@ -1664,19 +1804,58 @@ def cluster_tile_neighbor_list(
             "cutoff": float(cutoff),
             "max_neighbors": int(max_neighbors),
             "fill_value": int(fill_value),
+            "pair_fn": pair_fn,
+            "pair_params": pair_params,
         }
-        distances_out, vectors_out, nm_out, nn_out, shifts_out = _route_pair_outputs(
+        route_out = _route_pair_outputs(
             positions,
             cell,
             _cluster_tile_pair_outputs_forward,
             forward_kwargs,
         )
-        base = (nm_out, nn_out, shifts_out)
-        if return_distances and return_vectors:
-            return (*base, distances_out, vectors_out)
+        if pair_fn is not None:
+            (
+                distances_out,
+                vectors_out,
+                nm_out,
+                nn_out,
+                shifts_out,
+                pe_out,
+                pf_out,
+            ) = route_out
+        else:
+            distances_out, vectors_out, nm_out, nn_out, shifts_out = route_out
+            pe_out = pf_out = None
+        if format == "coo":
+            # Mirror the naive / cell_list COO contract: convert the matrix
+            # topology to a flat neighbor list and repack the per-pair geometry
+            # (and pair_fn outputs) into the same COO order.  Eager-only, like the
+            # matrix->COO index conversion (the pair count is data-dependent).
+            nl, nptr, nl_shifts = get_neighbor_list_from_neighbor_matrix(
+                nm_out,
+                num_neighbors=nn_out,
+                neighbor_shift_matrix=shifts_out,
+                fill_value=int(fill_value),
+            )
+            base = (nl, nptr, nl_shifts)
+            active = nm_out != int(fill_value)
+            distances_out, vectors_out = coo_pack_pair_geometry(
+                active, distances_out, vectors_out
+            )
+            if pair_fn is not None:
+                pe_out, pf_out = coo_pack_pair_geometry(active, pe_out, pf_out)
+        else:
+            base = (nm_out, nn_out, shifts_out)
+        # Return tail mirrors the torch contract: optional distances / vectors,
+        # then (pe, pf) when ``pair_fn`` is set.
+        tail: list = []
         if return_distances:
-            return (*base, distances_out)
-        return (*base, vectors_out)
+            tail.append(distances_out)
+        if return_vectors:
+            tail.append(vectors_out)
+        if pair_fn is not None:
+            tail.extend((pe_out, pf_out))
+        return (*base, *tail)
 
     # Tile candidates must cover the larger radius so the cutoff2 matrix cannot
     # miss pairs in the (cutoff, cutoff2] shell; the query filters each matrix

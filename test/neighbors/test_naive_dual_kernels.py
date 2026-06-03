@@ -36,14 +36,22 @@ from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_
 from .test_utils import create_simple_cubic_system
 
 _FILL_NAIVE_DUAL = {
-    t: get_naive_neighbor_matrix_dual_cutoff_kernel(t, pbc_mode="none", batched=False)
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_dual_cutoff_kernel(
+            t, pbc_mode="none", batched=False, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 _FILL_NAIVE_PBC_DUAL_WRAP = {
-    t: get_naive_neighbor_matrix_dual_cutoff_kernel(
-        t, pbc_mode="wrap_on_entry", batched=False
-    )
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_dual_cutoff_kernel(
+            t, pbc_mode="wrap_on_entry", batched=False, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 
 
@@ -117,7 +125,7 @@ class TestNaiveDualCutoffKernels:
 
         # Launch kernel
         wp.launch(
-            _FILL_NAIVE_DUAL[wp_dtype],
+            _FILL_NAIVE_DUAL[half_fill][wp_dtype],
             dim=(1, 1, positions.shape[0]),
             device=wp_device,
             inputs=[
@@ -142,7 +150,6 @@ class TestNaiveDualCutoffKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                half_fill,
                 empty_rebuild_flags,
             ],
         )
@@ -285,7 +292,7 @@ class TestNaiveDualCutoffKernels:
 
         # Launch kernel
         wp.launch(
-            _FILL_NAIVE_PBC_DUAL_WRAP[wp_dtype],
+            _FILL_NAIVE_PBC_DUAL_WRAP[True][wp_dtype],
             dim=(1, max_shifts, positions.shape[0]),
             device=wp_device,
             inputs=[
@@ -310,7 +317,6 @@ class TestNaiveDualCutoffKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                True,  # half_fill
                 empty_rebuild_flags,
             ],
         )

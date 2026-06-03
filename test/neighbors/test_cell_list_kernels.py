@@ -818,12 +818,12 @@ class TestCellListPairCentric:
             nm_p, nn_p
         ), "Pair sets must match between kernels (row order may differ)"
 
-    def test_dispatch_threshold_env(self, device, dtype, monkeypatch):
-        """``select_cell_list_strategy`` and env override."""
+    def test_dispatch_threshold_rule(self, device, dtype):
+        """``select_cell_list_strategy`` applies the (N, cutoff) threshold rule."""
         del device, dtype  # not used; fixture present for parametrization
         from nvalchemiops.torch.neighbors.cell_list import select_cell_list_strategy
 
-        # Default rule: clause 1 (cutoff >= 8 AND N <= 65536) → pair_centric.
+        # Clause 1 (cutoff >= 8 AND N <= 65536) → pair_centric.
         assert select_cell_list_strategy(4096, 12.0) == "pair_centric"
         # Outside every clause → atom_centric.
         assert select_cell_list_strategy(131072, 12.0) == "atom_centric"
@@ -831,12 +831,6 @@ class TestCellListPairCentric:
         assert select_cell_list_strategy(2048, 6.0) == "pair_centric"
         # Clause 3 (cutoff >= 4 AND N <= 1024) → pair_centric.
         assert select_cell_list_strategy(1024, 4.0) == "pair_centric"
-
-        # Env override pins to a specific strategy regardless of rule.
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "atom_centric")
-        assert select_cell_list_strategy(1024, 12.0) == "atom_centric"
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "pair_centric")
-        assert select_cell_list_strategy(131072, 4.0) == "pair_centric"
 
     def test_pair_centric_with_rebuild_flag_false(self, device, dtype):
         """rebuild_flags=False with pair-centric must preserve outputs."""
@@ -999,13 +993,6 @@ class TestQueryCellListErrorPaths:
         with pytest.raises(ValueError, match="atom_centric"):
             query_cell_list(**kwargs, strategy="bogus")
 
-    def test_dispatch_log_env_prints(self, device, dtype, monkeypatch, capsys):
-        kwargs = _make_query_cell_list_kwargs(device, dtype)
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY_LOG", "1")
-        query_cell_list(**kwargs, strategy="atom_centric")
-        out = capsys.readouterr().out
-        assert "[neighlist-strategy] (wp.launcher)" in out
-        assert "atom_centric_local_count_sorted" in out
 
     def test_pair_centric_success_path(self, device, dtype):
         """Valid ``strategy='pair_centric'`` + ``n_outer`` exercises the

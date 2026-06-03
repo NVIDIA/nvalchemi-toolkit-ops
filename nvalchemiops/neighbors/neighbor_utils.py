@@ -250,7 +250,33 @@ __all__ = [
     "wrap_positions_single",
     "wrap_positions_batch",
     "wp_device_str",
+    "zero_array",
 ]
+
+
+def zero_array(array: wp.array, device: str) -> None:
+    """Zero all elements of a Warp array in place.
+
+    .. deprecated::
+        Use ``array.zero_()`` directly.  This shim forwards to it and will be
+        removed in a future release.
+
+    Parameters
+    ----------
+    array : wp.array, dtype=Any
+        OUTPUT: Array to be zeroed in place.
+    device : str
+        Accepted for backward compatibility and ignored; ``array.zero_()``
+        runs on the array's own device.
+    """
+    warnings.warn(
+        "nvalchemiops.neighbors.zero_array is deprecated; use array.zero_() "
+        "instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    del device  # retained only for signature compatibility
+    array.zero_()
 
 
 @wp.func

@@ -370,10 +370,9 @@ class TestTileNeighborListErrors:
     def test_wrong_dtype(self, device):
         positions = torch.rand(32, 3, dtype=torch.float64, device=device) * 10.0
         cell = _orthorhombic_cell(10.0, device)
-        # The torch wrapper accepts float64 in its signature; the Warp
-        # layer rejects non-float32 inputs with ValueError (cluster_tile
-        # is float32-only — see ``cluster_tile._require_f32``).
-        with pytest.raises((TypeError, ValueError)):
+        # Cluster-tile is float32-only; the torch wrapper rejects non-float32
+        # positions at the frontend with TypeError.
+        with pytest.raises(TypeError, match="float32"):
             cluster_tile_neighbor_list(positions, 2.5, cell, max_neighbors=32)
 
     def test_non_multiple_of_group_size_accepted(self, device, dtype):

@@ -645,6 +645,39 @@ def _make_cell_list_inputs(dtype):
     )
 
 
+class TestCellListAtomCentricDirect:
+    """``atom_centric_path="direct"`` skips the sorted gather and reads positions
+    directly; it must produce the same neighbor sets as the sorted kernel."""
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_direct_matches_sorted(self, dtype):
+        if dtype == jnp.float64:
+            jax.config.update("jax_enable_x64", True)
+        positions, cell, pbc, cutoff, max_neighbors, max_total_cells, nsr = (
+            _make_cell_list_inputs(dtype)
+        )
+
+        def neighbor_sets(acp):
+            nm, nn, _sh = cell_list(
+                positions,
+                cutoff,
+                cell,
+                pbc,
+                atom_centric_path=acp,
+                max_neighbors=max_neighbors,
+                max_total_cells=max_total_cells,
+                neighbor_search_radius=nsr,
+            )
+            fill = positions.shape[0]
+            sets = [frozenset(j for j in row if j != fill) for row in nm.tolist()]
+            return sets, nn.tolist()
+
+        sorted_sets, sorted_counts = neighbor_sets("sorted")
+        direct_sets, direct_counts = neighbor_sets("direct")
+        assert direct_sets == sorted_sets
+        assert direct_counts == sorted_counts
+
+
 class TestCellListGraphMode:
     """Graph-mode coverage for JAX cell-list bindings."""
 
@@ -912,14 +945,12 @@ class TestCellListPreallocatedBufferReuse:
 
 
 # ---------------------------------------------------------------------------
-# JAX autograd primitive — exercises the `_attach_neighbor_pair_grads`
-# custom_vjp in nvalchemiops.jax.neighbors._autograd via a pure-JAX forward
-# closure.  Validates the autograd math and JIT compatibility without
-# requiring the warp-side `jax_callable` plumbing to be in place.
-#
-# Once `cell_list` (the JAX wrapper) is wired to produce its own
-# `_NeighborForwardOutput`, replace ``_pure_jax_pair_forward`` below with the
-# real wrapper call.  The autograd primitive itself stays unchanged.
+# JAX autograd path — exercises ``_route_pair_outputs`` /
+# ``_reconstruct_pair_geometry`` in nvalchemiops.jax.neighbors._autograd via a
+# pure-JAX forward closure.  Validates the autograd math and JIT compatibility
+# without the warp-side ``jax_callable`` plumbing.  The real per-family wrappers
+# (e.g. ``TestJaxCellListAutograd`` below) route through the same
+# ``_route_pair_outputs``.
 # ---------------------------------------------------------------------------
 
 
@@ -1124,9 +1155,10 @@ class TestJaxCellListAutograd:
     """End-to-end autograd through the real JAX ``cell_list`` wrapper.
 
     These tests exercise the full pair-output path: the wrapper runs the
-    warp ``build_cell_list`` and pair-output query kernels (with
-    ``stop_gradient`` on the inputs going into the kernels) and routes
-    through ``_attach_neighbor_pair_grads`` for the analytical backward.
+    warp ``build_cell_list`` and pair-output query kernels (which determine the
+    neighbour topology) and routes through ``_route_pair_outputs``, which
+    reconstructs the differentiable geometry in pure JAX via
+    ``_reconstruct_pair_geometry``.
     """
 
     @pytest.fixture(autouse=True)
@@ -1155,6 +1187,60 @@ class TestJaxCellListAutograd:
         assert d.shape == (6, nm.shape[1])
         assert v.shape == (6, nm.shape[1], 3)
         assert jnp.isfinite(d).all() and jnp.isfinite(v).all()
+
+    def test_coo_distances_vectors_aligned(self):
+        """``return_neighbor_list=True`` repacks per-pair geometry into COO
+        order that index-aligns with the neighbor list."""
+        positions, cell, pbc = self._make_system()
+        nl, _nptr, nl_shifts, d, v = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+            return_distances=True,
+            return_vectors=True,
+        )
+        num_pairs = nl.shape[1]
+        assert d.shape == (num_pairs,)
+        assert v.shape == (num_pairs, 3)
+        i_idx, j_idx = nl[0], nl[1]
+        rij = positions[j_idx] - positions[i_idx] + nl_shifts @ cell[0]
+        assert jnp.allclose(rij, v, atol=1e-6)
+        assert jnp.allclose(jnp.linalg.norm(rij, axis=1), d, atol=1e-6)
+
+    def test_hvp_nonlinear_loss_matches_analytic(self):
+        """Regression: the HVP of a loss *nonlinear in distance* matches the exact
+        analytic Hessian through the real ``cell_list`` wrapper.
+
+        ``test_check_grads_second_order`` only exercised the pure-JAX forward (which
+        always reconstructed live), so it never caught the detached-distance
+        higher-order bug on the real binding; this does.
+        """
+        from .conftest import analytic_distance_sq_hvp
+
+        positions, cell, pbc = self._make_system()
+        v = jax.random.normal(jax.random.key(1), positions.shape, dtype=positions.dtype)
+
+        def loss(p):
+            *_, d, _ = cell_list(
+                p, 1.5, cell, pbc, return_distances=True, return_vectors=True
+            )
+            return (d**2).sum()
+
+        hvp = np.asarray(jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(positions))
+        nl, *_ = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+            return_distances=True,
+            return_vectors=True,
+        )
+        hvp_true = analytic_distance_sq_hvp(nl, v, positions.shape[0])
+        assert nl.shape[1] > 0
+        assert np.allclose(hvp, hvp_true, atol=1e-9, rtol=1e-9)
 
     def test_return_tuple_shape_extends_with_flags(self):
         """0.3.1-compat: tuple stays at 3 elements when flags off."""
@@ -1269,18 +1355,46 @@ class TestJaxCellListAutograd:
         assert jnp.isfinite(hvp).all().item()
         assert hvp.shape == positions.shape
 
-    def test_pair_fn_rejected_with_clear_message(self):
-        """pair_fn / target_indices remain rejected (out of scope this pass)."""
+    def test_target_indices_partial_matches_full_restricted(self):
+        """``target_indices`` (partial neighbor lists) is wired (task 5).
+
+        The compact output has ``num_targets`` rows (row ``r`` -> atom
+        ``target_indices[r]``); each row's neighbor set must equal the full
+        matrix restricted to that atom.  COO source index ``nl[0]`` is the
+        compact row in ``[0, num_targets)`` (matches the torch contract)."""
         positions, cell, pbc = self._make_system()
-        with pytest.raises(NotImplementedError, match="pair_fn"):
-            cell_list(
-                positions,
-                1.5,
-                cell,
-                pbc,
-                return_distances=True,
-                pair_fn=object(),  # any non-None
-            )
+        n = positions.shape[0]
+        targets = jnp.array([0, 2, 4], dtype=jnp.int32)
+        nt = int(targets.shape[0])
+        mn = 32
+
+        # Partial matrix.
+        pnm, pnn, _pnms = cell_list(
+            positions, 1.5, cell, pbc, max_neighbors=mn,
+            target_indices=targets, fill_value=n,
+        )
+        assert pnm.shape == (nt, mn) and pnn.shape == (nt,)
+
+        # Full matrix reference, restricted to the target rows.
+        fnm, fnn, _fnms = cell_list(
+            positions, 1.5, cell, pbc, max_neighbors=mn, fill_value=n,
+        )
+        pnm, pnn, fnm, fnn, tg = (np.asarray(x) for x in (pnm, pnn, fnm, fnn, targets))
+
+        def row_set(nm, count):
+            return {int(nm[k]) for k in range(int(count))}
+
+        for r in range(nt):
+            assert row_set(pnm[r], pnn[r]) == row_set(fnm[int(tg[r])], fnn[int(tg[r])])
+
+        # COO: compact-row source index, matching torch.
+        nl, _nptr, _nls = cell_list(
+            positions, 1.5, cell, pbc, max_neighbors=mn,
+            target_indices=targets, return_neighbor_list=True,
+        )
+        nl = np.asarray(nl)
+        if nl.shape[1] > 0:
+            assert int(nl[0].max()) < nt
 
     def test_graph_mode_warp_rejected_with_pair_outputs(self):
         """graph_mode='warp' with pair outputs raises (CUDA-graph follow-up)."""

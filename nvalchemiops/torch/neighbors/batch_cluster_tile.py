@@ -1504,6 +1504,7 @@ def batch_cluster_tile_neighbor_list(
     neighbor_distances: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
+    max_tiles_per_group: int | None = None,
 ) -> tuple[torch.Tensor, ...]:
     """Build a batched cluster-pair tile neighbor list (one-shot convenience).
 
@@ -1576,6 +1577,10 @@ def batch_cluster_tile_neighbor_list(
     neighbor_vectors, neighbor_distances, pair_energies, pair_forces : torch.Tensor, optional
         OUTPUT buffers, written only when the corresponding enable flag
         / ``pair_fn`` is active.
+    max_tiles_per_group : int, optional
+        Upper bound on neighbor groups per row group for scratch allocation.
+        Passing this skips the geometry-aware sizing preflight, which otherwise
+        synchronizes per-system counts and cell volumes to the host.
 
     Returns
     -------
@@ -1605,10 +1610,9 @@ def batch_cluster_tile_neighbor_list(
     - Cluster-tile does not support partial neighbor lists (no
       ``target_indices`` kwarg).
     - The unified
-      :func:`nvalchemiops.torch.neighbors.neighbor_list` entry point
-      selects this binding automatically for fully-periodic float32 CUDA
-      batches with average ``>= 2000`` atoms per system and no
-      pair-output kwargs.
+      :func:`nvalchemiops.torch.neighbors.neighbor_list` entry point may
+      select this binding automatically when the selector guards and cost
+      model prefer it; pass ``method="batch_cluster_tile"`` to force it.
 
     See Also
     --------
@@ -1738,9 +1742,10 @@ def batch_cluster_tile_neighbor_list(
     build_cutoff = cutoff if cutoff2 is None else max(float(cutoff), float(cutoff2))
 
     if sorted_atom_index is None:
-        max_tiles_per_group = _batch_max_tiles_per_group(
-            batch_ptr, build_cutoff, cell_batch
-        )
+        if max_tiles_per_group is None:
+            max_tiles_per_group = _batch_max_tiles_per_group(
+                batch_ptr, build_cutoff, cell_batch
+            )
         (
             sorted_atom_index,
             sort_inv,

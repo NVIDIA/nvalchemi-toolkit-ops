@@ -22,6 +22,19 @@ from __future__ import annotations
 
 import torch
 
+from nvalchemiops.neighbors.base_dispatch import (
+    NEIGHBOR_LIST_STRATEGIES,
+    neighbor_list_strategy_run_args,
+)
+from nvalchemiops.torch.neighbors._dispatch import (
+    _auto_method_from_geometry,
+    _reject_unsupported_cluster_tile_combo,
+    _squeeze_single_system_cell_pbc,
+    broadcast_shared_cell_for_batch,
+    estimate_neighbor_list_costs,
+    suggest_neighbor_list_method,
+)
+
 # Batch cell list functions
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
@@ -70,107 +83,6 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
     synthesize_cell_for_batch,
     synthesize_cell_for_ss,
 )
-
-_CLUSTER_TILE_AUTO_BLOCKED_KWARGS = {
-    "cutoff2",
-    "format",
-    "max_pairs",
-    "neighbor_distances",
-    "neighbor_list",
-    "neighbor_list_shifts",
-    "neighbor_vectors",
-    "pair_counter",
-    "pair_energies",
-    "pair_fn",
-    "pair_forces",
-    "pair_params",
-    "return_distances",
-    "return_vectors",
-    "target_indices",
-}
-
-
-def _has_active_cluster_tile_blocker(kwargs: dict) -> bool:
-    """Return True when kwargs request behavior outside safe auto-dispatch."""
-    for name in _CLUSTER_TILE_AUTO_BLOCKED_KWARGS:
-        value = kwargs.get(name)
-        if value is None:
-            continue
-        if isinstance(value, bool):
-            if value:
-                return True
-            continue
-        return True
-    return False
-
-
-def _reject_unsupported_cluster_tile_combo(
-    pbc: torch.Tensor | None,
-    half_fill: bool,
-) -> None:
-    """Raise NotImplementedError for combos cluster_tile cannot honor.
-
-    Cluster-tile is fundamentally PBC-implicit (it enumerates tile pairs
-    inside a periodic shift range) and tile-level upper-triangular
-    (atom-level full-fill within tiles, but no per-pair half-fill).
-    Honoring non-periodic boundaries or ``half_fill=True`` would require
-    post-processing passes that change the algorithm's identity, so the
-    dispatcher rejects them explicitly instead of silently dropping.
-    """
-    if pbc is None:
-        raise NotImplementedError(
-            "method='cluster_tile' / 'batch_cluster_tile' is "
-            "fundamentally PBC-implicit; non-periodic systems (pbc=None) "
-            "are not supported.  Use method='naive' or 'cell_list', "
-            "or pass a cell with fully periodic pbc."
-        )
-    try:
-        all_periodic = bool(pbc.all().item())
-    except RuntimeError:
-        all_periodic = True  # let downstream handle malformed pbc
-    if not all_periodic:
-        raise NotImplementedError(
-            "method='cluster_tile' / 'batch_cluster_tile' is "
-            "fundamentally PBC-implicit; pbc with any False entry "
-            "is not supported.  Use method='naive' or 'cell_list'."
-        )
-    if half_fill:
-        raise NotImplementedError(
-            "method='cluster_tile' / 'batch_cluster_tile' uses "
-            "tile-level upper-triangular iteration; atom-level "
-            "half_fill=True is not supported.  Use method='naive' or "
-            "'cell_list' for half-fill output."
-        )
-
-
-def _cluster_tile_auto_eligible(
-    positions: torch.Tensor,
-    cell: torch.Tensor | None,
-    pbc: torch.Tensor | None,
-    cutoff2: float | None,
-    half_fill: bool,
-    kwargs: dict,
-) -> bool:
-    """Return True when ``method=None`` may safely select cluster-pair tile.
-
-    Cluster-tile is PBC-implicit and tile-level upper-triangular, so
-    auto-dispatch never picks it when ``pbc`` has any False entry or
-    ``half_fill=True``.  Explicit ``method='cluster_tile'`` callers get
-    a clear ``NotImplementedError`` in those cases (see the dispatcher
-    match branch below).
-    """
-    if cutoff2 is not None:
-        return False
-    if half_fill:
-        return False
-    if positions.dtype != torch.float32 or positions.device.type != "cuda":
-        return False
-    if cell is None or pbc is None or _has_active_cluster_tile_blocker(kwargs):
-        return False
-    try:
-        return bool(pbc.to(device=positions.device).all().item())
-    except RuntimeError:
-        return False
 
 
 def neighbor_list(
@@ -234,15 +146,15 @@ def neighbor_list(
         Method to use for neighbor list computation.
         Choices: "naive", "cell_list", "cluster_tile", "batch_naive",
         "batch_cell_list", "batch_cluster_tile", "naive_dual_cutoff",
-        "batch_naive_dual_cutoff".  For large fully periodic CUDA float32
-        single-cutoff systems, ``method=None`` may select ``cluster_tile`` /
-        ``batch_cluster_tile`` when no partial or pair-output kwargs are active.
-        If None, a default method will be chosen based on average atoms per
-        system (cluster_tile/cell_list when >= 2000, naive otherwise). When only
-        ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
-        auto-selection reads ``batch_idx[-1]`` which triggers a
-        device-to-host synchronization. To avoid this, pass ``batch_ptr``,
-        a 3-D ``cell`` array, or specify ``method`` explicitly.
+        "batch_naive_dual_cutoff". If None, a default method is chosen by
+        comparing estimated work from per-system atom counts and cell (or
+        bounding-box) volumes and can select cluster-tile when the CUDA,
+        float32, fully-periodic, contiguous-batch, and output-option guards
+        allow it. When only ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
+        auto-selection computes ``batch_idx.max() + 1`` (and a ``bincount``)
+        which triggers a device-to-host
+        synchronization. To avoid this, pass ``batch_ptr``, a 3-D ``cell``
+        array, or specify ``method`` explicitly.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -303,6 +215,30 @@ def neighbor_list(
             Maximum number of atoms per system. Used in batch naive implementation
             with PBC. If not provided, it will be computed automatically.
             Can be provided to avoid CUDA synchronization.
+        target_indices : torch.Tensor, optional
+            Restrict the source rows of the neighbor list to this subset of atom
+            indices (partial neighbor list). Supported by naive and cell-list
+            methods; not by cluster_tile.
+        return_distances : bool, default=False
+            Also return per-pair distances ``|r_ij|`` in matrix layout
+            ``(total_atoms, max_neighbors)``, differentiable w.r.t. positions
+            (and cell). See the user guide for layout notes.
+        return_vectors : bool, default=False
+            Also return per-pair displacement vectors ``r_ij`` in matrix layout
+            ``(total_atoms, max_neighbors, 3)``, differentiable w.r.t. positions
+            (and cell).
+        rebuild_flags : torch.Tensor, optional
+            Boolean flags selecting which systems to re-enumerate; systems whose
+            flag is ``False`` keep their previous output (per-system skip for the
+            batched methods, whole-list flag for single-system methods).
+        pair_fn : warp.Function, optional
+            Inline Warp pair potential evaluated as neighbors are enumerated;
+            requires ``pair_params`` and fills ``pair_energies`` / ``pair_forces``.
+            Forward-only (not differentiable). See
+            ``examples/neighbors/06_pair_outputs_lj.py``.
+        pair_params, pair_energies, pair_forces : torch.Tensor, optional
+            Per-atom parameter table and per-pair energy / force output buffers
+            consumed and filled by ``pair_fn``.
 
     Returns
     -------
@@ -381,45 +317,87 @@ def neighbor_list(
             "e.g. pbc=torch.tensor([True, True, True])."
         )
 
+    use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
+    explicit_cell_strategy = str(kwargs.pop("strategy", "auto"))
+    explicit_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
+    explicit_native_strategy = str(kwargs.pop("native_strategy", "auto"))
+    target_indices = kwargs.get("target_indices")
+    return_vectors = bool(kwargs.get("return_vectors", False))
+    return_distances = bool(kwargs.get("return_distances", False))
+    use_pair_fn = (
+        use_pair_fn_option
+        or kwargs.get("pair_fn") is not None
+        or kwargs.get("pair_params") is not None
+        or kwargs.get("pair_energies") is not None
+        or kwargs.get("pair_forces") is not None
+    )
+    rebuild_flags = kwargs.get("rebuild_flags")
+    selected_native_strategy = explicit_native_strategy
+    selected_cell_strategy = explicit_cell_strategy
+    selected_atom_centric_path = explicit_atom_centric_path
+
+    def _apply_auto_suboptions(native_strategy: str, cell_strategy: str, path: str) -> None:
+        nonlocal selected_native_strategy, selected_cell_strategy
+        nonlocal selected_atom_centric_path
+        if selected_native_strategy == "auto" and native_strategy != "auto":
+            selected_native_strategy = native_strategy
+        if selected_cell_strategy == "auto" and cell_strategy != "auto":
+            selected_cell_strategy = cell_strategy
+        if selected_atom_centric_path == "auto" and path != "auto":
+            selected_atom_centric_path = path
+
     if method is None:
         total_atoms = positions.shape[0]
+        has_batch_inputs = batch_idx is not None or batch_ptr is not None
 
-        # Compute average atoms per system for method selection.
-        num_systems = 1
-        if cell is not None and cell.ndim == 3:
-            # cell shape is (num_systems, 3, 3)
-            num_systems = cell.shape[0]
-        elif batch_ptr is not None:
-            # batch_ptr shape is (num_systems + 1,)
-            num_systems = batch_ptr.shape[0] - 1
-        elif batch_idx is not None:
-            # NOTE: reading batch_idx[-1] triggers a GPU-to-CPU sync
-            # assume sorted batch_idx
-            num_systems = max(1, batch_idx[-1].item() + 1)
-        avg_atoms = total_atoms // num_systems
-
-        if cutoff2 is not None:
-            method = "naive_dual_cutoff"
-
-        elif avg_atoms >= 2000 and _cluster_tile_auto_eligible(
-            positions,
-            cell,
-            pbc,
-            cutoff2,
-            half_fill,
-            kwargs,
-        ):
-            method = "cluster_tile"
-        elif avg_atoms >= 2000:
-            method = "cell_list"
-        else:
-            method = "naive"
-
-        if batch_idx is not None or batch_ptr is not None:
-            method = "batch_" + method
+        if has_batch_inputs:
             batch_idx, batch_ptr = prepare_batch_idx_ptr(
                 batch_idx, batch_ptr, total_atoms, positions.device
             )
+            num_systems = batch_ptr.shape[0] - 1
+        elif cell is not None and cell.ndim == 3:
+            num_systems = cell.shape[0]
+        else:
+            num_systems = 1
+
+        strategy_name = _auto_method_from_geometry(
+            positions,
+            max(float(cutoff), float(cutoff2) if cutoff2 is not None else float(cutoff)),
+            cell,
+            pbc,
+            batch_idx if has_batch_inputs else None,
+            batch_ptr if has_batch_inputs else None,
+            num_systems,
+            cutoff2=cutoff2,
+            half_fill=half_fill,
+            return_neighbor_list=return_neighbor_list,
+            target_indices=target_indices,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            use_pair_fn=use_pair_fn,
+            rebuild_flags=rebuild_flags,
+            wrap_positions=wrap_positions,
+        )
+        method, auto_native, auto_cell, auto_path = neighbor_list_strategy_run_args(
+            strategy_name
+        )
+        if cutoff2 is not None and method in ("naive", "cell_list"):
+            method = "naive_dual_cutoff"
+        _apply_auto_suboptions(auto_native, auto_cell, auto_path)
+
+        if has_batch_inputs and num_systems > 1:
+            method = "batch_" + method
+        elif has_batch_inputs:
+            cell, pbc = _squeeze_single_system_cell_pbc(cell, pbc)
+    else:
+        base = method[len("batch_") :] if method.startswith("batch_") else method
+        if base in NEIGHBOR_LIST_STRATEGIES:
+            # Fine-grained strategy name (e.g. from suggest/report): decompose
+            # to the base method plus its sub-options, honoring batch_ prefix.
+            method, fg_native, fg_cell, fg_path = neighbor_list_strategy_run_args(
+                method
+            )
+            _apply_auto_suboptions(fg_native, fg_cell, fg_path)
     match method:
         case "naive":
             return naive_neighbor_list(
@@ -431,6 +409,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
+                native_strategy=selected_native_strategy,
                 **kwargs,
             )
         case "cell_list":
@@ -444,6 +423,8 @@ def neighbor_list(
                 half_fill=half_fill,
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
+                strategy=selected_cell_strategy,
+                atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
         case "batch_naive":
@@ -458,6 +439,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
+                native_strategy=selected_native_strategy,
                 **kwargs,
             )
         case "batch_cell_list":
@@ -478,6 +460,8 @@ def neighbor_list(
                 half_fill=half_fill,
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
+                strategy=selected_cell_strategy,
+                atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
         case "cluster_tile":
@@ -507,6 +491,7 @@ def neighbor_list(
                 )
             if cell is None:
                 raise ValueError("cell is required for method='batch_cluster_tile'")
+            cell = broadcast_shared_cell_for_batch(cell, batch_ptr.shape[0] - 1)
             return batch_cluster_tile_neighbor_list(
                 positions,
                 cutoff,
@@ -552,6 +537,8 @@ def neighbor_list(
 __all__ = [
     # High-level API
     "neighbor_list",
+    "estimate_neighbor_list_costs",
+    "suggest_neighbor_list_method",
     # Unbatched algorithms
     "cell_list",
     "naive_neighbor_list",

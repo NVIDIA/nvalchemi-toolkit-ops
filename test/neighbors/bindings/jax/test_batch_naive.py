@@ -589,6 +589,48 @@ class TestJaxBatchNaiveAutograd:
         assert jnp.isfinite(hvp).all().item()
         assert hvp.shape == pos.shape
 
+    def test_hvp_nonlinear_loss_matches_analytic(self):
+        """Regression: nonlinear-loss HVP matches the exact analytic Hessian on the
+        batched path — exercises the per-system cell-gather reconstruction branch
+        (``cell[batch_idx[i]]``) for a loss the old detached backward got wrong."""
+        import numpy as np
+
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        from .conftest import analytic_distance_sq_hvp
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+        v = jax.random.normal(jax.random.key(1), pos.shape, dtype=pos.dtype)
+
+        def loss(p):
+            *_, d, _ = batch_naive_neighbor_list(
+                p,
+                1.5,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return (d**2).sum()
+
+        hvp = np.asarray(jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos))
+        nl, *_ = batch_naive_neighbor_list(
+            pos,
+            1.5,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_neighbor_list=True,
+        )
+        hvp_true = analytic_distance_sq_hvp(nl, v, pos.shape[0])
+        assert nl.shape[1] > 0
+        assert np.allclose(hvp, hvp_true, atol=1e-9, rtol=1e-9)
+
     def test_no_grad_path_unchanged(self):
         from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
 

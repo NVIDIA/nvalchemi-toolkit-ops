@@ -45,12 +45,22 @@ from .test_utils import (
 )
 
 _FILL_NAIVE_NO_PBC = {
-    t: get_naive_neighbor_matrix_kernel(t, pbc_mode="none", batched=False)
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_kernel(
+            t, pbc_mode="none", batched=False, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 _FILL_NAIVE_PBC_WRAP = {
-    t: get_naive_neighbor_matrix_kernel(t, pbc_mode="wrap_on_entry", batched=False)
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_kernel(
+            t, pbc_mode="wrap_on_entry", batched=False, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 
 try:
@@ -347,7 +357,7 @@ class TestNaiveKernels:
 
         # Launch kernel
         wp.launch(
-            _FILL_NAIVE_NO_PBC[wp_dtype],
+            _FILL_NAIVE_NO_PBC[half_fill][wp_dtype],
             dim=(1, 1, positions.shape[0]),
             device=wp_device,
             inputs=[
@@ -372,7 +382,6 @@ class TestNaiveKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                half_fill,
                 empty_rebuild_flags,
             ],
         )
@@ -557,7 +566,7 @@ class TestNaiveKernels:
 
         # Launch kernel using the typed overload
         wp.launch(
-            _FILL_NAIVE_PBC_WRAP[wp_dtype],
+            _FILL_NAIVE_PBC_WRAP[half_fill][wp_dtype],
             dim=(1, len(shifts), total_atoms),
             device=wp_device,
             inputs=[
@@ -582,7 +591,6 @@ class TestNaiveKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                True,  # half_fill
                 empty_rebuild_flags,
             ],
         )

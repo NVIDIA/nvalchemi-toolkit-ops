@@ -314,25 +314,37 @@ class TestJaxClusterTileAutograd:
             loss, (pos,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"], eps=1e-3
         )
 
-    def test_pair_fn_rejected_with_clear_message(self):
-        pos, cell = self._make_system()
-        with pytest.raises(NotImplementedError, match="pair_fn"):
-            cluster_tile_neighbor_list(
-                pos,
-                1.5,
-                cell,
-                return_distances=True,
-                pair_fn=object(),  # any non-None sentinel
-            )
+    def test_pair_fn_supported(self):
+        """pair_fn is now wired through the JAX cluster_tile binding (matrix and COO;
+        returns per-pair pe/pf).  See test_pair_fn.py for full coverage."""
+        from .test_pair_fn import _sum_pair_fn_f32
 
-    def test_format_not_matrix_with_pair_outputs_rejected(self):
         pos, cell = self._make_system()
-        with pytest.raises(NotImplementedError, match="format='matrix'"):
+        pp = ((jnp.arange(pos.shape[0], dtype=jnp.float32) + 1.0) * 0.5).reshape(-1, 1)
+        out = cluster_tile_neighbor_list(
+            pos,
+            1.5,
+            cell,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+            pair_fn=_sum_pair_fn_f32,
+            pair_params=pp,
+        )
+        # nm, nn, shifts, distances, vectors, pe, pf
+        assert len(out) == 7
+        assert out[5].shape == (pos.shape[0], out[0].shape[1])
+        assert out[6].shape == (pos.shape[0], out[0].shape[1], 3)
+
+    def test_format_tile_with_pair_outputs_rejected(self):
+        """Pair outputs work with 'matrix' and 'coo'; only 'tile' rejects them."""
+        pos, cell = self._make_system()
+        with pytest.raises(NotImplementedError, match="format='tile'"):
             cluster_tile_neighbor_list(
                 pos,
                 1.5,
                 cell,
-                format="coo",
+                format="tile",
                 return_distances=True,
             )
 
@@ -359,6 +371,52 @@ class TestJaxClusterTileAutograd:
         hvp = jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos)
         assert jnp.isfinite(hvp).all().item()
         assert hvp.shape == pos.shape
+
+    def test_hvp_nonlinear_loss_matches_analytic(self):
+        """Regression: nonlinear-loss HVP matches the exact analytic Hessian on the
+        cluster_tile path (fp32).  The existing HVP smoke only used a *linear* loss
+        (``d.sum()``); this guards the nonlinear 2nd-order through the shared
+        live-reconstruction autograd (the old detached backward got it wrong)."""
+        from .conftest import analytic_distance_sq_hvp
+
+        pos, cell = self._make_system()
+        v = jax.random.normal(jax.random.key(1), pos.shape, dtype=pos.dtype)
+        cutoff = 1.5
+
+        def loss(p):
+            *_, d, _ = cluster_tile_neighbor_list(
+                p,
+                cutoff,
+                cell,
+                max_neighbors=64,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return (d**2).sum()
+
+        hvp = np.asarray(jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos))
+
+        # cluster_tile rejects COO + pair outputs, so derive the directed (i, j)
+        # pairs from the neighbour matrix the loss sums over.
+        out = cluster_tile_neighbor_list(
+            pos,
+            cutoff,
+            cell,
+            max_neighbors=64,
+            return_distances=True,
+            return_vectors=True,
+        )
+        nm_np, nn_np = np.asarray(out[0]), np.asarray(out[1])
+        width = nm_np.shape[1]
+        i_list, j_list = [], []
+        for i in range(nm_np.shape[0]):
+            for s in range(min(int(nn_np[i]), width)):
+                i_list.append(i)
+                j_list.append(int(nm_np[i, s]))
+        nl = np.array([i_list, j_list])
+        assert nl.shape[1] > 0
+        hvp_true = analytic_distance_sq_hvp(nl, v, pos.shape[0])
+        assert np.allclose(hvp, hvp_true, atol=1e-2, rtol=1e-2)
 
     def test_no_grad_path_unchanged(self):
         pos, cell = self._make_system()

@@ -18,15 +18,13 @@
 
 from __future__ import annotations
 
-import os
-import warnings
-
 import warp as wp
 
 from nvalchemiops.neighbors.cell_list.dispatch import (
     PAIR_CENTRIC_MAX_LINEAR_LAUNCH,
     compute_batch_pair_centric_n_outer,
     is_pair_centric_launch_safe,
+    is_pair_centric_parallelism_sufficient,
     pair_centric_launch_size,
     select_batch_cell_list_strategy,
     select_cell_list_strategy,
@@ -59,6 +57,7 @@ __all__ = [
     "build_cell_list",
     "compute_batch_pair_centric_n_outer",
     "is_pair_centric_launch_safe",
+    "is_pair_centric_parallelism_sufficient",
     "pair_centric_launch_size",
     "get_cell_list_cells_per_system_kernel",
     "get_build_cell_list_kernel",
@@ -70,6 +69,11 @@ __all__ = [
     "select_batch_cell_list_strategy",
     "select_cell_list_strategy",
 ]
+
+# Inert ``max_radius`` placeholder for the single-system pair-centric launch
+# (only the batched kernel reads ``max_radius``).  Hoisted to module scope so
+# the launch reuses one host-side value instead of rebuilding it per call.
+_ZERO_RADIUS = wp.vec3i(0, 0, 0)
 
 
 def _pair_centric_unsafe_message(
@@ -84,21 +88,7 @@ def _pair_centric_unsafe_message(
         f"{launch_size} logical threads "
         f"({int(total_cells)} cells * {int(n_outer) + 1} offsets * "
         f"{int(block_dim)} threads), exceeding the safe linear launch limit "
-        f"of {PAIR_CENTRIC_MAX_LINEAR_LAUNCH}; falling back to "
-        "strategy='atom_centric'."
-    )
-
-
-def _warn_pair_centric_fallback(
-    total_cells: int,
-    n_outer: int,
-    block_dim: int,
-) -> None:
-    """Warn that an unsafe explicit pair-centric request is falling back."""
-    warnings.warn(
-        _pair_centric_unsafe_message(total_cells, n_outer, block_dim),
-        RuntimeWarning,
-        stacklevel=3,
+        f"of {PAIR_CENTRIC_MAX_LINEAR_LAUNCH}."
     )
 
 
@@ -108,11 +98,7 @@ def _raise_unsafe_pair_centric_launch(
     block_dim: int,
 ) -> None:
     """Raise for raw pair-centric launchers that cannot fall back."""
-    message = _pair_centric_unsafe_message(total_cells, n_outer, block_dim).replace(
-        "; falling back to strategy='atom_centric'.",
-        ".",
-    )
-    raise ValueError(message)
+    raise ValueError(_pair_centric_unsafe_message(total_cells, n_outer, block_dim))
 
 
 def _prepare_target_row_lookup(
@@ -160,6 +146,7 @@ def build_cell_list(
     cell_atom_list: wp.array,
     wp_dtype: type,
     device: str,
+    min_cells_per_dimension: int = 4,
 ) -> None:
     """Core warp launcher for building spatial cell list.
 
@@ -194,6 +181,8 @@ def build_cell_list(
         Warp dtype (``wp.float32`` or ``wp.float64``).
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
+    min_cells_per_dimension : int, default 4
+        Lower bound for the per-axis cell count. Pass 1 for the legacy grid rule.
 
     Notes
     -----
@@ -211,7 +200,11 @@ def build_cell_list(
     wp_cutoff = wp_dtype(cutoff)
 
     wp.launch(
-        get_build_cell_list_kernel("construct_bin_size", wp_dtype),
+        get_build_cell_list_kernel(
+            "construct_bin_size",
+            wp_dtype,
+            min_cells_per_dimension=int(min_cells_per_dimension),
+        ),
         dim=1,
         device=device,
         inputs=(
@@ -299,6 +292,8 @@ def query_cell_list_atom_centric_sorted(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
+    atom_centric_path: str = "sorted",
+    selective: bool = True,
 ) -> None:
     """Atom-centric query with sorted-position reads.
 
@@ -312,9 +307,9 @@ def query_cell_list_atom_centric_sorted(
     The local-counter (per-thread register) is valid in both modes
     because each thread is the unique writer to its own row.
 
-    ``rebuild_flags`` is a caller-allocated 1-element ``wp.bool`` array.
-    Non-selective callers pass a reusable always-True array.  When ``False``
-    the kernel returns immediately.
+    ``rebuild_flags`` is a caller-allocated 1-element ``wp.bool`` array for
+    selective rebuilds.  Non-selective callers pass a sentinel array and set
+    ``selective=False`` so the kernel specialization does not read it.
 
     Parameters
     ----------
@@ -380,6 +375,8 @@ def query_cell_list_atom_centric_sorted(
         OUTPUT buffer for per-pair energies (only with ``pair_fn``).
     pair_forces : wp.array, shape (num_atoms, max_neighbors), dtype=wp.vec3*, optional
         OUTPUT buffer for per-pair forces (only with ``pair_fn``).
+    selective : bool, default ``True``
+        Whether ``rebuild_flags`` controls kernel execution.
 
     Notes
     -----
@@ -389,10 +386,17 @@ def query_cell_list_atom_centric_sorted(
     """
 
     partial = target_indices is not None
-    if partial and (positions is None or atom_periodic_shifts is None):
+    if atom_centric_path not in {"direct", "sorted"}:
         raise ValueError(
-            "positions and atom_periodic_shifts are required when "
-            "target_indices is provided",
+            "atom_centric_path must be 'direct' | 'sorted', "
+            f"got {atom_centric_path!r}",
+        )
+    if (partial or atom_centric_path == "direct") and (
+        positions is None or atom_periodic_shifts is None
+    ):
+        raise ValueError(
+            "positions and atom_periodic_shifts are required for the "
+            f"atom-centric {atom_centric_path!r} path",
         )
     positions_arg = positions if positions is not None else sorted_positions
     atom_periodic_shifts_arg = (
@@ -427,13 +431,20 @@ def query_cell_list_atom_centric_sorted(
         wp_dtype,
         strategy="atom_centric",
         batched=False,
-        selective=True,
+        selective=bool(selective),
         partial=partial,
+        half_fill=bool(half_fill),
         return_vectors=return_vectors,
         return_distances=return_distances,
         pair_fn=pair_fn,
+        atom_centric_path=atom_centric_path,
     )
-    dim = int(target_indices.shape[0]) if partial else int(sorted_positions.shape[0])
+    if partial:
+        dim = int(target_indices.shape[0])
+    elif atom_centric_path == "direct":
+        dim = int(positions_arg.shape[0])
+    else:
+        dim = int(sorted_positions.shape[0])
     wp.launch(
         kernel,
         dim=dim,
@@ -465,7 +476,6 @@ def query_cell_list_atom_centric_sorted(
             pair_params_arg,
             pair_energies_arg,
             pair_forces_arg,
-            bool(half_fill),
             rebuild_flags,
         ],
         device=device,
@@ -503,6 +513,7 @@ def query_cell_list_pair_centric_sorted(
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
     target_row_lookup: wp.array | None = None,
+    selective: bool = True,
 ) -> None:
     """Pair-centric query: one block per (source cell, offset).
 
@@ -545,7 +556,7 @@ def query_cell_list_pair_centric_sorted(
         return immediately and outputs are preserved.  ``True`` runs the
         full build - caller must zero ``num_neighbors`` first so the
         per-emit atomic_adds start from 0.  Non-selective callers pass a
-        reusable always-True array.
+        sentinel array and set ``selective=False``.
 
     Notes
     -----
@@ -595,8 +606,9 @@ def query_cell_list_pair_centric_sorted(
         wp_dtype,
         strategy="pair_centric",
         batched=False,
-        selective=True,
+        selective=bool(selective),
         partial=partial,
+        half_fill=bool(half_fill),
         return_vectors=return_vectors,
         return_distances=return_distances,
         pair_fn=pair_fn,
@@ -633,8 +645,7 @@ def query_cell_list_pair_centric_sorted(
             block_dim_int,
             total_cells,
             n_offsets_int,
-            wp.vec3i(0, 0, 0),
-            bool(half_fill),
+            _ZERO_RADIUS,
             rebuild_flags,
         ],
         device=device,
@@ -664,6 +675,7 @@ def query_cell_list(
     sorted_positions: wp.array | None = None,
     sorted_atom_periodic_shifts: wp.array | None = None,
     strategy: str = "atom_centric",
+    atom_centric_path: str = "auto",
     n_outer: int | None = None,
     target_indices: wp.array | None = None,
     return_vectors: bool = False,
@@ -684,11 +696,11 @@ def query_cell_list(
     are caller-allocated.  The per-cell-contiguous gather scratch
     (``sorted_positions``, ``sorted_atom_periodic_shifts``) and the
     1-element ``rebuild_flags`` are optional: when omitted, this launcher
-    allocates them transiently for the call.  Graph/capture callers should
+    uses the non-selective kernel specialization.  Graph/capture callers should
     pass caller-owned scratch explicitly to keep allocations out of the
     captured region.  If ``target_indices`` is used with pair-centric mode
-    and ``target_row_lookup`` is omitted, this launcher allocates a
-    transient lookup scratch array.
+    and ``target_row_lookup`` is omitted, this launcher allocates a transient
+    lookup scratch array.
 
     Parameters
     ----------
@@ -719,7 +731,9 @@ def query_cell_list(
     neighbor_matrix_shifts : wp.array, shape (total_atoms, max_neighbors, 3), dtype=wp.vec3i
         OUTPUT: Matrix storing shift vectors for each neighbor relationship.
     num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
-        OUTPUT: Number of neighbors found for each atom.
+        OUTPUT (atomic): per-atom neighbor counts.  Accumulated via
+        ``wp.atomic_add``, so non-selective callers must zero it before the
+        call (selective callers zero it via ``rebuild_flags``).
     wp_dtype : type
         Warp dtype (``wp.float32`` or ``wp.float64``).
     device : str
@@ -734,9 +748,8 @@ def query_cell_list(
         callers should pass caller-owned scratch.
     rebuild_flags : wp.array, shape (1,), dtype=wp.bool, optional
         1-element flag.  ``False`` makes the kernel return immediately.
-        When omitted, this launcher allocates a fresh always-True flag
-        for the call; non-selective callers in graph/capture contexts
-        should allocate one once and reuse it.
+        When omitted, this launcher uses the non-selective kernel
+        specialization and does not read a rebuild flag.
     half_fill : bool, default=False
         If True, only store half of the neighbor relationships (i < j).
     strategy : {"atom_centric", "pair_centric"}, default "atom_centric"
@@ -792,15 +805,12 @@ def query_cell_list(
 
     total_atoms = positions.shape[0]
 
-    if rebuild_flags is None:
-        rebuild_flags = wp.array([True], dtype=wp.bool, device=device)
-    if sorted_positions is None:
-        _vec_dtype, _ = dtype_info(wp_dtype)
-        sorted_positions = wp.empty(int(total_atoms), dtype=_vec_dtype, device=device)
-    if sorted_atom_periodic_shifts is None:
-        sorted_atom_periodic_shifts = wp.empty(
-            int(total_atoms), dtype=wp.vec3i, device=device
-        )
+    selective = rebuild_flags is not None
+    rebuild_flags_arg = (
+        rebuild_flags
+        if rebuild_flags is not None
+        else _empty_sentinel(1, wp.bool, device)
+    )
 
     cpu_only = "cpu" in str(device).lower()
     if strategy == "atom_centric":
@@ -818,45 +828,53 @@ def query_cell_list(
                 "compute_batch_pair_centric_n_outer((Rx, Ry, Rz), half_fill).",
             )
         block_dim = 64
-        if is_pair_centric_launch_safe(
-            int(atoms_per_cell_count.shape[0]), int(n_outer), block_dim
-        ):
-            chosen = "pair_centric"
-        else:
-            _warn_pair_centric_fallback(
-                int(atoms_per_cell_count.shape[0]), int(n_outer), block_dim
-            )
-            chosen = "atom_centric"
+        total_cells = int(atoms_per_cell_count.shape[0])
+        if not is_pair_centric_launch_safe(total_cells, int(n_outer), block_dim):
+            _raise_unsafe_pair_centric_launch(total_cells, int(n_outer), block_dim)
+        chosen = "pair_centric"
     else:
         raise ValueError(
             f"strategy must be 'atom_centric' | 'pair_centric', got {strategy!r}",
         )
 
-    if os.environ.get("NVALCHEMI_NEIGHLIST_STRATEGY_LOG"):
-        _v = (
-            "pair_centric_sorted"
-            if chosen == "pair_centric"
-            else "atom_centric_local_count_sorted"
+    if atom_centric_path == "auto":
+        atom_centric_path = "direct"
+    elif atom_centric_path not in {"direct", "sorted"}:
+        raise ValueError(
+            "atom_centric_path must be 'auto' | 'direct' | 'sorted', "
+            f"got {atom_centric_path!r}",
         )
-        _sel = " (selective)" if rebuild_flags is not None else ""
-        print(
-            f"[neighlist-strategy] (wp.launcher) natom={int(total_atoms)} "
-            f"cutoff={float(cutoff):.3f} half_fill={bool(half_fill)} -> {_v}{_sel}",
-            flush=True,
-        )
+    needs_sorted = chosen == "pair_centric" or atom_centric_path == "sorted"
+    _vec_dtype, _ = dtype_info(wp_dtype)
+    if needs_sorted:
+        if (sorted_positions is None) != (sorted_atom_periodic_shifts is None):
+            raise ValueError(
+                "Pass both sorted_positions and sorted_atom_periodic_shifts, "
+                "or neither - got a mixed state.",
+            )
+        if sorted_positions is None:
+            sorted_positions = wp.empty(int(total_atoms), dtype=_vec_dtype, device=device)
+        if sorted_atom_periodic_shifts is None:
+            sorted_atom_periodic_shifts = wp.empty(
+                int(total_atoms), dtype=wp.vec3i, device=device
+            )
+    else:
+        sorted_positions = _empty_sentinel(1, _vec_dtype, device)
+        sorted_atom_periodic_shifts = _empty_sentinel(1, wp.vec3i, device)
 
-    wp.launch(
-        get_gather_positions_and_shifts_kernel(wp_dtype),
-        dim=total_atoms,
-        inputs=[
-            positions,
-            atom_periodic_shifts,
-            cell_atom_list,
-            sorted_positions,
-            sorted_atom_periodic_shifts,
-        ],
-        device=device,
-    )
+    if needs_sorted:
+        wp.launch(
+            get_gather_positions_and_shifts_kernel(wp_dtype),
+            dim=total_atoms,
+            inputs=[
+                positions,
+                atom_periodic_shifts,
+                cell_atom_list,
+                sorted_positions,
+                sorted_atom_periodic_shifts,
+            ],
+            device=device,
+        )
     if chosen == "pair_centric":
         query_cell_list_pair_centric_sorted(
             sorted_positions=sorted_positions,
@@ -872,7 +890,7 @@ def query_cell_list(
             neighbor_matrix=neighbor_matrix,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
             num_neighbors=num_neighbors,
-            rebuild_flags=rebuild_flags,
+            rebuild_flags=rebuild_flags_arg,
             wp_dtype=wp_dtype,
             device=device,
             n_outer=int(n_outer),
@@ -888,6 +906,7 @@ def query_cell_list(
             pair_energies=pair_energies,
             pair_forces=pair_forces,
             target_row_lookup=target_row_lookup,
+            selective=selective,
         )
     else:
         query_cell_list_atom_centric_sorted(
@@ -905,7 +924,7 @@ def query_cell_list(
             neighbor_matrix=neighbor_matrix,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
             num_neighbors=num_neighbors,
-            rebuild_flags=rebuild_flags,
+            rebuild_flags=rebuild_flags_arg,
             wp_dtype=wp_dtype,
             device=device,
             half_fill=bool(half_fill),
@@ -920,6 +939,8 @@ def query_cell_list(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+            atom_centric_path=atom_centric_path,
+            selective=selective,
         )
 
 
@@ -944,6 +965,7 @@ def batch_build_cell_list(
     cell_atom_list: wp.array,
     wp_dtype: type,
     device: str,
+    min_cells_per_dimension: int = 4,
 ) -> None:
     """Core warp launcher for building batch spatial cell lists.
 
@@ -986,6 +1008,8 @@ def batch_build_cell_list(
         Warp dtype (``wp.float32`` or ``wp.float64``).
     device : str
         Warp device string (e.g., 'cuda:0', 'cpu').
+    min_cells_per_dimension : int, default 4
+        Lower bound for the per-axis cell count. Pass 1 for the legacy grid rule.
 
     Notes
     -----
@@ -1004,7 +1028,12 @@ def batch_build_cell_list(
     wp_cutoff = wp_dtype(cutoff)
 
     wp.launch(
-        get_build_cell_list_kernel("construct_bin_size", wp_dtype, batched=True),
+        get_build_cell_list_kernel(
+            "construct_bin_size",
+            wp_dtype,
+            batched=True,
+            min_cells_per_dimension=int(min_cells_per_dimension),
+        ),
         dim=num_systems,
         device=device,
         inputs=(
@@ -1203,7 +1232,6 @@ def batch_query_cell_list_pair_centric_sorted(
     n_offsets_int = int(n_outer) + 1
     if not is_pair_centric_launch_safe(int(total_cells), int(n_outer), block_dim_int):
         _raise_unsafe_pair_centric_launch(int(total_cells), int(n_outer), block_dim_int)
-    hf = bool(half_fill)
     R_max_vec = wp.vec3i(int(R_max[0]), int(R_max[1]), int(R_max[2]))
     partial = target_indices is not None
     rebuild_flags_arg = (
@@ -1262,6 +1290,7 @@ def batch_query_cell_list_pair_centric_sorted(
         batched=True,
         selective=rebuild_flags is not None,
         partial=partial,
+        half_fill=bool(half_fill),
         return_vectors=return_vectors,
         return_distances=return_distances,
         pair_fn=pair_fn,
@@ -1299,7 +1328,6 @@ def batch_query_cell_list_pair_centric_sorted(
             total_cells,
             n_offsets_int,
             R_max_vec,
-            hf,
             rebuild_flags_arg,
         ],
         device=device,
@@ -1331,6 +1359,7 @@ def batch_query_cell_list(
     sorted_positions: wp.array | None = None,
     sorted_atom_periodic_shifts: wp.array | None = None,
     strategy: str = "atom_centric",
+    atom_centric_path: str = "auto",
     cells_per_system: wp.array | None = None,
     cell_to_system: wp.array | None = None,
     n_outer: int | None = None,
@@ -1390,7 +1419,9 @@ def batch_query_cell_list(
     neighbor_matrix_shifts : wp.array, shape (total_atoms, max_neighbors, 3), dtype=wp.vec3i
         OUTPUT: Matrix storing shift vectors for each neighbor relationship.
     num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
-        OUTPUT: Number of neighbors found for each atom.
+        OUTPUT (atomic): per-atom neighbor counts.  Accumulated via
+        ``wp.atomic_add``, so non-selective callers must zero it before the
+        call (selective callers zero it via ``rebuild_flags``).
     wp_dtype : type
         Warp dtype (``wp.float32`` or ``wp.float64``).
     device : str
@@ -1400,8 +1431,9 @@ def batch_query_cell_list(
     rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool, optional
         Per-system rebuild flags. If provided, only systems where
         ``rebuild_flags[i]`` is True are processed; others are skipped on
-        the GPU without CPU sync.  When omitted, this launcher allocates
-        an always-True per-system flag for the call.
+        the GPU without CPU sync.  When omitted, the non-selective kernel
+        specialization is launched and the caller is responsible for
+        pre-zeroing ``num_neighbors``.
     sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*, optional
         Per-cell-contiguous gather scratch.  Allocated transiently when
         omitted; graph/capture callers should pass caller-owned scratch.
@@ -1443,17 +1475,13 @@ def batch_query_cell_list(
     """
 
     total_atoms = positions.shape[0]
-    num_systems = int(cell.shape[0])
 
-    if rebuild_flags is None:
-        rebuild_flags = wp.array([True] * num_systems, dtype=wp.bool, device=device)
-    if sorted_positions is None:
-        _vec_dtype, _ = dtype_info(wp_dtype)
-        sorted_positions = wp.empty(int(total_atoms), dtype=_vec_dtype, device=device)
-    if sorted_atom_periodic_shifts is None:
-        sorted_atom_periodic_shifts = wp.empty(
-            int(total_atoms), dtype=wp.vec3i, device=device
-        )
+    selective = rebuild_flags is not None
+    rebuild_flags_arg = (
+        rebuild_flags
+        if rebuild_flags is not None
+        else _empty_sentinel(1, wp.bool, device)
+    )
 
     if strategy == "pair_centric":
         missing = [
@@ -1476,12 +1504,36 @@ def batch_query_cell_list(
             )
         block_dim = 64
         if not is_pair_centric_launch_safe(int(total_cells), int(n_outer), block_dim):
-            _warn_pair_centric_fallback(int(total_cells), int(n_outer), block_dim)
-            strategy = "atom_centric"
+            _raise_unsafe_pair_centric_launch(int(total_cells), int(n_outer), block_dim)
     elif strategy != "atom_centric":
         raise ValueError(
             f"strategy must be 'atom_centric' | 'pair_centric', got {strategy!r}",
         )
+
+    if atom_centric_path == "auto":
+        atom_centric_path = "direct"
+    elif atom_centric_path not in {"direct", "sorted"}:
+        raise ValueError(
+            "atom_centric_path must be 'auto' | 'direct' | 'sorted', "
+            f"got {atom_centric_path!r}",
+        )
+    needs_sorted = strategy == "pair_centric" or atom_centric_path == "sorted"
+    _vec_dtype, _ = dtype_info(wp_dtype)
+    if needs_sorted:
+        if (sorted_positions is None) != (sorted_atom_periodic_shifts is None):
+            raise ValueError(
+                "Pass both sorted_positions and sorted_atom_periodic_shifts, "
+                "or neither - got a mixed state.",
+            )
+        if sorted_positions is None:
+            sorted_positions = wp.empty(int(total_atoms), dtype=_vec_dtype, device=device)
+        if sorted_atom_periodic_shifts is None:
+            sorted_atom_periodic_shifts = wp.empty(
+                int(total_atoms), dtype=wp.vec3i, device=device
+            )
+    else:
+        sorted_positions = _empty_sentinel(1, _vec_dtype, device)
+        sorted_atom_periodic_shifts = _empty_sentinel(1, wp.vec3i, device)
 
     if strategy == "pair_centric":
         batch_query_cell_list_pair_centric_sorted(
@@ -1523,21 +1575,22 @@ def batch_query_cell_list(
         )
         return
 
-    wp.launch(
-        get_cell_list_gather_kernel(wp_dtype),
-        dim=total_atoms,
-        inputs=[
-            positions,
-            atom_periodic_shifts,
-            cell_atom_list,
-            sorted_positions,
-            sorted_atom_periodic_shifts,
-        ],
-        device=device,
-    )
+    if needs_sorted:
+        wp.launch(
+            get_cell_list_gather_kernel(wp_dtype),
+            dim=total_atoms,
+            inputs=[
+                positions,
+                atom_periodic_shifts,
+                cell_atom_list,
+                sorted_positions,
+                sorted_atom_periodic_shifts,
+            ],
+            device=device,
+        )
 
     partial = target_indices is not None
-    if not partial:
+    if selective and not partial:
         selective_zero_num_neighbors(num_neighbors, batch_idx, rebuild_flags, device)
     target_indices_arg = (
         target_indices
@@ -1566,11 +1619,13 @@ def batch_query_cell_list(
         wp_dtype,
         strategy="atom_centric",
         batched=True,
-        selective=True,
+        selective=selective,
         partial=partial,
+        half_fill=bool(half_fill),
         return_vectors=return_vectors,
         return_distances=return_distances,
         pair_fn=pair_fn,
+        atom_centric_path=atom_centric_path,
     )
     dim = int(target_indices.shape[0]) if partial else total_atoms
     wp.launch(
@@ -1604,8 +1659,7 @@ def batch_query_cell_list(
             pair_params_arg,
             pair_energies_arg,
             pair_forces_arg,
-            bool(half_fill),
-            rebuild_flags,
+            rebuild_flags_arg,
         ],
         device=device,
     )

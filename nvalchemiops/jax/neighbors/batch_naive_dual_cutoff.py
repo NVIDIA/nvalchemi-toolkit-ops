@@ -589,7 +589,6 @@ def batch_naive_neighbor_list_dual_cutoff(
                     empty_pair_params,
                     empty_energies,
                     empty_forces,
-                    half_fill,
                     rf,
                     launch_dims=(1, 1, total_atoms),
                 )
@@ -618,7 +617,6 @@ def batch_naive_neighbor_list_dual_cutoff(
                     empty_pair_params,
                     empty_energies,
                     empty_forces,
-                    half_fill,
                     empty_rebuild_flags,
                     launch_dims=(1, 1, total_atoms),
                 )
@@ -702,7 +700,6 @@ def batch_naive_neighbor_list_dual_cutoff(
                     empty_pair_params,
                     empty_energies,
                     empty_forces,
-                    half_fill,
                     rf,
                     launch_dims=(
                         num_systems,
@@ -740,7 +737,6 @@ def batch_naive_neighbor_list_dual_cutoff(
                     empty_pair_params,
                     empty_energies,
                     empty_forces,
-                    half_fill,
                     empty_rebuild_flags,
                     launch_dims=(
                         num_systems,
@@ -787,7 +783,6 @@ def batch_naive_neighbor_list_dual_cutoff(
                     empty_pair_params,
                     empty_energies,
                     empty_forces,
-                    half_fill,
                     rf,
                     launch_dims=(
                         num_systems,
@@ -825,7 +820,6 @@ def batch_naive_neighbor_list_dual_cutoff(
                     empty_pair_params,
                     empty_energies,
                     empty_forces,
-                    half_fill,
                     empty_rebuild_flags,
                     launch_dims=(
                         num_systems,

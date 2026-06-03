@@ -684,27 +684,55 @@ def test_torch_batch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
     assert torch.all(distances[:npairs] > 0)
 
 
-def test_jax_cluster_tile_neighbor_list_pair_fn_raises_not_implemented():
-    """JAX binding surfaces the kwargs but raises ``NotImplementedError``.
+@wp.func
+def _ct_getter_sum_pair_fn(
+    r_ij: wp.vec3f,
+    distance: wp.float32,
+    pair_params: wp.array2d(dtype=wp.float32),
+    i: int,
+    j: int,
+):
+    return pair_params[i, 0] + pair_params[j, 0] + distance, -r_ij
 
-    Per the binding's docstring: the ``jax_callable`` pathway here
-    cannot carry a callable ``pair_fn`` across the trace boundary, so
-    the kwargs reject use explicitly at runtime.
+
+def test_jax_cluster_tile_neighbor_list_pair_fn_supported():
+    """JAX cluster_tile binding now wires ``pair_fn`` (fp32, matrix-only) via a
+    call-time ``jax_callable`` closing over the function; returns per-pair
+    ``pair_energies`` / ``pair_forces``.  See ``bindings/jax/test_pair_fn.py``.
     """
     pytest.importorskip("jax")
     import jax.numpy as jnp
 
     from nvalchemiops.jax.neighbors.cluster_tile import cluster_tile_neighbor_list
 
-    positions = jnp.zeros((TILE_GROUP_SIZE, 3), dtype=jnp.float32)
+    rng = np.random.RandomState(0)
+    positions = jnp.asarray(
+        rng.uniform(0.0, 5.0, size=(TILE_GROUP_SIZE, 3)).astype(np.float32)
+    )
     cell = jnp.eye(3, dtype=jnp.float32) * 10.0
+    pp = ((jnp.arange(TILE_GROUP_SIZE, dtype=jnp.float32) + 1.0) * 0.5).reshape(-1, 1)
 
-    with pytest.raises(NotImplementedError, match="pair_fn"):
+    out = cluster_tile_neighbor_list(
+        positions,
+        cutoff=2.0,
+        cell=cell,
+        max_neighbors=64,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_ct_getter_sum_pair_fn,
+        pair_params=pp,
+    )
+    # nm, nn, shifts, distances, vectors, pe, pf
+    assert len(out) == 7
+    assert out[5].shape[0] == TILE_GROUP_SIZE
+
+    # pair_fn still requires pair_params.
+    with pytest.raises(ValueError, match="pair_fn requires pair_params"):
         cluster_tile_neighbor_list(
             positions,
             cutoff=2.0,
             cell=cell,
-            pair_fn=object(),
+            pair_fn=_ct_getter_sum_pair_fn,
         )
 
 

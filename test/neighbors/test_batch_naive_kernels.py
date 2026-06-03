@@ -37,12 +37,22 @@ from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_
 from .test_utils import create_batch_systems
 
 _FILL_BATCH_NAIVE_NO_PBC = {
-    t: get_naive_neighbor_matrix_kernel(t, pbc_mode="none", batched=True)
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_kernel(
+            t, pbc_mode="none", batched=True, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 _FILL_BATCH_NAIVE_PBC_WRAP = {
-    t: get_naive_neighbor_matrix_kernel(t, pbc_mode="wrap_on_entry", batched=True)
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_kernel(
+            t, pbc_mode="wrap_on_entry", batched=True, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 
 
@@ -147,7 +157,7 @@ class TestBatchNaiveKernels:
 
         # Launch kernel
         wp.launch(
-            _FILL_BATCH_NAIVE_NO_PBC[wp_dtype],
+            _FILL_BATCH_NAIVE_NO_PBC[half_fill][wp_dtype],
             dim=(1, 1, total_atoms),
             device=wp_device,
             inputs=[
@@ -172,7 +182,6 @@ class TestBatchNaiveKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                half_fill,
                 empty_rebuild_flags,
             ],
         )
@@ -272,7 +281,7 @@ class TestBatchNaiveKernels:
 
         # Launch kernel using the typed overload (3D: systems x shifts x atoms)
         wp.launch(
-            _FILL_BATCH_NAIVE_PBC_WRAP[wp_dtype],
+            _FILL_BATCH_NAIVE_PBC_WRAP[True][wp_dtype],
             dim=(num_systems, max_shifts, max_atoms_per_system),
             device=wp_device,
             inputs=[
@@ -297,7 +306,6 @@ class TestBatchNaiveKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                True,  # half_fill
                 empty_rebuild_flags,
             ],
         )
@@ -539,7 +547,6 @@ class TestBatchNaiveWpLaunchers:
                 sentinels.pair_params,
                 sentinels.pair_energies,
                 sentinels.pair_forces,
-                False,
                 sentinels.rebuild_flags,
             ],
         )
@@ -572,7 +579,6 @@ class TestBatchNaiveWpLaunchers:
                 wp.from_torch(nm_tiled, dtype=wp.int32),
                 wp.from_torch(ns_tiled, dtype=wp.vec3i),
                 wp.from_torch(nn_tiled, dtype=wp.int32),
-                False,
                 sentinels.rebuild_flags,
             ],
             block_dim=BLOCK_DIM,

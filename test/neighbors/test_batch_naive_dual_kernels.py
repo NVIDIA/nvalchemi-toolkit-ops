@@ -36,14 +36,22 @@ from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_
 from .test_utils import create_batch_systems
 
 _FILL_BATCH_NAIVE_DUAL = {
-    t: get_naive_neighbor_matrix_dual_cutoff_kernel(t, pbc_mode="none", batched=True)
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_dual_cutoff_kernel(
+            t, pbc_mode="none", batched=True, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 _FILL_BATCH_NAIVE_PBC_DUAL_WRAP = {
-    t: get_naive_neighbor_matrix_dual_cutoff_kernel(
-        t, pbc_mode="wrap_on_entry", batched=True
-    )
-    for t in (wp.float32, wp.float64, wp.float16)
+    half_fill: {
+        t: get_naive_neighbor_matrix_dual_cutoff_kernel(
+            t, pbc_mode="wrap_on_entry", batched=True, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
 }
 
 
@@ -136,7 +144,7 @@ class TestBatchNaiveDualCutoffKernels:
 
         # Launch kernel
         wp.launch(
-            _FILL_BATCH_NAIVE_DUAL[wp_dtype],
+            _FILL_BATCH_NAIVE_DUAL[half_fill][wp_dtype],
             dim=(1, 1, positions_batch.shape[0]),
             device=wp_device,
             inputs=[
@@ -161,7 +169,6 @@ class TestBatchNaiveDualCutoffKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                half_fill,
                 empty_rebuild_flags,
             ],
         )
@@ -307,7 +314,7 @@ class TestBatchNaiveDualCutoffKernels:
 
         # Launch kernel with 3D dims: (num_systems, max_shifts, max_atoms_per_system)
         wp.launch(
-            _FILL_BATCH_NAIVE_PBC_DUAL_WRAP[wp_dtype],
+            _FILL_BATCH_NAIVE_PBC_DUAL_WRAP[True][wp_dtype],
             dim=(num_systems, max_shifts, max_atoms_per_system),
             device=wp_device,
             inputs=[
@@ -332,7 +339,6 @@ class TestBatchNaiveDualCutoffKernels:
                 empty_pair_params,
                 empty_energies,
                 empty_forces,
-                True,  # half_fill
                 empty_rebuild_flags,
             ],
         )

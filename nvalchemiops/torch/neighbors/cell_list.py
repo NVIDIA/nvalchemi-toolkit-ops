@@ -23,23 +23,21 @@ half-fill modes, and selective rebuild.
 
 Two query kernels share this build:
 
-* **atom-centric** - one thread per atom; thread-local-counter
-  optimisation; no atomics on ``num_neighbors``.  Best at large N.
+* **atom-centric** - one thread per atom.  The default direct
+  (full-fill) path accumulates counts via ``wp.atomic_add`` on
+  ``num_neighbors``, so the order of neighbors within a given row is
+  unspecified.  Best at large N.
 * **pair-centric** - one CUDA block per ``(source_cell, offset)``;
   offset zero handles same-cell pairs.  Per-emit ``atomic_add`` on
   ``num_neighbors``.  Best at small/medium N or large cutoff (more
   cell-level parallelism than atom-level).
 
 Auto-select uses sync-free quantities (``natom``, ``cutoff``).  See
-:func:`select_cell_list_strategy` for the 3-clause rule.  Users can override
-per-call via ``cell_list(..., strategy="pair_centric")`` or globally
-via env ``NVALCHEMI_NEIGHLIST_STRATEGY``.
+:func:`select_cell_list_strategy` for the 3-clause rule.  Pin a strategy
+per-call via ``cell_list(..., strategy="pair_centric")``.
 """
 
 from __future__ import annotations
-
-import os
-import warnings
 
 import torch
 import warp as wp
@@ -49,6 +47,7 @@ from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
     get_build_cell_list_kernel,
     is_pair_centric_launch_safe,
+    is_pair_centric_parallelism_sufficient,
     pair_centric_launch_size,
     select_cell_list_strategy,
 )
@@ -76,6 +75,7 @@ from nvalchemiops.torch.neighbors._autograd import (
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
+    coo_pack_pair_geometry,
     get_neighbor_list_from_neighbor_matrix,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
@@ -89,22 +89,40 @@ __all__ = [
 ]
 
 
-def _warn_pair_centric_fallback(
+def _pair_centric_unsafe_message(
     total_cells: int,
     n_outer: int,
     block_dim: int = 64,
-) -> None:
-    """Warn that an explicit pair-centric request is falling back."""
+) -> str:
+    """Return the unsafe pair-centric launch message."""
     launch_size = pair_centric_launch_size(total_cells, n_outer, block_dim)
-    warnings.warn(
+    return (
         "strategy='pair_centric' would require "
         f"{launch_size} logical threads "
         f"({int(total_cells)} cells * {int(n_outer) + 1} offsets * "
         f"{int(block_dim)} threads), exceeding the safe linear launch limit "
-        f"of {PAIR_CENTRIC_MAX_LINEAR_LAUNCH}; falling back to "
-        "strategy='atom_centric'.",
-        RuntimeWarning,
-        stacklevel=3,
+        f"of {PAIR_CENTRIC_MAX_LINEAR_LAUNCH}."
+    )
+
+
+def _raise_unsafe_pair_centric_launch(
+    total_cells: int,
+    n_outer: int,
+    block_dim: int = 64,
+) -> None:
+    """Raise when an explicit pair-centric request is unsafe."""
+    raise ValueError(_pair_centric_unsafe_message(total_cells, n_outer, block_dim))
+
+
+def _resolve_atom_centric_path(atom_centric_path: str) -> str:
+    """Resolve an atom-centric path argument; ``"auto"`` defaults to ``"direct"``."""
+    if atom_centric_path == "auto":
+        return "direct"
+    if atom_centric_path in {"direct", "sorted"}:
+        return atom_centric_path
+    raise ValueError(
+        "atom_centric_path must be 'auto' | 'direct' | 'sorted', "
+        f"got {atom_centric_path!r}",
     )
 
 
@@ -157,6 +175,7 @@ def estimate_cell_list_sizes(
     pbc: torch.Tensor,
     cutoff: float,
     max_nbins: int = 524288,
+    min_cells_per_dimension: int = 4,
 ) -> tuple[int, torch.Tensor]:
     """Estimate allocation sizes for torch.compile-friendly cell list construction.
 
@@ -171,7 +190,7 @@ def estimate_cell_list_sizes(
     ----------
     cell : torch.Tensor, shape (1, 3, 3)
         Unit cell matrix defining the simulation box.
-    pbc : torch.Tensor, shape (1, 3), dtype=bool
+    pbc : torch.Tensor, shape (3,) or (1, 3), dtype=bool
         Flags indicating periodic boundary conditions in x, y, z directions.
     cutoff : float
         Maximum distance for neighbor search, determines minimum cell size.
@@ -179,9 +198,11 @@ def estimate_cell_list_sizes(
         Cap on total cells.  When the natural cell-grid (box / cutoff)^3
         exceeds this cap, the kernel halves cells/dim iteratively until it
         fits - which inflates the *atoms-per-cell* count and quadratically
-        increases inner-loop work.  Default raised from 8192 -> 524288 in
-        2026-04 after observing a 10x cliff at N>500k atoms; cells/dim arrays
-        cost only ~4 MB at this cap (2 x max_nbins x 4 bytes).
+        increases inner-loop work.  Cells/dim arrays cost ~4 MB at this
+        cap (2 x max_nbins x 4 bytes).
+    min_cells_per_dimension : int, default=4
+        Lower bound for the per-axis cell count. Pass 1 for the legacy grid
+        rule used by explicit atom-centric benchmarks.
 
     Returns
     -------
@@ -213,17 +234,19 @@ def estimate_cell_list_sizes(
         )
     dtype = cell.dtype
     device = cell.device
-    wp_device = str(device)
-    wp_dtype = get_wp_dtype(dtype)
-    wp_mat_dtype = get_wp_mat_dtype(dtype)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
 
     if (cell.ndim == 3 and cell.shape[0] == 0) or cutoff <= 0:
         return 1, torch.zeros((3,), dtype=torch.int32, device=device)
 
     if cell.ndim == 2:
         cell = cell.unsqueeze(0)
+    pbc = pbc.reshape(3)
+
+    wp_device = str(device)
+    wp_dtype = get_wp_dtype(dtype)
+    wp_mat_dtype = get_wp_mat_dtype(dtype)
+    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
 
     max_total_cells = torch.zeros(1, device=device, dtype=torch.int32)
     wp_max_total_cells = wp.from_torch(
@@ -236,7 +259,11 @@ def estimate_cell_list_sizes(
     )
 
     wp.launch(
-        get_build_cell_list_kernel("estimate_sizes", wp_dtype),
+        get_build_cell_list_kernel(
+            "estimate_sizes",
+            wp_dtype,
+            min_cells_per_dimension=int(min_cells_per_dimension),
+        ),
         dim=1,
         inputs=[
             wp_cell,
@@ -279,6 +306,7 @@ def _build_cell_list_op(
     atoms_per_cell_count: torch.Tensor,
     cell_atom_start_indices: torch.Tensor,
     cell_atom_list: torch.Tensor,
+    min_cells_per_dimension: int = 4,
 ) -> None:
     """Internal custom op for building spatial cell list.
 
@@ -302,7 +330,7 @@ def _build_cell_list_op(
         return
 
     cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
-    pbc = pbc.squeeze(0)
+    pbc = pbc.reshape(3)
 
     # Get warp dtypes and arrays
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -343,6 +371,7 @@ def _build_cell_list_op(
         cell_atom_list=wp_cell_atom_list,
         wp_dtype=wp_dtype,
         device=wp_device,
+        min_cells_per_dimension=int(min_cells_per_dimension),
     )
 
 
@@ -358,6 +387,7 @@ def build_cell_list(
     atoms_per_cell_count: torch.Tensor,
     cell_atom_start_indices: torch.Tensor,
     cell_atom_list: torch.Tensor,
+    min_cells_per_dimension: int = 4,
 ) -> None:
     """Build spatial cell list with fixed allocation sizes for torch.compile compatibility.
 
@@ -375,7 +405,7 @@ def build_cell_list(
     cell : torch.Tensor, shape (1, 3, 3)
         Unit cell matrix defining the simulation box. Each row represents a
         lattice vector in Cartesian coordinates. Must match positions dtype.
-    pbc : torch.Tensor, shape (3,), dtype=bool
+    pbc : torch.Tensor, shape (3,) or (1, 3), dtype=bool
         Flags indicating periodic boundary conditions in x, y, z directions.
         True enables PBC, False disables it for that dimension.
     cells_per_dimension : torch.Tensor, shape (3,), dtype=int32
@@ -394,6 +424,9 @@ def build_cell_list(
     cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32
         OUTPUT: Flattened list of atom indices organized by cell. Use with start_indices
         to extract atoms for each cell.
+    min_cells_per_dimension : int, default=4
+        Lower bound for the per-axis cell count. Pass 1 for the legacy grid
+        rule used by explicit atom-centric benchmarks.
 
     Notes
     -----
@@ -420,6 +453,7 @@ def build_cell_list(
         atoms_per_cell_count,
         cell_atom_start_indices,
         cell_atom_list,
+        min_cells_per_dimension,
     )
 
 
@@ -446,6 +480,7 @@ def _query_cell_list_op(
     rebuild_flags: torch.Tensor | None = None,
     fill_value: int | None = None,
     algorithm: str = "auto",
+    atom_centric_path: str = "auto",
     sorted_positions: torch.Tensor | None = None,
     sorted_shifts: torch.Tensor | None = None,
 ) -> None:
@@ -476,7 +511,7 @@ def _query_cell_list_op(
         return
 
     cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
-    pbc = pbc.squeeze(0)
+    pbc = pbc.reshape(3)
 
     # Get warp dtypes and arrays
     wp_dtype = get_wp_dtype(positions.dtype)
@@ -516,10 +551,6 @@ def _query_cell_list_op(
     )
     wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
 
-    # The warp-level launchers require ``rebuild_flags`` to be a real
-    # 1-element ``wp.bool`` array (no hidden allocation inside the kernel
-    # path).  Non-selective callers get a fresh always-True allocation
-    # per call.
     if rebuild_flags is not None:
         wp_rebuild_flags = wp.from_torch(
             rebuild_flags, dtype=wp.bool, return_ctype=True
@@ -528,10 +559,7 @@ def _query_cell_list_op(
             wp_num_neighbors, wp_rebuild_flags, wp_device
         )
     else:
-        always_true_flag = torch.ones((1,), dtype=torch.bool, device=device)
-        wp_rebuild_flags = wp.from_torch(
-            always_true_flag, dtype=wp.bool, return_ctype=True
-        )
+        wp_rebuild_flags = None
 
     # Pair-centric kernels are CUDA-only; see :func:`select_cell_list_strategy`.
     cpu_only = device.type == "cpu"
@@ -557,10 +585,10 @@ def _query_cell_list_op(
             f"got {strategy!r}",
         )
     use_pair = chosen == "pair_centric"
+    atom_centric_path = _resolve_atom_centric_path(atom_centric_path)
 
     # Caller-allocated sort scratch - both or neither.  Mixed state raises so
-    # a half-graph capture can't silently fall back to an internal
-    # allocation.
+    # a half-graph capture can't silently fall back to an internal allocation.
     _sort_set = {sorted_positions is not None, sorted_shifts is not None}
     if len(_sort_set) != 1:
         raise ValueError(
@@ -568,30 +596,8 @@ def _query_cell_list_op(
             "got a mixed state.",
         )
     sort_scratch_provided = sorted_positions is not None
-
-    # Resolve sort scratch (used by both paths).  When the caller does not
-    # supply scratch, allocate a fresh torch tensor per call.
-    if sort_scratch_provided:
-        sorted_positions_t = sorted_positions
-        sorted_shifts_t = sorted_shifts
-    else:
-        pos_dtype = positions.dtype
-        sorted_positions_t = torch.empty(
-            (int(total_atoms), 3), dtype=pos_dtype, device=device
-        )
-        sorted_shifts_t = torch.empty(
-            (int(total_atoms), 3), dtype=torch.int32, device=device
-        )
-    wp_sorted_positions = wp.from_torch(
-        sorted_positions_t,
-        dtype=wp_vec_dtype,
-        return_ctype=True,
-    )
-    wp_sorted_shifts = wp.from_torch(
-        sorted_shifts_t,
-        dtype=wp.vec3i,
-        return_ctype=True,
-    )
+    wp_sorted_positions = None
+    wp_sorted_shifts = None
 
     n_outer = None
     if use_pair:
@@ -606,21 +612,34 @@ def _query_cell_list_op(
         total_cells = int(atoms_per_cell_count.shape[0])
         if not is_pair_centric_launch_safe(total_cells, n_outer):
             if strategy == "pair_centric":
-                _warn_pair_centric_fallback(total_cells, n_outer)
+                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
+            chosen = "atom_centric"
+            use_pair = False
+            n_outer = None
+        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+            int(total_atoms), total_cells, n_outer
+        ):
             chosen = "atom_centric"
             use_pair = False
             n_outer = None
 
-    if os.environ.get("NVALCHEMI_NEIGHLIST_STRATEGY_LOG"):
-        _selective = " selective" if rebuild_flags is not None else ""
-        _scratch = " (scratch=ext)" if sort_scratch_provided else " (scratch=fresh)"
-        print(
-            f"[neighlist-strategy] natom={int(total_atoms)} "
-            f"cutoff={float(cutoff):.3f} "
-            f"total_cells={int(atoms_per_cell_count.shape[0])} "
-            f"half_fill={bool(half_fill)} strategy={strategy} "
-            f"-> {chosen}{_selective}{_scratch}",
-            flush=True,
+    needs_sorted = use_pair or atom_centric_path == "sorted"
+    if needs_sorted:
+        if sort_scratch_provided:
+            sorted_positions_t = sorted_positions
+            sorted_shifts_t = sorted_shifts
+        else:
+            sorted_positions_t = torch.empty(
+                (int(total_atoms), 3), dtype=positions.dtype, device=device
+            )
+            sorted_shifts_t = torch.empty(
+                (int(total_atoms), 3), dtype=torch.int32, device=device
+            )
+        wp_sorted_positions = wp.from_torch(
+            sorted_positions_t, dtype=wp_vec_dtype, return_ctype=True
+        )
+        wp_sorted_shifts = wp.from_torch(
+            sorted_shifts_t, dtype=wp.vec3i, return_ctype=True
         )
 
     wp_query_cell_list(
@@ -646,6 +665,7 @@ def _query_cell_list_op(
         half_fill=bool(half_fill),
         strategy=chosen,
         n_outer=n_outer,
+        atom_centric_path=atom_centric_path,
     )
 
     # Coalesced tail fill (CUDA only - the kernel uses wp.launch_tiled which
@@ -688,6 +708,7 @@ def query_cell_list(
     rebuild_flags: torch.Tensor | None = None,
     fill_value: int | None = None,
     strategy: str = "auto",
+    atom_centric_path: str = "auto",
     sorted_positions: torch.Tensor | None = None,
     sorted_shifts: torch.Tensor | None = None,
     target_indices: torch.Tensor | None = None,
@@ -716,7 +737,7 @@ def query_cell_list(
         Maximum distance for considering atoms as neighbors.
     cell : torch.Tensor, shape (1, 3, 3)
         Unit cell matrix for periodic boundary coordinate shifts.
-    pbc : torch.Tensor, shape (3,), dtype=bool
+    pbc : torch.Tensor, shape (3,) or (1, 3), dtype=bool
         Periodic boundary condition flags.
     cells_per_dimension : torch.Tensor, shape (3,), dtype=int32
         Number of cells in x, y, z directions from build_cell_list.
@@ -759,8 +780,10 @@ def query_cell_list(
         Selects which of the two cell-list query kernels to launch.  See
         :func:`select_cell_list_strategy` for the "auto" rule.  Both strategies
         return identical pair sets for either ``half_fill`` value;
-        per-row ordering inside ``neighbor_matrix`` differs.  Override
-        via env ``NVALCHEMI_NEIGHLIST_STRATEGY``.
+        per-row ordering inside ``neighbor_matrix`` differs.
+    atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
+        Selects the atom-centric implementation path when
+        ``strategy="atom_centric"``.  ``"auto"`` resolves to ``"direct"``.
     sorted_positions, sorted_shifts : torch.Tensor, optional
         Pre-allocated scratch (shape ``(total_atoms, 3)``) used by both
         atom-centric and pair-centric paths.  Allocate via
@@ -835,6 +858,7 @@ def query_cell_list(
             sorted_positions=sorted_positions,
             sorted_shifts=sorted_shifts,
             strategy=strategy,
+            atom_centric_path=atom_centric_path,
             target_indices=target_indices,
             return_vectors=return_vectors,
             return_distances=return_distances,
@@ -844,6 +868,34 @@ def query_cell_list(
             neighbor_distances=neighbor_distances,
             pair_energies=pair_energies,
             pair_forces=pair_forces,
+        )
+        return None
+    if (
+        not torch.compiler.is_compiling()
+        and strategy == "atom_centric"
+        and sorted_positions is None
+        and sorted_shifts is None
+        and _resolve_atom_centric_path(atom_centric_path) == "direct"
+    ):
+        _query_cell_list_direct_eager(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            half_fill=half_fill,
+            rebuild_flags=rebuild_flags,
+            fill_value=fill_value,
+            atom_centric_path="direct",
         )
         return None
     return _query_cell_list_op(
@@ -865,12 +917,13 @@ def query_cell_list(
         rebuild_flags,
         fill_value,
         strategy,
+        atom_centric_path,
         sorted_positions,
         sorted_shifts,
     )
 
 
-def _query_cell_list_optional(
+def _query_cell_list_direct_eager(
     positions: torch.Tensor,
     cutoff: float,
     cell: torch.Tensor,
@@ -889,54 +942,20 @@ def _query_cell_list_optional(
     half_fill: bool,
     rebuild_flags: torch.Tensor | None,
     fill_value: int | None,
-    sorted_positions: torch.Tensor | None,
-    sorted_shifts: torch.Tensor | None,
-    strategy: str,
-    target_indices: torch.Tensor | None,
-    return_vectors: bool,
-    return_distances: bool,
-    pair_fn: wp.Function | None,
-    pair_params: torch.Tensor | None,
-    neighbor_vectors: torch.Tensor | None,
-    neighbor_distances: torch.Tensor | None,
-    pair_energies: torch.Tensor | None,
-    pair_forces: torch.Tensor | None,
+    atom_centric_path: str,
 ) -> None:
-    """Route to the warp factory when optional per-neighbor outputs are used.
+    """Eager fast path for explicit atom-centric direct queries.
 
-    The torch ``@torch.library.custom_op`` boundary cannot carry a
-    callable ``pair_fn``; this helper bypasses it and calls
-    :func:`wp_query_cell_list` directly.  Caller-supplied scratch + output
-    buffers are converted via :func:`wp.from_torch`; omitted scratch is
-    allocated fresh as a torch tensor for this call.
+    This keeps the common benchmark/runtime path off the generic custom-op
+    boundary while preserving that boundary for ``torch.compile``.
     """
     total_atoms = positions.shape[0]
     device = positions.device
     if total_atoms == 0:
         return
 
-    # The query writes one output row per source atom: ``num_targets`` compact
-    # rows when ``target_indices`` is given, else ``total_atoms``.  Validate the
-    # caller-owned output buffers cover that many rows *before* launching, so an
-    # undersized (e.g. compact ``target_indices``) buffer raises a clean error
-    # instead of an out-of-bounds device write that corrupts the CUDA context.
-    n_out_rows = (
-        int(target_indices.shape[0]) if target_indices is not None else total_atoms
-    )
-    if int(neighbor_matrix.shape[0]) < n_out_rows:
-        raise ValueError(
-            f"neighbor_matrix has {int(neighbor_matrix.shape[0])} rows but the "
-            f"{'partial target_indices' if target_indices is not None else 'full'}"
-            f" query writes {n_out_rows} rows; allocate at least that many."
-        )
-    if int(num_neighbors.shape[0]) < int(neighbor_matrix.shape[0]):
-        raise ValueError(
-            "num_neighbors must have at least as many rows as neighbor_matrix "
-            f"(got {int(num_neighbors.shape[0])} vs {int(neighbor_matrix.shape[0])})."
-        )
-
     cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
-    pbc = pbc.squeeze(0)
+    pbc = pbc.reshape(3)
 
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
@@ -981,24 +1000,160 @@ def _query_cell_list_optional(
             wp_num_neighbors, wp_rebuild_flags, wp_device
         )
     else:
-        always_true_flag = torch.ones((1,), dtype=torch.bool, device=device)
-        wp_rebuild_flags = wp.from_torch(
-            always_true_flag, dtype=wp.bool, return_ctype=True
+        wp_rebuild_flags = None
+
+    wp_query_cell_list(
+        positions=wp_positions,
+        cell=wp_cell,
+        pbc=wp_pbc,
+        cutoff=float(cutoff),
+        cells_per_dimension=wp_cells_per_dimension,
+        neighbor_search_radius=wp_neighbor_search_radius,
+        atom_periodic_shifts=wp_atom_periodic_shifts,
+        atom_to_cell_mapping=wp_atom_to_cell_mapping,
+        atoms_per_cell_count=wp_atoms_per_cell_count,
+        cell_atom_start_indices=wp_cell_atom_start_indices,
+        cell_atom_list=wp_cell_atom_list,
+        neighbor_matrix=wp_neighbor_matrix,
+        neighbor_matrix_shifts=wp_neighbor_matrix_shifts,
+        num_neighbors=wp_num_neighbors,
+        wp_dtype=wp_dtype,
+        device=wp_device,
+        half_fill=bool(half_fill),
+        rebuild_flags=wp_rebuild_flags,
+        strategy="atom_centric",
+        atom_centric_path=atom_centric_path,
+    )
+
+    if fill_value is not None and rebuild_flags is None and wp_device != "cpu":
+        max_neighbors = int(neighbor_matrix.shape[1])
+        if max_neighbors > 0:
+            wp_fill_neighbor_matrix_tail(
+                wp_num_neighbors,
+                int(neighbor_matrix.shape[0]),
+                max_neighbors,
+                int(fill_value),
+                wp_neighbor_matrix,
+                wp_device,
+            )
+
+
+def _query_cell_list_optional(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cells_per_dimension: torch.Tensor,
+    neighbor_search_radius: torch.Tensor,
+    atom_periodic_shifts: torch.Tensor,
+    atom_to_cell_mapping: torch.Tensor,
+    atoms_per_cell_count: torch.Tensor,
+    cell_atom_start_indices: torch.Tensor,
+    cell_atom_list: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    *,
+    half_fill: bool,
+    rebuild_flags: torch.Tensor | None,
+    fill_value: int | None,
+    sorted_positions: torch.Tensor | None,
+    sorted_shifts: torch.Tensor | None,
+    strategy: str,
+    atom_centric_path: str,
+    target_indices: torch.Tensor | None,
+    return_vectors: bool,
+    return_distances: bool,
+    pair_fn: wp.Function | None,
+    pair_params: torch.Tensor | None,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    pair_energies: torch.Tensor | None,
+    pair_forces: torch.Tensor | None,
+) -> None:
+    """Route to the warp factory when optional per-neighbor outputs are used.
+
+    The torch ``@torch.library.custom_op`` boundary cannot carry a
+    callable ``pair_fn``; this helper bypasses it and calls
+    :func:`wp_query_cell_list` directly.  Caller-supplied scratch + output
+    buffers are converted via :func:`wp.from_torch`; omitted scratch is
+    allocated fresh as a torch tensor for this call.
+    """
+    total_atoms = positions.shape[0]
+    device = positions.device
+    if total_atoms == 0:
+        return
+
+    # The query writes one output row per source atom: ``num_targets`` compact
+    # rows when ``target_indices`` is given, else ``total_atoms``.  Validate the
+    # caller-owned output buffers cover that many rows *before* launching, so an
+    # undersized (e.g. compact ``target_indices``) buffer raises a clean error
+    # instead of an out-of-bounds device write that corrupts the CUDA context.
+    n_out_rows = (
+        int(target_indices.shape[0]) if target_indices is not None else total_atoms
+    )
+    if int(neighbor_matrix.shape[0]) < n_out_rows:
+        raise ValueError(
+            f"neighbor_matrix has {int(neighbor_matrix.shape[0])} rows but the "
+            f"{'partial target_indices' if target_indices is not None else 'full'}"
+            f" query writes {n_out_rows} rows; allocate at least that many."
+        )
+    if int(num_neighbors.shape[0]) < int(neighbor_matrix.shape[0]):
+        raise ValueError(
+            "num_neighbors must have at least as many rows as neighbor_matrix "
+            f"(got {int(num_neighbors.shape[0])} vs {int(neighbor_matrix.shape[0])})."
         )
 
-    # Sort scratch: caller-supplied or fresh torch tensors.
-    if sorted_positions is None:
-        sorted_positions = torch.empty(
-            (int(total_atoms), 3), dtype=positions.dtype, device=device
-        )
-    if sorted_shifts is None:
-        sorted_shifts = torch.empty(
-            (int(total_atoms), 3), dtype=torch.int32, device=device
-        )
-    wp_sorted_positions = wp.from_torch(
-        sorted_positions, dtype=wp_vec_dtype, return_ctype=True
+    cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
+    pbc = pbc.reshape(3)
+
+    wp_dtype = get_wp_dtype(positions.dtype)
+    wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
+    wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
+    wp_device = str(device)
+
+    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
+    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_cells_per_dimension = wp.from_torch(
+        cells_per_dimension, dtype=wp.int32, return_ctype=True
     )
-    wp_sorted_shifts = wp.from_torch(sorted_shifts, dtype=wp.vec3i, return_ctype=True)
+    wp_neighbor_search_radius = wp.from_torch(
+        neighbor_search_radius, dtype=wp.int32, return_ctype=True
+    )
+    wp_atom_periodic_shifts = wp.from_torch(
+        atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_atom_to_cell_mapping = wp.from_torch(
+        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_atoms_per_cell_count = wp.from_torch(
+        atoms_per_cell_count, dtype=wp.int32, return_ctype=True
+    )
+    wp_cell_atom_start_indices = wp.from_torch(
+        cell_atom_start_indices, dtype=wp.int32, return_ctype=True
+    )
+    wp_cell_atom_list = wp.from_torch(cell_atom_list, dtype=wp.int32, return_ctype=True)
+    wp_neighbor_matrix = wp.from_torch(
+        neighbor_matrix, dtype=wp.int32, return_ctype=True
+    )
+    wp_neighbor_matrix_shifts = wp.from_torch(
+        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+    )
+    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+
+    if rebuild_flags is not None:
+        wp_rebuild_flags = wp.from_torch(
+            rebuild_flags, dtype=wp.bool, return_ctype=True
+        )
+        selective_zero_num_neighbors_single(
+            wp_num_neighbors, wp_rebuild_flags, wp_device
+        )
+    else:
+        wp_rebuild_flags = None
+
+    wp_sorted_positions = None
+    wp_sorted_shifts = None
 
     # Optional torch buffers -> warp arrays (only when supplied).
     wp_target_indices = (
@@ -1035,6 +1190,8 @@ def _query_cell_list_optional(
         else None
     )
 
+    atom_centric_path = _resolve_atom_centric_path(atom_centric_path)
+
     cpu_only = device.type == "cpu"
     if strategy == "auto":
         chosen = (
@@ -1067,9 +1224,30 @@ def _query_cell_list_optional(
         total_cells = int(atoms_per_cell_count.shape[0])
         if not is_pair_centric_launch_safe(total_cells, n_outer):
             if strategy == "pair_centric":
-                _warn_pair_centric_fallback(total_cells, n_outer)
+                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
             chosen = "atom_centric"
             n_outer = None
+        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+            int(total_atoms), total_cells, n_outer
+        ):
+            chosen = "atom_centric"
+            n_outer = None
+
+    if chosen == "pair_centric" or atom_centric_path == "sorted":
+        if sorted_positions is None:
+            sorted_positions = torch.empty(
+                (int(total_atoms), 3), dtype=positions.dtype, device=device
+            )
+        if sorted_shifts is None:
+            sorted_shifts = torch.empty(
+                (int(total_atoms), 3), dtype=torch.int32, device=device
+            )
+        wp_sorted_positions = wp.from_torch(
+            sorted_positions, dtype=wp_vec_dtype, return_ctype=True
+        )
+        wp_sorted_shifts = wp.from_torch(
+            sorted_shifts, dtype=wp.vec3i, return_ctype=True
+        )
 
     wp_query_cell_list(
         positions=wp_positions,
@@ -1094,6 +1272,7 @@ def _query_cell_list_optional(
         half_fill=bool(half_fill),
         strategy=chosen,
         n_outer=n_outer,
+        atom_centric_path=atom_centric_path,
         target_indices=wp_target_indices,
         return_vectors=bool(return_vectors),
         return_distances=bool(return_distances),
@@ -1143,6 +1322,7 @@ def cell_list(
     cell_atom_list: torch.Tensor | None = None,
     rebuild_flags: torch.Tensor | None = None,
     strategy: str = "auto",
+    atom_centric_path: str = "auto",
     sorted_positions: torch.Tensor | None = None,
     sorted_shifts: torch.Tensor | None = None,
     target_indices: torch.Tensor | None = None,
@@ -1174,7 +1354,7 @@ def cell_list(
     cell : torch.Tensor, shape (1, 3, 3)
         Unit cell matrix defining the simulation box. Each row represents a
         lattice vector in Cartesian coordinates.
-    pbc : torch.Tensor, shape (1, 3), dtype=bool
+    pbc : torch.Tensor, shape (3,) or (1, 3), dtype=bool
         Flags indicating periodic boundary conditions in x, y, z directions.
     max_neighbors : int, optional
         Maximum number of neighbors per atom. If not provided, will be estimated automatically.
@@ -1234,8 +1414,9 @@ def cell_list(
         Cell-list query kernel selection.  Both strategies return identical
         pair sets; per-row ordering inside ``neighbor_matrix`` differs.
         See :func:`nvalchemiops.neighbors.cell_list.select_cell_list_strategy`
-        for the ``"auto"`` rule and the ``NVALCHEMI_NEIGHLIST_STRATEGY``
-        environment override.  Pair-centric is CUDA-only.
+        for the ``"auto"`` rule.  Pair-centric is CUDA-only.
+    atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
+        Atom-centric implementation path.  ``"auto"`` resolves to ``"direct"``.
     sorted_positions, sorted_shifts : torch.Tensor, optional
         Pre-allocated sort-side scratch (shape ``(total_atoms, 3)``).
         Pass both to make the call graph-capture safe.  Allocate via
@@ -1272,7 +1453,7 @@ def cell_list(
             "e.g. pbc=torch.tensor([True, True, True])."
         )
     cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
-    pbc = pbc.squeeze(0)
+    pbc = pbc.reshape(3)
 
     if fill_value is None:
         fill_value = total_atoms
@@ -1326,8 +1507,9 @@ def cell_list(
     elif rebuild_flags is None:
         num_neighbors.zero_()
 
-    # Allocate cell list if needed
-    if (
+    # Allocate cell list if needed. Explicit atom-centric queries use the
+    # legacy 1-cell minimum; auto/pair-centric keep the current 4-cell policy.
+    allocated_cell_list = (
         cells_per_dimension is None
         or neighbor_search_radius is None
         or atom_periodic_shifts is None
@@ -1335,9 +1517,14 @@ def cell_list(
         or atoms_per_cell_count is None
         or cell_atom_start_indices is None
         or cell_atom_list is None
-    ):
+    )
+    cell_list_min_cells = 1 if strategy == "atom_centric" else 4
+    if allocated_cell_list:
         max_total_cells, neighbor_search_radius = estimate_cell_list_sizes(
-            cell, pbc, cutoff
+            cell,
+            pbc,
+            cutoff,
+            min_cells_per_dimension=cell_list_min_cells,
         )
         cell_list_cache = allocate_cell_list(
             total_atoms,
@@ -1346,6 +1533,9 @@ def cell_list(
             device,
         )
     else:
+        # Caller-provided caches are assumed to have been sized with the
+        # default public estimate policy.
+        cell_list_min_cells = 4
         cells_per_dimension.zero_()
         atom_periodic_shifts.zero_()
         atom_to_cell_mapping.zero_()
@@ -1368,6 +1558,7 @@ def cell_list(
         cell,
         pbc,
         *cell_list_cache,
+        min_cells_per_dimension=cell_list_min_cells,
     )
 
     if return_vectors or return_distances:
@@ -1388,6 +1579,17 @@ def cell_list(
                 dtype=positions.dtype,
                 device=device,
             )
+        # ``pair_fn`` energy/force buffers are optional: allocate them like the
+        # neighbor matrix when the caller did not supply them, so they can be
+        # returned.
+        if pair_fn is not None and pair_energies is None:
+            pair_energies = torch.zeros(
+                (total_atoms, max_neighbors), dtype=positions.dtype, device=device
+            )
+        if pair_fn is not None and pair_forces is None:
+            pair_forces = torch.zeros(
+                (total_atoms, max_neighbors, 3), dtype=positions.dtype, device=device
+            )
 
         forward_kwargs = {
             "cutoff": cutoff,
@@ -1400,6 +1602,7 @@ def cell_list(
             "rebuild_flags": rebuild_flags,
             "fill_value": fill_value,
             "strategy": strategy,
+            "atom_centric_path": atom_centric_path,
             "sorted_positions": sorted_positions,
             "sorted_shifts": sorted_shifts,
             "target_indices": target_indices,
@@ -1427,14 +1630,29 @@ def cell_list(
                 fill_value=fill_value,
             )
             base = (nl, nptr, nl_shifts)
+            # Repack the per-pair outputs into the same COO order as the
+            # neighbor list so they index-align with ``nl``; ``index_select``
+            # keeps the autograd link.  ``pair_fn`` also fills the caller's
+            # matrix buffers in place (those stay matrix layout).
+            active = nm_out != fill_value
+            distances_out, vectors_out = coo_pack_pair_geometry(
+                active, distances_out, vectors_out
+            )
+            pe_out, pf_out = coo_pack_pair_geometry(
+                active, pair_energies, pair_forces
+            )
         else:
             base = (nm_out, nn_out, shifts_out)
+            pe_out, pf_out = pair_energies, pair_forces
 
-        if return_distances and return_vectors:
-            return (*base, distances_out, vectors_out)
+        tail: list[torch.Tensor] = []
         if return_distances:
-            return (*base, distances_out)
-        return (*base, vectors_out)
+            tail.append(distances_out)
+        if return_vectors:
+            tail.append(vectors_out)
+        if pair_fn is not None:
+            tail.extend((pe_out, pf_out))
+        return (*base, *tail)
 
     query_cell_list(
         positions,
@@ -1449,6 +1667,7 @@ def cell_list(
         rebuild_flags,
         fill_value,
         strategy,
+        atom_centric_path,
         sorted_positions,
         sorted_shifts,
         target_indices=target_indices,
@@ -1490,6 +1709,7 @@ def _cell_list_query_forward(
     rebuild_flags: torch.Tensor | None,
     fill_value: int,
     strategy: str,
+    atom_centric_path: str,
     sorted_positions: torch.Tensor | None,
     sorted_shifts: torch.Tensor | None,
     target_indices: torch.Tensor | None,
@@ -1523,6 +1743,7 @@ def _cell_list_query_forward(
         rebuild_flags,
         fill_value,
         strategy,
+        atom_centric_path,
         sorted_positions,
         sorted_shifts,
         target_indices=target_indices,

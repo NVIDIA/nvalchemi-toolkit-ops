@@ -18,6 +18,7 @@
 import pytest
 import torch
 
+import nvalchemiops.torch.neighbors as neighbor_module
 from nvalchemiops.torch.neighbors import neighbor_list
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
@@ -46,12 +47,12 @@ from ...test_utils import (
 
 
 class TestNeighborListAutoSelection:
-    """Test automatic method selection based on system size."""
+    """Test automatic method selection based on estimated neighbor density."""
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_auto_select_naive_small_system(self, dtype, device):
-        """Auto-select naive for small systems (< 2000 atoms)."""
+    def test_auto_select_cell_list_sparse_no_cell(self, dtype, device):
+        """Cell-less auto dispatch is correct at method-dependent COO arity."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
 
@@ -64,19 +65,24 @@ class TestNeighborListAutoSelection:
         cutoff = 2.0
 
         # Call wrapper with no method specified
-        result = neighbor_list(positions, cutoff, return_neighbor_list=True)
+        result = neighbor_list(
+            positions, cutoff, max_neighbors=64, return_neighbor_list=True
+        )
 
-        # Should auto-select "naive" and work correctly
-        assert len(result) == 2  # No PBC, so includes neighbor_ptr but no shifts
-        neighbor_list_result, neighbor_ptr = result
+        # Cell-less COO arity is method-dependent (naive -> 2-tuple, cell_list ->
+        # 3-tuple with zeroed shifts). The COO list/ptr always live at [0]/[1].
+        assert len(result) in (2, 3)
+        neighbor_list_result, neighbor_ptr = result[0], result[1]
         assert neighbor_list_result.shape[0] == 2  # COO format
         assert neighbor_ptr.shape[0] == 101
         assert neighbor_ptr[0] == 0
+        if len(result) == 3:
+            assert result[2].shape[1] == 3  # shifts present only for cell_list
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_auto_select_naive_with_pbc(self, dtype, device):
-        """Auto-select naive for small systems with PBC."""
+    def test_auto_select_cell_list_sparse_with_pbc(self, dtype, device):
+        """Auto-select cell_list for sparse systems with PBC."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
 
@@ -90,7 +96,7 @@ class TestNeighborListAutoSelection:
             positions, cutoff, cell=cell, pbc=pbc, return_neighbor_list=True
         )
 
-        # Should auto-select "naive" and include shifts
+        # Should include shifts because a periodic cell was provided.
         assert len(result) == 3  # With PBC, includes neighbor_ptr and shifts
         neighbor_list_result, neighbor_ptr, shifts = result
         assert neighbor_list_result.shape[0] == 2
@@ -100,8 +106,8 @@ class TestNeighborListAutoSelection:
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_auto_select_cell_list_large_system(self, dtype, device):
-        """Auto-select cell_list for large systems (>= 2000 avg atoms per system)."""
+    def test_auto_select_cell_list_large_sparse_system(self, dtype, device):
+        """Auto-select cell_list for large sparse systems."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
 
@@ -162,8 +168,8 @@ class TestNeighborListAutoSelection:
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
-    def test_auto_select_batch_naive(self, dtype, device):
-        """Auto-select batch_naive when batch_idx is provided for small system."""
+    def test_auto_select_batch_cell_list_sparse(self, dtype, device):
+        """Auto-select batch_cell_list for sparse batched systems."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
 
@@ -197,7 +203,7 @@ class TestNeighborListAutoSelection:
             return_neighbor_list=True,
         )
 
-        # Should auto-select "batch_naive"
+        # Should auto-select a batched method and include shifts from the input PBC.
         assert len(result) == 3
         nlist, neighbor_ptr, _ = result
         assert nlist.shape[0] == 2
@@ -217,10 +223,10 @@ class TestNeighborListAutoSelection:
             ),
         ],
     )
-    def test_auto_select_batch_cell_list(self, dtype, device):
-        """Auto-select batch_cell_list when batch_idx is provided for large system."""
+    def test_auto_select_batch_cell_list_large_sparse(self, dtype, device):
+        """Auto-select batch_cell_list for large sparse batched systems."""
 
-        # Create batch with avg >= 2000 atoms per system
+        # Create sparse batch
         positions1 = torch.randn(2500, 3, dtype=dtype, device=device) * 50.0
         positions2 = torch.randn(2500, 3, dtype=dtype, device=device) * 50.0
 
@@ -255,6 +261,312 @@ class TestNeighborListAutoSelection:
         assert nlist.shape[0] == 2
         assert neighbor_ptr.shape[0] == 5001
         assert neighbor_ptr[0] == 0
+
+    def test_auto_dispatch_dense_geometry_uses_naive(self, monkeypatch):
+        """Dense geometry selects the naive implementation."""
+        seen = {}
+
+        def fake_naive(positions, cutoff, **kwargs):
+            del positions, cutoff, kwargs
+            seen["method"] = "naive"
+            return "naive"
+
+        def fail_cell_list(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("cell_list should not be selected")
+
+        monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fake_naive)
+        monkeypatch.setattr(neighbor_module, "cell_list", fail_cell_list)
+
+        positions = torch.zeros(1000, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32) * 10.0
+        pbc = torch.zeros(3, dtype=torch.bool)
+
+        assert (
+            neighbor_module.neighbor_list(positions, 5.0, cell=cell, pbc=pbc) == "naive"
+        )
+        assert seen["method"] == "naive"
+
+    def test_auto_dispatch_sparse_geometry_uses_cell_list(self, monkeypatch):
+        """Sparse geometry selects the cell-list implementation."""
+        seen = {}
+
+        def fail_naive(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("naive should not be selected")
+
+        def fake_cell_list(positions, cutoff, cell, pbc, **kwargs):
+            del positions, cutoff, cell, pbc, kwargs
+            seen["method"] = "cell_list"
+            return "cell_list"
+
+        monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fail_naive)
+        monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
+
+        positions = torch.zeros(1000, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32) * 100.0
+        pbc = torch.zeros(3, dtype=torch.bool)
+
+        assert (
+            neighbor_module.neighbor_list(positions, 2.0, cell=cell, pbc=pbc)
+            == "cell_list"
+        )
+        assert seen["method"] == "cell_list"
+
+    def test_auto_dispatch_batched_uses_max_expected_neighbors(self, monkeypatch):
+        """Batched geometry uses the densest system for method selection."""
+        seen = {}
+
+        def fake_batch_naive(positions, cutoff, **kwargs):
+            del positions, cutoff, kwargs
+            seen["method"] = "batch_naive"
+            return "batch_naive"
+
+        def fail_batch_cell_list(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("batch_cell_list should not be selected")
+
+        monkeypatch.setattr(
+            neighbor_module, "batch_naive_neighbor_list", fake_batch_naive
+        )
+        monkeypatch.setattr(neighbor_module, "batch_cell_list", fail_batch_cell_list)
+
+        positions = torch.zeros(1100, 3, dtype=torch.float32)
+        cell = torch.stack(
+            [
+                torch.eye(3, dtype=torch.float32) * 10.0,
+                torch.eye(3, dtype=torch.float32) * 100.0,
+            ]
+        )
+        pbc = torch.zeros(2, 3, dtype=torch.bool)
+        batch_idx = torch.cat(
+            [
+                torch.zeros(1000, dtype=torch.int32),
+                torch.ones(100, dtype=torch.int32),
+            ]
+        )
+        batch_ptr = torch.tensor([0, 1000, 1100], dtype=torch.int32)
+
+        assert (
+            neighbor_module.neighbor_list(
+                positions,
+                5.0,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+            )
+            == "batch_naive"
+        )
+        assert seen["method"] == "batch_naive"
+
+    def test_auto_dispatch_single_system_batch_unbatches_naive(self, monkeypatch):
+        """Single-system batched inputs dispatch to unbatched naive."""
+
+        def fake_naive(positions, cutoff, **kwargs):
+            del positions, cutoff
+            assert kwargs["cell"].shape == (3, 3)
+            assert kwargs["pbc"].shape == (3,)
+            return "naive"
+
+        def fail_batch_naive(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("batch_naive should not be selected")
+
+        monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fake_naive)
+        monkeypatch.setattr(
+            neighbor_module, "batch_naive_neighbor_list", fail_batch_naive
+        )
+
+        positions = torch.zeros(1000, 3, dtype=torch.float32)
+        cell = (torch.eye(3, dtype=torch.float32) * 10.0).reshape(1, 3, 3)
+        pbc = torch.zeros(1, 3, dtype=torch.bool)
+        batch_idx = torch.zeros(1000, dtype=torch.int32)
+        batch_ptr = torch.tensor([0, 1000], dtype=torch.int32)
+
+        assert (
+            neighbor_module.neighbor_list(
+                positions,
+                5.0,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+            )
+            == "naive"
+        )
+
+    def test_auto_dispatch_single_system_batch_unbatches_cell_list(self, monkeypatch):
+        """Single-system batched inputs dispatch to unbatched cell_list."""
+
+        def fail_batch_cell_list(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("batch_cell_list should not be selected")
+
+        def fake_cell_list(positions, cutoff, cell, pbc, **kwargs):
+            del positions, cutoff, kwargs
+            assert cell.shape == (3, 3)
+            assert pbc.shape == (3,)
+            return "cell_list"
+
+        monkeypatch.setattr(neighbor_module, "batch_cell_list", fail_batch_cell_list)
+        monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
+
+        positions = torch.zeros(1000, 3, dtype=torch.float32)
+        cell = (torch.eye(3, dtype=torch.float32) * 100.0).reshape(1, 3, 3)
+        pbc = torch.zeros(1, 3, dtype=torch.bool)
+        batch_idx = torch.zeros(1000, dtype=torch.int32)
+        batch_ptr = torch.tensor([0, 1000], dtype=torch.int32)
+
+        assert (
+            neighbor_module.neighbor_list(
+                positions,
+                2.0,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+            )
+            == "cell_list"
+        )
+
+    def test_auto_dispatch_sparse_periodic_float32_uses_cell_list(self, monkeypatch):
+        """Sparse periodic inputs below the cluster-tile gate use cell_list."""
+
+        def fail_cluster_tile(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("cluster_tile should not be selected")
+
+        def fail_naive(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("naive should not be selected")
+
+        def fake_cell_list(positions, cutoff, cell, pbc, **kwargs):
+            del positions, cutoff, cell, pbc, kwargs
+            return "cell_list"
+
+        monkeypatch.setattr(
+            neighbor_module, "cluster_tile_neighbor_list", fail_cluster_tile
+        )
+        monkeypatch.setattr(
+            neighbor_module, "batch_cluster_tile_neighbor_list", fail_cluster_tile
+        )
+        monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fail_naive)
+        monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
+
+        positions = torch.zeros(2048, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32) * 30.0
+        pbc = torch.ones(3, dtype=torch.bool)
+
+        assert (
+            neighbor_module.neighbor_list(positions, 3.0, cell=cell, pbc=pbc)
+            == "cell_list"
+        )
+
+    def test_auto_dispatch_routes_cluster_tile_decision(self, monkeypatch):
+        """Auto-dispatch can route a feasible selector decision to cluster_tile."""
+
+        def fake_auto_method(*args, **kwargs):
+            del args, kwargs
+            return "cluster_tile"
+
+        def fail_naive(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("naive should not be selected")
+
+        def fail_cell_list(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("cell_list should not be selected")
+
+        def fake_cluster_tile(positions, cutoff, cell, **kwargs):
+            del positions, cutoff, cell, kwargs
+            return "cluster_tile"
+
+        monkeypatch.setattr(neighbor_module, "_auto_method_from_geometry", fake_auto_method)
+        monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fail_naive)
+        monkeypatch.setattr(neighbor_module, "cell_list", fail_cell_list)
+        monkeypatch.setattr(
+            neighbor_module, "cluster_tile_neighbor_list", fake_cluster_tile
+        )
+
+        positions = torch.zeros(128, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32) * 30.0
+        pbc = torch.ones(3, dtype=torch.bool)
+
+        assert (
+            neighbor_module.neighbor_list(positions, 3.0, cell=cell, pbc=pbc)
+            == "cluster_tile"
+        )
+
+    def test_auto_dispatch_routes_batch_cluster_tile_decision(self, monkeypatch):
+        """Auto-dispatch prefixes a feasible batched cluster-tile decision."""
+
+        def fake_auto_method(*args, **kwargs):
+            del args, kwargs
+            return "cluster_tile"
+
+        def fake_batch_cluster_tile(positions, cutoff, cell, batch_ptr, **kwargs):
+            del positions, cutoff, cell, batch_ptr, kwargs
+            return "batch_cluster_tile"
+
+        monkeypatch.setattr(neighbor_module, "_auto_method_from_geometry", fake_auto_method)
+        monkeypatch.setattr(
+            neighbor_module, "batch_cluster_tile_neighbor_list", fake_batch_cluster_tile
+        )
+
+        positions = torch.zeros(8, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32).reshape(1, 3, 3)
+        cell = cell.expand(2, -1, -1).contiguous() * 30.0
+        pbc = torch.ones((2, 3), dtype=torch.bool)
+        batch_idx = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1], dtype=torch.int32)
+        batch_ptr = torch.tensor([0, 4, 8], dtype=torch.int32)
+
+        assert (
+            neighbor_module.neighbor_list(
+                positions,
+                3.0,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+            )
+            == "batch_cluster_tile"
+        )
+
+    def test_explicit_batch_cluster_tile_broadcasts_shared_cell(self, monkeypatch):
+        """Explicit batch_cluster_tile accepts a shared (3, 3) cell."""
+        captured = {}
+
+        def fake_batch_cluster_tile(positions, cutoff, cell, batch_ptr, **kwargs):
+            del positions, cutoff, kwargs
+            captured["cell"] = cell
+            captured["batch_ptr"] = batch_ptr
+            return "batch_cluster_tile"
+
+        monkeypatch.setattr(
+            neighbor_module, "batch_cluster_tile_neighbor_list", fake_batch_cluster_tile
+        )
+
+        positions = torch.zeros(64, 3, dtype=torch.float32)
+        batch_ptr = torch.tensor([0, 32, 64], dtype=torch.int32)
+        cell = torch.eye(3, dtype=torch.float32) * 10.0
+        pbc = torch.ones(2, 3, dtype=torch.bool)
+
+        assert (
+            neighbor_module.neighbor_list(
+                positions,
+                3.0,
+                cell=cell,
+                pbc=pbc,
+                batch_ptr=batch_ptr,
+                method="batch_cluster_tile",
+            )
+            == "batch_cluster_tile"
+        )
+        assert captured["cell"].shape == (2, 3, 3)
+        assert captured["cell"].is_contiguous()
+        torch.testing.assert_close(captured["cell"][0], cell)
+        torch.testing.assert_close(captured["cell"][1], cell)
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -325,9 +637,10 @@ class TestNeighborListAutoSelection:
             batch_ptr=batch_ptr,
             return_neighbor_list=True,
         )
-        # avg_atoms = 40 < 2000 → batch_naive (no PBC → 2-tuple)
-        assert len(result) == 2
-        nlist, neighbor_ptr = result
+        # Cell-less batch COO arity is method-dependent (batch_naive -> 2-tuple,
+        # batch_cell_list -> 3-tuple). The COO list/ptr always live at [0]/[1].
+        assert len(result) in (2, 3)
+        nlist, neighbor_ptr = result[0], result[1]
         assert nlist.shape[0] == 2
         assert neighbor_ptr.shape[0] == 81
 
@@ -352,8 +665,10 @@ class TestNeighborListAutoSelection:
             batch_idx=batch_idx,
             return_neighbor_list=True,
         )
-        assert len(result) == 2
-        nlist, neighbor_ptr = result
+        # Cell-less batch COO arity is method-dependent (batch_naive -> 2-tuple,
+        # batch_cell_list -> 3-tuple). The COO list/ptr always live at [0]/[1].
+        assert len(result) in (2, 3)
+        nlist, neighbor_ptr = result[0], result[1]
         assert nlist.shape[0] == 2
         assert neighbor_ptr.shape[0] == 81
 
@@ -1283,6 +1598,164 @@ class TestNeighborListBoundingBoxCell:
         torch.testing.assert_close(cell_pairs, naive_pairs)
 
 
+class TestNeighborListFineGrainedMethodEquivalence:
+    """Fine-grained ``method=`` names match their base method's pair set.
+
+    The fine-grained strategy names (e.g. ``naive_tile``,
+    ``cell_list_pair_centric``) route to the same base kernel as
+    ``naive`` / ``cell_list`` with sub-options pinned, so they must produce
+    an identical neighbor set on the same geometry.
+    """
+
+    def _periodic_float32_system(self, device):
+        torch.manual_seed(42)
+        positions = torch.rand(256, 3, dtype=torch.float32, device=device) * 20.0
+        cell = torch.eye(3, dtype=torch.float32, device=device) * 20.0
+        pbc = torch.ones(3, dtype=torch.bool, device=device)
+        return positions, cell, pbc
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("method", ["naive_scalar", "naive_tile"])
+    def test_naive_suboptions_match_naive(self, device, method):
+        """``naive_scalar`` / ``naive_tile`` match the base ``naive`` pair set."""
+        positions, cell, pbc = self._periodic_float32_system(device)
+        cutoff = 5.0
+
+        base = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method="naive",
+            return_neighbor_list=True,
+        )
+        fine = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method=method,
+            return_neighbor_list=True,
+        )
+        torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_cell_list_atom_centric_matches_cell_list(self, device):
+        """``cell_list_atom_centric`` matches the base ``cell_list`` pair set."""
+        positions, cell, pbc = self._periodic_float32_system(device)
+        cutoff = 5.0
+
+        base = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            return_neighbor_list=True,
+        )
+        fine = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc,
+            method="cell_list_atom_centric", return_neighbor_list=True,
+        )
+        torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="pair_centric requires CUDA")
+    def test_cell_list_pair_centric_matches_cell_list(self):
+        """``cell_list_pair_centric`` (CUDA-only) matches the base ``cell_list``."""
+        positions, cell, pbc = self._periodic_float32_system("cuda")
+        cutoff = 5.0
+
+        base = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            return_neighbor_list=True,
+        )
+        fine = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc,
+            method="cell_list_pair_centric", return_neighbor_list=True,
+        )
+        torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_batch_naive_tile_matches_batch_naive(self, device):
+        """Batched ``batch_naive_tile`` matches the base ``batch_naive`` pair set."""
+        torch.manual_seed(42)
+        n1, n2 = 128, 96
+        positions = torch.rand(n1 + n2, 3, dtype=torch.float32, device=device) * 20.0
+        cell = (
+            torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3)
+            .expand(2, -1, -1).contiguous() * 20.0
+        )
+        pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
+        batch_idx = torch.cat(
+            [
+                torch.zeros(n1, dtype=torch.int32, device=device),
+                torch.ones(n2, dtype=torch.int32, device=device),
+            ]
+        )
+        batch_ptr = torch.tensor([0, n1, n1 + n2], dtype=torch.int32, device=device)
+        cutoff = 5.0
+
+        base = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            batch_ptr=batch_ptr, method="batch_naive", return_neighbor_list=True,
+        )
+        fine = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            batch_ptr=batch_ptr, method="batch_naive_tile", return_neighbor_list=True,
+        )
+        torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
+
+
+class TestNeighborListEmptyNoCell:
+    """B2: empty positions with ``cell=None`` returns empty outputs, not a raise."""
+
+    @pytest.mark.parametrize(
+        "device",
+        [
+            "cpu",
+            pytest.param(
+                "cuda",
+                marks=pytest.mark.skipif(
+                    not torch.cuda.is_available(), reason="Requires GPU."
+                ),
+            ),
+        ],
+    )
+    def test_empty_positions_no_cell_auto_dispatch(self, device):
+        """``method=None`` + (0, 3) positions + ``cell=None`` must not raise."""
+        positions = torch.empty(0, 3, dtype=torch.float32, device=device)
+        cutoff = 2.0
+
+        result = neighbor_list(positions, cutoff, return_neighbor_list=True)
+
+        # COO list/ptr always at [0]/[1]; empty system -> no pairs, ptr=[0].
+        neighbor_list_coo, neighbor_ptr = result[0], result[1]
+        assert neighbor_list_coo.shape[1] == 0
+        assert neighbor_ptr.shape[0] == 1
+        assert int(neighbor_ptr[0]) == 0
+
+
 class TestNeighborListInvalidMethod:
     """Test error handling for invalid method."""
 
@@ -1548,3 +2021,33 @@ class TestPrepareBatchIdxPtr:
             )
             torch.cumsum(num_atoms_per_system, dim=0, out=calculated_ptr[1:])
             assert torch.all(batch_ptr == calculated_ptr)
+
+
+def test_suggest_then_run_under_torch_compile():
+    """``suggest`` (host-only) then an explicit-method run survives torch.compile.
+
+    The estimation call is made outside the compiled region; feeding its
+    returned strategy name straight back as ``method=`` must produce the same
+    matrix-format result compiled as eager.
+    """
+    from nvalchemiops.torch.neighbors import suggest_neighbor_list_method
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch.manual_seed(0)
+    n = 256
+    positions = torch.rand(n, 3, dtype=torch.float32, device=device) * 20.0
+    cell = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3) * 20.0
+    pbc = torch.ones(3, dtype=torch.bool, device=device)
+    batch_ptr = torch.tensor([0, n], dtype=torch.int32, device=device)
+
+    method = suggest_neighbor_list_method(batch_ptr, cell, pbc, 5.0)
+
+    def run(pos):
+        return neighbor_list(
+            pos, 5.0, cell=cell, pbc=pbc, method=method, max_neighbors=128
+        )
+
+    eager = run(positions)
+    compiled = torch.compile(run)(positions)
+
+    assert torch.equal(eager[1], compiled[1])  # num_neighbors agree

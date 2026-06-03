@@ -22,14 +22,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import nvalchemiops.jax.neighbors as neighbor_module
 from nvalchemiops.jax.neighbors import (
-    _cluster_tile_auto_eligible,
     batch_naive_neighbor_list_dual_cutoff,
     cell_list,
     naive_neighbor_list,
     naive_neighbor_list_dual_cutoff,
     neighbor_list,
+    suggest_neighbor_list_method,
 )
+from nvalchemiops.neighbors.base_dispatch import neighbor_list_strategy_run_args
 
 from .conftest import create_batch_idx_and_ptr_jax, requires_gpu
 
@@ -102,8 +104,14 @@ class TestNeighborListAutoSelection:
     """Test automatic method selection based on system size."""
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-    def test_auto_select_naive_small_system(self, dtype, device):
-        """Auto-select naive for small systems (< 5000 atoms), no PBC → 2-tuple."""
+    def test_auto_select_cell_list_sparse_no_cell(self, dtype, device):
+        """Cell-less auto dispatch is correct at method-dependent COO arity.
+
+        With no input cell the cost model picks naive (2-tuple, non-periodic) or
+        cell_list (synthesizes a non-PBC cell, so a 3-tuple with zeroed shifts).
+        Whichever it picks, the pair count must match the naive reference
+        (method choice must not change results).
+        """
         target_density = 0.25
         num_atoms = 100
         volume = num_atoms / target_density
@@ -115,16 +123,26 @@ class TestNeighborListAutoSelection:
 
         result = neighbor_list(positions, cutoff, return_neighbor_list=True)
 
-        # No PBC → 2-tuple (neighbor_list_coo, neighbor_ptr)
-        assert len(result) == 2
-        neighbor_list_coo, neighbor_ptr = result
+        # Cell-less COO arity is method-dependent (naive -> 2-tuple, cell_list ->
+        # 3-tuple). The COO list/ptr always live at [0]/[1]; shifts appear only
+        # in the 3-tuple cell_list case.
+        assert len(result) in (2, 3)
+        neighbor_list_coo, neighbor_ptr = result[0], result[1]
         assert neighbor_list_coo.shape[0] == 2  # COO format
         assert neighbor_ptr.shape[0] == num_atoms + 1
         assert int(neighbor_ptr[0]) == 0
+        if len(result) == 3:
+            assert result[2].shape[1] == 3  # shifts present only for cell_list
+
+        # Method choice must not change results: same pair count as naive.
+        naive_ptr = neighbor_list(
+            positions, cutoff, return_neighbor_list=True, method="naive"
+        )[1]
+        assert int(neighbor_ptr[-1]) == int(naive_ptr[-1])
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-    def test_auto_select_naive_with_pbc(self, dtype, device):
-        """Auto-select naive for small systems with PBC → 3-tuple."""
+    def test_auto_select_cell_list_sparse_with_pbc(self, dtype, device):
+        """Auto-select for small sparse systems with PBC → 3-tuple."""
         positions, cell, pbc = create_random_system_jax(100, 10.0, dtype=dtype)
         cutoff = 2.0
 
@@ -141,30 +159,24 @@ class TestNeighborListAutoSelection:
         assert shifts.shape[1] == 3
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-    def test_auto_select_cell_list_large_system(self, dtype, device):
-        """Auto-select cell_list for large systems (>= 5000 atoms).
+    def test_auto_select_cell_list_large_sparse_system(self, dtype, device):
+        """Auto-select cell_list for large sparse systems without an input cell.
 
-        When no cell/pbc is provided, the wrapper auto-creates identity cell
-        with pbc=False.  We explicitly provide cell/pbc placed on the correct
-        device to avoid device-mismatch issues with the auto-created arrays.
+        With no input cell the wrapper synthesizes a non-PBC cell, so the COO
+        result includes shifts (3-tuple).
         """
         key = jax.random.PRNGKey(0)
-        positions = jax.random.normal(key, (5000, 3), dtype=dtype) * 50.0
-
-        # Provide cell/pbc
-        cell = jnp.eye(3, dtype=dtype).reshape(1, 3, 3)
-        pbc = jnp.array([[False, False, False]])
+        positions = jax.random.normal(key, (2000, 3), dtype=dtype) * 50.0
         cutoff = 2.0
 
-        result = neighbor_list(
-            positions, cutoff, cell=cell, pbc=pbc, return_neighbor_list=True
-        )
+        result = neighbor_list(positions, cutoff, return_neighbor_list=True)
 
-        # cell_list always returns 3-tuple with shifts
+        # Sparse geometry auto-selects cell_list, which synthesizes a non-PBC
+        # cell and therefore returns shifts.
         assert len(result) == 3
         neighbor_list_coo, neighbor_ptr, shifts = result
         assert neighbor_list_coo.shape[0] == 2
-        assert neighbor_ptr.shape[0] == 5001
+        assert neighbor_ptr.shape[0] == 2001
         assert int(neighbor_ptr[0]) == 0
         assert shifts.shape[1] == 3
 
@@ -283,11 +295,23 @@ class TestNeighborListAutoSelection:
             batch_ptr=batch_ptr,
             return_neighbor_list=True,
         )
-        # avg_atoms = 40 < 2000 → batch_naive (no PBC → 2-tuple)
-        assert len(result) == 2
-        nlist, neighbor_ptr = result
+        # Cell-less batch COO arity is method-dependent (batch_naive -> 2-tuple,
+        # batch_cell_list -> 3-tuple). The COO list/ptr always live at [0]/[1].
+        assert len(result) in (2, 3)
+        nlist, neighbor_ptr = result[0], result[1]
         assert nlist.shape[0] == 2
         assert neighbor_ptr.shape[0] == 81
+
+        # Method choice must not change results: same pair count as batch_naive
+        # (guards the synthesized per-system cell on this previously-faulting path).
+        naive_ptr = neighbor_list(
+            positions,
+            cutoff=2.0,
+            batch_ptr=batch_ptr,
+            return_neighbor_list=True,
+            method="batch_naive",
+        )[1]
+        assert int(neighbor_ptr[-1]) == int(naive_ptr[-1])
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_auto_select_batch_idx_only_no_cell(self, dtype, device):
@@ -307,10 +331,23 @@ class TestNeighborListAutoSelection:
             batch_idx=batch_idx,
             return_neighbor_list=True,
         )
-        assert len(result) == 2
-        nlist, neighbor_ptr = result
+        # Cell-less batch COO arity is method-dependent (batch_naive -> 2-tuple,
+        # batch_cell_list -> 3-tuple). The COO list/ptr always live at [0]/[1].
+        assert len(result) in (2, 3)
+        nlist, neighbor_ptr = result[0], result[1]
         assert nlist.shape[0] == 2
         assert neighbor_ptr.shape[0] == 81
+
+        # Method choice must not change results: same pair count as batch_naive
+        # (guards the synthesized per-system cell on this previously-faulting path).
+        naive_ptr = neighbor_list(
+            positions,
+            cutoff=2.0,
+            batch_idx=batch_idx,
+            return_neighbor_list=True,
+            method="batch_naive",
+        )[1]
+        assert int(neighbor_ptr[-1]) == int(naive_ptr[-1])
 
     @pytest.mark.parametrize("dtype", [jnp.float32])
     def test_auto_select_batch_cell_list_large(self, dtype, device):
@@ -387,6 +424,294 @@ class TestNeighborListExplicitMethod:
 
         assert len(wrapper_result) == len(direct_result)
         assert_neighbor_matrix_equal_jax(wrapper_result, direct_result)
+
+
+# ==============================================================================
+# Tests: Fine-Grained Method Equivalence
+# ==============================================================================
+
+
+def _canonical_pairs(coo_result):
+    """Return the undirected ``(i, j, shift)`` set from a COO neighbor-list result.
+
+    Takes the full ``(neighbor_list, neighbor_ptr, shifts)`` tuple and keys each
+    pair on the lower-index endpoint, negating the periodic shift when the
+    endpoints are swapped — so the set is invariant to which atom "owns" the
+    pair (half-fill owner conventions differ between kernels) while still
+    distinguishing different periodic images of the same atom pair.
+    """
+    coo = np.asarray(coo_result[0])
+    src, dst = coo[0], coo[1]
+    shifts = np.asarray(coo_result[2])
+    out = set()
+    for i, j, s in zip(src, dst, shifts):
+        if int(i) <= int(j):
+            out.add((int(i), int(j), int(s[0]), int(s[1]), int(s[2])))
+        else:
+            out.add((int(j), int(i), -int(s[0]), -int(s[1]), -int(s[2])))
+    return out
+
+
+class TestNeighborListFineGrainedMethodEquivalence:
+    """Fine-grained ``method=`` names run the requested kernel and match base.
+
+    JAX now honors fine-grained sub-options: ``cell_list_pair_centric`` runs
+    the pair-centric kernel and ``naive_tile`` runs the tiled kernel (via
+    ``jax_callable``).  These are performance variants with identical pair
+    sets, so the fine-grained name must produce the same pair SET as the
+    corresponding base method.
+    """
+
+    def _periodic_system(self, dtype):
+        key = jax.random.PRNGKey(42)
+        positions = jax.random.uniform(key, (256, 3), dtype=dtype) * 20.0
+        cell = (jnp.eye(3, dtype=dtype) * 20.0).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+        return positions, cell, pbc
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize(
+        "method, base",
+        [
+            ("naive_scalar", "naive"),
+            ("naive_tile", "naive"),
+            ("cell_list_atom_centric", "cell_list"),
+            ("cell_list_pair_centric", "cell_list"),
+        ],
+    )
+    def test_fine_grained_name_matches_base(self, method, base, dtype):
+        """Fine-grained name runs the kernel and matches the base (i, j, shift) set."""
+        positions, cell, pbc = self._periodic_system(dtype)
+        cutoff = 5.0
+
+        base_res = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method=base,
+            return_neighbor_list=True,
+        )
+        fine_res = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method=method,
+            return_neighbor_list=True,
+        )
+        assert _canonical_pairs(fine_res) == _canonical_pairs(base_res)
+
+    def test_suggest_result_roundtrips_through_method(self):
+        """A name from ``suggest_neighbor_list_method`` runs as ``method=`` and
+        matches the base method's (i, j, shift) set (claim-1 honesty)."""
+        positions, cell, pbc = self._periodic_system(jnp.float32)
+        cutoff = 5.0
+        batch_ptr = jnp.array([0, positions.shape[0]], dtype=jnp.int32)
+
+        name = suggest_neighbor_list_method(batch_ptr, cell, pbc, cutoff)
+        base = neighbor_list_strategy_run_args(name)[0]
+        suggested_res = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method=name,
+            return_neighbor_list=True,
+        )
+        base_res = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method=base,
+            return_neighbor_list=True,
+        )
+        assert _canonical_pairs(suggested_res) == _canonical_pairs(base_res)
+
+
+class TestNeighborListCellListHalfFillFillValue:
+    """JAX cell_list now honors ``half_fill`` and ``fill_value`` (parity)."""
+
+    def _periodic_float32_system(self):
+        key = jax.random.PRNGKey(3)
+        positions = jax.random.uniform(key, (300, 3), dtype=jnp.float32) * 18.0
+        cell = (jnp.eye(3, dtype=jnp.float32) * 18.0).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+        return positions, cell, pbc
+
+    def test_explicit_cell_list_half_fill_matches_naive_half(self):
+        """method='cell_list', half_fill=True: half pair set == naive half."""
+        positions, cell, pbc = self._periodic_float32_system()
+        cutoff = 5.0
+
+        cl_full = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            return_neighbor_list=True,
+        )[1]
+        cl_half = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            half_fill=True, return_neighbor_list=True,
+        )
+        nv_half = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method="naive",
+            half_fill=True, return_neighbor_list=True,
+        )
+        assert int(cl_half[1][-1]) * 2 == int(cl_full[-1])
+        assert _canonical_pairs(cl_half) == _canonical_pairs(nv_half)
+
+    def test_auto_dispatch_half_fill_returns_half(self):
+        """method=None with half_fill must not raise and must return the half list."""
+        positions, cell, pbc = self._periodic_float32_system()
+        cutoff = 5.0
+
+        full = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, return_neighbor_list=True,
+        )[1]
+        half = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, half_fill=True,
+            return_neighbor_list=True,
+        )[1]
+        assert int(half[-1]) * 2 == int(full[-1])
+
+    def test_explicit_cell_list_fill_value_remaps_matrix_tail(self):
+        """method='cell_list', matrix format: a custom fill_value fills the tail."""
+        positions, cell, pbc = self._periodic_float32_system()
+        cutoff = 5.0
+
+        matrix = neighbor_list(
+            positions, cutoff, cell=cell, pbc=pbc, method="cell_list",
+            fill_value=-1,
+        )[0]
+        nm = np.asarray(matrix)
+        assert (nm == -1).any()
+        assert not (nm == positions.shape[0]).any()
+
+
+class TestNeighborListPairOutputAndExplicitStrategy:
+    """Pair-output (return_distances/vectors) half_fill/fill_value contracts and
+    the explicit-vs-auto pair_centric + half_fill behavior."""
+
+    def _periodic_float32_system(self):
+        key = jax.random.PRNGKey(5)
+        positions = jax.random.uniform(key, (300, 3), dtype=jnp.float32) * 18.0
+        cell = (jnp.eye(3, dtype=jnp.float32) * 18.0).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+        return positions, cell, pbc
+
+    def test_half_fill_with_pair_outputs_raises(self):
+        """half_fill is unsupported on the JAX cell-list pair-output path."""
+        positions, cell, pbc = self._periodic_float32_system()
+        with pytest.raises(NotImplementedError, match="half_fill"):
+            neighbor_list(
+                positions, 5.0, cell=cell, pbc=pbc, method="cell_list",
+                half_fill=True, return_distances=True,
+            )
+
+    def test_fill_value_remapped_with_pair_outputs(self):
+        """A custom fill_value fills the matrix tail even on the pair-output path."""
+        positions, cell, pbc = self._periodic_float32_system()
+        out = neighbor_list(
+            positions, 5.0, cell=cell, pbc=pbc, method="cell_list",
+            fill_value=-1, return_distances=True,
+        )
+        nm = np.asarray(out[0])
+        assert (nm == -1).any()
+        assert not (nm == positions.shape[0]).any()
+
+    def test_explicit_pair_centric_half_fill_raises(self):
+        """Explicit cell_list_pair_centric + half_fill raises (full-fill only)."""
+        positions, cell, pbc = self._periodic_float32_system()
+        with pytest.raises(NotImplementedError, match="pair.?centric|half_fill"):
+            neighbor_list(
+                positions, 5.0, cell=cell, pbc=pbc,
+                method="cell_list_pair_centric", half_fill=True,
+            )
+
+
+class TestNeighborListBatchStrategyParity:
+    """Batched fine-grained strategies run the requested kernel and match base
+    (perf-only variants -> identical pair sets).  GPU-gated module-wide."""
+
+    def _batched_periodic(self, dtype):
+        key = jax.random.PRNGKey(11)
+        positions = jax.random.uniform(key, (64, 3), dtype=dtype) * 16.0
+        batch_idx, batch_ptr = create_batch_idx_and_ptr_jax([28, 36])
+        cell = jnp.broadcast_to(jnp.eye(3, dtype=dtype) * 16.0, (2, 3, 3))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+        return positions, cell, pbc, batch_idx, batch_ptr
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_batch_naive_tile_matches_batch_naive(self, dtype):
+        positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(dtype)
+        base = neighbor_list(
+            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            batch_ptr=batch_ptr, method="batch_naive", return_neighbor_list=True,
+        )
+        tile = neighbor_list(
+            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            batch_ptr=batch_ptr, method="batch_naive_tile",
+            return_neighbor_list=True,
+        )
+        assert _canonical_pairs(tile) == _canonical_pairs(base)
+
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_batch_cell_list_pair_centric_matches_atom_centric(self, dtype):
+        positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(dtype)
+        base = neighbor_list(
+            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            batch_ptr=batch_ptr, method="batch_cell_list_atom_centric",
+            return_neighbor_list=True,
+        )
+        pc = neighbor_list(
+            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            batch_ptr=batch_ptr, method="batch_cell_list_pair_centric",
+            return_neighbor_list=True,
+        )
+        assert _canonical_pairs(pc) == _canonical_pairs(base)
+
+    def test_batch_cell_list_half_fill_with_pair_outputs_raises(self):
+        """C (batch): half_fill is unsupported on the pair-output path."""
+        positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(jnp.float32)
+        with pytest.raises(NotImplementedError, match="half_fill"):
+            neighbor_list(
+                positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
+                batch_ptr=batch_ptr, method="batch_cell_list",
+                half_fill=True, return_distances=True,
+            )
+
+    def test_batch_cell_list_fill_value_remapped_with_pair_outputs(self):
+        """D (batch): a custom fill_value fills the matrix tail on the pair-output path."""
+        positions, cell, pbc, batch_idx, batch_ptr = self._batched_periodic(jnp.float32)
+        out = neighbor_list(
+            positions, 5.0, cell=cell, pbc=pbc, batch_idx=batch_idx,
+            batch_ptr=batch_ptr, method="batch_cell_list",
+            fill_value=-1, return_distances=True,
+        )
+        nm = np.asarray(out[0])
+        assert (nm == -1).any()
+        assert not (nm == positions.shape[0]).any()
+
+
+# ==============================================================================
+# Tests: B1/B2 Regressions
+# ==============================================================================
+
+
+class TestNeighborListNoCellRegressions:
+    """B1/B2 regression guards for ``cell=None`` dispatch."""
+
+    def test_explicit_cell_list_no_cell_nonperiodic_matches_naive(self):
+        """B1: explicit ``cell_list`` with ``cell=None``/``pbc=None`` on a
+        spread-out non-periodic system yields the same pair count as ``naive``
+        (no spurious periodic wrap pairs from a synthesized box)."""
+        key = jax.random.PRNGKey(7)
+        positions = jax.random.normal(key, (300, 3), dtype=jnp.float32) * 15.0
+        cutoff = 3.0
+
+        cell_ptr = neighbor_list(
+            positions, cutoff, method="cell_list", return_neighbor_list=True
+        )[1]
+        naive_ptr = neighbor_list(
+            positions, cutoff, method="naive", return_neighbor_list=True
+        )[1]
+        assert int(cell_ptr[-1]) == int(naive_ptr[-1])
+
+    def test_empty_positions_no_cell_returns_empty(self):
+        """B2: ``(0, 3)`` positions with ``cell=None`` returns empty outputs."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+        cutoff = 2.0
+
+        result = neighbor_list(positions, cutoff, return_neighbor_list=True)
+
+        neighbor_list_coo, neighbor_ptr = result[0], result[1]
+        assert neighbor_list_coo.shape[1] == 0
+        assert neighbor_ptr.shape[0] == 1
+        assert int(neighbor_ptr[0]) == 0
 
 
 # ==============================================================================
@@ -575,25 +900,46 @@ class TestNeighborListHalfFill:
             assert len(overlap) == 0, "Half-fill should not have reciprocal pairs"
 
 
-class TestNeighborListHalfFillAutoDispatch:
-    """``method=None`` auto-dispatch must not pick cluster_tile for half_fill.
+class TestNeighborListClusterTileAutoGuards:
+    """``method=None`` selects cluster_tile only when selector guards allow it."""
 
-    Regression for the jax/torch asymmetry where the jax auto-dispatcher lacked
-    the ``half_fill`` gate that torch has: an otherwise-cluster_tile-eligible
-    call with ``half_fill=True`` auto-selected cluster_tile and then hard-raised
-    ``NotImplementedError`` instead of falling back to cell_list.
-    """
+    def test_auto_dispatch_fully_periodic_float32_uses_cell_list(self, monkeypatch):
+        """Sparse periodic inputs below the cluster-tile gate use cell_list."""
 
-    def test_auto_dispatch_half_fill_falls_back(self):
-        # Eligible for cluster_tile EXCEPT for half_fill: float32, GPU (module
-        # is requires_gpu), periodic all-True, avg_atoms >= 2000.
+        def fail_cluster_tile(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("cluster_tile should not be selected")
+
+        monkeypatch.setattr(
+            neighbor_module, "cluster_tile_neighbor_list", fail_cluster_tile
+        )
+        monkeypatch.setattr(
+            neighbor_module, "batch_cluster_tile_neighbor_list", fail_cluster_tile
+        )
+
         key = jax.random.PRNGKey(0)
         positions = jax.random.uniform(key, (2048, 3), dtype=jnp.float32) * 30.0
         cell = (jnp.eye(3, dtype=jnp.float32) * 30.0).reshape(1, 3, 3)
         pbc = jnp.array([[True, True, True]])
 
-        # Must not raise NotImplementedError; falls back to cell_list (3-tuple).
-        result = neighbor_list(
+        result = neighbor_module.neighbor_list(
+            positions,
+            3.0,
+            cell=cell,
+            pbc=pbc,
+            method=None,
+            return_neighbor_list=True,
+        )
+        assert len(result) == 3
+
+    def test_auto_dispatch_half_fill_does_not_raise_cluster_tile_error(self):
+        """Half-fill auto-dispatch stays on cell_list rather than cluster_tile."""
+        key = jax.random.PRNGKey(0)
+        positions = jax.random.uniform(key, (2048, 3), dtype=jnp.float32) * 30.0
+        cell = (jnp.eye(3, dtype=jnp.float32) * 30.0).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+
+        result = neighbor_module.neighbor_list(
             positions,
             3.0,
             cell=cell,
@@ -603,18 +949,6 @@ class TestNeighborListHalfFillAutoDispatch:
             return_neighbor_list=True,
         )
         assert len(result) == 3
-
-    def test_auto_eligible_gates_on_half_fill(self):
-        # On a GPU float32 periodic input, eligibility flips solely on half_fill.
-        positions = jnp.zeros((8, 3), dtype=jnp.float32)
-        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3)
-        pbc = jnp.array([[True, True, True]])
-        assert (
-            _cluster_tile_auto_eligible(positions, cell, pbc, None, False, {}) is True
-        )
-        assert (
-            _cluster_tile_auto_eligible(positions, cell, pbc, None, True, {}) is False
-        )
 
 
 # ==============================================================================

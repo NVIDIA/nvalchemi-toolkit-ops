@@ -216,6 +216,42 @@ def get_neighbor_list_from_neighbor_matrix(
         return neighbor_list, neighbor_ptr
 
 
+def coo_pack_pair_geometry(
+    active_mask: torch.Tensor,
+    distances: torch.Tensor | None = None,
+    vectors: torch.Tensor | None = None,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Repack matrix-layout per-pair geometry into COO order.
+
+    ``active_mask`` is ``neighbor_matrix != fill_value``.  Flattening it in
+    row-major order yields the active-slot indices in the same order
+    :func:`get_neighbor_list_from_neighbor_matrix` uses, so the gathered
+    distances ``(num_pairs,)`` and vectors ``(num_pairs, 3)`` index-align with
+    the returned neighbor list.  ``index_select`` keeps the autograd link.
+
+    Parameters
+    ----------
+    active_mask : torch.Tensor, shape (total_atoms, max_neighbors), dtype=bool
+        Mask of active neighbor-matrix slots.
+    distances : torch.Tensor | None, shape (total_atoms, max_neighbors)
+        Per-pair distances in matrix layout, or ``None``.
+    vectors : torch.Tensor | None, shape (total_atoms, max_neighbors, 3)
+        Per-pair displacement vectors in matrix layout, or ``None``.
+
+    Returns
+    -------
+    tuple of (torch.Tensor | None, torch.Tensor | None)
+        ``(distances, vectors)`` in COO layout, each unchanged if it was
+        ``None``.
+    """
+    flat_active = active_mask.reshape(-1).nonzero(as_tuple=True)[0]
+    if distances is not None:
+        distances = distances.reshape(-1).index_select(0, flat_active)
+    if vectors is not None:
+        vectors = vectors.reshape(-1, vectors.shape[-1]).index_select(0, flat_active)
+    return distances, vectors
+
+
 @torch.compile
 def prepare_batch_idx_ptr(
     batch_idx: torch.Tensor | None,
@@ -328,12 +364,17 @@ def synthesize_cell_for_ss(
     pbc : (3,) bool
         ``[False, False, False]`` — synthesized cells are non-periodic.
     """
+    pbc = torch.zeros(3, dtype=torch.bool, device=positions.device)
+    if positions.shape[0] == 0:
+        cell = torch.eye(3, dtype=positions.dtype, device=positions.device).reshape(
+            1, 3, 3
+        )
+        return positions, cell, pbc
     pos_min = positions.min(dim=0).values
     positions = positions - pos_min
     pos_max = positions.max(dim=0).values
     cell_lengths = pos_max + padding_fraction * cutoff
     cell = torch.diag(cell_lengths).reshape(1, 3, 3)
-    pbc = torch.tensor([False, False, False], dtype=torch.bool, device=positions.device)
     return positions, cell, pbc
 
 
@@ -378,6 +419,15 @@ def synthesize_cell_for_batch(
         All False — synthesized cells are non-periodic.
     """
     num_systems = int(batch_ptr.shape[0]) - 1
+    if positions.shape[0] == 0:
+        cell = (
+            torch.eye(3, dtype=positions.dtype, device=positions.device)
+            .reshape(1, 3, 3)
+            .expand(num_systems, -1, -1)
+            .contiguous()
+        )
+        pbc = torch.zeros((num_systems, 3), dtype=torch.bool, device=positions.device)
+        return positions, cell, pbc
     expanded_idx = batch_idx.unsqueeze(1).expand_as(positions)
     pos_min = torch.full(
         (num_systems, 3),

@@ -461,8 +461,8 @@ def build_cluster_tile_list(
     --------
     nvalchemiops.neighbors.cluster_tile.build_cluster_tile_list : warp launcher
     """
-    if positions.dtype not in (torch.float32, torch.float64):
-        raise TypeError("positions must be float32 or float64")
+    if positions.dtype != torch.float32:
+        raise TypeError("positions must be float32")
     cell_mat, inv_cell_mat = _cell_invcell_from_cell(cell)
     cell_mat = cell_mat.to(positions.dtype)
     inv_cell_mat = inv_cell_mat.to(positions.dtype)
@@ -1225,7 +1225,7 @@ def cluster_tile_neighbor_list(
 
     Parameters
     ----------
-    positions : torch.Tensor, shape (N, 3), dtype=float32 or float64
+    positions : torch.Tensor, shape (N, 3), dtype=float32
         Atomic coordinates. Any ``N >= 0``; non-32-aligned ``N`` is
         supported via internal padding to
         ``ceil(N / TILE_GROUP_SIZE) * TILE_GROUP_SIZE``. Padding slots
@@ -1238,7 +1238,7 @@ def cluster_tile_neighbor_list(
         second ``(neighbor_matrix2, num_neighbors2, neighbor_matrix_shifts2)``
         group for neighbors within ``cutoff2``. Cannot be combined with pair
         outputs or COO/tile formats.
-    cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32 or float64
+    cell : torch.Tensor, shape (1, 3, 3) or (3, 3), dtype=float32
         Any non-degenerate cell (orthorhombic or triclinic).
     max_neighbors : int, optional
         Falls back to ``estimate_max_neighbors(cutoff)``.  Matrix
@@ -1331,10 +1331,9 @@ def cluster_tile_neighbor_list(
     - Cluster-tile does not support partial neighbor lists (no
       ``target_indices`` kwarg).
     - The unified
-      :func:`nvalchemiops.torch.neighbors.neighbor_list` entry point
-      selects this binding automatically for fully-periodic float32 CUDA
-      inputs with at least 2000 atoms and no pair-output kwargs; call
-      this function directly to force the strategy.
+      :func:`nvalchemiops.torch.neighbors.neighbor_list` entry point may
+      select this binding automatically when the selector guards and cost
+      model prefer it; pass ``method="cluster_tile"`` to force it.
 
     See Also
     --------
@@ -1346,8 +1345,8 @@ def cluster_tile_neighbor_list(
         Lower-level query step.
     """
 
-    if positions.dtype not in (torch.float32, torch.float64):
-        raise TypeError("positions must be float32 or float64")
+    if positions.dtype != torch.float32:
+        raise TypeError("positions must be float32")
     if format not in ("matrix", "coo", "tile"):
         raise ValueError(
             f"format must be 'matrix' | 'coo' | 'tile'; got {format!r}",

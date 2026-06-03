@@ -22,6 +22,7 @@ from typing import Literal
 __all__ = [
     "PAIR_CENTRIC_MAX_LINEAR_LAUNCH",
     "is_pair_centric_launch_safe",
+    "is_pair_centric_parallelism_sufficient",
     "pair_centric_launch_size",
     "select_batch_cell_list_strategy",
     "select_cell_list_strategy",
@@ -120,8 +121,39 @@ def is_pair_centric_launch_safe(
     )
 
 
-# Strategy envar: "auto" (default), "atom_centric", or "pair_centric".
-_STRATEGY_ENV = "NVALCHEMI_NEIGHLIST_STRATEGY"
+def is_pair_centric_parallelism_sufficient(
+    total_atoms: int,
+    total_cells: int,
+    n_outer: int,
+    block_dim: int = 256,
+) -> bool:
+    """Return whether pair-centric exposes at least atom-kernel block count.
+
+    Parameters
+    ----------
+    total_atoms : int
+        Number of source atoms in the query.
+    total_cells : int
+        Number of source cells in the pair-centric launch.
+    n_outer : int
+        Number of non-self neighbor-cell offsets.
+    block_dim : int, default=256
+        Threads per atom-centric CUDA block.  The atom-centric query
+        kernel is launched with ``wp.launch(..., dim=natom)`` and no
+        explicit ``block_dim``, so it runs at Warp's default block size
+        (256); ``atom_blocks`` must use the same divisor for the
+        like-for-like block-count comparison below.
+
+    Returns
+    -------
+    bool
+        True when the pair-centric grid has at least as many logical
+        blocks as an atom-centric one-thread-per-atom launch.
+    """
+    block_dim_int = max(int(block_dim), 1)
+    atom_blocks = max(1, (int(total_atoms) + block_dim_int - 1) // block_dim_int)
+    pair_blocks = int(total_cells) * (int(n_outer) + 1)
+    return pair_blocks >= atom_blocks
 
 
 def select_cell_list_strategy(
@@ -129,25 +161,25 @@ def select_cell_list_strategy(
 ) -> Literal["atom_centric", "pair_centric"]:
     """Select ``"atom_centric"`` or ``"pair_centric"`` for the given (N, cutoff).
 
-    Sync-free: takes Python ints / floats, no GPU reads.
+    Sync-free: takes Python ints / floats, no GPU reads.  Note this applies to
+    the strategy *decision* only; once ``"pair_centric"`` is chosen, the Torch
+    launcher materializes launch metadata (``n_outer`` per axis, and for the
+    batched path ``R_max`` / ``total_cells``) via ``.item()`` / ``.tolist()``,
+    which do synchronize to host.  ``"atom_centric"`` avoids those reads.
 
     Pair-centric wins iff any of:
       1. ``cutoff >= 8  AND N <= 65536``
       2. ``cutoff >= 6  AND N <=  8192``
       3. ``cutoff >= 4  AND N <=  1024``
 
-    Override via env var ``NVALCHEMI_NEIGHLIST_STRATEGY`` =
-    ``"auto"`` (default) / ``"atom_centric"`` / ``"pair_centric"``.
+    To pin a strategy, pass it explicitly (``cell_list(..., strategy=...)`` or a
+    fine-grained ``method=`` name) rather than via an environment variable.
 
     Calibrated on GB10 sm_121.  Cross-GPU sensitivity is real but
     bounded (<= ~35 % wallclock penalty per cell, <= ~3 % mean) - recalibrate
     by sweeping ``benchmark_neighborlist.py --methods
-    cell_list_atom_centric cell_list_pair_centric`` and editing the rule
-    above, or pin a single variant via the env var.
+    cell_list_atom_centric cell_list_pair_centric`` and editing the rule above.
     """
-    override = os.environ.get(_STRATEGY_ENV, "auto").strip()
-    if override in ("atom_centric", "pair_centric"):
-        return override
     n = int(natom)
     c = float(cutoff)
     if (
@@ -159,12 +191,12 @@ def select_cell_list_strategy(
     return "atom_centric"
 
 
-# Three-clause rule (see ``select_batch_cell_list_strategy``):
-#   1. cutoff >= 8 - pair-centric dominates almost everywhere here.
-#   2. cutoff >= 6 AND total_atoms <= 65_536 AND avg_aps >= 4096 -
-#      small-/medium-N MLIP regime with reasonably-sized systems.  The
-#      avg_aps floor avoids picking pair-centric for many-tiny-systems
-#      shapes where its setup overhead dominates the kernel speedup.
+# Three-clause rule (see ``select_batch_cell_list_strategy``).  Every
+# pair-centric clause is gated by avg_aps >= 4096 so high-cutoff
+# many-tiny-system batches stay atom-centric.
+#   1. cutoff >= 8 - high-cutoff, reasonably-sized systems.
+#   2. cutoff >= 6 AND total_atoms <= 65_536 - small-/medium-N MLIP
+#      regime with reasonably-sized systems.
 #   3. cutoff >= 6 AND num_systems <= 8 - few-large-systems regime,
 #      where cell-level parallelism dominates atomic contention.
 _BATCH_PAIR_STRATEGY_DEFAULTS = {
@@ -182,29 +214,26 @@ def select_batch_cell_list_strategy(
 ) -> Literal["atom_centric", "pair_centric"]:
     """Select ``"atom_centric"`` or ``"pair_centric"`` for the batch path.
 
-    Selects pair-centric when *any* of the three clauses holds:
+    Selects pair-centric when ``avg_atoms_per_system`` is at least
+    ``NVALCHEMI_NEIGHLIST_BATCH_PAIR_AVG_APS_FLOOR`` (default 4096) and
+    *any* of the three clauses holds:
 
     1. ``cutoff >= NVALCHEMI_NEIGHLIST_BATCH_PAIR_CUTOFF_FLOOR`` (default 8.0).
     2. ``cutoff >= 6`` AND
-       ``total_atoms <= NVALCHEMI_NEIGHLIST_BATCH_PAIR_TOTAL_CAP`` (default 65_536)
-       AND ``avg_atoms_per_system >= NVALCHEMI_NEIGHLIST_BATCH_PAIR_AVG_APS_FLOOR``
-       (default 4096).
+       ``total_atoms <= NVALCHEMI_NEIGHLIST_BATCH_PAIR_TOTAL_CAP`` (default 65_536).
     3. ``cutoff >= 6`` AND
        ``num_systems <= NVALCHEMI_NEIGHLIST_BATCH_PAIR_NSYS_CAP`` (default 8)
        AND ``total_atoms > TOTAL_CAP`` (few-large-systems regime).
 
-    Override via env var ``NVALCHEMI_NEIGHLIST_STRATEGY`` =
-    ``"auto"`` (default) / ``"atom_centric"`` / ``"pair_centric"``.
+    To pin a strategy, pass it explicitly rather than via an environment
+    variable.
 
     Calibrated on Blackwell GB10.  The thresholds are env-tunable; the
     cost of picking wrong is bounded (<= ~20 % mean wallclock penalty on
     cross-GPU measurements).  Recalibrate by sweeping
     ``benchmark_neighborlist.py --methods batch_cell_list_atom_centric
-    batch_cell_list_pair_centric`` and resetting the env vars above.
+    batch_cell_list_pair_centric`` and resetting the threshold env vars above.
     """
-    override = os.environ.get(_STRATEGY_ENV, "auto").strip()
-    if override in ("atom_centric", "pair_centric"):
-        return override
 
     def _i(name: str) -> int:
         raw = os.environ.get(name)
@@ -229,10 +258,12 @@ def select_batch_cell_list_strategy(
     avg_aps_floor = _i("NVALCHEMI_NEIGHLIST_BATCH_PAIR_AVG_APS_FLOOR")
     nsys_cap = _i("NVALCHEMI_NEIGHLIST_BATCH_PAIR_NSYS_CAP")
 
+    avg_aps = total_atoms // max(num_systems, 1)
+    if avg_aps < avg_aps_floor:
+        return "atom_centric"
     if cutoff >= cutoff_floor:
         return "pair_centric"
-    avg_aps = total_atoms // max(num_systems, 1)
-    if cutoff >= 6.0 and total_atoms <= total_cap and avg_aps >= avg_aps_floor:
+    if cutoff >= 6.0 and total_atoms <= total_cap:
         return "pair_centric"
     # Few-large-systems clause: require total_atoms above the same cap so
     # the per-call setup overhead (gather + cell_to_system map + R_max

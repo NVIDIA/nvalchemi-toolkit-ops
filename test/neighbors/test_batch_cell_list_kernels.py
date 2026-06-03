@@ -59,6 +59,38 @@ TORCH_TO_WP_MAT_DTYPE = {
 dtypes = [torch.float32, torch.float64]
 
 
+def _neighbor_shift_entries(
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+) -> set[tuple[int, int, tuple[int, int, int]]]:
+    """Return order-independent matrix entries including shift vectors."""
+    matrix_cpu = neighbor_matrix.detach().cpu()
+    counts_cpu = num_neighbors.detach().cpu()
+    shifts_cpu = neighbor_matrix_shifts.detach().cpu()
+    entries: set[tuple[int, int, tuple[int, int, int]]] = set()
+    for atom_idx in range(matrix_cpu.shape[0]):
+        for slot in range(int(counts_cpu[atom_idx].item())):
+            entries.add(
+                (
+                    atom_idx,
+                    int(matrix_cpu[atom_idx, slot].item()),
+                    tuple(int(x) for x in shifts_cpu[atom_idx, slot].tolist()),
+                )
+            )
+    return entries
+
+
+def _reciprocal_full_fill_entries(
+    half_entries: set[tuple[int, int, tuple[int, int, int]]],
+) -> set[tuple[int, int, tuple[int, int, int]]]:
+    """Expand half-fill entries to the expected full-fill pair set."""
+    full_entries = set(half_entries)
+    for atom_i, atom_j, shift in half_entries:
+        full_entries.add((atom_j, atom_i, tuple(-x for x in shift)))
+    return full_entries
+
+
 def estimate_batch_cell_list_sizes_wp(
     cell: wp.array,
     pbc: wp.array,
@@ -1238,6 +1270,62 @@ class TestBatchCellListSelectiveRebuildFlags:
 
 
 @pytest.mark.parametrize("dtype", dtypes)
+@pytest.mark.parametrize("pbc_flag", [False, True])
+class TestBatchCellListFullFillDirect:
+    """Regression coverage for direct atom-centric full-fill output."""
+
+    def test_full_fill_matches_half_fill_reciprocal_expansion(
+        self, device, dtype, pbc_flag
+    ):
+        """Full-fill direct output should equal half-fill plus reciprocal rows."""
+        from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list
+
+        atoms_per_system = [17, 19]
+        positions, cell, pbc, _ptr = create_batch_systems(
+            num_systems=2,
+            atoms_per_system=atoms_per_system,
+            cell_sizes=[8.0, 8.0],
+            dtype=dtype,
+            device=device,
+            seed=7,
+            pbc_flag=pbc_flag,
+        )
+        batch_idx = torch.repeat_interleave(
+            torch.arange(2, dtype=torch.int32, device=device),
+            torch.tensor(atoms_per_system, dtype=torch.int32, device=device),
+        )
+        kwargs = {
+            "cell": cell,
+            "pbc": pbc,
+            "batch_idx": batch_idx,
+            "max_neighbors": 256,
+            "fill_value": positions.shape[0],
+            "return_neighbor_list": False,
+            "strategy": "atom_centric",
+        }
+
+        full_matrix, full_counts, full_shifts = batch_cell_list(
+            positions,
+            3.2,
+            half_fill=False,
+            **kwargs,
+        )
+        half_matrix, half_counts, half_shifts = batch_cell_list(
+            positions,
+            3.2,
+            half_fill=True,
+            **kwargs,
+        )
+
+        full_entries = _neighbor_shift_entries(full_matrix, full_counts, full_shifts)
+        expected_entries = _reciprocal_full_fill_entries(
+            _neighbor_shift_entries(half_matrix, half_counts, half_shifts)
+        )
+
+        assert full_entries == expected_entries
+
+
+@pytest.mark.parametrize("dtype", dtypes)
 class TestBatchCellListPairCentric:
     """Parity tests for the batch pair-centric query kernel.
 
@@ -1253,12 +1341,26 @@ class TestBatchCellListPairCentric:
             select_batch_cell_list_strategy,
         )
 
-        # Default rule: cutoff=12 always picks pair-centric.
+        # High cutoff still picks pair-centric when each system is large enough.
         assert (
             select_batch_cell_list_strategy(
                 total_atoms=1_000_000, num_systems=64, cutoff=12.0
             )
             == "pair_centric"
+        )
+
+        # High-cutoff many-small-system batches stay atom-centric.
+        assert (
+            select_batch_cell_list_strategy(
+                total_atoms=1001, num_systems=60, cutoff=15.0
+            )
+            == "atom_centric"
+        )
+        assert (
+            select_batch_cell_list_strategy(
+                total_atoms=100_001, num_systems=5365, cutoff=15.0
+            )
+            == "atom_centric"
         )
 
         # cutoff=6, large total, many systems → atom-centric.
@@ -1307,23 +1409,6 @@ class TestBatchCellListPairCentric:
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_BATCH_PAIR_CUTOFF_FLOOR", "20.0")
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_BATCH_PAIR_TOTAL_CAP", "0")
         monkeypatch.setenv("NVALCHEMI_NEIGHLIST_BATCH_PAIR_NSYS_CAP", "0")
-        assert (
-            select_batch_cell_list_strategy(
-                total_atoms=1_000_000, num_systems=64, cutoff=12.0
-            )
-            == "atom_centric"
-        )
-
-        # Check direct strategy override envar
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "pair_centric")
-        assert (
-            select_batch_cell_list_strategy(
-                total_atoms=1_000_000, num_systems=64, cutoff=12.0
-            )
-            == "pair_centric"
-        )
-
-        monkeypatch.setenv("NVALCHEMI_NEIGHLIST_STRATEGY", "atom_centric")
         assert (
             select_batch_cell_list_strategy(
                 total_atoms=1_000_000, num_systems=64, cutoff=12.0
