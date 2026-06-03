@@ -18,6 +18,12 @@ High-Level Interface
 
 .. autofunction:: nvalchemiops.jax.neighbors.neighbor_list
 
+Method Selection
+^^^^^^^^^^^^^^^^
+
+.. autofunction:: nvalchemiops.jax.neighbors.estimate_neighbor_list_costs
+.. autofunction:: nvalchemiops.jax.neighbors.suggest_neighbor_list_method
+
 Unbatched Algorithms
 --------------------
 
@@ -71,6 +77,7 @@ Batched Cluster Tile Algorithm
 .. autofunction:: nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile_coo
 .. autofunction:: nvalchemiops.jax.neighbors.estimate_batch_cluster_tile_list_sizes
 .. autofunction:: nvalchemiops.jax.neighbors.estimate_batch_cluster_tile_segments
+.. autofunction:: nvalchemiops.jax.neighbors.batch_cluster_tile.allocate_batch_cluster_tile_list
 
 Batched Dual Cutoff Algorithm
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

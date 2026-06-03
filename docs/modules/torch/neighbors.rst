@@ -27,6 +27,12 @@ High-Level Interface
 
 .. autofunction:: nvalchemiops.torch.neighbors.neighbor_list
 
+Method Selection
+^^^^^^^^^^^^^^^^
+
+.. autofunction:: nvalchemiops.torch.neighbors.estimate_neighbor_list_costs
+.. autofunction:: nvalchemiops.torch.neighbors.suggest_neighbor_list_method
+
 Unbatched Algorithms
 --------------------
 

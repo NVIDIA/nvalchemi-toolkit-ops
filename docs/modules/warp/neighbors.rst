@@ -12,6 +12,21 @@ Warp-Level Interface
    This is the low-level Warp interface that operates on ``warp.array`` objects.
    For PyTorch tensor support, see :doc:`../torch/neighbors`.
 
+High-Level Compatibility
+------------------------
+
+.. py:function:: nvalchemiops.neighbors.neighbor_list(*args, **kwargs)
+
+   Compatibility shim for the pre-0.3 PyTorch neighbor-list entry point.
+   New code should import :func:`nvalchemiops.torch.neighbors.neighbor_list`
+   directly. If PyTorch is unavailable, accessing this name raises
+   :class:`RuntimeError`.
+
+Method Selection
+----------------
+
+.. autofunction:: nvalchemiops.neighbors.estimate_neighbor_list_costs
+.. autofunction:: nvalchemiops.neighbors.suggest_neighbor_list_method
 
 .. _warp-neighbor-pair-function-contract:
 
