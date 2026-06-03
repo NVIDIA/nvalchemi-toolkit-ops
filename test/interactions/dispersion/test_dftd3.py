@@ -38,6 +38,8 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
     _s5_switch,
     dftd3,
     dftd3_matrix,
+    dftd3_matrix_pbc,
+    dftd3_pbc,
 )
 from test.interactions.dispersion.conftest import from_warp, to_warp
 
@@ -1186,6 +1188,176 @@ class TestFormatConsistency:
             atol=1e-7,
             err_msg="Coordination numbers differ between neighbor matrix and neighbor list formats",
         )
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("compute_virial", [False, True])
+    @pytest.mark.usefixtures("element_tables", "functional_params", "device")
+    def test_pbc_nm_nl_consistency_exercises_block_stride(
+        self, request, compute_virial
+    ):
+        """Test matrix and CSR PBC paths with more neighbors than a block."""
+        device = request.getfixturevalue("device")
+        if "cuda" not in device:
+            pytest.skip("Block-stride coverage requires CUDA block launches")
+        element_tables = request.getfixturevalue("element_tables")
+        functional_params = request.getfixturevalue("functional_params")
+
+        num_atoms = 70
+        max_neighbors = num_atoms - 1
+
+        positions_np = np.zeros((num_atoms, 3), dtype=np.float32)
+        positions_np[:, 0] = np.arange(num_atoms, dtype=np.float32) * 1.4
+        numbers_np = np.ones(num_atoms, dtype=np.int32)
+        neighbor_matrix_np = np.empty((num_atoms, max_neighbors), dtype=np.int32)
+        for atom_i in range(num_atoms):
+            neighbor_matrix_np[atom_i] = np.array(
+                [atom_j for atom_j in range(num_atoms) if atom_j != atom_i],
+                dtype=np.int32,
+            )
+        idx_j_np, neighbor_ptr_np = neighbor_matrix_to_csr(
+            neighbor_matrix_np, num_atoms
+        )
+
+        max_z_inc = element_tables["z_max_inc"]
+        rcov_wp = to_warp(element_tables["rcov"], wp.float32, device)
+        r4r2_wp = to_warp(element_tables["r4r2"], wp.float32, device)
+        c6_reference_wp = to_warp(
+            element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
+            wp.float32,
+            device,
+        )
+        coord_num_ref_wp = to_warp(
+            element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
+            wp.float32,
+            device,
+        )
+        positions_wp = to_warp(positions_np, wp.vec3f, device)
+        numbers_wp = to_warp(numbers_np, wp.int32, device)
+        batch_idx_wp = wp.zeros(num_atoms, dtype=wp.int32, device=device)
+        cell_wp = to_warp(
+            np.array(
+                [[[200.0, 0.0, 0.0], [0.0, 200.0, 0.0], [0.0, 0.0, 200.0]]],
+                dtype=np.float32,
+            ),
+            wp.mat33f,
+            device,
+        )
+
+        def run_matrix() -> dict[str, np.ndarray]:
+            neighbor_matrix_wp = to_warp(neighbor_matrix_np, wp.int32, device)
+            unit_shifts_wp = to_warp(
+                np.zeros((num_atoms, max_neighbors, 3), dtype=np.int32),
+                wp.vec3i,
+                device,
+            )
+            coord_num_wp = wp.zeros(num_atoms, dtype=wp.float32, device=device)
+            forces_wp = wp.zeros(num_atoms, dtype=wp.vec3f, device=device)
+            energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
+            virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
+            cartesian_shifts_wp = wp.zeros(
+                (num_atoms, max_neighbors), dtype=wp.vec3f, device=device
+            )
+            dE_dCN_wp = wp.zeros(num_atoms, dtype=wp.float32, device=device)
+
+            dftd3_matrix_pbc(
+                positions=positions_wp,
+                numbers=numbers_wp,
+                neighbor_matrix=neighbor_matrix_wp,
+                cell=cell_wp,
+                neighbor_matrix_shifts=unit_shifts_wp,
+                covalent_radii=rcov_wp,
+                r4r2=r4r2_wp,
+                c6_reference=c6_reference_wp,
+                coord_num_ref=coord_num_ref_wp,
+                a1=functional_params["a1"],
+                a2=functional_params["a2"],
+                s8=functional_params["s8"],
+                coord_num=coord_num_wp,
+                forces=forces_wp,
+                energy=energy_wp,
+                virial=virial_wp,
+                batch_idx=batch_idx_wp,
+                cartesian_shifts=cartesian_shifts_wp,
+                dE_dCN=dE_dCN_wp,
+                wp_dtype=wp.float32,
+                device=device,
+                k1=functional_params["k1"],
+                k3=functional_params["k3"],
+                s6=functional_params["s6"],
+                compute_virial=compute_virial,
+            )
+            return {
+                "energy": from_warp(energy_wp),
+                "forces": from_warp(forces_wp),
+                "coord_num": from_warp(coord_num_wp),
+                "virial": from_warp(virial_wp),
+            }
+
+        def run_csr() -> dict[str, np.ndarray]:
+            idx_j_wp = to_warp(idx_j_np, wp.int32, device)
+            neighbor_ptr_wp = to_warp(neighbor_ptr_np, wp.int32, device)
+            unit_shifts_wp = to_warp(
+                np.zeros((idx_j_np.shape[0], 3), dtype=np.int32),
+                wp.vec3i,
+                device,
+            )
+            coord_num_wp = wp.zeros(num_atoms, dtype=wp.float32, device=device)
+            forces_wp = wp.zeros(num_atoms, dtype=wp.vec3f, device=device)
+            energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
+            virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
+            cartesian_shifts_wp = wp.zeros(
+                idx_j_np.shape[0], dtype=wp.vec3f, device=device
+            )
+            dE_dCN_wp = wp.zeros(num_atoms, dtype=wp.float32, device=device)
+
+            dftd3_pbc(
+                positions=positions_wp,
+                numbers=numbers_wp,
+                idx_j=idx_j_wp,
+                neighbor_ptr=neighbor_ptr_wp,
+                cell=cell_wp,
+                unit_shifts=unit_shifts_wp,
+                covalent_radii=rcov_wp,
+                r4r2=r4r2_wp,
+                c6_reference=c6_reference_wp,
+                coord_num_ref=coord_num_ref_wp,
+                a1=functional_params["a1"],
+                a2=functional_params["a2"],
+                s8=functional_params["s8"],
+                coord_num=coord_num_wp,
+                forces=forces_wp,
+                energy=energy_wp,
+                virial=virial_wp,
+                batch_idx=batch_idx_wp,
+                cartesian_shifts=cartesian_shifts_wp,
+                dE_dCN=dE_dCN_wp,
+                wp_dtype=wp.float32,
+                device=device,
+                k1=functional_params["k1"],
+                k3=functional_params["k3"],
+                s6=functional_params["s6"],
+                compute_virial=compute_virial,
+            )
+            return {
+                "energy": from_warp(energy_wp),
+                "forces": from_warp(forces_wp),
+                "coord_num": from_warp(coord_num_wp),
+                "virial": from_warp(virial_wp),
+            }
+
+        matrix_results = run_matrix()
+        csr_results = run_csr()
+        keys = ["energy", "forces", "coord_num"]
+        if compute_virial:
+            keys.append("virial")
+        for key in keys:
+            np.testing.assert_allclose(
+                csr_results[key],
+                matrix_results[key],
+                rtol=5e-4,
+                atol=5e-5,
+                err_msg=f"{key} differs between block-stride matrix and CSR paths",
+            )
 
 
 # ==============================================================================
