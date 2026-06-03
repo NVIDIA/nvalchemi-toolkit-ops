@@ -1343,7 +1343,8 @@ def dftd3(
 
     - Use neighbor_matrix for dense systems or when max_neighbors is small
     - Use neighbor_list for sparse systems, large cutoffs, or memory-constrained scenarios
-    - Both formats produce identical results and support PBC
+    - Both formats compute the same model and support PBC; results may differ
+      by floating-point roundoff due to traversal order
 
     **PBC Handling**:
 
