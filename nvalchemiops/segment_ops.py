@@ -30,6 +30,7 @@ from __future__ import annotations
 from typing import Any
 
 import warp as wp
+from warp._src.types import type_size_in_bytes
 
 from nvalchemiops.warp_dispatch import register_overloads
 
@@ -1644,6 +1645,43 @@ _segment_div_overloads = register_overloads(
 # ---------------------------------------------------------------------------
 
 
+# Per-(kernel-id, device-id) Launch object cache.  Keyed by id() so we don't
+# pay a Python attribute-equality hash on every call; warp's kernel/device
+# objects are stable (singletons per (dtype, device)) so identity is safe.
+_segmented_sum_launch_cache: dict[tuple[int, int], wp._src.context.Launch] = {}
+
+
+def _get_segmented_sum_launch(kernel, device, x, idx, out, N, ept):
+    """Return a cached, parameter-reset ``Launch`` for ``_segmented_sum_kernel``.
+
+    First call for a given ``(kernel, device)`` pair builds the Launch via
+    ``wp.launch(record_cmd=True)`` (the expensive path).  Subsequent calls
+    mutate ``dim`` + the five parameter slots in place and skip the bulk of
+    Warp's ``wp.launch`` dispatch (~12.6 KB of validation + kernel-hooks
+    resolution).  At low N this saves ~3 µs per call.
+    """
+    key = (id(kernel), id(device))
+    launch = _segmented_sum_launch_cache.get(key)
+    dim = (N + ept - 1) // ept
+    if launch is None:
+        launch = wp.launch(
+            kernel,
+            dim=dim,
+            inputs=[x, idx, out, N, ept],
+            device=device,
+            record_cmd=True,
+        )
+        _segmented_sum_launch_cache[key] = launch
+        return launch
+    launch.set_dim(dim)
+    launch.set_param_at_index(0, x)
+    launch.set_param_at_index(1, idx)
+    launch.set_param_at_index(2, out)
+    launch.set_param_at_index(3, N)
+    launch.set_param_at_index(4, ept)
+    return launch
+
+
 def segmented_sum(
     x: wp.array,
     idx: wp.array,
@@ -1668,9 +1706,29 @@ def segmented_sum(
     if N == 0:
         return
 
-    out.zero_()
     device = x.device
     M = out.shape[0]
+
+    # CPU path: keep the unoptimized wp.launch dispatch (device.stream and the
+    # cached Launch path are CUDA-only; the optimization targets low-N CUDA
+    # latency where Python/Warp wrapper overhead dominates).
+    if device.is_cpu:
+        out.zero_()
+        ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
+        dim = (N + ept - 1) // ept
+        wp.launch(
+            _segmented_sum_overloads[x.dtype],
+            dim=dim,
+            inputs=[x, idx, out, N, ept],
+            device=device,
+        )
+        return
+
+    # CUDA fast path: raw device memset + cached Launch object.
+    # The memset bypasses wp.array.zero_()'s autograd-tracking wrapper and
+    # mark_init bookkeeping — saves ~0.5 µs per call on top of the
+    # cudaMemsetAsync itself.
+    device.memset(out.ptr, 0, out.size * type_size_in_bytes(out.dtype))
 
     # -- M=1 fast path: tile-based block reduction --------------------------
     if M == 1 and N >= 8192:
@@ -1695,14 +1753,26 @@ def segmented_sum(
         return
 
     # -- General path: run-length segmented sum -----------------------------
-    ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
-    dim = (N + ept - 1) // ept
-    wp.launch(
-        _segmented_sum_overloads[x.dtype],
-        dim=dim,
-        inputs=[x, idx, out, N, ept],
-        device=device,
+    # Inlined compute_ept: skips the Python function call on the hot path.
+    # ept_max=8 for vec3 (vec3f/vec3d), 16 for scalars (float32/float64).
+    is_vec3 = x.dtype in _VEC_TYPES
+    sm_count = device.sm_count if device.sm_count > 0 else 1
+    ept_raw = max(1, N // (sm_count * 512))
+    p = 1
+    while p < ept_raw:
+        p <<= 1
+    if p > 1 and (p - ept_raw) > (ept_raw - (p >> 1)):
+        p >>= 1
+    if is_vec3:
+        ept = max(2, min(p, 8))
+    else:
+        ept = max(4, min(p, 16))
+
+    # Cached Launch object — skips ~12.6 KB of wp.launch's validation/dispatch.
+    launch = _get_segmented_sum_launch(
+        _segmented_sum_overloads[x.dtype], device, x, idx, out, N, ept
     )
+    launch.launch(stream=device.stream)
 
 
 def segmented_component_sum(

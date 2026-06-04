@@ -141,6 +141,7 @@ See the [PyTorch API Reference](../modules/torch/neighbors.rst) and
 - [Electrostatics](components/electrostatics)
 - [Dispersion Corrections](components/dispersion)
 - [Dynamics](components/dynamics)
+- [Segment Operations](components/segment_ops)
 
 ## Advanced Usage
 
@@ -166,6 +167,7 @@ components/neighborlist
 components/electrostatics
 components/dispersion
 components/dynamics
+components/segment_ops
 ```
 
 ```{toctree}

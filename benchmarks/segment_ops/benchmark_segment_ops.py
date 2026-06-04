@@ -137,6 +137,65 @@ def _bench_cuda(setup, fn, torch_device, warmup, runs) -> float:
     return float(np.median(times))
 
 
+def _bench_cuda_graph(setup, fn, torch_device, warmup, runs, wp_device) -> float:
+    """Return median time (ms) of replaying ``(setup, fn)`` from a captured CUDA graph.
+
+    Captures ``setup(); fn()`` once into a Warp CUDA graph and times
+    ``wp.capture_launch`` of the replay over *runs* iterations.  The graph is
+    captured on Warp's default device stream (the docstring's note about
+    ``wp.ScopedStream(stream_from_torch(...))`` does **not** apply here —
+    ``ScopedCapture`` requires a Warp-managed stream).  Returns ``None`` if
+    capture fails for any reason (some op chains aren't capturable).
+
+    Timing uses ``torch.cuda.Event`` plus a final ``torch.cuda.synchronize``;
+    the sync ensures the event end-time reflects graph completion regardless
+    of which stream the graph ran on.
+    """
+    # Pre-capture warmup so all Warp modules are loaded and any first-call
+    # work (overload compilation, mempool init) happens outside the capture.
+    for _ in range(3):
+        setup()
+        fn()
+    wp.synchronize_device(wp_device)
+
+    try:
+        with wp.ScopedCapture(device=wp_device) as cap:
+            setup()
+            fn()
+    except Exception:
+        return None
+
+    for _ in range(warmup):
+        wp.capture_launch(cap.graph)
+    torch.cuda.synchronize(torch_device)
+
+    times = []
+    for _ in range(runs):
+        torch.cuda.synchronize(torch_device)
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        wp.capture_launch(cap.graph)
+        end.record()
+        torch.cuda.synchronize(torch_device)
+        times.append(start.elapsed_time(end))
+    return float(np.median(times))
+
+
+def _bench_warp_both(setup, fn, torch_device, warmup, runs):
+    """Time ``fn`` on the warp side both eagerly and via a captured CUDA graph.
+
+    Returns ``(eager_ms, graph_ms)``.  ``graph_ms`` is ``None`` if capture failed
+    (e.g. the op chain mutates host state or uses an unsupported API).  The
+    Warp device is derived from ``torch_device`` so existing call sites don't
+    need a signature change beyond renaming ``_bench_cuda`` to this helper.
+    """
+    wp_device = wp.get_device(str(torch_device))
+    eager_ms = _bench_cuda(setup, fn, torch_device, warmup, runs)
+    graph_ms = _bench_cuda_graph(setup, fn, torch_device, warmup, runs, wp_device)
+    return eager_ms, graph_ms
+
+
 def _wp_vec_array(arr_np, wp_dtype, device):
     return wp.array([tuple(r) for r in arr_np], dtype=wp_dtype, device=device)
 
@@ -149,11 +208,18 @@ def _noop():
     pass
 
 
-def _print_header(name):
-    header = (
-        f"{'N':>10}  {'M':>7}  {'L':>9}  "
-        f"{'warp ms':>9}  {'torch ms':>9}  {'speedup':>8}"
-    )
+def _print_header(name, with_graph=False):
+    if with_graph:
+        header = (
+            f"{'N':>10}  {'M':>7}  {'L':>9}  "
+            f"{'warp ms':>9}  {'wp_graph ms':>11}  {'torch ms':>9}  "
+            f"{'eager spd':>9}  {'graph spd':>9}"
+        )
+    else:
+        header = (
+            f"{'N':>10}  {'M':>7}  {'L':>9}  "
+            f"{'warp ms':>9}  {'torch ms':>9}  {'speedup':>8}"
+        )
     sep = "-" * len(header)
     print(f"\n{name}")
     print(sep)
@@ -161,12 +227,21 @@ def _print_header(name):
     print(sep)
 
 
-def _print_row(N, M, ms_wp, ms_torch):
+def _print_row(N, M, ms_wp, ms_torch, ms_wp_graph=None):
     L = N / max(M, 1)
     speedup = ms_torch / ms_wp if ms_wp > 0 else float("inf")
-    print(
-        f"{N:>10}  {M:>7}  {L:>9.1f}  {ms_wp:>9.4f}  {ms_torch:>9.4f}  {speedup:>7.2f}x"
-    )
+    if ms_wp_graph is None:
+        print(
+            f"{N:>10}  {M:>7}  {L:>9.1f}  {ms_wp:>9.4f}  {ms_torch:>9.4f}  "
+            f"{speedup:>7.2f}x"
+        )
+    else:
+        graph_speedup = ms_torch / ms_wp_graph if ms_wp_graph > 0 else float("inf")
+        print(
+            f"{N:>10}  {M:>7}  {L:>9.1f}  "
+            f"{ms_wp:>9.4f}  {ms_wp_graph:>11.4f}  {ms_torch:>9.4f}  "
+            f"{speedup:>8.2f}x  {graph_speedup:>8.2f}x"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +290,7 @@ def bench_segmented_sum(N, M, device, torch_device, rng, warmup, runs, dtypes=No
         idx = wp.array(idx_np, device=device)
         t_idx = torch.from_numpy(idx_np.astype(np.int64)).to(torch_device)
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             lambda: out.zero_(),
             lambda: segmented_sum(x, idx, out),
             torch_device,
@@ -229,9 +304,9 @@ def bench_segmented_sum(N, M, device, torch_device, rng, warmup, runs, dtypes=No
             warmup,
             runs,
         )
-        _print_row(N, M, ms_wp, ms_t)
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
 
-        results.append(("segmented_sum", label, N, M, ms_wp, ms_t))
+        results.append(("segmented_sum", label, N, M, ms_wp, ms_t, ms_wp_graph))
 
     return results
 
@@ -255,7 +330,7 @@ def bench_segmented_component_sum(
         t_out.zero_()
         t_out.index_add_(0, t_idx, t_x.sum(dim=1))
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         lambda: out.zero_(),
         lambda: segmented_component_sum(x, idx, out),
         torch_device,
@@ -263,9 +338,9 @@ def bench_segmented_component_sum(
         runs,
     )
     ms_t = _bench_cuda(_noop, _torch_component_sum, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
 
-    return [("segmented_component_sum", "vec3f", N, M, ms_wp, ms_t)]
+    return [("segmented_component_sum", "vec3f", N, M, ms_wp, ms_t, ms_wp_graph)]
 
 
 def bench_segmented_dot(N, M, device, torch_device, rng, warmup, runs, dtypes=None):
@@ -311,7 +386,7 @@ def bench_segmented_dot(N, M, device, torch_device, rng, warmup, runs, dtypes=No
                 t_out.zero_()
                 t_out.index_add_(0, t_idx, t_x * t_y)
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             lambda: out.zero_(),
             lambda: segmented_dot(x, y, idx, out),
             torch_device,
@@ -319,9 +394,9 @@ def bench_segmented_dot(N, M, device, torch_device, rng, warmup, runs, dtypes=No
             runs,
         )
         ms_t = _bench_cuda(_noop, _torch_dot, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
 
-        results.append(("segmented_dot", label, N, M, ms_wp, ms_t))
+        results.append(("segmented_dot", label, N, M, ms_wp, ms_t, ms_wp_graph))
 
     return results
 
@@ -343,7 +418,7 @@ def bench_segmented_max_norm(N, M, device, torch_device, rng, warmup, runs, **_k
         t_out.zero_()
         t_out.scatter_reduce_(0, t_idx, t_x.norm(dim=1), reduce="amax")
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         lambda: out.zero_(),
         lambda: segmented_max_norm(x, idx, out),
         torch_device,
@@ -351,9 +426,9 @@ def bench_segmented_max_norm(N, M, device, torch_device, rng, warmup, runs, **_k
         runs,
     )
     ms_t = _bench_cuda(_noop, _torch_max_norm, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
 
-    return [("segmented_max_norm", "vec3f", N, M, ms_wp, ms_t)]
+    return [("segmented_max_norm", "vec3f", N, M, ms_wp, ms_t, ms_wp_graph)]
 
 
 def bench_segmented_mul(N, M, device, torch_device, rng, warmup, runs, **_kwargs):
@@ -392,13 +467,13 @@ def bench_segmented_mul(N, M, device, torch_device, rng, warmup, runs, **_kwargs
             def _torch_mul():
                 t_out.copy_(t_x * t_y[t_idx])
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop, lambda: segmented_mul(x, y, idx, out), torch_device, warmup, runs
         )
         ms_t = _bench_cuda(_noop, _torch_mul, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
 
-        results.append(("segmented_mul", label, N, M, ms_wp, ms_t))
+        results.append(("segmented_mul", label, N, M, ms_wp, ms_t, ms_wp_graph))
 
     return results
 
@@ -439,13 +514,13 @@ def bench_segmented_add(N, M, device, torch_device, rng, warmup, runs, **_kwargs
             def _torch_add():
                 t_out.copy_(t_x + t_y[t_idx])
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop, lambda: segmented_add(x, y, idx, out), torch_device, warmup, runs
         )
         ms_t = _bench_cuda(_noop, _torch_add, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
 
-        results.append(("segmented_add", label, N, M, ms_wp, ms_t))
+        results.append(("segmented_add", label, N, M, ms_wp, ms_t, ms_wp_graph))
 
     return results
 
@@ -471,13 +546,13 @@ def bench_segmented_matvec(N, M, device, torch_device, rng, warmup, runs, **_kwa
         gathered = t_m[t_idx]
         t_out.copy_(torch.einsum("nji,nj->ni", gathered, t_v))
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         _noop, lambda: segmented_matvec(v, m, idx, out), torch_device, warmup, runs
     )
     ms_t = _bench_cuda(_noop, _torch_matvec, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
 
-    return [("segmented_matvec", "mat33f", N, M, ms_wp, ms_t)]
+    return [("segmented_matvec", "mat33f", N, M, ms_wp, ms_t, ms_wp_graph)]
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +616,7 @@ def bench_segmented_sum_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
             N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, np_dt
         )
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
             lambda: _launch_segmented_sum_backward(g_out, idx, grad_x),
             torch_device,
@@ -555,8 +630,10 @@ def bench_segmented_sum_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
             warmup,
             runs,
         )
-        _print_row(N, M, ms_wp, ms_t)
-        results.append(("segmented_sum_backward", label, N, M, ms_wp, ms_t))
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+        results.append(
+            ("segmented_sum_backward", label, N, M, ms_wp, ms_t, ms_wp_graph)
+        )
     return results
 
 
@@ -579,7 +656,7 @@ def bench_segmented_sum_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
             N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, np_dt
         )
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
             lambda: _launch_segmented_sum_double_backward(gg_x, idx, M, grad_g_out),
             torch_device,
@@ -592,8 +669,10 @@ def bench_segmented_sum_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
             t_grad_g_out.index_add_(0, t_idx, t_gg_x)
 
         ms_t = _bench_cuda(_noop, _t_dbl, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
-        results.append(("segmented_sum_double_backward", label, N, M, ms_wp, ms_t))
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+        results.append(
+            ("segmented_sum_double_backward", label, N, M, ms_wp, ms_t, ms_wp_graph)
+        )
     return results
 
 
@@ -691,7 +770,7 @@ def bench_segmented_dot_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
             N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, np_dt
         )
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
             lambda: _launch_segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y),
             torch_device,
@@ -713,8 +792,10 @@ def bench_segmented_dot_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
                 return gx, gy
 
         ms_t = _bench_cuda(_noop, _t_bwd, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
-        results.append(("segmented_dot_backward", label, N, M, ms_wp, ms_t))
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+        results.append(
+            ("segmented_dot_backward", label, N, M, ms_wp, ms_t, ms_wp_graph)
+        )
     return results
 
 
@@ -747,7 +828,7 @@ def bench_segmented_dot_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
             N, M, device, torch_device, rng, is_vec, wp_dt, torch_dt, np_dt
         )
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
             lambda: _launch_segmented_dot_double_backward(
                 gg_gx, gg_gy, g_out, x, y, idx, M, grad_g_out, grad_x_ex, grad_y_ex
@@ -775,8 +856,10 @@ def bench_segmented_dot_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
                 return t_g_out[t_idx] * t_gg_y, t_g_out[t_idx] * t_gg_x
 
         ms_t = _bench_cuda(_noop, _t_dbl, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
-        results.append(("segmented_dot_double_backward", label, N, M, ms_wp, ms_t))
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+        results.append(
+            ("segmented_dot_double_backward", label, N, M, ms_wp, ms_t, ms_wp_graph)
+        )
     return results
 
 
@@ -880,7 +963,7 @@ def bench_segmented_mul_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
             _is_vec,
         ) = _setup_mul_arrays(N, M, device, torch_device, rng, is_vec, np_dt)
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
             lambda: _launch_segmented_mul_backward(g_out, x, y, idx, M, grad_x, grad_y),
             torch_device,
@@ -904,8 +987,10 @@ def bench_segmented_mul_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
                 return gx, t_grad_y
 
         ms_t = _bench_cuda(_noop, _t_bwd, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
-        results.append(("segmented_mul_backward", label, N, M, ms_wp, ms_t))
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+        results.append(
+            ("segmented_mul_backward", label, N, M, ms_wp, ms_t, ms_wp_graph)
+        )
     return results
 
 
@@ -939,7 +1024,7 @@ def bench_segmented_mul_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
             _is_vec,
         ) = _setup_mul_arrays(N, M, device, torch_device, rng, is_vec, np_dt)
 
-        ms_wp = _bench_cuda(
+        ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
             lambda: _launch_segmented_mul_double_backward(
                 gg_gx, gg_gy, g_out, x, y, idx, grad_g_out, grad_x_ex, grad_y_ex
@@ -967,8 +1052,10 @@ def bench_segmented_mul_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
                 return _g_o, _g_x, t_grad_y
 
         ms_t = _bench_cuda(_noop, _t_dbl, torch_device, warmup, runs)
-        _print_row(N, M, ms_wp, ms_t)
-        results.append(("segmented_mul_double_backward", label, N, M, ms_wp, ms_t))
+        _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+        results.append(
+            ("segmented_mul_double_backward", label, N, M, ms_wp, ms_t, ms_wp_graph)
+        )
     return results
 
 
@@ -1052,7 +1139,7 @@ def bench_segmented_matvec_bwd(
         t_grad_M,
     ) = _setup_matvec_arrays(N, M, device, torch_device, rng)
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
         lambda: _launch_segmented_matvec_backward(g_out, v, m, idx, grad_v, grad_M),
         torch_device,
@@ -1070,8 +1157,8 @@ def bench_segmented_matvec_bwd(
         return gv, t_grad_M
 
     ms_t = _bench_cuda(_noop, _t_bwd, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
-    return [("segmented_matvec_backward", "mat33f", N, M, ms_wp, ms_t)]
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+    return [("segmented_matvec_backward", "mat33f", N, M, ms_wp, ms_t, ms_wp_graph)]
 
 
 def bench_segmented_matvec_dbl(
@@ -1099,7 +1186,7 @@ def bench_segmented_matvec_dbl(
         t_grad_M,
     ) = _setup_matvec_arrays(N, M, device, torch_device, rng)
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
         lambda: _launch_segmented_matvec_double_backward(
             gg_gv, gg_gM, g_out, v, m, idx, grad_g_out, grad_v_ex, grad_M_ex
@@ -1122,8 +1209,10 @@ def bench_segmented_matvec_dbl(
         return gg, gv_ex, t_grad_M
 
     ms_t = _bench_cuda(_noop, _t_dbl, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
-    return [("segmented_matvec_double_backward", "mat33f", N, M, ms_wp, ms_t)]
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+    return [
+        ("segmented_matvec_double_backward", "mat33f", N, M, ms_wp, ms_t, ms_wp_graph)
+    ]
 
 
 def _setup_max_norm_arrays(N, M, device, torch_device, rng):
@@ -1191,7 +1280,7 @@ def bench_segmented_max_norm_bwd(
         _t_gg,
     ) = _setup_max_norm_arrays(N, M, device, torch_device, rng)
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
         lambda: _launch_segmented_max_norm_backward(g_out, x, argmax_idx, idx, grad_x),
         torch_device,
@@ -1213,8 +1302,8 @@ def bench_segmented_max_norm_bwd(
         return gx
 
     ms_t = _bench_cuda(_noop, _t_bwd, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
-    return [("segmented_max_norm_backward", "vec3f", N, M, ms_wp, ms_t)]
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+    return [("segmented_max_norm_backward", "vec3f", N, M, ms_wp, ms_t, ms_wp_graph)]
 
 
 def bench_segmented_max_norm_dbl(
@@ -1239,7 +1328,7 @@ def bench_segmented_max_norm_dbl(
         t_gg_gx,
     ) = _setup_max_norm_arrays(N, M, device, torch_device, rng)
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
         lambda: _launch_segmented_max_norm_double_backward(
             gg_gx, g_out, x, argmax_idx, idx, grad_x_ex, grad_g_out
@@ -1264,8 +1353,10 @@ def bench_segmented_max_norm_dbl(
         return gx_ex, proj * valid.squeeze(-1)
 
     ms_t = _bench_cuda(_noop, _t_dbl, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
-    return [("segmented_max_norm_double_backward", "vec3f", N, M, ms_wp, ms_t)]
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+    return [
+        ("segmented_max_norm_double_backward", "vec3f", N, M, ms_wp, ms_t, ms_wp_graph)
+    ]
 
 
 def _setup_rms_norm_arrays(N, M, device, torch_device, rng):
@@ -1337,7 +1428,7 @@ def bench_segmented_rms_norm_bwd(
         _t_inner,
     ) = _setup_rms_norm_arrays(N, M, device, torch_device, rng)
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
         lambda: _launch_segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x),
         torch_device,
@@ -1349,8 +1440,8 @@ def bench_segmented_rms_norm_bwd(
         return t_g_out[t_idx, None] * t_x * t_inv_norm[t_idx, None]
 
     ms_t = _bench_cuda(_noop, _t_bwd, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
-    return [("segmented_rms_norm_backward", "vec3f", N, M, ms_wp, ms_t)]
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+    return [("segmented_rms_norm_backward", "vec3f", N, M, ms_wp, ms_t, ms_wp_graph)]
 
 
 def bench_segmented_rms_norm_dbl(
@@ -1376,7 +1467,7 @@ def bench_segmented_rms_norm_dbl(
         t_inner,
     ) = _setup_rms_norm_arrays(N, M, device, torch_device, rng)
 
-    ms_wp = _bench_cuda(
+    ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
         lambda: _launch_segmented_rms_norm_double_backward(
             gg_x, x, g_out, inv_norm, counts, idx, M, grad_x_ex, grad_g_out_ex
@@ -1400,8 +1491,10 @@ def bench_segmented_rms_norm_dbl(
         return gx_ex, g_g_out_ex
 
     ms_t = _bench_cuda(_noop, _t_dbl, torch_device, warmup, runs)
-    _print_row(N, M, ms_wp, ms_t)
-    return [("segmented_rms_norm_double_backward", "vec3f", N, M, ms_wp, ms_t)]
+    _print_row(N, M, ms_wp, ms_t, ms_wp_graph)
+    return [
+        ("segmented_rms_norm_double_backward", "vec3f", N, M, ms_wp, ms_t, ms_wp_graph)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1543,7 +1636,7 @@ def run_benchmarks(config: dict, output_dir: Path, device_str: str) -> None:
         elif supports_dtypes:
             dtype_info = " (f32, vec3f)"
 
-        _print_header(f"{display_name}{dtype_info}")
+        _print_header(f"{display_name}{dtype_info}", with_graph=True)
         for N in n_values:
             for L in l_values:
                 if L > N:
@@ -1566,15 +1659,27 @@ def run_benchmarks(config: dict, output_dir: Path, device_str: str) -> None:
             "num_segments",
             "avg_segment_length",
             "warp_median_ms",
+            "warp_graph_median_ms",
             "torch_median_ms",
             "speedup",
+            "graph_speedup",
         ]
         with open(csv_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            for op, dtype_label, N, M, ms_wp, ms_t in all_results:
+            for row in all_results:
+                # Backward-compatible: forward ops emit 6-tuples (no graph timing);
+                # bwd/dbl ops emit 7-tuples with the graph median.
+                if len(row) == 7:
+                    op, dtype_label, N, M, ms_wp, ms_t, ms_wp_graph = row
+                else:
+                    op, dtype_label, N, M, ms_wp, ms_t = row
+                    ms_wp_graph = None
                 L = N / max(M, 1)
                 speedup = ms_t / ms_wp if ms_wp > 0 else float("inf")
+                graph_speedup = (
+                    ms_t / ms_wp_graph if ms_wp_graph and ms_wp_graph > 0 else None
+                )
                 writer.writerow(
                     {
                         "operation": op,
@@ -1583,8 +1688,14 @@ def run_benchmarks(config: dict, output_dir: Path, device_str: str) -> None:
                         "num_segments": M,
                         "avg_segment_length": f"{L:.1f}",
                         "warp_median_ms": f"{ms_wp:.4f}",
+                        "warp_graph_median_ms": (
+                            f"{ms_wp_graph:.4f}" if ms_wp_graph is not None else ""
+                        ),
                         "torch_median_ms": f"{ms_t:.4f}",
                         "speedup": f"{speedup:.2f}",
+                        "graph_speedup": (
+                            f"{graph_speedup:.2f}" if graph_speedup is not None else ""
+                        ),
                     }
                 )
         print(f"Wrote results to {csv_path}")

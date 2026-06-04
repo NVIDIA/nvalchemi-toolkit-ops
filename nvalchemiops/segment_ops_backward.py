@@ -30,6 +30,45 @@ Design
   save cheap intermediates during the forward pass.
 - ``idx``, ``segment_ptr``, and ``num_segments`` are integer meta; their
   gradient slots always return ``None`` at the Torch/JAX layer.
+
+Output-buffer zeroing policy
+----------------------------
+Backward launchers used to zero every output buffer unconditionally before
+launching the kernel.  That was correct but expensive: for the simplest
+gather-shaped backwards (e.g. ``segmented_sum``'s first-order ``grad_x[i] =
+g_out[idx[i]]``), the pre-zero was a full-buffer memset on the same bytes the
+kernel was about to overwrite — a measurable ~50% slowdown vs torch on
+memory-bound paths.
+
+The current policy is: **a launcher zeros an output only when the kernel
+won't otherwise leave it fully defined.**  Concretely:
+
+- **Required** — keep the pre-zero when the kernel uses ``wp.atomic_add`` to
+  scatter into the buffer (the RLE-EPT segmented_sum / segmented_dot paths),
+  when the kernel writes the buffer only at a subset of indices
+  (``segmented_max_norm`` writes only at argmax positions), or when the
+  kernel may run with ``dim < buffer.shape[0]`` and downstream code reads the
+  whole buffer.
+- **Redundant — do NOT add** — when the kernel writes every element of the
+  output exactly once via pure assignment (``arr[i] = ...`` over ``dim=N``,
+  ``wp.copy``, or a fused element-wise overload over the full output).
+
+- **Empty-input handling**: when ``N == 0`` the kernel is skipped, but
+  callers may pass re-used output buffers whose contents would otherwise be
+  stale.  Launchers must still zero on the empty-input early-return path.
+  Several launchers do this by zeroing inside the ``if N == 0: return``
+  branch; the three fused-double-backward ``grad_g_out`` outputs
+  (``_launch_segmented_add_double_backward``,
+  ``_launch_segmented_axpy_double_backward``,
+  ``_launch_segmented_matvec_double_backward``) keep an unconditional
+  pre-guard zero, pinned by
+  ``test_empty_fused_double_backward_zeros_grad_g_out``.
+
+When in doubt, follow the kernel: if every element of ``out`` is written by a
+``dim == out.shape[0]`` pure-assignment kernel, the pre-zero is wasted memory
+bandwidth.  Tests in ``test/test_segment_ops_backward.py`` cover the
+``N == 0`` and atomic-accumulation paths, so removing or adding a zero in
+the wrong place will fail visibly rather than silently.
 """
 
 from __future__ import annotations
@@ -70,7 +109,7 @@ _SCALAR_TO_VEC = {wp.float32: wp.vec3f, wp.float64: wp.vec3d}
 
 
 def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
-    """Zero ``out`` then run the forward ``segmented_sum`` overloads.
+    """Run the forward ``segmented_sum`` overloads (scatter-reduce).
 
     Shared dispatcher for any backward path that needs a segmented sum
     reduction (e.g. ``segmented_sum`` double-backward, ``segmented_broadcast``
@@ -83,13 +122,15 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     out : wp.array, shape ``(M,)``, dtype matches ``x``
-        OUTPUT: per-segment reduction.  Zeroed before launch.
+        OUTPUT: per-segment reduction.
 
     Notes
     -----
     Two-mode dispatch: a tile-based total-sum kernel when ``M == 1`` and
-    ``N >= 8192``, otherwise RLE-EPT segmented_sum with ``dim=ceil(N/EPT)`` and
-    ``atomic_add`` accumulation per segment.
+    ``N >= 8192``, otherwise RLE-EPT segmented_sum with ``dim=ceil(N/EPT)``
+    and ``atomic_add`` accumulation per segment.  ``out`` is zeroed here
+    because the ``atomic_add`` reduction needs a zero baseline (per the
+    output-buffer policy in the module docstring).
 
     See Also
     --------
@@ -136,7 +177,7 @@ def _launch_sum(x: wp.array, idx: wp.array, out: wp.array) -> None:
 
 
 def _launch_broadcast(values: wp.array, idx: wp.array, out: wp.array) -> None:
-    """Zero ``out`` then run the forward ``segmented_broadcast`` overloads.
+    """Run the forward ``segmented_broadcast`` overloads (pure gather).
 
     Gathers per-segment ``values`` into per-element ``out`` via ``idx``.  Shared
     dispatcher for any backward path that needs a scatter→gather (e.g.
@@ -149,7 +190,10 @@ def _launch_broadcast(values: wp.array, idx: wp.array, out: wp.array) -> None:
     idx : wp.array, shape ``(N,)``, dtype int32
         Segment indices; need not be sorted.
     out : wp.array, shape ``(N,)``, dtype matches ``values``
-        OUTPUT: ``out[i] = values[idx[i]]``.  Zeroed before launch.
+        OUTPUT: ``out[i] = values[idx[i]]``.  Every element is written by the
+        gather kernel, so no pre-zero is performed (saves a full-buffer memset
+        on what is otherwise a bandwidth-bound op).  When ``N == 0`` the
+        output is empty and no write is needed.
 
     Notes
     -----
@@ -159,7 +203,6 @@ def _launch_broadcast(values: wp.array, idx: wp.array, out: wp.array) -> None:
     --------
     _launch_sum : Inverse op (per-element scatter-sum → per-segment).
     """
-    out.zero_()
     N = out.shape[0]
     if N == 0:
         return
@@ -997,7 +1040,16 @@ _segmented_add_dbl_bwd_grad_out_overloads = register_overloads(
 # ===========================================================================
 # Internal launch functions
 # All functions below are the contracts consumed by PR 2 (Torch) and PR 3 (JAX).
-# Convention: output arrays are zeroed by the callee before writing.
+#
+# Output buffer convention (see module docstring for the full rationale):
+#   Each launcher zeros only those outputs whose kernel doesn't fully define
+#   them — outputs accumulated via wp.atomic_add, written at a subset of
+#   indices, or returned on the N == 0 fast path.  Outputs fully written via
+#   dim=N pure-assignment kernels (or wp.copy) are NOT pre-zeroed: that
+#   pre-zero is a full-buffer memset over bytes the kernel is about to
+#   overwrite.  Adding a zero where it isn't needed is a real perf cost; do
+#   not add one without verifying the kernel doesn't already write every
+#   element.
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
@@ -1019,7 +1071,7 @@ def _launch_segmented_sum_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_x : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: per-element gradient.  Zeroed before launch.
+        OUTPUT: per-element gradient.
 
     Notes
     -----
@@ -1052,7 +1104,7 @@ def _launch_segmented_sum_double_backward(
         Number of segments.  Unused; retained for API symmetry with
         ``grad_g_out.shape[0]``.
     grad_g_out : wp.array, shape ``(M,)``, dtype matches ``gg_x``
-        OUTPUT: per-segment second-order adjoint.  Zeroed before launch.
+        OUTPUT: per-segment second-order adjoint.
 
     Notes
     -----
@@ -1088,7 +1140,7 @@ def _launch_segmented_broadcast_backward(
     M : int
         Number of segments.  Unused; retained for API symmetry.
     grad_values : wp.array, shape ``(M,)``, dtype matches ``g_out``
-        OUTPUT: per-segment gradient.  Zeroed before launch.
+        OUTPUT: per-segment gradient.
 
     Notes
     -----
@@ -1116,7 +1168,7 @@ def _launch_segmented_broadcast_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``gg_values``
-        OUTPUT: per-element second-order adjoint.  Zeroed before launch.
+        OUTPUT: per-element second-order adjoint.
 
     Notes
     -----
@@ -1151,7 +1203,7 @@ def _launch_segmented_component_sum_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_x : wp.array, shape ``(N,)``, dtype vec3f / vec3d (matches ``g_out`` precision)
-        OUTPUT: per-element vec3 gradient.  Zeroed before launch.
+        OUTPUT: per-element vec3 gradient.
 
     Notes
     -----
@@ -1161,7 +1213,6 @@ def _launch_segmented_component_sum_backward(
     --------
     _launch_segmented_component_sum_double_backward : Symmetric reduction.
     """
-    grad_x.zero_()
     N = grad_x.shape[0]
     if N == 0:
         return
@@ -1192,7 +1243,7 @@ def _launch_segmented_component_sum_double_backward(
     M : int
         Number of segments.  Unused; retained for API symmetry.
     grad_g_out : wp.array, shape ``(M,)``, dtype float32 / float64
-        OUTPUT: per-segment second-order adjoint.  Zeroed before launch.
+        OUTPUT: per-segment second-order adjoint.
 
     Notes
     -----
@@ -1244,9 +1295,9 @@ def _launch_segmented_add_backward(
     M : int
         Number of segments.  Unused; retained for API symmetry.
     grad_x : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: per-element gradient (copy of ``g_out``).  Zeroed before launch.
+        OUTPUT: per-element gradient (copy of ``g_out``).
     grad_y : wp.array, shape ``(M,)``, dtype matches ``g_out``
-        OUTPUT: per-segment scatter-sum of ``g_out``.  Zeroed before launch.
+        OUTPUT: per-segment scatter-sum of ``g_out``.
 
     Notes
     -----
@@ -1259,9 +1310,8 @@ def _launch_segmented_add_backward(
     --------
     _launch_segmented_add_double_backward : Fused gather-and-add second order.
     """
-    grad_x.zero_()
-    grad_y.zero_()
     if g_out.shape[0] == 0:
+        grad_y.zero_()
         return
     wp.copy(grad_x, g_out)
     _launch_sum(g_out, idx, grad_y)
@@ -1288,7 +1338,7 @@ def _launch_segmented_add_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``gg_x``
-        OUTPUT: per-element second-order adjoint.  Zeroed before launch.
+        OUTPUT: per-element second-order adjoint.
 
     Notes
     -----
@@ -1345,9 +1395,9 @@ def _launch_segmented_mul_backward(
     M : int
         Number of segments.  Unused; retained for API symmetry.
     grad_x : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: per-element gradient.  Zeroed before launch.
+        OUTPUT: per-element gradient.
     grad_y : wp.array, shape ``(M,)``, dtype matches ``y``
-        OUTPUT: per-segment gradient.  Zeroed before launch.
+        OUTPUT: per-segment gradient.
 
     Notes
     -----
@@ -1359,11 +1409,11 @@ def _launch_segmented_mul_backward(
     --------
     _launch_segmented_mul_double_backward : Second-order backward.
     """
-    grad_x.zero_()
-    grad_y.zero_()
     # grad_x[i] = g_out[i] * y[s]
     N = g_out.shape[0]
     if N == 0:
+        grad_x.zero_()
+        grad_y.zero_()
         return
     wp.launch(
         _segmented_mul_overloads[(g_out.dtype, y.dtype)],
@@ -1417,11 +1467,11 @@ def _launch_segmented_mul_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Zeroed before launch.
+        OUTPUT: second-order adjoint w.r.t. ``g_out``.
     grad_x_extra : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: extra contribution to the second-order adjoint of ``x``.  Zeroed.
+        OUTPUT: extra contribution to the second-order adjoint of ``x``.
     grad_y_extra : wp.array, shape ``(M,)``, dtype matches ``y``
-        OUTPUT: extra contribution to the second-order adjoint of ``y``.  Zeroed.
+        OUTPUT: extra contribution to the second-order adjoint of ``y``.
 
     Notes
     -----
@@ -1434,12 +1484,14 @@ def _launch_segmented_mul_double_backward(
     --------
     _launch_segmented_mul_backward : First-order backward.
     """
-    grad_g_out.zero_()
-    grad_x_extra.zero_()
-    grad_y_extra.zero_()
     N = g_out.shape[0]
     if N == 0:
+        grad_g_out.zero_()
+        grad_x_extra.zero_()
+        grad_y_extra.zero_()
         return
+    # grad_y_extra accumulates via atomic_add in segmented_dot, so it must start zeroed.
+    grad_y_extra.zero_()
     device = g_out.device
     # grad_g_out[i] = gg_gx[i]*y[s] + gg_gy[s]*x[i]
     wp.launch(
@@ -1492,7 +1544,7 @@ def _launch_segmented_dot_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_x, grad_y : wp.array, shape ``(N,)``, dtype matches ``x``
-        OUTPUT: per-element gradients.  Zeroed before launch.
+        OUTPUT: per-element gradients.
 
     Notes
     -----
@@ -1502,11 +1554,11 @@ def _launch_segmented_dot_backward(
     --------
     _launch_segmented_dot_double_backward : Second-order backward.
     """
-    grad_x.zero_()
-    grad_y.zero_()
     # grad_x[i] = y[i] * g_out[s]  → _segmented_mul(y, g_out, idx, grad_x)
     N = x.shape[0]
     if N == 0:
+        grad_x.zero_()
+        grad_y.zero_()
         return
     wp.launch(
         _segmented_mul_overloads[(y.dtype, g_out.dtype)],
@@ -1556,9 +1608,9 @@ def _launch_segmented_dot_double_backward(
     M : int
         Number of segments.  Unused; retained for API symmetry.
     grad_g_out : wp.array, shape ``(M,)``, dtype matches ``g_out``
-        OUTPUT: per-segment second-order adjoint.  Zeroed before launch.
+        OUTPUT: per-segment second-order adjoint.
     grad_x_extra, grad_y_extra : wp.array, shape ``(N,)``, dtype matches ``x``
-        OUTPUT: extra per-element second-order adjoints.  Zeroed.
+        OUTPUT: extra per-element second-order adjoints.
 
     Notes
     -----
@@ -1570,12 +1622,14 @@ def _launch_segmented_dot_double_backward(
     --------
     _launch_segmented_dot_backward : First-order backward.
     """
-    grad_g_out.zero_()
-    grad_x_extra.zero_()
-    grad_y_extra.zero_()
     N = x.shape[0]
     if N == 0:
+        grad_g_out.zero_()
+        grad_x_extra.zero_()
+        grad_y_extra.zero_()
         return
+    # grad_g_out accumulates via two atomic_add reductions, so it must start zeroed.
+    grad_g_out.zero_()
     device = x.device
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
@@ -1641,7 +1695,7 @@ def _launch_segmented_inner_products_backward(
     g_xy, g_xx, g_yy : wp.array, shape ``(M,)``, dtype float32 / float64
         Cotangents of the three forward outputs.
     grad_x, grad_y : wp.array, shape ``(N,)``, dtype matches ``x``
-        OUTPUT: per-element gradients.  Zeroed before launch.
+        OUTPUT: per-element gradients.
 
     Notes
     -----
@@ -1651,10 +1705,10 @@ def _launch_segmented_inner_products_backward(
     --------
     _launch_segmented_inner_products_double_backward : Second-order backward.
     """
-    grad_x.zero_()
-    grad_y.zero_()
     N = x.shape[0]
     if N == 0:
+        grad_x.zero_()
+        grad_y.zero_()
         return
     wp.launch(
         _segmented_inner_products_backward_overloads[x.dtype],
@@ -1817,11 +1871,11 @@ def _launch_segmented_axpy_backward(
     M : int
         Number of segments.  Unused; retained for API symmetry.
     grad_y_in : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: identity copy of ``g_out``.  Zeroed before launch.
+        OUTPUT: identity copy of ``g_out``.
     grad_x : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: per-element gradient.  Zeroed.
+        OUTPUT: per-element gradient.
     grad_a : wp.array, shape ``(M,)``, dtype matches ``a``
-        OUTPUT: per-segment scalar gradient.  Zeroed.
+        OUTPUT: per-segment scalar gradient.
 
     Notes
     -----
@@ -1834,12 +1888,14 @@ def _launch_segmented_axpy_backward(
     _launch_segmented_axpy_double_backward : Second-order backward.
     _launch_segmented_axpby_backward : Two-coefficient variant.
     """
-    grad_y_in.zero_()
-    grad_x.zero_()
-    grad_a.zero_()
     N = g_out.shape[0]
     if N == 0:
+        grad_y_in.zero_()
+        grad_x.zero_()
+        grad_a.zero_()
         return
+    # grad_a accumulates via atomic_add in segmented_dot, so it must start zeroed.
+    grad_a.zero_()
     wp.copy(grad_y_in, g_out)
     # grad_x[i] = a[s]*g_out[i]
     wp.launch(
@@ -1897,11 +1953,11 @@ def _launch_segmented_axpy_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Zeroed before launch.
+        OUTPUT: second-order adjoint w.r.t. ``g_out``.
     grad_x_extra : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: extra second-order adjoint of ``x``.  Zeroed before launch.
+        OUTPUT: extra second-order adjoint of ``x``.
     grad_a_extra : wp.array, shape ``(M,)``, dtype matches ``a``
-        OUTPUT: extra second-order adjoint of ``a``.  Zeroed.
+        OUTPUT: extra second-order adjoint of ``a``.
 
     Notes
     -----
@@ -1918,11 +1974,13 @@ def _launch_segmented_axpy_double_backward(
     _launch_segmented_axpby_double_backward : Two-coefficient variant.
     """
     grad_g_out.zero_()
-    grad_x_extra.zero_()
-    grad_a_extra.zero_()
     N = g_out.shape[0]
     if N == 0:
+        grad_x_extra.zero_()
+        grad_a_extra.zero_()
         return
+    # grad_a_extra accumulates via atomic_add in segmented_dot, so it must start zeroed.
+    grad_a_extra.zero_()
     device = g_out.device
     ept = compute_ept(N, max(device.sm_count, 1), x.dtype in _VEC_TYPES)
     dim_rle = (N + ept - 1) // ept
@@ -1989,9 +2047,9 @@ def _launch_segmented_axpby_backward(
     M : int
         Number of segments.  Unused; retained for API symmetry.
     grad_x, grad_y : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: per-element gradients.  Zeroed before launch.
+        OUTPUT: per-element gradients.
     grad_a, grad_b : wp.array, shape ``(M,)``, dtype matches ``a``
-        OUTPUT: per-segment gradients.  Zeroed before launch.
+        OUTPUT: per-segment gradients.
 
     Notes
     -----
@@ -2173,7 +2231,7 @@ def _launch_segmented_mean_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_x : wp.array, shape ``(N,)``, dtype matches ``g_out``
-        OUTPUT: per-element gradient.  Zeroed before launch.
+        OUTPUT: per-element gradient.
 
     Notes
     -----
@@ -2184,7 +2242,6 @@ def _launch_segmented_mean_backward(
     --------
     _launch_segmented_mean_double_backward : Symmetric mean of ``gg_x``.
     """
-    grad_x.zero_()
     N = grad_x.shape[0]
     if N == 0:
         return
@@ -2225,7 +2282,7 @@ def _launch_segmented_mean_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(M,)``, dtype matches ``gg_x``
-        OUTPUT: per-segment second-order adjoint.  Zeroed before launch.
+        OUTPUT: per-segment second-order adjoint.
 
     Notes
     -----
@@ -2349,7 +2406,7 @@ def _launch_segmented_rms_norm_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_x : wp.array, shape ``(N,)``, dtype matches ``x``
-        OUTPUT: per-element gradient.  Zeroed before launch.
+        OUTPUT: per-element gradient.
 
     Notes
     -----
@@ -2360,7 +2417,6 @@ def _launch_segmented_rms_norm_backward(
     _launch_segmented_rms_norm_forward_precompute : Produces ``inv_norm``.
     _launch_segmented_rms_norm_double_backward : Second-order backward.
     """
-    grad_x.zero_()
     N = grad_x.shape[0]
     if N == 0:
         return
@@ -2408,9 +2464,9 @@ def _launch_segmented_rms_norm_double_backward(
     M : int
         Number of segments.
     grad_x_extra : wp.array, shape ``(N,)``, dtype matches ``x``
-        OUTPUT: extra second-order adjoint w.r.t. ``x``.  Zeroed before launch.
+        OUTPUT: extra second-order adjoint w.r.t. ``x``.
     grad_g_out_extra : wp.array, shape ``(M,)``, dtype matches ``g_out``
-        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Zeroed.
+        OUTPUT: second-order adjoint w.r.t. ``g_out``.
 
     Notes
     -----
@@ -2422,10 +2478,10 @@ def _launch_segmented_rms_norm_double_backward(
     --------
     _launch_segmented_rms_norm_backward : First-order backward.
     """
-    grad_x_extra.zero_()
-    grad_g_out_extra.zero_()
     N = x.shape[0]
     if N == 0:
+        grad_x_extra.zero_()
+        grad_g_out_extra.zero_()
         return
     device = x.device
     scalar_dtype = _VEC_TO_SCALAR[x.dtype]
@@ -2541,7 +2597,7 @@ def _launch_segmented_max_norm_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_x : wp.array, shape ``(N,)``, dtype matches ``x``
-        OUTPUT: per-element gradient.  Zeroed before launch.
+        OUTPUT: per-element gradient.
 
     Notes
     -----
@@ -2601,9 +2657,9 @@ def _launch_segmented_max_norm_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_x_extra : wp.array, shape ``(N,)``, dtype matches ``x``
-        OUTPUT: extra second-order adjoint w.r.t. ``x``.  Zeroed before launch.
+        OUTPUT: extra second-order adjoint w.r.t. ``x``.
     grad_g_out : wp.array, shape ``(M,)``, dtype matches ``g_out``
-        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Zeroed.
+        OUTPUT: second-order adjoint w.r.t. ``g_out``.
 
     Notes
     -----
@@ -2660,9 +2716,9 @@ def _launch_segmented_matvec_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_v : wp.array, shape ``(N,)``, dtype matches ``v``
-        OUTPUT: per-element gradient.  Zeroed before launch.
+        OUTPUT: per-element gradient.
     grad_M : wp.array, shape ``(M,)``, dtype matches ``m``
-        OUTPUT: per-segment matrix gradient.  Zeroed before launch.
+        OUTPUT: per-segment matrix gradient.
 
     Notes
     -----
@@ -2674,11 +2730,13 @@ def _launch_segmented_matvec_backward(
     --------
     _launch_segmented_matvec_double_backward : Second-order backward.
     """
-    grad_v.zero_()
-    grad_M.zero_()
     N = v.shape[0]
     if N == 0:
+        grad_v.zero_()
+        grad_M.zero_()
         return
+    # grad_M accumulates via atomic_add in the outer-product reduction, so it must start zeroed.
+    grad_M.zero_()
     device = v.device
     wp.launch(
         _segmented_matvec_backward_v_overloads[(v.dtype, m.dtype)],
@@ -2730,11 +2788,11 @@ def _launch_segmented_matvec_double_backward(
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
     grad_g_out : wp.array, shape ``(N,)``, dtype matches ``v``
-        OUTPUT: second-order adjoint w.r.t. ``g_out``.  Zeroed before launch.
+        OUTPUT: second-order adjoint w.r.t. ``g_out``.
     grad_v_extra : wp.array, shape ``(N,)``, dtype matches ``v``
-        OUTPUT: extra second-order adjoint of ``v``.  Zeroed before launch.
+        OUTPUT: extra second-order adjoint of ``v``.
     grad_M_extra : wp.array, shape ``(M,)``, dtype matches ``m``
-        OUTPUT: extra second-order adjoint of ``M``.  Zeroed.
+        OUTPUT: extra second-order adjoint of ``M``.
 
     Notes
     -----
@@ -2750,11 +2808,13 @@ def _launch_segmented_matvec_double_backward(
     _launch_segmented_matvec_backward : First-order backward.
     """
     grad_g_out.zero_()
-    grad_v_extra.zero_()
-    grad_M_extra.zero_()
     N = v.shape[0]
     if N == 0:
+        grad_v_extra.zero_()
+        grad_M_extra.zero_()
         return
+    # grad_M_extra accumulates via atomic_add in the outer-product reduction, so it must start zeroed.
+    grad_M_extra.zero_()
     device = v.device
     ept = compute_ept(N, max(device.sm_count, 1), True)
     dim_rle = (N + ept - 1) // ept
@@ -2805,7 +2865,7 @@ def _launch_segment_div_backward(
     denominator : wp.array, shape ``(N,)``, dtype int32
         Per-element integer denominator from the forward (e.g. counts).
     grad_numerator : wp.array, shape ``(N,)``, dtype matches ``g_result``
-        OUTPUT: per-element gradient.  Zeroed before launch.
+        OUTPUT: per-element gradient.
 
     Notes
     -----
@@ -2815,7 +2875,6 @@ def _launch_segment_div_backward(
     --------
     _launch_segment_div_double_backward : Symmetric divide.
     """
-    grad_numerator.zero_()
     N = g_result.shape[0]
     if N == 0:
         return
@@ -2845,7 +2904,7 @@ def _launch_segment_div_double_backward(
     denominator : wp.array, shape ``(N,)``, dtype int32
         Per-element integer denominator from the forward.
     grad_g_result : wp.array, shape ``(N,)``, dtype matches ``gg_numerator``
-        OUTPUT: per-element second-order adjoint.  Zeroed before launch.
+        OUTPUT: per-element second-order adjoint.
 
     Notes
     -----
