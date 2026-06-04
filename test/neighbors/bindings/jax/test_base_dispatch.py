@@ -124,9 +124,10 @@ class TestReportNeighborListCosts:
         batch_ptr = jnp.asarray([0, 20], dtype=jnp.int32)
         cell = jnp.eye(3, dtype=jnp.float32)[None] * 20.0
         pbc = jnp.zeros((1, 3), dtype=bool)
-        assert suggest_jax(batch_ptr, cell, pbc, 5.0) == _names(
-            _report([20], [8000.0], 5.0)
-        )[0]
+        assert (
+            suggest_jax(batch_ptr, cell, pbc, 5.0)
+            == _names(_report([20], [8000.0], 5.0))[0]
+        )
 
     def test_target_indices_optional_output_requires_count(self):
         """Optional target feasibility checks require a concrete target count."""
