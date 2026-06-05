@@ -19,4 +19,10 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("jax", reason="No JAX installed.")
+jax = pytest.importorskip("jax", reason="No JAX installed.")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def enable_jax_x64():
+    """Enable process-global JAX x64 for DFT-D3 precision tests."""
+    jax.config.update("jax_enable_x64", True)

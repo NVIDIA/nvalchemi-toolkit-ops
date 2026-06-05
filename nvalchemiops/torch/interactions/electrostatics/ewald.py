@@ -105,12 +105,20 @@ from nvalchemiops.torch.autograd import (
     warp_custom_op,
     warp_from_torch,
 )
-from nvalchemiops.torch.interactions.electrostatics._util import _InjectChargeGrad
+from nvalchemiops.torch.interactions.electrostatics._util import (
+    _build_electrostatic_result,
+    _combine_electrostatic_outputs,
+    _InjectChargeGrad,
+    _unpack_electrostatic_outputs,
+)
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
 from nvalchemiops.torch.interactions.electrostatics.parameters import (
     estimate_ewald_parameters,
+)
+from nvalchemiops.torch.interactions.electrostatics.slab import (
+    compute_slab_correction as _compute_slab_correction,
 )
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
@@ -185,15 +193,6 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
     if cell.dim() == 2:
         cell = cell.unsqueeze(0)
     return cell, cell.shape[0]
-
-
-@torch.compiler.disable
-def _sum_charge_gradients(
-    real_space_charge_grads: torch.Tensor,
-    reciprocal_charge_grads: torch.Tensor,
-) -> torch.Tensor:
-    """Sum Ewald charge gradients eagerly on compiled paths."""
-    return real_space_charge_grads + reciprocal_charge_grads
 
 
 ###########################################################################################
@@ -2648,30 +2647,6 @@ def ewald_real_space(
     # compute_virial=True), we must dispatch a force-capable kernel.
     need_force_kernel = compute_forces or compute_virial
 
-    # Helper to build the return tuple from raw outputs using match dispatch.
-    def _build_result(energies, forces=None, charge_grads=None, virial=None):
-        match (
-            compute_forces and forces is not None,
-            compute_charge_gradients and charge_grads is not None,
-            compute_virial and virial is not None,
-        ):
-            case (True, True, True):
-                return energies, forces, charge_grads, virial
-            case (True, True, False):
-                return energies, forces, charge_grads
-            case (True, False, True):
-                return energies, forces, virial
-            case (True, False, False):
-                return energies, forces
-            case (False, True, True):
-                return energies, charge_grads, virial
-            case (False, True, False):
-                return energies, charge_grads
-            case (False, False, True):
-                return energies, virial
-            case _:
-                return energies
-
     if hybrid_forces:
         pos_d = positions.detach()
         chg_d = charges.detach()
@@ -2745,7 +2720,15 @@ def ewald_real_space(
                 energies, charges, charge_grads, batch_idx
             )
 
-        return _build_result(energies, forces, charge_grads, virial)
+        return _build_electrostatic_result(
+            energies,
+            forces,
+            charge_grads,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
 
     if compute_charge_gradients:
         if neighbor_list is not None:
@@ -2811,7 +2794,15 @@ def ewald_real_space(
         else:
             raise ValueError("Either neighbor_list or neighbor_matrix must be provided")
 
-        return _build_result(energies, forces, charge_grads, virial)
+        return _build_electrostatic_result(
+            energies,
+            forces,
+            charge_grads,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
 
     # No charge gradients requested
     if neighbor_list is not None:
@@ -2830,7 +2821,16 @@ def ewald_real_space(
                     neighbor_shifts,
                     compute_virial=compute_virial,
                 )
-                return _build_result(energies, forces, virial=virial)
+                charge_grads = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
             else:
                 energies = _batch_ewald_real_space_energy(
                     positions,
@@ -2842,7 +2842,18 @@ def ewald_real_space(
                     neighbor_ptr,
                     neighbor_shifts,
                 )
-                return _build_result(energies)
+                forces = None
+                charge_grads = None
+                virial = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
         else:
             if need_force_kernel:
                 energies, forces, virial = _ewald_real_space_energy_forces(
@@ -2855,7 +2866,16 @@ def ewald_real_space(
                     neighbor_shifts,
                     compute_virial=compute_virial,
                 )
-                return _build_result(energies, forces, virial=virial)
+                charge_grads = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
             else:
                 energies = _ewald_real_space_energy(
                     positions,
@@ -2866,7 +2886,18 @@ def ewald_real_space(
                     neighbor_ptr,
                     neighbor_shifts,
                 )
-                return _build_result(energies)
+                forces = None
+                charge_grads = None
+                virial = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
     elif neighbor_matrix is not None:
         if is_batch:
             if need_force_kernel:
@@ -2881,7 +2912,16 @@ def ewald_real_space(
                     mask_value,
                     compute_virial=compute_virial,
                 )
-                return _build_result(energies, forces, virial=virial)
+                charge_grads = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
             else:
                 energies = _batch_ewald_real_space_energy_matrix(
                     positions,
@@ -2893,7 +2933,18 @@ def ewald_real_space(
                     neighbor_matrix_shifts,
                     mask_value,
                 )
-                return _build_result(energies)
+                forces = None
+                charge_grads = None
+                virial = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
         else:
             if need_force_kernel:
                 energies, forces, virial = _ewald_real_space_energy_forces_matrix(
@@ -2906,7 +2957,16 @@ def ewald_real_space(
                     mask_value,
                     compute_virial=compute_virial,
                 )
-                return _build_result(energies, forces, virial=virial)
+                charge_grads = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
             else:
                 energies = _ewald_real_space_energy_matrix(
                     positions,
@@ -2917,7 +2977,18 @@ def ewald_real_space(
                     neighbor_matrix_shifts,
                     mask_value,
                 )
-                return _build_result(energies)
+                forces = None
+                charge_grads = None
+                virial = None
+                return _build_electrostatic_result(
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
+                    compute_forces,
+                    compute_charge_gradients,
+                    compute_virial,
+                )
     else:
         raise ValueError("Either neighbor_list or neighbor_matrix must be provided")
 
@@ -2991,30 +3062,6 @@ def ewald_reciprocal_space(
     elif not is_batch and k_vectors.dim() == 3 and k_vectors.shape[0] == 1:
         k_vectors = k_vectors.squeeze(0)
 
-    # Helper to build the return tuple from raw outputs using match dispatch.
-    def _build_result(energies, forces=None, charge_grads=None, virial=None):
-        match (
-            compute_forces and forces is not None,
-            compute_charge_gradients and charge_grads is not None,
-            compute_virial and virial is not None,
-        ):
-            case (True, True, True):
-                return energies, forces, charge_grads, virial
-            case (True, True, False):
-                return energies, forces, charge_grads
-            case (True, False, True):
-                return energies, forces, virial
-            case (True, False, False):
-                return energies, forces
-            case (False, True, True):
-                return energies, charge_grads, virial
-            case (False, True, False):
-                return energies, charge_grads
-            case (False, False, True):
-                return energies, virial
-            case _:
-                return energies
-
     if hybrid_forces:
         pos_d = positions.detach()
         chg_d = charges.detach()
@@ -3049,7 +3096,15 @@ def ewald_reciprocal_space(
                 energies, charges, charge_grads, batch_idx
             )
 
-        return _build_result(energies, forces, charge_grads, virial)
+        return _build_electrostatic_result(
+            energies,
+            forces,
+            charge_grads,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
 
     if compute_charge_gradients:
         if is_batch:
@@ -3076,7 +3131,15 @@ def ewald_reciprocal_space(
                 )
             )
 
-        return _build_result(energies, forces, charge_grads, virial)
+        return _build_electrostatic_result(
+            energies,
+            forces,
+            charge_grads,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
 
     # No charge gradients
     if is_batch:
@@ -3090,7 +3153,16 @@ def ewald_reciprocal_space(
                 batch_idx,
                 compute_virial=compute_virial,
             )
-            return _build_result(energies, forces, virial=virial)
+            charge_grads = None
+            return _build_electrostatic_result(
+                energies,
+                forces,
+                charge_grads,
+                virial,
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
         else:
             energies, virial = _batch_ewald_reciprocal_space_energy(
                 positions,
@@ -3101,7 +3173,17 @@ def ewald_reciprocal_space(
                 batch_idx,
                 compute_virial=compute_virial,
             )
-            return _build_result(energies, virial=virial)
+            forces = None
+            charge_grads = None
+            return _build_electrostatic_result(
+                energies,
+                forces,
+                charge_grads,
+                virial,
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
     else:
         if compute_forces:
             energies, forces, virial = _ewald_reciprocal_space_energy_forces(
@@ -3112,7 +3194,16 @@ def ewald_reciprocal_space(
                 alpha,
                 compute_virial=compute_virial,
             )
-            return _build_result(energies, forces, virial=virial)
+            charge_grads = None
+            return _build_electrostatic_result(
+                energies,
+                forces,
+                charge_grads,
+                virial,
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
         else:
             energies, virial = _ewald_reciprocal_space_energy(
                 positions,
@@ -3122,7 +3213,17 @@ def ewald_reciprocal_space(
                 alpha,
                 compute_virial=compute_virial,
             )
-            return _build_result(energies, virial=virial)
+            forces = None
+            charge_grads = None
+            return _build_electrostatic_result(
+                energies,
+                forces,
+                charge_grads,
+                virial,
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
 
 
 def ewald_summation(
@@ -3144,6 +3245,8 @@ def ewald_summation(
     compute_virial: bool = False,
     accuracy: float = 1e-6,
     hybrid_forces: bool = False,
+    pbc: torch.Tensor | None = None,
+    slab_correction: bool = False,
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
     """Complete Ewald summation for long-range electrostatics.
 
@@ -3192,6 +3295,19 @@ def ewald_summation(
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         See :func:`ewald_real_space` for details.
+    pbc : torch.Tensor, shape (3,) or (B, 3), dtype=bool, optional
+        Per-system periodic boundary conditions. Required when
+        ``slab_correction=True``. Each row has True for periodic directions
+        and False for the non-periodic (slab) direction. A (3,) tensor is
+        accepted only for single-system calls; batched calls require explicit
+        (B, 3) per-system pbc. This argument controls the slab correction
+        geometry; real-space periodic images are determined by the neighbor
+        list supplied to the Ewald real-space term.
+    slab_correction : bool, default=False
+        When True, apply the Yeh-Berkowitz slab correction (with the
+        Ballenegger et al. 2009 Eq. 29 non-neutral extension) to the total
+        energy and to forces/charge_grads/virial when those are requested.
+        Orthorhombic and triclinic slab cells are supported.
 
     Returns
     -------
@@ -3206,8 +3322,45 @@ def ewald_summation(
 
     Note
     ----
-    Energies are always float64 for numerical stability during accumulation.
-    Forces, charge gradients, and virial match the input dtype (float32 or float64).
+    Energies and charge gradients are always float64 for numerical stability
+    during accumulation. Forces and virial match the input dtype (float32 or
+    float64).
+
+    Return Patterns
+    ---------------
+    Enabled flags are appended in order: energies, [forces], [charge_gradients], [virial].
+    A single output is returned unwrapped; multiple outputs as a tuple.
+
+    Examples
+    --------
+    Automatic parameter estimation (recommended for most cases)::
+
+        >>> energies = ewald_summation(
+        ...     positions, charges, cell,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
+        ...     accuracy=1e-6,
+        ... )
+        >>> total_energy = energies.sum()
+
+    Explicit parameters with forces::
+
+        >>> energies, forces = ewald_summation(
+        ...     positions, charges, cell,
+        ...     alpha=0.3, k_cutoff=8.0,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
+        ...     compute_forces=True,
+        ... )
+
+    Slab correction for two-dimensional periodic systems::
+
+        >>> pbc_slab = torch.tensor([[True, True, False]], device=positions.device)
+        >>> energies, forces = ewald_summation(
+        ...     positions, charges, cell,
+        ...     alpha=0.3, k_cutoff=8.0,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
+        ...     pbc=pbc_slab, slab_correction=True,
+        ...     compute_forces=True,
+        ... )
     """
     device = positions.device
     dtype = positions.dtype
@@ -3263,36 +3416,61 @@ def ewald_summation(
         hybrid_forces=hybrid_forces,
     )
 
-    # Normalize return tuples for element-wise combination
-    rs_tuple = rs if isinstance(rs, tuple) else (rs,)
-    rec_tuple = rec if isinstance(rec, tuple) else (rec,)
-    tuple_index = 0
+    # Optional slab correction: returns a same-shape tuple as rs/rec,
+    # so it composes uniformly with the named-field combination below.
+    slab_result: torch.Tensor | tuple[torch.Tensor, ...] | None = None
+    if slab_correction:
+        if hybrid_forces:
+            slab_out = _compute_slab_correction(
+                positions.detach(),
+                charges.detach(),
+                cell.detach(),
+                pbc,
+                batch_idx=batch_idx,
+                compute_forces=compute_forces,
+                compute_charge_gradients=True,
+                compute_virial=compute_virial,
+            )
+            slab_energies, slab_forces, slab_charge_grads, slab_virial = (
+                _unpack_electrostatic_outputs(
+                    slab_out,
+                    compute_forces,
+                    compute_charge_gradients=True,
+                    compute_virial=compute_virial,
+                )
+            )
 
-    energies = rs_tuple[tuple_index] + rec_tuple[tuple_index]
-    tuple_index += 1
-    results: tuple[torch.Tensor, ...] = (energies,)
+            if charges.requires_grad:
+                slab_energies = _InjectChargeGrad.apply(
+                    slab_energies, charges, slab_charge_grads, batch_idx
+                )
 
-    if compute_forces:
-        forces = rs_tuple[tuple_index] + rec_tuple[tuple_index]
-        results += (forces,)
-        tuple_index += 1
-
-    if compute_charge_gradients:
-        real_charge_grads = rs_tuple[tuple_index]
-        reciprocal_charge_grads = rec_tuple[tuple_index]
-        if torch.compiler.is_compiling():
-            charge_grads = _sum_charge_gradients(
-                real_charge_grads, reciprocal_charge_grads
+            slab_result = _build_electrostatic_result(
+                slab_energies,
+                slab_forces,
+                slab_charge_grads,
+                slab_virial,
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
             )
         else:
-            charge_grads = real_charge_grads + reciprocal_charge_grads
-        results += (charge_grads,)
-        tuple_index += 1
+            slab_result = _compute_slab_correction(
+                positions,
+                charges,
+                cell,
+                pbc,
+                batch_idx=batch_idx,
+                compute_forces=compute_forces,
+                compute_charge_gradients=compute_charge_gradients,
+                compute_virial=compute_virial,
+            )
 
-    if compute_virial:
-        virial = rs_tuple[tuple_index] + rec_tuple[tuple_index]
-        results += (virial,)
-
-    if len(results) == 1:
-        return results[0]
-    return results
+    return _combine_electrostatic_outputs(
+        rs,
+        rec,
+        slab_result,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )

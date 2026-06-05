@@ -118,7 +118,7 @@ jobs:
 
       - name: Install dependencies and run lint
         run: |
-          uv sync --all-extras
+          uv sync --extra torch --extra jax
           make lint
 
   # ============================================================================
@@ -157,12 +157,13 @@ jobs:
   # TEST STAGE (GPU Runner)
   # ============================================================================
   test:
+    name: Test CUDA 13 py${{ matrix.python-version }}
     needs:
       - lint
       - get-pr-labels
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -211,13 +212,15 @@ jobs:
         run: |
           export PATH="$HOME/.local/bin:$PATH"
           uv venv --seed --python ${{ matrix.python-version }}
-          uv sync --all-extras
+          uv sync --extra torch --extra jax
           uv pip install -r test/test-requires.txt
 
       # CONDITIONAL LOGIC BASED ON EVENT TYPE
       #
       # PR branches use push events to refs/heads/pull-request/*, not the
       # pull_request event. Detect them via the branch name pattern.
+      # Testmon baselines are Python/CUDA-specific because testmon keys its
+      # dependency database by the interpreter version and installed packages.
       - name: Restore testmon baseline (for PRs)
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: actions/cache/restore@v4
@@ -225,9 +228,9 @@ jobs:
           path: |
             .testmondata
             .coverage
-          key: testmon-baseline-main-${{ github.run_id }}
+          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
           restore-keys: |
-            testmon-baseline-main-
+            testmon-baseline-main-py${{ matrix.python-version }}-cuda13-
 
       - name: Run tests with testmon and coverage
         run: |
@@ -242,15 +245,8 @@ jobs:
             make testmon-coverage PYTEST_TESTMON_FLAGS=""
           fi
 
-      # Cache baseline (only from main/schedule runs)
-      - name: Delete old testmon cache
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh cache list --key testmon-baseline-main- --json id,key --jq '.[].key' | \
-            xargs -I{} gh cache delete "{}" || true
-
+      # Save one baseline per Python version from main/schedule runs. PR runs
+      # restore the newest matching baseline for their matrix interpreter.
       - name: Save testmon baseline
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
         uses: actions/cache/save@v4
@@ -258,7 +254,7 @@ jobs:
           path: |
             .testmondata
             .coverage
-          key: testmon-baseline-main-${{ github.run_id }}
+          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
@@ -271,7 +267,75 @@ jobs:
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report-py${{ matrix.python-version }}
+          name: coverage-report-py${{ matrix.python-version }}-cuda13
+          path: nvalchemiops.coverage.xml
+          retention-days: 7
+
+  test-cuda12:
+    name: Test CUDA 12 py${{ matrix.python-version }}
+    needs:
+      - lint
+    runs-on: linux-amd64-gpu-h100-latest-1
+    timeout-minutes: 45
+    if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    container:
+      image: nvcr.io/nvidia/cuda:12.8.2-runtime-ubuntu24.04
+      options: --gpus all
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install apt requirements
+        env:
+          DEBIAN_FRONTEND: "noninteractive"
+          TZ: "Etc/UTC"
+        run: |
+          apt-get update && \
+          apt-get install -y curl \
+            git \
+            build-essential
+
+      - name: Setup UV
+        env:
+          UV_VERSION: "0.9.25"
+          UV_CHECKSUM: "1e1aea6cead1a07a7cee24f6eaec415b"
+        run: |
+          UV_INSTALLER=$(mktemp)
+          curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" -o "$UV_INSTALLER"
+          echo "${UV_CHECKSUM}  ${UV_INSTALLER}" | md5sum -c -
+          sh "$UV_INSTALLER"
+          rm "$UV_INSTALLER"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv --seed --python ${{ matrix.python-version }}
+          uv sync --extra torch-cu12 --extra jax-cu12
+          uv pip install -r test/test-requires.txt
+
+      - name: Run tests with testmon and coverage
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          make testmon-collect
+          make testmon-coverage PYTEST_TESTMON_FLAGS=""
+
+      - name: Save testmon baseline
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .testmondata
+            .coverage
+          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-py${{ matrix.python-version }}-cuda12
           path: nvalchemiops.coverage.xml
           retention-days: 7
 
@@ -283,6 +347,7 @@ jobs:
       - lint
       - get-pr-labels
       - test
+      - test-cuda12
     runs-on: ubuntu-latest
     if: always()
     steps:

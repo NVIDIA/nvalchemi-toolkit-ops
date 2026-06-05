@@ -9,6 +9,7 @@ These examples show how to:
 
 * Compute direct Coulomb interactions (damped and undamped)
 * Use Ewald summation for periodic systems with automatic parameter estimation
+* Apply two-dimensional slab corrections for Ewald and PME interfacial systems
 * Apply Particle Mesh Ewald (PME) for O(N log N) scaling
 * Work with neighbor list and neighbor matrix formats
 * Perform batch evaluation for multiple systems

@@ -19,18 +19,20 @@
 
 .DEFAULT_GOAL := help
 
+UV_DEFAULT_EXTRAS ?= --extra torch --extra jax
+
 # ==============================================================================
 # INSTALLATION
 # ==============================================================================
 
 .PHONY: install
-install:  ## Install the package with all extras
-	uv sync --all-extras
+install:  ## Install the package with default CUDA extras
+	uv sync $(UV_DEFAULT_EXTRAS)
 
 .PHONY: setup-ci
 setup-ci:  ## Setup CI environment
 	uv venv --python 3.12
-	uv sync --all-extras
+	uv sync $(UV_DEFAULT_EXTRAS)
 	uv run pre-commit install --install-hooks
 	uv run pip install -r test/test-requires.txt
 

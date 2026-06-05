@@ -71,7 +71,13 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
     _cn_forces_contrib_kernel_matrix_overload as wp_cn_forces_contrib_nm,
 )
 from nvalchemiops.interactions.dispersion._dftd3 import (
+    _cn_forces_contrib_kernel_matrix_virial_overload as wp_cn_forces_contrib_nm_virial,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
     _cn_forces_contrib_kernel_overload as wp_cn_forces_contrib_nl,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _cn_forces_contrib_kernel_virial_overload as wp_cn_forces_contrib_nl_virial,
 )
 from nvalchemiops.interactions.dispersion._dftd3 import (
     _cn_kernel_matrix_overload as wp_cn_kernel_nm,
@@ -89,62 +95,475 @@ from nvalchemiops.interactions.dispersion._dftd3 import (
     _direct_forces_and_dE_dCN_kernel_matrix_overload as wp_direct_forces_kernel_nm,
 )
 from nvalchemiops.interactions.dispersion._dftd3 import (
+    _direct_forces_and_dE_dCN_kernel_matrix_virial_overload as wp_direct_forces_kernel_nm_virial,
+)
+from nvalchemiops.interactions.dispersion._dftd3 import (
     _direct_forces_and_dE_dCN_kernel_overload as wp_direct_forces_kernel_nl,
 )
+from nvalchemiops.interactions.dispersion._dftd3 import (
+    _direct_forces_and_dE_dCN_kernel_virial_overload as wp_direct_forces_kernel_nl_virial,
+)
+
+# block_dim is hardcoded to 256 in warp.jax_experimental.ffi, so block_stride
+# and the second launch_dims component must both be 256.
+JAX_DFTD3_BLOCK_DIM = 256
 
 # ==============================================================================
 # JAX Kernel Wrappers (jax_kernel around Warp kernel overloads)
 # ==============================================================================
 
+
+def _normalize_dtype(dtype):
+    """Normalize dtype for JAX kernel dictionary lookup."""
+    if dtype == jnp.float32 or str(dtype) == "float32":
+        return jnp.float32
+    elif dtype == jnp.float64 or str(dtype) == "float64":
+        return jnp.float64
+    else:
+        raise ValueError(f"Unsupported dtype for DFT-D3 positions: {dtype}")
+
+
+def _make_jax_kernels(
+    wp_overload_dict: dict,
+    num_outputs: int,
+    in_out_argnames: list[str] | None = None,
+) -> dict:
+    """Create dtype-dispatched JAX kernel wrappers from Warp overloads."""
+    jax_to_wp = {jnp.float32: wp.float32, jnp.float64: wp.float64}
+    kwargs = {} if in_out_argnames is None else {"in_out_argnames": in_out_argnames}
+    return {
+        jax_dtype: jax_kernel(
+            wp_overload_dict[wp_dtype],
+            num_outputs=num_outputs,
+            enable_backward=False,
+            **kwargs,
+        )
+        for jax_dtype, wp_dtype in jax_to_wp.items()
+    }
+
+
+def _launch_kwargs_for_positions(
+    positions: jax.Array, kwargs: dict[str, object]
+) -> dict[str, object]:
+    """Validate or create the fixed JAX DFT-D3 launch dimensions."""
+    expected = (positions.shape[0], JAX_DFTD3_BLOCK_DIM)
+    launch_dims = kwargs.pop("launch_dims", expected)
+    try:
+        normalized = tuple(launch_dims)
+    except TypeError:
+        raise ValueError(
+            f"launch_dims must be {expected}; got {launch_dims!r}"
+        ) from None
+    if normalized != expected:
+        raise ValueError(f"launch_dims must be {expected}; got {normalized}")
+    return {"launch_dims": expected, **kwargs}
+
+
 # --- Pass 0: Cartesian Shift Computation ---
 
-compute_cartesian_shifts_nm = jax_kernel(
-    wp_compute_cartesian_shifts_nm[wp.float32], num_outputs=1
+_compute_cartesian_shifts_nm = _make_jax_kernels(
+    wp_compute_cartesian_shifts_nm, num_outputs=1
 )
-compute_cartesian_shifts_nl = jax_kernel(
-    wp_compute_cartesian_shifts_nl[wp.float32], num_outputs=1
+_compute_cartesian_shifts_nl = _make_jax_kernels(
+    wp_compute_cartesian_shifts_nl, num_outputs=1
 )
+compute_cartesian_shifts_nm = _compute_cartesian_shifts_nm[jnp.float32]
+compute_cartesian_shifts_nl = _compute_cartesian_shifts_nl[jnp.float32]
+
 # --- Pass 1: Coordination Number Computation ---
 
-cn_kernel_nm = jax_kernel(wp_cn_kernel_nm[wp.float32], num_outputs=1)
-cn_kernel_nl = jax_kernel(wp_cn_kernel_nl[wp.float32], num_outputs=1)
+_cn_kernel_nm = _make_jax_kernels(wp_cn_kernel_nm, num_outputs=1)
+_cn_kernel_nl = _make_jax_kernels(wp_cn_kernel_nl, num_outputs=1)
+cn_kernel_nm = _cn_kernel_nm[jnp.float32]
+cn_kernel_nl = _cn_kernel_nl[jnp.float32]
+
 # --- Pass 2: Direct Forces and dE/dCN Computation ---
 
-direct_forces_kernel_nm = jax_kernel(
-    wp_direct_forces_kernel_nm[wp.float32],
+_direct_forces_kernel_nm = _make_jax_kernels(
+    wp_direct_forces_kernel_nm,
+    num_outputs=3,
+    in_out_argnames=["dE_dCN", "forces", "energy"],
+)
+_direct_forces_kernel_nm_virial = _make_jax_kernels(
+    wp_direct_forces_kernel_nm_virial,
     num_outputs=4,
     in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
 )
-direct_forces_kernel_nl = jax_kernel(
-    wp_direct_forces_kernel_nl[wp.float32],
+_direct_forces_kernel_nl = _make_jax_kernels(
+    wp_direct_forces_kernel_nl,
+    num_outputs=3,
+    in_out_argnames=["dE_dCN", "forces", "energy"],
+)
+_direct_forces_kernel_nl_virial = _make_jax_kernels(
+    wp_direct_forces_kernel_nl_virial,
     num_outputs=4,
     in_out_argnames=["dE_dCN", "forces", "energy", "virial"],
 )
+
+
+def direct_forces_kernel_nm_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-matrix direct-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _direct_forces_kernel_nm_virial[kernel_dtype](*args, **launch_kwargs)
+
+
+def direct_forces_kernel_nl_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-list direct-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _direct_forces_kernel_nl_virial[kernel_dtype](*args, **launch_kwargs)
+
+
+def direct_forces_kernel_nm(
+    positions: jax.Array,
+    numbers: jax.Array,
+    neighbor_matrix: jax.Array,
+    cartesian_shifts: jax.Array,
+    coord_num: jax.Array,
+    r4r2: jax.Array,
+    c6_reference: jax.Array,
+    coord_num_ref: jax.Array,
+    k3: float,
+    a1: float,
+    a2: float,
+    s6: float,
+    s8: float,
+    s5_smoothing_on: float,
+    s5_smoothing_off: float,
+    inv_w: float,
+    fill_value: int,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    dE_dCN: jax.Array,
+    forces: jax.Array,
+    energy: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-matrix direct-force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    if compute_virial:
+        return _direct_forces_kernel_nm_virial[kernel_dtype](
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            coord_num,
+            r4r2,
+            c6_reference,
+            coord_num_ref,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+            **launch_kwargs,
+        )
+
+    dE_dCN, forces, energy = _direct_forces_kernel_nm[kernel_dtype](
+        positions,
+        numbers,
+        neighbor_matrix,
+        cartesian_shifts,
+        coord_num,
+        r4r2,
+        c6_reference,
+        coord_num_ref,
+        float(k3),
+        float(a1),
+        float(a2),
+        float(s6),
+        float(s8),
+        float(s5_smoothing_on),
+        float(s5_smoothing_off),
+        float(inv_w),
+        int(fill_value),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        batch_idx,
+        dE_dCN,
+        forces,
+        energy,
+        **launch_kwargs,
+    )
+    return dE_dCN, forces, energy, virial
+
+
+def direct_forces_kernel_nl(
+    positions: jax.Array,
+    numbers: jax.Array,
+    idx_j: jax.Array,
+    neighbor_ptr: jax.Array,
+    cartesian_shifts: jax.Array,
+    coord_num: jax.Array,
+    r4r2: jax.Array,
+    c6_reference: jax.Array,
+    coord_num_ref: jax.Array,
+    k3: float,
+    a1: float,
+    a2: float,
+    s6: float,
+    s8: float,
+    s5_smoothing_on: float,
+    s5_smoothing_off: float,
+    inv_w: float,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    dE_dCN: jax.Array,
+    forces: jax.Array,
+    energy: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-list direct-force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    if compute_virial:
+        return _direct_forces_kernel_nl_virial[kernel_dtype](
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            coord_num,
+            r4r2,
+            c6_reference,
+            coord_num_ref,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            dE_dCN,
+            forces,
+            energy,
+            virial,
+            **launch_kwargs,
+        )
+
+    dE_dCN, forces, energy = _direct_forces_kernel_nl[kernel_dtype](
+        positions,
+        numbers,
+        idx_j,
+        neighbor_ptr,
+        cartesian_shifts,
+        coord_num,
+        r4r2,
+        c6_reference,
+        coord_num_ref,
+        float(k3),
+        float(a1),
+        float(a2),
+        float(s6),
+        float(s8),
+        float(s5_smoothing_on),
+        float(s5_smoothing_off),
+        float(inv_w),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        batch_idx,
+        dE_dCN,
+        forces,
+        energy,
+        **launch_kwargs,
+    )
+    return dE_dCN, forces, energy, virial
+
 
 # --- Pass 3: CN-Dependent Force Contribution ---
 
-cn_forces_contrib_nm = jax_kernel(
-    wp_cn_forces_contrib_nm[wp.float32],
+_cn_forces_contrib_nm = _make_jax_kernels(
+    wp_cn_forces_contrib_nm,
+    num_outputs=1,
+    in_out_argnames=["forces"],
+)
+_cn_forces_contrib_nm_virial = _make_jax_kernels(
+    wp_cn_forces_contrib_nm_virial,
     num_outputs=2,
     in_out_argnames=["forces", "virial"],
 )
-cn_forces_contrib_nl = jax_kernel(
-    wp_cn_forces_contrib_nl[wp.float32],
+_cn_forces_contrib_nl = _make_jax_kernels(
+    wp_cn_forces_contrib_nl,
+    num_outputs=1,
+    in_out_argnames=["forces"],
+)
+_cn_forces_contrib_nl_virial = _make_jax_kernels(
+    wp_cn_forces_contrib_nl_virial,
     num_outputs=2,
     in_out_argnames=["forces", "virial"],
 )
+
+
+def cn_forces_contrib_nm_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-matrix CN-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _cn_forces_contrib_nm_virial[kernel_dtype](*args, **launch_kwargs)
+
+
+def cn_forces_contrib_nl_virial(
+    *args: object, **kwargs: object
+) -> tuple[jax.Array, jax.Array]:
+    """Dtype-dispatched exported neighbor-list CN-force virial kernel."""
+    positions = args[0]
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    return _cn_forces_contrib_nl_virial[kernel_dtype](*args, **launch_kwargs)
+
+
+def cn_forces_contrib_nm(
+    positions: jax.Array,
+    numbers: jax.Array,
+    neighbor_matrix: jax.Array,
+    cartesian_shifts: jax.Array,
+    covalent_radii: jax.Array,
+    dE_dCN: jax.Array,
+    k1: float,
+    fill_value: int,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    forces: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-matrix CN force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    if compute_virial:
+        return _cn_forces_contrib_nm_virial[kernel_dtype](
+            positions,
+            numbers,
+            neighbor_matrix,
+            cartesian_shifts,
+            covalent_radii,
+            dE_dCN,
+            float(k1),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            forces,
+            virial,
+            **launch_kwargs,
+        )
+
+    (forces,) = _cn_forces_contrib_nm[kernel_dtype](
+        positions,
+        numbers,
+        neighbor_matrix,
+        cartesian_shifts,
+        covalent_radii,
+        dE_dCN,
+        float(k1),
+        int(fill_value),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        forces,
+        **launch_kwargs,
+    )
+    return forces, virial
+
+
+def cn_forces_contrib_nl(
+    positions: jax.Array,
+    numbers: jax.Array,
+    idx_j: jax.Array,
+    neighbor_ptr: jax.Array,
+    cartesian_shifts: jax.Array,
+    covalent_radii: jax.Array,
+    dE_dCN: jax.Array,
+    k1: float,
+    periodic: bool,
+    batch_idx: jax.Array,
+    compute_virial: bool,
+    forces: jax.Array,
+    virial: jax.Array,
+    **kwargs,
+) -> tuple[jax.Array, jax.Array]:
+    """Compatibility wrapper for the exported neighbor-list CN force kernel."""
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
+    if compute_virial:
+        return _cn_forces_contrib_nl_virial[kernel_dtype](
+            positions,
+            numbers,
+            idx_j,
+            neighbor_ptr,
+            cartesian_shifts,
+            covalent_radii,
+            dE_dCN,
+            float(k1),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx,
+            forces,
+            virial,
+            **launch_kwargs,
+        )
+
+    (forces,) = _cn_forces_contrib_nl[kernel_dtype](
+        positions,
+        numbers,
+        idx_j,
+        neighbor_ptr,
+        cartesian_shifts,
+        covalent_radii,
+        dE_dCN,
+        float(k1),
+        JAX_DFTD3_BLOCK_DIM,
+        periodic,
+        forces,
+        **launch_kwargs,
+    )
+    return forces, virial
+
 
 __all__ = [
     "D3Parameters",
     "cn_forces_contrib_nl",
+    "cn_forces_contrib_nl_virial",
     "cn_forces_contrib_nm",
+    "cn_forces_contrib_nm_virial",
     "cn_kernel_nl",
     "cn_kernel_nm",
     "compute_cartesian_shifts_nl",
     "compute_cartesian_shifts_nm",
     "dftd3",
     "direct_forces_kernel_nl",
+    "direct_forces_kernel_nl_virial",
     "direct_forces_kernel_nm",
+    "direct_forces_kernel_nm_virial",
 ]
 
 
@@ -355,8 +774,17 @@ def _dftd3_nm_impl(
     if batch_idx is None:
         batch_idx = jnp.zeros(num_atoms, dtype=jnp.int32)
 
-    # Ensure arrays have correct dtypes for kernels (float32 for now)
-    positions_f32 = positions.astype(jnp.float32)
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    compute_cartesian_shifts_kernel = _compute_cartesian_shifts_nm[kernel_dtype]
+    cn_kernel = _cn_kernel_nm[kernel_dtype]
+    direct_forces_kernel = _direct_forces_kernel_nm[kernel_dtype]
+    direct_forces_kernel_virial = _direct_forces_kernel_nm_virial[kernel_dtype]
+    cn_forces_contrib_kernel = _cn_forces_contrib_nm[kernel_dtype]
+    cn_forces_contrib_kernel_virial = _cn_forces_contrib_nm_virial[kernel_dtype]
+
+    # Positions, cells, and Cartesian shifts use the position precision. D3
+    # parameters and outputs remain float32.
+    positions_kernel = positions.astype(kernel_dtype)
     numbers_i32 = numbers.astype(jnp.int32)
     neighbor_matrix_i32 = neighbor_matrix.astype(jnp.int32)
     batch_idx_i32 = batch_idx.astype(jnp.int32)
@@ -374,118 +802,176 @@ def _dftd3_nm_impl(
     # Pass 0: Handle PBC - determine if periodic and compute cartesian shifts
     if cell is not None and neighbor_matrix_shifts is not None:
         periodic = True
-        cell_f32 = cell.astype(jnp.float32)
+        cell_kernel = cell.astype(kernel_dtype)
         neighbor_matrix_shifts_i32 = neighbor_matrix_shifts.astype(jnp.int32)
 
-        # compute_cartesian_shifts returns a tuple with 1 output
-        # Launch dim is derived from first array argument, but we need 2D launch (num_atoms, max_neighbors)
-        # Use launch_dims parameter to specify
-        (cartesian_shifts,) = compute_cartesian_shifts_nm(
-            cell_f32,
+        # compute_cartesian_shifts_nm returns a tuple with 1 output (cartesian_shifts).
+        # Launch is 2D (num_atoms, JAX_DFTD3_BLOCK_DIM); output dim
+        # [num_atoms, max_neighbors] is passed explicitly via output_dims
+        # because it cannot be inferred from inputs.
+        (cartesian_shifts,) = compute_cartesian_shifts_kernel(
+            cell_kernel,
             neighbor_matrix_shifts_i32,
             neighbor_matrix_i32,
             batch_idx_i32,
             int(fill_value),
-            launch_dims=(num_atoms, max_neighbors),
+            JAX_DFTD3_BLOCK_DIM,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+            output_dims={"cartesian_shifts": (num_atoms, max_neighbors)},
         )
     else:
         periodic = False
         # Create zero shifts array (not used but need correct shape for kernel)
-        cartesian_shifts = jnp.zeros((num_atoms, max_neighbors, 3), dtype=jnp.float32)
+        cartesian_shifts = jnp.zeros((num_atoms, max_neighbors, 3), dtype=kernel_dtype)
 
     # Pass 1: Compute coordination numbers
-    # cn_kernel_nm returns a tuple with 1 output (coord_num)
-    # Inputs: positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii, k1, fill_value, periodic
-    # Launch dim is inferred from the first array argument (positions_f32)
-    (coord_num,) = cn_kernel_nm(
-        positions_f32,
+    # cn_kernel_nm returns a tuple with 1 output (coord_num).
+    # Inputs: positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii,
+    #         k1, fill_value, block_dim, periodic
+    # Launch is 2D (num_atoms, JAX_DFTD3_BLOCK_DIM); output dim [num_atoms]
+    # is passed explicitly via output_dims.
+    (coord_num,) = cn_kernel(
+        positions_kernel,
         numbers_i32,
         neighbor_matrix_i32,
         cartesian_shifts,
         covalent_radii_f32,
         float(k1),
         int(fill_value),
+        JAX_DFTD3_BLOCK_DIM,
         periodic,
+        launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        output_dims={"coord_num": (num_atoms,)},
     )
 
     # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
-    # direct_forces_kernel_nm returns a tuple with 4 outputs (dE_dCN, forces, energy, virial)
-    # Inputs (20): positions, numbers, neighbor_matrix, cartesian_shifts, coord_num, r4r2,
-    #              c6_reference, coord_num_ref, k3, a1, a2, s6, s8, s5_on, s5_off, inv_w,
-    #              fill_value, periodic, batch_idx, compute_virial
-    # Inputs (4 in_out): dE_dCN, forces, energy, virial (pre-allocated, zeroed)
-    # Outputs (4): dE_dCN, forces, energy, virial (modified versions returned)
-    # Output dims: dE_dCN [num_atoms], forces [num_atoms, 3], energy [num_systems], virial [num_systems, 3, 3]
+    # direct_forces_kernel_nm is split into two overloads:
+    #   - virial overload: returns (dE_dCN, forces, energy, virial) — 4 outputs
+    #   - non-virial overload: returns (dE_dCN, forces, energy) — 3 outputs
+    # Inputs (shared): positions, numbers, neighbor_matrix, cartesian_shifts, coord_num,
+    #                  r4r2, c6_reference, coord_num_ref, k3, a1, a2, s6, s8,
+    #                  s5_on, s5_off, inv_w, fill_value, block_dim, periodic, batch_idx
+    # Inputs (in_out): dE_dCN, forces, energy [, virial] (pre-allocated, zeroed)
+    # Output dims: dE_dCN [num_atoms], forces [num_atoms, 3], energy [num_systems],
+    #              virial [num_systems, 3, 3]
     # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
-    #       and the kernel uses atomic_add for energy/virial
+    #       and the kernel uses atomic_add for energy/virial.
     dE_dCN_init = jnp.zeros(num_atoms, dtype=jnp.float32)
     forces_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
     energy_init = jnp.zeros(num_systems, dtype=jnp.float32)
-    virial_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
 
-    dE_dCN, forces, energy, virial = direct_forces_kernel_nm(
-        positions_f32,
-        numbers_i32,
-        neighbor_matrix_i32,
-        cartesian_shifts,
-        coord_num,
-        r4r2_f32,
-        c6_reference_f32,
-        coord_num_ref_f32,
-        float(k3),
-        float(a1),
-        float(a2),
-        float(s6),
-        float(s8),
-        float(s5_smoothing_on),
-        float(s5_smoothing_off),
-        float(inv_w),
-        int(fill_value),
-        periodic,
-        batch_idx_i32,
-        compute_virial,
-        dE_dCN_init,
-        forces_init,
-        energy_init,
-        virial_init,
-    )
+    if compute_virial:
+        virial_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+        dE_dCN, forces, energy, virial = direct_forces_kernel_virial(
+            positions_kernel,
+            numbers_i32,
+            neighbor_matrix_i32,
+            cartesian_shifts,
+            coord_num,
+            r4r2_f32,
+            c6_reference_f32,
+            coord_num_ref_f32,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx_i32,
+            dE_dCN_init,
+            forces_init,
+            energy_init,
+            virial_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
+    else:
+        dE_dCN, forces, energy = direct_forces_kernel(
+            positions_kernel,
+            numbers_i32,
+            neighbor_matrix_i32,
+            cartesian_shifts,
+            coord_num,
+            r4r2_f32,
+            c6_reference_f32,
+            coord_num_ref_f32,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx_i32,
+            dE_dCN_init,
+            forces_init,
+            energy_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
 
     # Pass 3: Add CN-dependent force contribution
-    # cn_forces_contrib_nm returns a tuple with 2 outputs (forces, virial)
-    # Inputs (11): positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii,
-    #              dE_dCN, k1, fill_value, periodic, batch_idx, compute_virial
-    # Inputs (2 in_out): forces, virial (pre-allocated, zeroed)
-    # Outputs (2): forces, virial (modified versions returned)
-    # Note: These are NEW forces/virial arrays - they will be added to existing ones after kernel
+    # cn_forces_contrib_nm is split into two overloads:
+    #   - virial overload: returns (forces, virial) — 2 outputs
+    #   - non-virial overload: returns (forces,) — 1 output
+    # Inputs (shared): positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii,
+    #                  dE_dCN, k1, fill_value, block_dim, periodic
+    # Inputs (virial-only extra): batch_idx
+    # Inputs (in_out): forces [, virial] (pre-allocated, zeroed)
+    # Note: These are NEW forces/virial arrays — they are added to the existing ones after
+    #       the kernel.
     # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
-    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial
+    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial.
     forces_cn_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
-    virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
 
-    forces_cn, virial_cn = cn_forces_contrib_nm(
-        positions_f32,
-        numbers_i32,
-        neighbor_matrix_i32,
-        cartesian_shifts,
-        covalent_radii_f32,
-        dE_dCN,
-        float(k1),
-        int(fill_value),
-        periodic,
-        batch_idx_i32,
-        compute_virial,
-        forces_cn_init,
-        virial_cn_init,
-    )
-
-    # Add CN force contribution to direct forces
-    forces = forces + forces_cn
-    virial = virial + virial_cn
-
-    # Return JAX arrays
     if compute_virial:
+        virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+        forces_cn, virial_cn = cn_forces_contrib_kernel_virial(
+            positions_kernel,
+            numbers_i32,
+            neighbor_matrix_i32,
+            cartesian_shifts,
+            covalent_radii_f32,
+            dE_dCN,
+            float(k1),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx_i32,
+            forces_cn_init,
+            virial_cn_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
+        # Add CN force contribution to direct forces
+        forces = forces + forces_cn
+        virial = virial + virial_cn
+        # Return JAX arrays
         return energy, forces, coord_num, virial
     else:
+        (forces_cn,) = cn_forces_contrib_kernel(
+            positions_kernel,
+            numbers_i32,
+            neighbor_matrix_i32,
+            cartesian_shifts,
+            covalent_radii_f32,
+            dE_dCN,
+            float(k1),
+            int(fill_value),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            forces_cn_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
+        # Add CN force contribution to direct forces
+        forces = forces + forces_cn
+        # Return JAX arrays
         return energy, forces, coord_num
 
 
@@ -564,8 +1050,17 @@ def _dftd3_nl_impl(
     if batch_idx is None:
         batch_idx = jnp.zeros(num_atoms, dtype=jnp.int32)
 
-    # Ensure arrays have correct dtypes for kernels (float32 for now)
-    positions_f32 = positions.astype(jnp.float32)
+    kernel_dtype = _normalize_dtype(positions.dtype)
+    compute_cartesian_shifts_kernel = _compute_cartesian_shifts_nl[kernel_dtype]
+    cn_kernel = _cn_kernel_nl[kernel_dtype]
+    direct_forces_kernel = _direct_forces_kernel_nl[kernel_dtype]
+    direct_forces_kernel_virial = _direct_forces_kernel_nl_virial[kernel_dtype]
+    cn_forces_contrib_kernel = _cn_forces_contrib_nl[kernel_dtype]
+    cn_forces_contrib_kernel_virial = _cn_forces_contrib_nl_virial[kernel_dtype]
+
+    # Positions, cells, and Cartesian shifts use the position precision. D3
+    # parameters and outputs remain float32.
+    positions_kernel = positions.astype(kernel_dtype)
     numbers_i32 = numbers.astype(jnp.int32)
     idx_j_i32 = idx_j.astype(jnp.int32)
     neighbor_ptr_i32 = neighbor_ptr.astype(jnp.int32)
@@ -584,113 +1079,174 @@ def _dftd3_nl_impl(
     # Pass 0: Handle PBC - determine if periodic and compute cartesian shifts
     if unit_shifts is not None and cell is not None:
         periodic = True
-        cell_f32 = cell.astype(jnp.float32)
+        cell_kernel = cell.astype(kernel_dtype)
         unit_shifts_i32 = unit_shifts.astype(jnp.int32)
 
-        # compute_cartesian_shifts_nl returns a tuple with 1 output
-        (cartesian_shifts,) = compute_cartesian_shifts_nl(
-            cell_f32,
+        # compute_cartesian_shifts_nl returns a tuple with 1 output (cartesian_shifts).
+        # Launch is 2D (num_atoms, JAX_DFTD3_BLOCK_DIM); output dim [num_edges]
+        # is passed explicitly via output_dims because it cannot be inferred from inputs.
+        (cartesian_shifts,) = compute_cartesian_shifts_kernel(
+            cell_kernel,
             unit_shifts_i32,
             neighbor_ptr_i32,
             batch_idx_i32,
+            JAX_DFTD3_BLOCK_DIM,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+            output_dims={"cartesian_shifts": (num_edges,)},
         )
     else:
         periodic = False
         # Create zero shifts array (not used but need correct shape for kernel)
-        cartesian_shifts = jnp.zeros((num_edges, 3), dtype=jnp.float32)
+        cartesian_shifts = jnp.zeros((num_edges, 3), dtype=kernel_dtype)
 
     # Pass 1: Compute coordination numbers
-    # cn_kernel_nl returns a tuple with 1 output (coord_num)
-    # Inputs: positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii, k1, periodic
-    # Launch dim is inferred from the first array argument (positions_f32)
-    (coord_num,) = cn_kernel_nl(
-        positions_f32,
+    # cn_kernel_nl returns a tuple with 1 output (coord_num).
+    # Inputs: positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii,
+    #         k1, block_dim, periodic
+    # Launch is 2D (num_atoms, JAX_DFTD3_BLOCK_DIM); output dim [num_atoms]
+    # is passed explicitly via output_dims.
+    (coord_num,) = cn_kernel(
+        positions_kernel,
         numbers_i32,
         idx_j_i32,
         neighbor_ptr_i32,
         cartesian_shifts,
         covalent_radii_f32,
         float(k1),
+        JAX_DFTD3_BLOCK_DIM,
         periodic,
+        launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        output_dims={"coord_num": (num_atoms,)},
     )
 
     # Pass 2: Compute direct forces, energy, and accumulate dE/dCN
-    # direct_forces_kernel_nl returns a tuple with 4 outputs (dE_dCN, forces, energy, virial)
-    # Inputs (17): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, coord_num, r4r2,
-    #              c6_reference, coord_num_ref, k3, a1, a2, s6, s8, s5_on, s5_off, inv_w,
-    #              periodic, batch_idx, compute_virial
-    # Inputs (4 in_out): dE_dCN, forces, energy, virial (pre-allocated, zeroed)
-    # Outputs (4): dE_dCN, forces, energy, virial (modified versions returned)
+    # direct_forces_kernel_nl is split into two overloads:
+    #   - virial overload: returns (dE_dCN, forces, energy, virial) — 4 outputs
+    #   - non-virial overload: returns (dE_dCN, forces, energy) — 3 outputs
+    # Inputs (shared): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, coord_num,
+    #                  r4r2, c6_reference, coord_num_ref, k3, a1, a2, s6, s8,
+    #                  s5_on, s5_off, inv_w, block_dim, periodic, batch_idx
+    # Inputs (in_out): dE_dCN, forces, energy [, virial] (pre-allocated, zeroed)
+    # Output dims: dE_dCN [num_atoms], forces [num_atoms, 3], energy [num_systems],
+    #              virial [num_systems, 3, 3]
     # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
-    #       and the kernel uses atomic_add for energy/virial
+    #       and the kernel uses atomic_add for energy/virial.
     dE_dCN_init = jnp.zeros(num_atoms, dtype=jnp.float32)
     forces_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
     energy_init = jnp.zeros(num_systems, dtype=jnp.float32)
-    virial_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
 
-    dE_dCN, forces, energy, virial = direct_forces_kernel_nl(
-        positions_f32,
-        numbers_i32,
-        idx_j_i32,
-        neighbor_ptr_i32,
-        cartesian_shifts,
-        coord_num,
-        r4r2_f32,
-        c6_reference_f32,
-        coord_num_ref_f32,
-        float(k3),
-        float(a1),
-        float(a2),
-        float(s6),
-        float(s8),
-        float(s5_smoothing_on),
-        float(s5_smoothing_off),
-        float(inv_w),
-        periodic,
-        batch_idx_i32,
-        compute_virial,
-        dE_dCN_init,
-        forces_init,
-        energy_init,
-        virial_init,
-    )
+    if compute_virial:
+        virial_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+        dE_dCN, forces, energy, virial = direct_forces_kernel_virial(
+            positions_kernel,
+            numbers_i32,
+            idx_j_i32,
+            neighbor_ptr_i32,
+            cartesian_shifts,
+            coord_num,
+            r4r2_f32,
+            c6_reference_f32,
+            coord_num_ref_f32,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx_i32,
+            dE_dCN_init,
+            forces_init,
+            energy_init,
+            virial_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
+    else:
+        dE_dCN, forces, energy = direct_forces_kernel(
+            positions_kernel,
+            numbers_i32,
+            idx_j_i32,
+            neighbor_ptr_i32,
+            cartesian_shifts,
+            coord_num,
+            r4r2_f32,
+            c6_reference_f32,
+            coord_num_ref_f32,
+            float(k3),
+            float(a1),
+            float(a2),
+            float(s6),
+            float(s8),
+            float(s5_smoothing_on),
+            float(s5_smoothing_off),
+            float(inv_w),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx_i32,
+            dE_dCN_init,
+            forces_init,
+            energy_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
 
     # Pass 3: Add CN-dependent force contribution
-    # cn_forces_contrib_nl returns a tuple with 2 outputs (forces, virial)
-    # Inputs (9): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts, covalent_radii,
-    #              dE_dCN, k1, periodic, batch_idx, compute_virial
-    # Inputs (2 in_out): forces, virial (pre-allocated, zeroed)
-    # Outputs (2): forces, virial (modified versions returned)
-    # Note: These are NEW forces/virial arrays - they will be added to existing ones after kernel
+    # cn_forces_contrib_nl is split into two overloads:
+    #   - virial overload: returns (forces, virial) — 2 outputs
+    #   - non-virial overload: returns (forces,) — 1 output
+    # Inputs (shared): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts,
+    #                  covalent_radii, dE_dCN, k1, block_dim, periodic
+    # Inputs (virial-only extra): batch_idx
+    # Inputs (in_out): forces [, virial] (pre-allocated, zeroed)
+    # Note: These are NEW forces/virial arrays — they are added to the existing ones after
+    #       the kernel.
     # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
-    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial
+    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial.
     forces_cn_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
-    virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
 
-    forces_cn, virial_cn = cn_forces_contrib_nl(
-        positions_f32,
-        numbers_i32,
-        idx_j_i32,
-        neighbor_ptr_i32,
-        cartesian_shifts,
-        covalent_radii_f32,
-        dE_dCN,
-        float(k1),
-        periodic,
-        batch_idx_i32,
-        compute_virial,
-        forces_cn_init,
-        virial_cn_init,
-    )
-
-    # Add CN force contribution to direct forces
-    forces = forces + forces_cn
-    virial = virial + virial_cn
-
-    # Return JAX arrays
     if compute_virial:
+        virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
+        forces_cn, virial_cn = cn_forces_contrib_kernel_virial(
+            positions_kernel,
+            numbers_i32,
+            idx_j_i32,
+            neighbor_ptr_i32,
+            cartesian_shifts,
+            covalent_radii_f32,
+            dE_dCN,
+            float(k1),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            batch_idx_i32,
+            forces_cn_init,
+            virial_cn_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
+        # Add CN force contribution to direct forces
+        forces = forces + forces_cn
+        virial = virial + virial_cn
+        # Return JAX arrays
         return energy, forces, coord_num, virial
     else:
+        (forces_cn,) = cn_forces_contrib_kernel(
+            positions_kernel,
+            numbers_i32,
+            idx_j_i32,
+            neighbor_ptr_i32,
+            cartesian_shifts,
+            covalent_radii_f32,
+            dE_dCN,
+            float(k1),
+            JAX_DFTD3_BLOCK_DIM,
+            periodic,
+            forces_cn_init,
+            launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
+        )
+        # Add CN force contribution to direct forces
+        forces = forces + forces_cn
+        # Return JAX arrays
         return energy, forces, coord_num
 
 

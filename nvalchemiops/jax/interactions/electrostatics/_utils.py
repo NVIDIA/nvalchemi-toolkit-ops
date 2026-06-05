@@ -13,39 +13,87 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared utilities for electrostatics PyTorch bindings."""
+"""Shared utilities for JAX electrostatics bindings."""
 
 from __future__ import annotations
 
-import torch
-
-__all__ = [
-    "_InjectChargeGrad",
-    "_build_electrostatic_result",
-    "_combine_electrostatic_outputs",
-    "_sum_charge_gradients",
-    "_unpack_electrostatic_outputs",
-]
+import jax
+import jax.numpy as jnp
+import warp as wp
+from warp.jax_experimental import jax_kernel
 
 
-@torch.compiler.disable
-def _sum_charge_gradients(
-    real_space_charge_grads: torch.Tensor,
-    reciprocal_charge_grads: torch.Tensor,
-) -> torch.Tensor:
-    """Sum electrostatic charge gradients eagerly on compiled paths."""
-    return real_space_charge_grads + reciprocal_charge_grads
+def _normalize_dtype(dtype):
+    """Normalize dtype for kernel dictionary lookup.
+
+    Parameters
+    ----------
+    dtype : dtype-like
+        Input dtype from a JAX array.
+
+    Returns
+    -------
+    jnp.float32 or jnp.float64
+        Normalized JAX dtype for kernel lookup.
+    """
+    if dtype == jnp.float32 or str(dtype) == "float32":
+        return jnp.float32
+    if dtype == jnp.float64 or str(dtype) == "float64":
+        return jnp.float64
+    raise ValueError(f"Unsupported dtype: {dtype}")
+
+
+def _make_jax_kernels(
+    wp_overload_dict: dict,
+    num_outputs: int,
+    in_out_argnames: list[str],
+) -> dict:
+    """Maps a ``jax`` data type to ``warp``.
+
+    Parameters
+    ----------
+    wp_overload_dict : dict
+        Warp kernel overload dictionary keyed by wp.float32/wp.float64.
+    num_outputs : int
+        Number of output arrays returned by the kernel.
+    in_out_argnames : list of str
+        Names of in-place output arguments.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping jnp.float32/jnp.float64 to jax_kernel instances.
+    """
+    jax_to_wp = {jnp.float32: wp.float32, jnp.float64: wp.float64}
+    return {
+        jax_dtype: jax_kernel(
+            wp_overload_dict[wp_dtype],
+            num_outputs=num_outputs,
+            in_out_argnames=in_out_argnames,
+            enable_backward=False,
+        )
+        for jax_dtype, wp_dtype in jax_to_wp.items()
+    }
+
+
+def _prepare_cell(cell: jax.Array) -> tuple[jax.Array, int]:
+    """Normalize a cell array to shape ``(B, 3, 3)``."""
+    if cell.ndim == 2:
+        cell = cell[jnp.newaxis, :, :]
+    if cell.ndim != 3 or cell.shape[1:] != (3, 3):
+        raise ValueError(f"cell must have shape (3, 3) or (B, 3, 3), got {cell.shape}")
+    return cell, cell.shape[0]
 
 
 def _build_electrostatic_result(
-    energies: torch.Tensor,
-    forces: torch.Tensor | None,
-    charge_grads: torch.Tensor | None,
-    virial: torch.Tensor | None,
+    energies: jax.Array,
+    forces: jax.Array | None,
+    charge_grads: jax.Array | None,
+    virial: jax.Array | None,
     compute_forces: bool,
     compute_charge_gradients: bool,
     compute_virial: bool,
-) -> torch.Tensor | tuple[torch.Tensor, ...]:
+) -> jax.Array | tuple[jax.Array, ...]:
     """Build an output tuple in electrostatics API order."""
     result = [energies]
     if compute_forces and forces is not None:
@@ -58,11 +106,11 @@ def _build_electrostatic_result(
 
 
 def _unpack_electrostatic_outputs(
-    outputs: torch.Tensor | tuple[torch.Tensor, ...],
+    outputs: jax.Array | tuple[jax.Array, ...],
     compute_forces: bool,
     compute_charge_gradients: bool,
     compute_virial: bool,
-) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+) -> tuple[jax.Array, jax.Array | None, jax.Array | None, jax.Array | None]:
     """Unpack electrostatics outputs by flag combination without cursor logic."""
     output_tuple = outputs if isinstance(outputs, tuple) else (outputs,)
 
@@ -99,13 +147,13 @@ def _unpack_electrostatic_outputs(
 
 
 def _combine_electrostatic_outputs(
-    real_outputs: torch.Tensor | tuple[torch.Tensor, ...],
-    reciprocal_outputs: torch.Tensor | tuple[torch.Tensor, ...],
-    slab_outputs: torch.Tensor | tuple[torch.Tensor, ...] | None,
+    real_outputs: jax.Array | tuple[jax.Array, ...],
+    reciprocal_outputs: jax.Array | tuple[jax.Array, ...],
+    slab_outputs: jax.Array | tuple[jax.Array, ...] | None,
     compute_forces: bool,
     compute_charge_gradients: bool,
     compute_virial: bool,
-) -> torch.Tensor | tuple[torch.Tensor, ...]:
+) -> jax.Array | tuple[jax.Array, ...]:
     """Combine real, reciprocal, and optional slab outputs by named fields."""
     real_energies, real_forces, real_charge_grads, real_virial = (
         _unpack_electrostatic_outputs(
@@ -133,21 +181,13 @@ def _combine_electrostatic_outputs(
         if compute_forces and real_forces is not None and reciprocal_forces is not None
         else None
     )
-
-    if (
-        compute_charge_gradients
+    charge_grads = (
+        real_charge_grads + reciprocal_charge_grads
+        if compute_charge_gradients
         and real_charge_grads is not None
         and reciprocal_charge_grads is not None
-    ):
-        if torch.compiler.is_compiling():
-            charge_grads = _sum_charge_gradients(
-                real_charge_grads, reciprocal_charge_grads
-            )
-        else:
-            charge_grads = real_charge_grads + reciprocal_charge_grads
-    else:
-        charge_grads = None
-
+        else None
+    )
     virial = (
         real_virial + reciprocal_virial
         if compute_virial and real_virial is not None and reciprocal_virial is not None
@@ -164,16 +204,23 @@ def _combine_electrostatic_outputs(
             )
         )
         energies = energies + slab_energies
-        if compute_forces and forces is not None and slab_forces is not None:
-            forces = forces + slab_forces
-        if (
-            compute_charge_gradients
+        forces = (
+            forces + slab_forces
+            if compute_forces and forces is not None and slab_forces is not None
+            else forces
+        )
+        charge_grads = (
+            charge_grads + slab_charge_grads
+            if compute_charge_gradients
             and charge_grads is not None
             and slab_charge_grads is not None
-        ):
-            charge_grads = charge_grads + slab_charge_grads
-        if compute_virial and virial is not None and slab_virial is not None:
-            virial = virial + slab_virial
+            else charge_grads
+        )
+        virial = (
+            virial + slab_virial
+            if compute_virial and virial is not None and slab_virial is not None
+            else virial
+        )
 
     return _build_electrostatic_result(
         energies,
@@ -184,47 +231,3 @@ def _combine_electrostatic_outputs(
         compute_charge_gradients,
         compute_virial,
     )
-
-
-class _InjectChargeGrad(torch.autograd.Function):
-    """Inject analytical charge gradients into the autograd graph.
-
-    A no-op in the forward pass (returns ``energy`` unchanged).  On backward,
-    maps the per-system ``grad_energy`` to per-atom contributions using
-    ``batch_idx`` and multiplies by the kernel-computed ``charge_grad``
-    (dE/dq), so that ``energy.backward()`` propagates correct gradients
-    through the charge pathway without a Warp backward tape.
-
-    Parameters
-    ----------
-    energy : torch.Tensor
-        Per-system energies, shape ``(S,)``.
-    charges : torch.Tensor
-        Charges with ``requires_grad=True``, shape ``(N,)``.
-    charge_grad : torch.Tensor
-        Analytical per-atom dE/dq from the forward kernel, shape ``(N,)``.
-    batch_idx : torch.Tensor or None
-        Per-atom system index, shape ``(N,)``.  ``None`` for single-system.
-    """
-
-    @staticmethod
-    def forward(energy, charges, charge_grad, batch_idx):
-        """Return energy unchanged."""
-        return energy
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save charge_grad and batch_idx for backward."""
-        _, _, charge_grad, batch_idx = inputs
-        ctx.save_for_backward(charge_grad)
-        ctx.batch_idx = batch_idx
-
-    @staticmethod
-    def backward(ctx, grad_energy):
-        """Compute gradients for energy and charges."""
-        (charge_grad,) = ctx.saved_tensors
-        if ctx.batch_idx is not None:
-            atom_grad = grad_energy.index_select(0, ctx.batch_idx)
-        else:
-            atom_grad = grad_energy.squeeze(0)
-        return grad_energy, charge_grad * atom_grad, None, None

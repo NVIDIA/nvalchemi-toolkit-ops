@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PyTorch bindings for electrostatics interactions."""
+"""PyTorch bindings for electrostatics interactions.
+
+Includes Coulomb, DSF, Ewald, PME, parameter helpers, k-vector generation, and
+the standalone Yeh-Berkowitz / Ballenegger slab correction API.
+"""
 
 from nvalchemiops.torch.interactions.electrostatics.coulomb import (
     coulomb_energy,
@@ -47,6 +51,9 @@ from nvalchemiops.torch.interactions.electrostatics.pme import (
     pme_green_structure_factor,
     pme_reciprocal_space,
 )
+from nvalchemiops.torch.interactions.electrostatics.slab import (
+    compute_slab_correction,
+)
 
 __all__ = [
     # Coulomb
@@ -59,6 +66,8 @@ __all__ = [
     "ewald_real_space",
     "ewald_reciprocal_space",
     "ewald_summation",
+    # Slab correction (Yeh-Berkowitz / Ballenegger Eq. 29)
+    "compute_slab_correction",
     # PME
     "particle_mesh_ewald",
     "pme_reciprocal_space",
