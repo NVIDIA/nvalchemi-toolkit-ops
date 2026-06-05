@@ -366,6 +366,9 @@ class BenchmarkTimer:
         compile_ms: float | None = None
 
         try:
+            # Clear allocator state before warmup so timing runs reuse warmed caches.
+            self.clear_memory()
+
             # Warmup runs with timeout (timed to capture compile overhead)
             warmup_start = time.perf_counter()
             with timeout(self.timeout_seconds):
@@ -398,12 +401,19 @@ class BenchmarkTimer:
                         }
             compile_ms = (time.perf_counter() - warmup_start) * 1000.0
 
-            # Reset peak memory stats before timing runs
-            self.clear_memory()
+            # Reset peak memory stats before timing runs without emptying the
+            # allocator cache that warmup just populated.
+            if self.backend == "torch" and self.is_cuda:
+                self._torch.cuda.reset_peak_memory_stats()
 
             # Timing runs
             times = []
             last_result = None
+            start_event = None
+            end_event = None
+            if self.backend == "torch" and self.is_cuda:
+                start_event = self._torch.cuda.Event(enable_timing=True)
+                end_event = self._torch.cuda.Event(enable_timing=True)
 
             # Start profiler (torch backend only)
             if self.backend == "torch" and self._cudart is not None:
@@ -416,12 +426,10 @@ class BenchmarkTimer:
                             case "torch":
                                 if self.is_cuda:
                                     self._torch.cuda.synchronize()
-                                    start_event = self._torch.cuda.Event(
-                                        enable_timing=True
-                                    )
-                                    end_event = self._torch.cuda.Event(
-                                        enable_timing=True
-                                    )
+                                    if start_event is None or end_event is None:
+                                        raise RuntimeError(
+                                            "CUDA events were not initialized"
+                                        )
 
                                     start_event.record()
                                     last_result = func(*args, **kwargs)

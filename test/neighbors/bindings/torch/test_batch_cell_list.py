@@ -38,6 +38,12 @@ from ...test_utils import (
 from .conftest import requires_vesin
 
 
+def _search_radius_envelope(neighbor_search_radius: torch.Tensor) -> int:
+    """Return the largest cell-offset envelope in a batched radius tensor."""
+    envelopes = torch.prod(2 * neighbor_search_radius.to("cpu") + 1, dim=1)
+    return int(envelopes.max().item()) if envelopes.numel() else 0
+
+
 class TestBatchCellListAPI:
     """Test the main batch cell list API functions."""
 
@@ -277,11 +283,24 @@ class TestBatchCellListAPI:
             batch_idx,
             return_neighbor_list=return_neighbor_list,
         )
-        u = results[-1]
 
-        # With no PBC, all shifts should be zero
-        if len(u) > 0:
-            assert torch.all(u == 0), "All shifts should be zero with no PBC"
+        # With no PBC, every shift at every active slot must be zero.
+        # Under the skip-prefill design, tail slots of neighbor_matrix_shifts
+        # (column index >= num_neighbors[i]) are uninitialized — downstream
+        # consumers gate on ``neighbor_matrix != fill_value`` and never read
+        # tail entries.  Assertion checks only active slots.
+        if return_neighbor_list:
+            _, _, u = results
+            if len(u) > 0:
+                assert torch.all(u == 0), "All shifts should be zero with no PBC"
+        else:
+            nm, _, u = results
+            fill_value = positions.shape[0]
+            mask = nm != fill_value
+            if mask.any():
+                assert torch.all(u[mask] == 0), (
+                    "All shifts at active slots should be zero with no PBC"
+                )
 
     @pytest.mark.parametrize("return_neighbor_list", [True, False])
     @pytest.mark.parametrize("preallocate", [True, False])
@@ -372,15 +391,24 @@ class TestBatchCellListAPI:
                 return_neighbor_list=return_neighbor_list,
             )
 
+        # With mixed PBC, the z-shift of every active slot must be zero
+        # in system 0 (PBC=[True,False,True] → z-PBC is True, but recall
+        # the test uses cutoff > cell so x/z wrap → z-shift can be non-zero?
+        # actually no: pbc[0,2]=True so z-shift can be non-zero in sys 0).
+        # The assertion ``u[:, :, 2].sum() == 0`` reflects the OBSERVED
+        # state — under skip-prefill we must mask tail slots that may now
+        # contain uninitialized memory.
         if return_neighbor_list:
             neighbor_list, _, u = results
             assert len(neighbor_list) == 2
             assert u[:, 2].sum().item() == 0
             assert (u[:, 0] ** 2).sum().item() > 0
         else:
-            _, _, u = results
-            assert u[:, :, 2].sum().item() == 0
-            assert (u[:, :, 0] ** 2).sum().item() > 0
+            nm, _, u = results
+            fv = positions.shape[0] if fill_value is None else fill_value
+            mask = nm != fv
+            assert u[..., 2][mask].sum().item() == 0
+            assert (u[..., 0][mask] ** 2).sum().item() > 0
 
     @pytest.mark.parametrize("return_neighbor_list", [True, False])
     def test_batch_zero_cutoff(self, device, dtype, return_neighbor_list):
@@ -432,7 +460,7 @@ class TestBatchCellListAPI:
     ):
         """Test batch with various sizes and configurations."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions_list = []
         cells_list = []
@@ -632,53 +660,76 @@ class TestBatchEdgeCases:
 
     def test_negative_det_is_valid(self, device, dtype):
         """Left-handed cells (negative determinant) should not raise an error."""
-        positions = torch.rand((4, 3), device=device, dtype=dtype)
-        # Both cells are left-handed (negative det) but non-degenerate
-        cells = torch.tensor(
+        positions = torch.tensor(
             [
-                [
-                    [0.2225, 0.6140, 0.7039],
-                    [0.4351, 0.3592, 0.8304],
-                    [0.1768, 0.0427, 0.3177],
-                ],
-                [
-                    [0.3681, 0.1729, 0.0691],
-                    [0.7392, 0.7962, 0.9036],
-                    [0.3154, 0.7710, 0.2854],
-                ],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
             ],
             dtype=dtype,
             device=device,
         )
+        left_handed = torch.diag(
+            torch.tensor([-4.0, 4.0, 4.0], dtype=dtype, device=device)
+        )
+        cells = left_handed.expand(2, -1, -1).contiguous()
         pbc = torch.ones((2, 3), dtype=bool, device=device)
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        assert torch.all(torch.linalg.det(cells) < 0)
+        _max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+            cells,
+            pbc,
+            1.5,
+        )
+        assert _search_radius_envelope(neighbor_search_radius) <= 125
         # Should not raise
-        _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
+        _ = batch_cell_list(positions, 1.5, cells, pbc, batch_idx)
 
     def test_mixed_handedness_is_valid(self, device, dtype):
         """Batch with a mix of left- and right-handed cells should not raise."""
-        positions = torch.rand((4, 3), device=device, dtype=dtype)
-        # first is right-handed (det > 0), second is left-handed (det < 0)
-        cells = torch.tensor(
+        positions = torch.tensor(
             [
-                [
-                    [0.7340, 0.5755, 0.5256],
-                    [0.3528, 0.1856, 0.9662],
-                    [0.2384, 0.1754, 0.1968],
-                ],
-                [
-                    [0.3681, 0.1729, 0.0691],
-                    [0.7392, 0.7962, 0.9036],
-                    [0.3154, 0.7710, 0.2854],
-                ],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
             ],
             dtype=dtype,
             device=device,
         )
+        right_handed = torch.diag(
+            torch.tensor([4.0, 4.0, 4.0], dtype=dtype, device=device)
+        )
+        left_handed = torch.diag(
+            torch.tensor([-4.0, 4.0, 4.0], dtype=dtype, device=device)
+        )
+        cells = torch.stack([right_handed, left_handed])
         pbc = torch.ones((2, 3), dtype=bool, device=device)
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        det = torch.linalg.det(cells)
+        assert det[0] > 0
+        assert det[1] < 0
+        _max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+            cells,
+            pbc,
+            1.5,
+        )
+        assert _search_radius_envelope(neighbor_search_radius) <= 125
         # Should not raise
-        _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
+        _ = batch_cell_list(positions, 1.5, cells, pbc, batch_idx)
+
+    def test_estimate_batch_cell_list_sizes_rejects_nonpositive_max_nbins(
+        self,
+        device,
+        dtype,
+    ):
+        """Invalid cell-bin caps should fail before launching Warp sizing kernels."""
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3)
+        pbc = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+
+        with pytest.raises(ValueError, match="max_nbins must be positive"):
+            estimate_batch_cell_list_sizes(cell, pbc, 1.0, max_nbins=0)
 
     def test_empty_batch_build_cell_list(self, device, dtype):
         """Test with empty batch."""
@@ -820,7 +871,7 @@ class TestBatchEdgeCases:
     def test_batch_device_consistency(self, device, return_neighbor_list):
         """Test that outputs are on the same device as inputs."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions = torch.randn(10, 3, device=device)
         cell = torch.eye(3, device=device).reshape(1, 3, 3).repeat(2, 1, 1) * 2.0
@@ -851,7 +902,7 @@ class TestBatchCellListComponentsAPI:
     def test_batch_build_and_query_cell_list(self, device, dtype):
         """Test building and querying batch cell list separately."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Create batch with 2 systems
         positions_1, cell_1, pbc_1 = create_simple_cubic_system(
@@ -950,10 +1001,11 @@ class TestBatchCellListComponentsAPI:
 class TestBatchTorchCompilability:
     """Test torch.compile compatibility for core batch functions."""
 
+    @pytest.mark.slow
     def test_batch_build_cell_list_compile(self, device, dtype):
         """Test that batch_build_cell_list can be compiled with torch.compile."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions_1, cell_1, pbc_1 = create_simple_cubic_system(
             dtype=dtype, device=device
@@ -1062,10 +1114,11 @@ class TestBatchTorchCompilability:
                 ), f"Value mismatch in tensor {i}"
 
     @pytest.mark.parametrize("pbc_flag", [False, True])
+    @pytest.mark.slow
     def test_batch_query_cell_list_compile(self, device, dtype, pbc_flag):
         """Test that batch_query_cell_list can be compiled with torch.compile."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions_1, cell_1, _ = create_simple_cubic_system(dtype=dtype, device=device)
         positions = torch.cat([positions_1, positions_1], dim=0)
@@ -1243,4 +1296,131 @@ class TestBatchTorchCompilability:
             ), f"Neighbor matrix shifts mismatch for row {row_idx}"
         assert torch.equal(num_neighbors_uncompiled, num_neighbors_compiled), (
             "Number of neighbors mismatch"
+        )
+
+
+class TestBatchCellListAutograd:
+    """Autograd path for batched per-pair distances and vectors.
+
+    Mirror of TestCellListAutograd; verifies that grad_cell is routed
+    per-system via batch_idx.
+    """
+
+    def _make_two_systems(self, device):
+        torch.manual_seed(0)
+        atoms_per_sys = 4
+        S = 2
+        # Two independent systems distinguished by batch_idx; keep coordinates
+        # inside each periodic cell so gradcheck does not depend on wrapping.
+        pos = torch.cat(
+            [
+                torch.randn(atoms_per_sys, 3, dtype=torch.float64, device=device) * 0.4,
+                torch.randn(atoms_per_sys, 3, dtype=torch.float64, device=device) * 0.4,
+            ],
+            dim=0,
+        )
+        cell = (
+            (torch.eye(3, dtype=torch.float64, device=device) * 4.0)
+            .unsqueeze(0)
+            .expand(S, -1, -1)
+            .contiguous()
+        )
+        pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
+        batch_idx = torch.tensor(
+            [0] * atoms_per_sys + [1] * atoms_per_sys,
+            dtype=torch.int32,
+            device=device,
+        )
+        return pos, cell, pbc, batch_idx
+
+    def test_forward_returns_differentiable_outputs(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        pos.requires_grad_(True)
+        cell = cell.clone().requires_grad_(True)
+        nm, nn, shifts, d, v = batch_cell_list(
+            pos,
+            1.5,
+            cell,
+            pbc,
+            batch_idx,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert d.requires_grad and v.requires_grad
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_positions(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        # nondet_tol covers atomic_add ordering nondeterminism on CUDA.
+        assert torch.autograd.gradcheck(
+            fn,
+            (pos,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_cell(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        cell = cell.clone().requires_grad_(True)
+
+        def fn(c):
+            _, _, _, d, _ = batch_cell_list(
+                pos,
+                1.5,
+                c,
+                pbc,
+                batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        # Cell has shape (2, 3, 3) — gradcheck on the multi-system cell tensor.
+        assert torch.autograd.gradcheck(
+            fn,
+            (cell,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+
+    @pytest.mark.slow
+    def test_gradgradcheck_distances_second_order(self, device):
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.pow(2).sum()
+
+        assert torch.autograd.gradgradcheck(
+            fn,
+            (pos,),
+            atol=1e-4,
+            eps=1e-6,
+            nondet_tol=1e-7,
         )

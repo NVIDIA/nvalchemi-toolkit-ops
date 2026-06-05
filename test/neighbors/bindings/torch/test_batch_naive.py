@@ -907,3 +907,178 @@ class TestBatchNaivePerformance:
             assert num_neighbors.shape == (total_atoms,)
             assert torch.all(num_neighbors >= 0)
             assert torch.all(num_neighbors <= max_neighbors)
+
+
+class TestBatchNaiveAutograd:
+    """Differentiable per-pair distances/vectors with per-system grad_cell."""
+
+    def _make_two_systems(self, device, n_per=4, box=10.0):
+        torch.manual_seed(0)
+        pos = torch.randn(2 * n_per, 3, dtype=torch.float64, device=device) * 0.15
+        batch_idx = torch.tensor(
+            [0] * n_per + [1] * n_per,
+            dtype=torch.int32,
+            device=device,
+        )
+        cell = (
+            torch.eye(3, dtype=torch.float64, device=device)
+            .unsqueeze(0)
+            .repeat(2, 1, 1)
+            * box
+        )
+        pbc = torch.ones((2, 3), dtype=torch.bool, device=device)
+        return pos, cell, pbc, batch_idx, n_per
+
+    def test_forward_returns_differentiable(self, device):
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        pos.requires_grad_(True)
+        nm, nn, shifts, d, v = batch_naive_neighbor_list(
+            pos,
+            5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert d.requires_grad and v.requires_grad
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_positions(self, device):
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = batch_naive_neighbor_list(
+                p,
+                5.0,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        torch.autograd.gradcheck(fn, (pos,), atol=1e-5, eps=1e-6, nondet_tol=1e-7)
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_cell(self, device):
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        cell = cell.clone().requires_grad_(True)
+
+        def fn(c):
+            _, _, _, d, _ = batch_naive_neighbor_list(
+                pos,
+                5.0,
+                batch_idx=batch_idx,
+                cell=c,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        torch.autograd.gradcheck(fn, (cell,), atol=1e-5, eps=1e-6, nondet_tol=1e-7)
+
+    def test_half_fill_with_pair_outputs(self, device):
+        """half_fill=True now combines with per-pair geometry outputs (batched)."""
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        nm, _nn, _sh, dist, vec = batch_naive_neighbor_list(
+            pos,
+            5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_distances=True,
+            return_vectors=True,
+            half_fill=True,
+        )
+        active = nm != pos.shape[0]
+        assert int(active.sum()) > 0
+        assert torch.all(dist[active] <= 5.0 + 1e-4)
+        torch.testing.assert_close(
+            dist[active], vec[active].norm(dim=-1), atol=1e-5, rtol=1e-5
+        )
+
+    def test_pair_outputs_reject_rebuild_flags(self, device):
+        """rebuild_flags stays unsupported with pair outputs (stale cached geometry)."""
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        num_systems = int(batch_idx.max().item()) + 1
+        with pytest.raises(NotImplementedError, match="rebuild_flags"):
+            batch_naive_neighbor_list(
+                pos,
+                5.0,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                rebuild_flags=torch.ones(num_systems, dtype=torch.bool, device=device),
+            )
+
+    @pytest.mark.slow
+    def test_gradgradcheck_second_order(self, device):
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            *_, d, _ = batch_naive_neighbor_list(
+                p,
+                5.0,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        torch.autograd.gradgradcheck(
+            fn,
+            (pos,),
+            atol=1e-4,
+            eps=1e-5,
+            nondet_tol=1e-7,
+        )
+
+    def test_no_grad_path_unchanged(self, device):
+        pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
+        nm_a, nn_a, sh_a = batch_naive_neighbor_list(
+            pos,
+            5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+        )
+        nm_b, nn_b, sh_b, d_b, v_b = batch_naive_neighbor_list(
+            pos,
+            5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert not d_b.requires_grad and not v_b.requires_grad
+        assert torch.equal(nn_a, nn_b)
+        for i in range(nm_a.shape[0]):
+            n = nn_a[i].item()
+            row_a = sorted(nm_a[i, :n].tolist())
+            row_b = sorted(nm_b[i, :n].tolist())
+            assert row_a == row_b

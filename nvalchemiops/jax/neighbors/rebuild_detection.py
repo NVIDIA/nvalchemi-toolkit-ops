@@ -26,13 +26,9 @@ import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
 
-from nvalchemiops.neighbors.rebuild_detection import (
-    _check_atoms_changed_cells_overload,
-    _check_atoms_moved_beyond_skin_overload,
-    _check_atoms_moved_beyond_skin_pbc_overload,
-    _check_batch_atoms_changed_cells_overload,
-    _check_batch_atoms_moved_beyond_skin_overload,
-    _check_batch_atoms_moved_beyond_skin_pbc_overload,
+from nvalchemiops.neighbors.rebuild import (
+    get_cell_list_rebuild_kernel,
+    get_neighbor_list_rebuild_kernel,
 )
 
 __all__ = [
@@ -52,41 +48,41 @@ __all__ = [
 
 # Cell list rebuild detection kernel wrappers
 _jax_check_cells_f32 = jax_kernel(
-    _check_atoms_changed_cells_overload[wp.float32],
+    get_cell_list_rebuild_kernel(wp.float32),
     num_outputs=1,
-    in_out_argnames=["rebuild_flag"],
+    in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 _jax_check_cells_f64 = jax_kernel(
-    _check_atoms_changed_cells_overload[wp.float64],
+    get_cell_list_rebuild_kernel(wp.float64),
     num_outputs=1,
-    in_out_argnames=["rebuild_flag"],
+    in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 
 # Neighbor list rebuild detection kernel wrappers
 _jax_check_skin_f32 = jax_kernel(
-    _check_atoms_moved_beyond_skin_overload[wp.float32],
+    get_neighbor_list_rebuild_kernel(wp.float32),
     num_outputs=1,
-    in_out_argnames=["rebuild_flag"],
+    in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 _jax_check_skin_f64 = jax_kernel(
-    _check_atoms_moved_beyond_skin_overload[wp.float64],
+    get_neighbor_list_rebuild_kernel(wp.float64),
     num_outputs=1,
-    in_out_argnames=["rebuild_flag"],
+    in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 
 # Batch neighbor list rebuild detection kernel wrappers
 _jax_batch_check_skin_f32 = jax_kernel(
-    _check_batch_atoms_moved_beyond_skin_overload[wp.float32],
+    get_neighbor_list_rebuild_kernel(wp.float32, batched=True),
     num_outputs=1,
     in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 _jax_batch_check_skin_f64 = jax_kernel(
-    _check_batch_atoms_moved_beyond_skin_overload[wp.float64],
+    get_neighbor_list_rebuild_kernel(wp.float64, batched=True),
     num_outputs=1,
     in_out_argnames=["rebuild_flags"],
     enable_backward=False,
@@ -94,27 +90,27 @@ _jax_batch_check_skin_f64 = jax_kernel(
 
 # MIC neighbor list rebuild detection kernel wrappers
 _jax_check_skin_pbc_f32 = jax_kernel(
-    _check_atoms_moved_beyond_skin_pbc_overload[wp.float32],
+    get_neighbor_list_rebuild_kernel(wp.float32, pbc=True),
     num_outputs=1,
-    in_out_argnames=["rebuild_flag"],
+    in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 _jax_check_skin_pbc_f64 = jax_kernel(
-    _check_atoms_moved_beyond_skin_pbc_overload[wp.float64],
+    get_neighbor_list_rebuild_kernel(wp.float64, pbc=True),
     num_outputs=1,
-    in_out_argnames=["rebuild_flag"],
+    in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 
 # MIC batch neighbor list rebuild detection kernel wrappers
 _jax_batch_check_skin_pbc_f32 = jax_kernel(
-    _check_batch_atoms_moved_beyond_skin_pbc_overload[wp.float32],
+    get_neighbor_list_rebuild_kernel(wp.float32, batched=True, pbc=True),
     num_outputs=1,
     in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 _jax_batch_check_skin_pbc_f64 = jax_kernel(
-    _check_batch_atoms_moved_beyond_skin_pbc_overload[wp.float64],
+    get_neighbor_list_rebuild_kernel(wp.float64, batched=True, pbc=True),
     num_outputs=1,
     in_out_argnames=["rebuild_flags"],
     enable_backward=False,
@@ -122,17 +118,42 @@ _jax_batch_check_skin_pbc_f64 = jax_kernel(
 
 # Batch cell list rebuild detection kernel wrappers
 _jax_batch_check_cells_f32 = jax_kernel(
-    _check_batch_atoms_changed_cells_overload[wp.float32],
+    get_cell_list_rebuild_kernel(wp.float32, batched=True),
     num_outputs=1,
     in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
 _jax_batch_check_cells_f64 = jax_kernel(
-    _check_batch_atoms_changed_cells_overload[wp.float64],
+    get_cell_list_rebuild_kernel(wp.float64, batched=True),
     num_outputs=1,
     in_out_argnames=["rebuild_flags"],
     enable_backward=False,
 )
+
+
+def _empty_i32() -> jax.Array:
+    """Return a zero-size int32 sentinel for static factory axes."""
+    return jnp.empty((0,), dtype=jnp.int32)
+
+
+def _empty_vec3i() -> jax.Array:
+    """Return a zero-size vec3i-compatible sentinel."""
+    return jnp.empty((0, 3), dtype=jnp.int32)
+
+
+def _empty_bool() -> jax.Array:
+    """Return a zero-size bool sentinel for static factory axes."""
+    return jnp.empty((0,), dtype=jnp.bool_)
+
+
+def _empty_bool2d() -> jax.Array:
+    """Return a zero-size 2D bool sentinel for static factory axes."""
+    return jnp.empty((0, 3), dtype=jnp.bool_)
+
+
+def _empty_cell(dtype: jnp.dtype) -> jax.Array:
+    """Return a zero-size cell sentinel for static factory axes."""
+    return jnp.empty((0, 3, 3), dtype=dtype)
 
 
 # ==============================================================================
@@ -182,7 +203,7 @@ def cell_list_needs_rebuild(
     if total_atoms == 0:
         return jnp.array([False], dtype=jnp.bool_)
 
-    # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+    # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
     if cell.dtype != current_positions.dtype:
         cell = cell.astype(current_positions.dtype)
 
@@ -211,8 +232,11 @@ def cell_list_needs_rebuild(
         current_positions,
         cell,
         atom_to_cell_mapping,
+        _empty_i32(),
         cells_1d,
+        _empty_vec3i(),
         pbc,
+        _empty_bool2d(),
         rebuild_flag,
         launch_dims=(total_atoms,),
     )
@@ -293,9 +317,11 @@ def neighbor_list_needs_rebuild(
         (rebuild_flag,) = _jax_check(
             reference_positions,
             current_positions,
+            _empty_i32(),
             cell,
             cell_inv,
             pbc,
+            _empty_bool2d(),
             float(skin_distance_threshold),
             rebuild_flag,
             launch_dims=(total_atoms,),
@@ -311,6 +337,11 @@ def neighbor_list_needs_rebuild(
         (rebuild_flag,) = _jax_check(
             reference_positions,
             current_positions,
+            _empty_i32(),
+            _empty_cell(reference_positions.dtype),
+            _empty_cell(reference_positions.dtype),
+            _empty_bool(),
+            _empty_bool2d(),
             float(skin_distance_threshold),
             rebuild_flag,
             launch_dims=(total_atoms,),
@@ -507,6 +538,7 @@ def batch_neighbor_list_needs_rebuild(
             batch_idx,
             cell,
             cell_inv,
+            _empty_bool(),
             pbc,
             float(skin_distance_threshold),
             rebuild_flags,
@@ -524,6 +556,10 @@ def batch_neighbor_list_needs_rebuild(
             reference_positions,
             current_positions,
             batch_idx,
+            _empty_cell(reference_positions.dtype),
+            _empty_cell(reference_positions.dtype),
+            _empty_bool(),
+            _empty_bool2d(),
             float(skin_distance_threshold),
             rebuild_flags,
             launch_dims=(total_atoms,),
@@ -596,7 +632,9 @@ def batch_cell_list_needs_rebuild(
         cell,
         atom_to_cell_mapping,
         batch_idx,
+        _empty_i32(),
         cells_per_dimension,
+        _empty_bool(),
         pbc,
         rebuild_flags,
         launch_dims=(total_atoms,),

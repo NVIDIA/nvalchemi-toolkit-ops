@@ -23,21 +23,26 @@ import warp as wp
 from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.jax.neighbors.neighbor_utils import (
+    build_naive_kernel_tables,
     compute_naive_num_shifts,
     get_neighbor_list_from_neighbor_matrix,
     prepare_batch_idx_ptr,
 )
-from nvalchemiops.neighbors.batch_naive_dual_cutoff import (
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_overload,
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_overload,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_overload,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_overload,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_overload,
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_overload,
-)
 from nvalchemiops.neighbors.neighbor_utils import (
-    _wrap_positions_batch_overload,
     estimate_max_neighbors,
+    get_wrap_positions_kernel,
+)
+
+_DTYPE_TO_BATCH_NAIVE_DUAL_KERNELS = (wp.float32, wp.float64)
+(
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_kernels,
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_kernels,
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_kernels,
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_kernels,
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_kernels,
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_kernels,
+) = build_naive_kernel_tables(
+    "dual_cutoff", batched=True, dtypes=_DTYPE_TO_BATCH_NAIVE_DUAL_KERNELS
 )
 
 __all__ = ["batch_naive_neighbor_list_dual_cutoff"]
@@ -48,7 +53,7 @@ __all__ = ["batch_naive_neighbor_list_dual_cutoff"]
 
 # No-PBC batch naive dual cutoff neighbor matrix kernel wrappers
 _jax_fill_batch_dual_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_overload[wp.float32],
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_kernels[wp.float32],
     num_outputs=4,
     in_out_argnames=[
         "neighbor_matrix1",
@@ -59,7 +64,7 @@ _jax_fill_batch_dual_f32 = jax_kernel(
     enable_backward=False,
 )
 _jax_fill_batch_dual_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_overload[wp.float64],
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_kernels[wp.float64],
     num_outputs=4,
     in_out_argnames=[
         "neighbor_matrix1",
@@ -72,27 +77,27 @@ _jax_fill_batch_dual_f64 = jax_kernel(
 
 # PBC batch naive dual cutoff neighbor matrix kernel wrappers
 _jax_fill_batch_dual_pbc_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_overload[wp.float32],
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_kernels[wp.float32],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
 )
 _jax_fill_batch_dual_pbc_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_overload[wp.float64],
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_kernels[wp.float64],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
@@ -100,7 +105,7 @@ _jax_fill_batch_dual_pbc_f64 = jax_kernel(
 
 # Selective batch dual cutoff neighbor matrix kernel wrappers
 _jax_fill_batch_dual_selective_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_overload[wp.float32],
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_kernels[wp.float32],
     num_outputs=4,
     in_out_argnames=[
         "neighbor_matrix1",
@@ -111,7 +116,7 @@ _jax_fill_batch_dual_selective_f32 = jax_kernel(
     enable_backward=False,
 )
 _jax_fill_batch_dual_selective_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_overload[wp.float64],
+    _fill_batch_naive_neighbor_matrix_dual_cutoff_selective_kernels[wp.float64],
     num_outputs=4,
     in_out_argnames=[
         "neighbor_matrix1",
@@ -124,27 +129,27 @@ _jax_fill_batch_dual_selective_f64 = jax_kernel(
 
 # Selective PBC batch dual cutoff neighbor matrix kernel wrappers
 _jax_fill_batch_dual_pbc_selective_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_overload[wp.float32],
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_kernels[wp.float32],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
 )
 _jax_fill_batch_dual_pbc_selective_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_overload[wp.float64],
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_selective_kernels[wp.float64],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
@@ -152,57 +157,57 @@ _jax_fill_batch_dual_pbc_selective_f64 = jax_kernel(
 
 # Prewrapped PBC batch dual cutoff neighbor matrix kernel wrappers
 _jax_fill_batch_dual_pbc_prewrapped_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_overload[wp.float32],
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_kernels[wp.float32],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
 )
 _jax_fill_batch_dual_pbc_prewrapped_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_overload[wp.float64],
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_kernels[wp.float64],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
 )
 _jax_fill_batch_dual_pbc_prewrapped_selective_f32 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_overload[
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_kernels[
         wp.float32
     ],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
 )
 _jax_fill_batch_dual_pbc_prewrapped_selective_f64 = jax_kernel(
-    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_overload[
+    _fill_batch_naive_neighbor_matrix_pbc_dual_cutoff_prewrapped_selective_kernels[
         wp.float64
     ],
     num_outputs=6,
     in_out_argnames=[
         "neighbor_matrix1",
-        "neighbor_matrix2",
         "neighbor_matrix_shifts1",
-        "neighbor_matrix_shifts2",
         "num_neighbors1",
+        "neighbor_matrix2",
+        "neighbor_matrix_shifts2",
         "num_neighbors2",
     ],
     enable_backward=False,
@@ -210,17 +215,39 @@ _jax_fill_batch_dual_pbc_prewrapped_selective_f64 = jax_kernel(
 
 # Wrap positions batch kernel wrappers
 _jax_wrap_positions_batch_f32 = jax_kernel(
-    _wrap_positions_batch_overload[wp.float32],
+    get_wrap_positions_kernel(wp.float32, batched=True),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
 )
 _jax_wrap_positions_batch_f64 = jax_kernel(
-    _wrap_positions_batch_overload[wp.float64],
+    get_wrap_positions_kernel(wp.float64, batched=True),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
 )
+
+
+def _jax_scalar_sentinels(dtype):
+    """Return JAX zero-size placeholders for inactive naive scalar inputs."""
+    return (
+        jnp.empty((0, 3), dtype=jnp.int32),
+        jnp.empty((0, 3, 3), dtype=dtype),
+        jnp.empty((0, 3), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0, 0), dtype=jnp.int32),
+        jnp.empty((0, 0, 3), dtype=jnp.int32),
+        jnp.empty((0,), dtype=jnp.int32),
+        jnp.empty((0, 0, 3), dtype=dtype),
+        jnp.empty((0, 0), dtype=dtype),
+        jnp.empty((0, 0), dtype=dtype),
+        jnp.empty((0, 0), dtype=dtype),
+        jnp.empty((0, 0, 3), dtype=dtype),
+        jnp.empty((0,), dtype=jnp.bool_),
+    )
 
 
 def batch_naive_neighbor_list_dual_cutoff(
@@ -248,6 +275,9 @@ def batch_naive_neighbor_list_dual_cutoff(
     max_atoms_per_system: int | None = None,
     rebuild_flags: jax.Array | None = None,
     wrap_positions: bool = True,
+    positions_wrapped_buffer: jax.Array | None = None,
+    per_atom_cell_offsets_buffer: jax.Array | None = None,
+    inv_cell_buffer: jax.Array | None = None,
 ) -> (
     tuple[
         jax.Array,
@@ -348,7 +378,7 @@ def batch_naive_neighbor_list_dual_cutoff(
 
     if cell is not None:
         cell = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
-        # Ensure cell dtype matches positions dtype so warp overload dispatch is consistent
+        # Ensure cell dtype matches positions dtype so Warp kernel dispatch is consistent
         if cell.dtype != positions.dtype:
             cell = cell.astype(positions.dtype)
     if pbc is not None:
@@ -507,6 +537,24 @@ def batch_naive_neighbor_list_dual_cutoff(
     num_systems = batch_ptr.shape[0] - 1
     batch_idx_i32 = batch_idx.astype(jnp.int32)
     batch_ptr_i32 = batch_ptr.astype(jnp.int32)
+    (
+        empty_offsets,
+        empty_cell,
+        empty_shift_range,
+        empty_num_shifts,
+        empty_batch_idx,
+        empty_batch_ptr,
+        empty_target_indices,
+        empty_matrix,
+        empty_shifts,
+        empty_num_neighbors,
+        empty_vectors,
+        empty_distances,
+        empty_pair_params,
+        empty_energies,
+        empty_forces,
+        empty_rebuild_flags,
+    ) = _jax_scalar_sentinels(positions.dtype)
 
     if pbc is None:
         if rebuild_flags is not None:
@@ -521,33 +569,56 @@ def batch_naive_neighbor_list_dual_cutoff(
             neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
                 _jax_fill_selective(
                     positions,
+                    empty_offsets,
                     float(cutoff1 * cutoff1),
                     float(cutoff2 * cutoff2),
+                    empty_cell,
+                    empty_shift_range,
+                    empty_num_shifts,
                     batch_idx_i32,
                     batch_ptr_i32,
+                    empty_target_indices,
                     neighbor_matrix1,
+                    empty_shifts,
                     num_neighbors1,
                     neighbor_matrix2,
+                    empty_shifts,
                     num_neighbors2,
-                    half_fill,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
                     rf,
-                    launch_dims=(total_atoms,),
+                    launch_dims=(1, 1, total_atoms),
                 )
             )
         else:
             neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
                 _jax_fill(
                     positions,
+                    empty_offsets,
                     float(cutoff1 * cutoff1),
                     float(cutoff2 * cutoff2),
+                    empty_cell,
+                    empty_shift_range,
+                    empty_num_shifts,
                     batch_idx_i32,
                     batch_ptr_i32,
+                    empty_target_indices,
                     neighbor_matrix1,
+                    empty_shifts,
                     num_neighbors1,
                     neighbor_matrix2,
+                    empty_shifts,
                     num_neighbors2,
-                    half_fill,
-                    launch_dims=(total_atoms,),
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
+                    empty_rebuild_flags,
+                    launch_dims=(1, 1, total_atoms),
                 )
             )
     else:
@@ -568,9 +639,19 @@ def batch_naive_neighbor_list_dual_cutoff(
                 ) from None
 
         if wrap_positions:
-            inv_cell = jnp.linalg.inv(cell)
-            positions_wrapped = jnp.zeros_like(positions)
-            per_atom_cell_offsets = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+            inv_cell = (
+                inv_cell_buffer if inv_cell_buffer is not None else jnp.linalg.inv(cell)
+            )
+            positions_wrapped = (
+                positions_wrapped_buffer
+                if positions_wrapped_buffer is not None
+                else jnp.zeros_like(positions)
+            )
+            per_atom_cell_offsets = (
+                per_atom_cell_offsets_buffer
+                if per_atom_cell_offsets_buffer is not None
+                else jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+            )
             positions_wrapped, per_atom_cell_offsets = _jax_wrap_batch(
                 positions,
                 cell,
@@ -592,27 +673,33 @@ def batch_naive_neighbor_list_dual_cutoff(
                 )
                 (
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
                 ) = _jax_fill_pbc_selective(
                     positions_wrapped,
                     per_atom_cell_offsets,
-                    cell,
                     float(cutoff1 * cutoff1),
                     float(cutoff2 * cutoff2),
-                    batch_ptr_i32,
+                    cell,
                     shift_range_per_dimension,
                     num_shifts_per_system,
+                    batch_idx_i32,
+                    batch_ptr_i32,
+                    empty_target_indices,
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
-                    half_fill,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
                     rf,
                     launch_dims=(
                         num_systems,
@@ -623,27 +710,34 @@ def batch_naive_neighbor_list_dual_cutoff(
             else:
                 (
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
                 ) = _jax_fill_pbc(
                     positions_wrapped,
                     per_atom_cell_offsets,
-                    cell,
                     float(cutoff1 * cutoff1),
                     float(cutoff2 * cutoff2),
-                    batch_ptr_i32,
+                    cell,
                     shift_range_per_dimension,
                     num_shifts_per_system,
+                    batch_idx_i32,
+                    batch_ptr_i32,
+                    empty_target_indices,
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
-                    half_fill,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
+                    empty_rebuild_flags,
                     launch_dims=(
                         num_systems,
                         max_shifts_per_system,
@@ -662,26 +756,33 @@ def batch_naive_neighbor_list_dual_cutoff(
                 )
                 (
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
                 ) = _jax_fill_pbc_prewrapped_selective(
                     positions,
-                    cell,
+                    empty_offsets,
                     float(cutoff1 * cutoff1),
                     float(cutoff2 * cutoff2),
-                    batch_ptr_i32,
+                    cell,
                     shift_range_per_dimension,
                     num_shifts_per_system,
+                    batch_idx_i32,
+                    batch_ptr_i32,
+                    empty_target_indices,
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
-                    half_fill,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
                     rf,
                     launch_dims=(
                         num_systems,
@@ -692,26 +793,34 @@ def batch_naive_neighbor_list_dual_cutoff(
             else:
                 (
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
                 ) = _jax_fill_pbc_prewrapped(
                     positions,
-                    cell,
+                    empty_offsets,
                     float(cutoff1 * cutoff1),
                     float(cutoff2 * cutoff2),
-                    batch_ptr_i32,
+                    cell,
                     shift_range_per_dimension,
                     num_shifts_per_system,
+                    batch_idx_i32,
+                    batch_ptr_i32,
+                    empty_target_indices,
                     neighbor_matrix1,
-                    neighbor_matrix2,
                     neighbor_matrix_shifts1,
-                    neighbor_matrix_shifts2,
                     num_neighbors1,
+                    neighbor_matrix2,
+                    neighbor_matrix_shifts2,
                     num_neighbors2,
-                    half_fill,
+                    empty_vectors,
+                    empty_distances,
+                    empty_pair_params,
+                    empty_energies,
+                    empty_forces,
+                    empty_rebuild_flags,
                     launch_dims=(
                         num_systems,
                         max_shifts_per_system,

@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core warp interface for neighbor list operations.
+"""Core Warp interface for neighbor-list operations.
 
-This module exports warp launchers that accept warp arrays directly.
-For PyTorch users, use `nvalchemiops.torch.neighbors` instead.
+This package exports Warp launchers that accept Warp arrays directly. For
+PyTorch users, use :mod:`nvalchemiops.torch.neighbors` instead.
 """
 
 from __future__ import annotations
@@ -24,51 +24,42 @@ from __future__ import annotations
 import importlib
 import warnings
 
-# Warp launchers from batch_cell_list
-from nvalchemiops.neighbors.batch_cell_list import (
+from nvalchemiops.neighbors.base_dispatch import (
+    estimate_neighbor_list_costs,
+    suggest_neighbor_list_method,
+)
+from nvalchemiops.neighbors.cell_list import (
     batch_build_cell_list,
     batch_query_cell_list,
-)
-
-# Warp launchers from batch_naive
-from nvalchemiops.neighbors.batch_naive import (
-    batch_naive_neighbor_matrix,
-    batch_naive_neighbor_matrix_pbc,
-)
-
-# Warp launchers from batch_naive_dual_cutoff
-from nvalchemiops.neighbors.batch_naive_dual_cutoff import (
-    batch_naive_neighbor_matrix_dual_cutoff,
-    batch_naive_neighbor_matrix_pbc_dual_cutoff,
-)
-
-# Warp launchers from cell_list
-from nvalchemiops.neighbors.cell_list import (
     build_cell_list,
     query_cell_list,
 )
-
-# Warp launchers from naive
-from nvalchemiops.neighbors.naive import (
-    naive_neighbor_matrix,
-    naive_neighbor_matrix_pbc,
+from nvalchemiops.neighbors.cluster_tile import (
+    TILE_GROUP_SIZE,
+    batch_build_cluster_tile_list,
+    batch_query_cluster_tile,
+    batch_query_cluster_tile_coo,
+    build_cluster_tile_list,
+    query_cluster_tile,
+    query_cluster_tile_coo,
 )
-
-# Warp launchers from naive_dual_cutoff
-from nvalchemiops.neighbors.naive_dual_cutoff import (
+from nvalchemiops.neighbors.naive import (
+    batch_naive_neighbor_matrix,
+    batch_naive_neighbor_matrix_dual_cutoff,
+    batch_naive_neighbor_matrix_pbc,
+    batch_naive_neighbor_matrix_pbc_dual_cutoff,
+    naive_neighbor_matrix,
     naive_neighbor_matrix_dual_cutoff,
+    naive_neighbor_matrix_pbc,
     naive_neighbor_matrix_pbc_dual_cutoff,
 )
-
-# Warp utilities and launchers from neighbor_utils
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
     compute_naive_num_shifts,
     estimate_max_neighbors,
+    zero_array,
 )
-
-# Warp launchers from rebuild_detection
-from nvalchemiops.neighbors.rebuild_detection import (
+from nvalchemiops.neighbors.rebuild import (
     check_batch_cell_list_rebuild,
     check_batch_neighbor_list_rebuild,
     check_cell_list_rebuild,
@@ -77,11 +68,21 @@ from nvalchemiops.neighbors.rebuild_detection import (
 
 
 def __getattr__(name: str):  # pragma: no cover
-    """Lazy import for backward compatibility with the old API.
+    """Lazy import for backward compatibility with the old API."""
+    if name in (
+        "batch_cell_list",
+        "batch_naive",
+        "batch_naive_dual_cutoff",
+        "cell_list",
+        "cluster_tile",
+        "naive",
+        "naive_dual_cutoff",
+        "neighbor_utils",
+        "rebuild",
+        "rebuild_detection",
+    ):
+        return importlib.import_module(f"nvalchemiops.neighbors.{name}")
 
-    This avoids circular imports by deferring the import of `neighbor_list`
-    from `nvalchemiops.torch.neighbors` until it is actually accessed.
-    """
     if name == "neighbor_list":
         if importlib.util.find_spec("torch") is None:
             warnings.warn(
@@ -102,41 +103,53 @@ def __getattr__(name: str):  # pragma: no cover
                 )
 
             return neighbor_list
-        else:
-            warnings.warn(
-                "From version 0.3.0 onwards, PyTorch is now an optional dependency"
-                " and the `nvalchemiops.neighbors` namespace is reserved for `warp`"
-                " kernels directly. For end-users, import from"
-                " `nvalchemiops.torch.neighbors` instead.",
-                category=DeprecationWarning,
-                stacklevel=2,
-            )
-            from nvalchemiops.torch.neighbors import neighbor_list
+        warnings.warn(
+            "From version 0.3.0 onwards, PyTorch is now an optional dependency"
+            " and the `nvalchemiops.neighbors` namespace is reserved for `warp`"
+            " kernels directly. For end-users, import from"
+            " `nvalchemiops.torch.neighbors` instead.",
+            category=DeprecationWarning,
+            stacklevel=2,
+        )
+        from nvalchemiops.torch.neighbors import neighbor_list
 
-            return neighbor_list
+        return neighbor_list
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# Supported public surface.  0.3.1-era names plus the new cluster-tile
+# family launchers.  Kernel-factory getters, low-level helpers, and strategy
+# selectors live only at their canonical package paths.
 __all__ = [
     "NeighborOverflowError",
-    "naive_neighbor_matrix",
-    "naive_neighbor_matrix_pbc",
-    "build_cell_list",
-    "query_cell_list",
-    "batch_naive_neighbor_matrix",
-    "batch_naive_neighbor_matrix_pbc",
+    "TILE_GROUP_SIZE",
     "batch_build_cell_list",
-    "batch_query_cell_list",
-    "naive_neighbor_matrix_dual_cutoff",
-    "naive_neighbor_matrix_pbc_dual_cutoff",
+    "batch_build_cluster_tile_list",
+    "batch_naive_neighbor_matrix",
     "batch_naive_neighbor_matrix_dual_cutoff",
+    "batch_naive_neighbor_matrix_pbc",
     "batch_naive_neighbor_matrix_pbc_dual_cutoff",
+    "batch_query_cell_list",
+    "batch_query_cluster_tile",
+    "batch_query_cluster_tile_coo",
+    "build_cell_list",
+    "build_cluster_tile_list",
+    "check_batch_cell_list_rebuild",
+    "check_batch_neighbor_list_rebuild",
     "check_cell_list_rebuild",
     "check_neighbor_list_rebuild",
-    "check_batch_neighbor_list_rebuild",
-    "check_batch_cell_list_rebuild",
     "compute_naive_num_shifts",
     "estimate_max_neighbors",
+    "naive_neighbor_matrix",
+    "naive_neighbor_matrix_dual_cutoff",
+    "naive_neighbor_matrix_pbc",
+    "naive_neighbor_matrix_pbc_dual_cutoff",
     "neighbor_list",
+    "query_cell_list",
+    "query_cluster_tile",
+    "query_cluster_tile_coo",
+    "estimate_neighbor_list_costs",
+    "suggest_neighbor_list_method",
+    "zero_array",
 ]

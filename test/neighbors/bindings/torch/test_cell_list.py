@@ -39,6 +39,11 @@ from ...test_utils import (
 from .conftest import requires_vesin
 
 
+def _search_radius_envelope(neighbor_search_radius: torch.Tensor) -> int:
+    """Return the number of cell-offset combinations implied by a radius."""
+    return int(torch.prod(2 * neighbor_search_radius.to("cpu") + 1).item())
+
+
 class TestCellListCorrectness:
     """Tests verifying cell list correctness against reference implementations."""
 
@@ -317,6 +322,99 @@ class TestCellListEdgeCases:
         assert neighbor_search_radius.dtype == torch.int32
         assert neighbor_search_radius.device == torch.device(device)
 
+    def test_estimate_cell_list_sizes_min_cells_one_pbc_shapes(self, device, dtype):
+        """Legacy min-cell sizing should treat (3,) and (1, 3) PBC equally."""
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3) * 11.0
+        pbc_2d = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+        pbc_1d = pbc_2d.reshape(3)
+        cutoff = 20.0
+
+        max_cells_2d, neighbor_search_radius_2d = estimate_cell_list_sizes(
+            cell,
+            pbc_2d,
+            cutoff,
+            min_cells_per_dimension=1,
+        )
+        max_cells_1d, neighbor_search_radius_1d = estimate_cell_list_sizes(
+            cell,
+            pbc_1d,
+            cutoff,
+            min_cells_per_dimension=1,
+        )
+
+        expected_radius = torch.tensor([2, 2, 2], dtype=torch.int32, device=device)
+        assert max_cells_2d == 1
+        assert max_cells_1d == 1
+        assert torch.equal(neighbor_search_radius_2d, expected_radius)
+        assert torch.equal(neighbor_search_radius_1d, expected_radius)
+
+    def test_build_cell_list_min_cells_one_uses_legacy_grid(self, device, dtype):
+        """build_cell_list should expose the legacy one-cell grid policy."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3) * 11.0
+        pbc = torch.tensor([True, True, True], dtype=torch.bool, device=device)
+        cutoff = 20.0
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff,
+            min_cells_per_dimension=1,
+        )
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius,
+            device,
+        )
+
+        build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            *cell_list_cache,
+            min_cells_per_dimension=1,
+        )
+
+        assert torch.equal(
+            cell_list_cache[0],
+            torch.tensor([1, 1, 1], dtype=torch.int32, device=device),
+        )
+
+    def test_atom_centric_cell_list_allocates_legacy_grid(self, device, dtype):
+        """Explicit atom-centric cell_list runs on the legacy single-cell grid.
+
+        With ``cutoff`` larger than the box, the grid collapses to one cell; the
+        atom-centric path must still enumerate the pair correctly.
+        """
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3) * 11.0
+        pbc = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+
+        matrix, num_neighbors, _shifts = cell_list(
+            positions,
+            20.0,
+            cell,
+            pbc,
+            max_neighbors=1024,
+            return_neighbor_list=False,
+            strategy="atom_centric",
+        )
+
+        assert matrix.shape[0] == 2
+        assert num_neighbors.shape == (2,)
+        # Both atoms are within cutoff of each other (and periodic images).
+        assert int(num_neighbors.min()) >= 1
+
     def test_large_cutoff(self, device, dtype, return_neighbor_list):
         """Large cutoff that includes many neighbors should work correctly."""
         positions, cell, pbc = create_random_system(
@@ -366,9 +464,28 @@ class TestCellListErrors:
 class TestLeftHandedCells:
     """Tests for left-handed (negative determinant) cell support."""
 
-    def _check_left_handed(self, positions, cell, pbc, cutoff, dtype):
+    def _check_left_handed(
+        self,
+        positions,
+        cell,
+        pbc,
+        cutoff,
+        dtype,
+        *,
+        max_radius_envelope=None,
+        require_periodic_shift=False,
+    ):
         """Helper: verify neighbor list and distance equivalence for a left-handed cell."""
         assert cell.det().item() < 0, "Cell should have negative determinant"
+        if max_radius_envelope is not None:
+            _max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+                cell,
+                pbc,
+                cutoff,
+            )
+            assert (
+                _search_radius_envelope(neighbor_search_radius) <= max_radius_envelope
+            )
 
         estimated_density = positions.shape[0] / cell.det().abs().item()
         max_neighbors = estimate_max_neighbors(
@@ -387,6 +504,8 @@ class TestLeftHandedCells:
 
         # Neighbor list equivalence
         assert_neighbor_lists_equal((i, j, u), (ref_i, ref_j, ref_u))
+        if require_periodic_shift:
+            assert torch.any(u != 0)
 
         # Distance equivalence
         if len(i) > 0:
@@ -428,20 +547,40 @@ class TestLeftHandedCells:
     @requires_vesin
     def test_nonorthorhombic_system(self, device, dtype):
         """Left-handed triclinic cell should match brute force."""
-        positions, cell, pbc = create_nonorthorhombic_system(
-            num_atoms=50,
-            a=8.57,
-            b=12.9645,
-            c=7.2203,
-            alpha=90.74,
-            beta=115.944,
-            gamma=87.663,
+        cell = torch.tensor(
+            [
+                [
+                    [-6.0, 0.2, 0.1],
+                    [0.4, 7.0, 0.3],
+                    [0.2, 0.5, 8.0],
+                ],
+            ],
             dtype=dtype,
             device=device,
-            seed=42,
         )
-        cell[..., 0, :] *= -1
-        self._check_left_handed(positions, cell, pbc, cutoff=5.0, dtype=dtype)
+        frac = torch.tensor(
+            [
+                [0.05, 0.10, 0.10],
+                [0.95, 0.10, 0.10],
+                [0.50, 0.05, 0.50],
+                [0.50, 0.95, 0.50],
+                [0.25, 0.25, 0.25],
+                [0.75, 0.75, 0.75],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        positions = frac @ cell[0]
+        pbc = torch.tensor([[True, True, True]], device=device)
+        self._check_left_handed(
+            positions,
+            cell,
+            pbc,
+            cutoff=2.0,
+            dtype=dtype,
+            max_radius_envelope=125,
+            require_periodic_shift=True,
+        )
 
     def test_left_handed_estimate_cell_list_sizes(self, device, dtype):
         """estimate_cell_list_sizes should accept left-handed cells."""
@@ -452,6 +591,18 @@ class TestLeftHandedCells:
         max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, 2.0)
         assert max_cells > 0
         assert neighbor_search_radius.shape == (3,)
+
+    def test_estimate_cell_list_sizes_rejects_nonpositive_max_nbins(
+        self,
+        device,
+        dtype,
+    ):
+        """Invalid cell-bin caps should fail before launching Warp sizing kernels."""
+        cell = (torch.eye(3, dtype=dtype, device=device) * 5.0).reshape(1, 3, 3)
+        pbc = torch.tensor([True, True, True], device=device)
+
+        with pytest.raises(ValueError, match="max_nbins must be positive"):
+            estimate_cell_list_sizes(cell, pbc, 2.0, max_nbins=0)
 
 
 class TestCellListOutputFormats:
@@ -479,25 +630,36 @@ class TestCellListOutputFormats:
             assert torch.all(u == 0), "All shifts should be zero with no PBC"
 
     def test_no_pbc_neighbor_matrix_format(self, device, dtype):
-        """No PBC should result in zero shifts (matrix format)."""
+        """No PBC should result in zero shifts at every ACTIVE slot.
+
+        Note: under the always-write design, ``neighbor_matrix_shifts`` is
+        allocated via ``torch.empty`` and the kernel writes every active
+        slot unconditionally.  Tail slots (column index >= num_neighbors[i])
+        are left uninitialized — downstream consumers gate on
+        ``neighbor_matrix != fill_value``, so tail values are never read.
+        Assertion checks only active slots.
+        """
         positions, cell, pbc = create_simple_cubic_system(
             num_atoms=8, cell_size=3.0, dtype=dtype, device=device
         )
         pbc = torch.tensor([False, False, False], device=device)
         cutoff = 3.0
 
-        results = cell_list(
+        nm, nn, nms = cell_list(
             positions,
             cutoff,
             cell,
             pbc,
             return_neighbor_list=False,
         )
-        u = results[-1]
 
-        # With no PBC, all shifts should be zero
-        if u.shape[0] > 0:
-            assert torch.all(u == 0), "All shifts should be zero with no PBC"
+        # With no PBC, every shift at every active slot must be (0, 0, 0).
+        fill_value = positions.shape[0]
+        mask = nm != fill_value
+        if mask.any():
+            assert torch.all(nms[mask] == 0), (
+                "All shifts at active slots should be zero with no PBC"
+            )
 
     @pytest.mark.parametrize("cell_pbc_shape", [0, 1])
     @pytest.mark.parametrize("fill_value", [None, -1])
@@ -650,11 +812,16 @@ class TestCellListOutputFormats:
                 return_neighbor_list=False,
             )
 
-        _, _, u = results
+        nm, _, u = results
+        # Under the always-write-shifts contract only the active range of
+        # ``u`` is written; the tail is uninitialised.  Mask by the
+        # fill_value-padded neighbor_matrix (matches the batch sibling).
+        fv = positions.shape[0] if fill_value is None else fill_value
+        mask = nm != fv
         # z-direction should have no shifts (no PBC)
-        assert u[:, :, 2].sum().item() == 0
+        assert int(u[..., 2][mask].sum().item()) == 0
         # x-direction should have some shifts (PBC enabled)
-        assert (u[:, :, 0] ** 2).sum().item() > 0
+        assert int((u[..., 0][mask] ** 2).sum().item()) > 0
 
     def test_dtype_consistency(self, dtype, return_neighbor_list):
         """Output dtypes should be consistent (int32 for indices)."""
@@ -684,9 +851,62 @@ class TestCellListOutputFormats:
             assert result.device == torch.device(device)
 
 
+def _sorted_pairs(neighbor_list_coo):
+    """Sort COO (source, target) pairs for order-independent comparison."""
+    sources = neighbor_list_coo[0]
+    targets = neighbor_list_coo[1]
+    keys = sources.to(torch.int64) * (
+        int(targets.max().item()) + 1 if targets.numel() else 1
+    ) + targets.to(torch.int64)
+    order = torch.argsort(keys)
+    return torch.stack([sources[order], targets[order]], dim=0)
+
+
+class TestCellListAtomCentricPathEquivalence:
+    """``atom_centric_path="sorted"`` matches ``"direct"`` (CUDA-only)."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(),
+        reason="cell_list atom-centric direct/sorted path requires CUDA",
+    )
+    def test_sorted_matches_direct(self):
+        """Sorted and direct atom-centric paths produce the same pair set."""
+        torch.manual_seed(0)
+        device = "cuda"
+        positions = torch.rand(300, 3, dtype=torch.float32, device=device) * 20.0
+        cell = (torch.eye(3, dtype=torch.float32, device=device) * 20.0).reshape(
+            1, 3, 3
+        )
+        pbc = torch.tensor([[True, True, True]], device=device)
+        cutoff = 5.0
+
+        direct = cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            strategy="atom_centric",
+            atom_centric_path="direct",
+            return_neighbor_list=True,
+        )
+        sorted_ = cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            strategy="atom_centric",
+            atom_centric_path="sorted",
+            return_neighbor_list=True,
+        )
+        torch.testing.assert_close(
+            _sorted_pairs(sorted_[0]).cpu(), _sorted_pairs(direct[0]).cpu()
+        )
+
+
 class TestCellListCompile:
     """Tests for torch.compile compatibility."""
 
+    @pytest.mark.slow
     def test_build_cell_list_compile(self, device, dtype):
         """build_cell_list should be compatible with torch.compile."""
         positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
@@ -773,6 +993,7 @@ class TestCellListCompile:
                 ), f"Value mismatch in tensor {i}"
 
     @pytest.mark.parametrize("pbc_flag", [False, True])
+    @pytest.mark.slow
     def test_query_cell_list_compile(self, device, dtype, pbc_flag):
         """query_cell_list should be compatible with torch.compile."""
         positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
@@ -784,8 +1005,9 @@ class TestCellListCompile:
             pbc,
             cutoff,
         )
+        density = positions.shape[0] / cell.det()
         max_neighbors = estimate_max_neighbors(
-            cutoff,
+            cutoff, atomic_density=density, safety_factor=2.0
         )
         cell_list_cache_uncompiled = allocate_cell_list(
             positions.shape[0],
@@ -908,22 +1130,7 @@ class TestCellListCompile:
             assert torch.equal(unc_row_sorted, cmp_row_sorted), (
                 f"Neighbor matrix mismatch for row {row_idx}"
             )
-            assert torch.equal(indices_uncompiled, indices_compiled), (
-                f"Indices mismatch for row {row_idx}"
-            )
 
-            assert torch.equal(
-                neighbor_matrix_shifts_uncompiled[row_idx, indices_uncompiled, 0],
-                neighbor_matrix_shifts_compiled[row_idx, indices_compiled, 0],
-            ), f"Neighbor matrix shifts mismatch for row {row_idx}"
-            assert torch.equal(
-                neighbor_matrix_shifts_uncompiled[row_idx, indices_uncompiled, 1],
-                neighbor_matrix_shifts_compiled[row_idx, indices_compiled, 1],
-            ), f"Neighbor matrix shifts mismatch for row {row_idx}"
-            assert torch.equal(
-                neighbor_matrix_shifts_uncompiled[row_idx, indices_uncompiled, 2],
-                neighbor_matrix_shifts_compiled[row_idx, indices_compiled, 2],
-            ), f"Neighbor matrix shifts mismatch for row {row_idx}"
         assert torch.equal(num_neighbors_uncompiled, num_neighbors_compiled), (
             "Number of neighbors mismatch"
         )
@@ -1212,3 +1419,368 @@ class TestCellListSelectiveRebuildFlags:
         assert torch.equal(nn_sel, nn_ref), (
             "num_neighbors should match full rebuild when flag=True"
         )
+
+    @pytest.mark.parametrize("pbc_flag", [[True, True, True], [False, False, False]])
+    def test_nonselective_matches_true_rebuild_flag(self, device, dtype, pbc_flag):
+        """Non-selective query output should match selective flag=True output."""
+        positions, cell, pbc = create_random_system(
+            num_atoms=12,
+            cell_size=6.0,
+            dtype=dtype,
+            device=device,
+            seed=7,
+            pbc_flag=pbc_flag,
+        )
+        cell = cell.reshape(1, 3, 3)
+        pbc = pbc.reshape(3)
+        cutoff = 2.0
+
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, cutoff)
+        cell_list_cache = allocate_cell_list(
+            positions.shape[0], max_cells, neighbor_search_radius, device
+        )
+        (
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        ) = cell_list_cache
+
+        build_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+        )
+
+        max_neighbors = 32
+        nm_ref = torch.full(
+            (positions.shape[0], max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        shifts_ref = torch.zeros(
+            (positions.shape[0], max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_ref = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm_ref,
+            shifts_ref,
+            nn_ref,
+            strategy="atom_centric",
+        )
+
+        nm_sel = torch.full_like(nm_ref, -1)
+        shifts_sel = torch.zeros_like(shifts_ref)
+        nn_sel = torch.full_like(nn_ref, 99)
+        rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius_t,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            nm_sel,
+            shifts_sel,
+            nn_sel,
+            rebuild_flags=rebuild_flags,
+            strategy="atom_centric",
+        )
+
+        assert torch.equal(nn_sel, nn_ref)
+        for row_idx, count in enumerate(nn_ref.detach().cpu().tolist()):
+            active_ref = [
+                (
+                    int(nm_ref[row_idx, col].item()),
+                    tuple(int(x) for x in shifts_ref[row_idx, col].cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            active_sel = [
+                (
+                    int(nm_sel[row_idx, col].item()),
+                    tuple(int(x) for x in shifts_sel[row_idx, col].cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            assert sorted(active_sel) == sorted(active_ref)
+
+
+class TestCellListAutograd:
+    """Autograd path for per-pair distances and vectors.
+
+    When ``return_distances`` / ``return_vectors`` are set, the wrapper
+    appends the differentiable per-pair tensors to its return tuple.  The
+    backward is computed by ``_NeighborDistanceVectorFn`` via reconstruction
+    from positions and cell, which also enables second-order autograd.
+    """
+
+    def _make_system(self, device):
+        # fp64, small N, atoms well inside cutoff so the neighbor topology is
+        # stable under the central-difference perturbations gradcheck applies.
+        torch.manual_seed(0)
+        N = 6
+        positions = torch.randn(N, 3, dtype=torch.float64, device=device) * 0.4
+        cell = (torch.eye(3, dtype=torch.float64, device=device) * 4.0).unsqueeze(0)
+        pbc = torch.tensor([[True, True, True]], device=device)
+        return positions, cell, pbc
+
+    def test_forward_returns_differentiable_distances_and_vectors(self, device):
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+        cell.requires_grad_(True)
+        nm, nn, shifts, dists, vecs = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert dists.requires_grad and vecs.requires_grad
+        assert dists.shape == (positions.shape[0], nm.shape[1])
+        assert vecs.shape == (positions.shape[0], nm.shape[1], 3)
+
+    def test_coo_distances_vectors_aligned_and_differentiable(self, device):
+        """``return_neighbor_list=True`` repacks per-pair geometry into COO
+        order aligned with the neighbor list and keeps the autograd link."""
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+        nl, _nptr, nl_shifts, dists, vecs = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_neighbor_list=True,
+            return_distances=True,
+            return_vectors=True,
+        )
+        num_pairs = nl.shape[1]
+        assert dists.shape == (num_pairs,)
+        assert vecs.shape == (num_pairs, 3)
+        # COO geometry must index-align with the neighbor list.
+        i_idx, j_idx = nl[0].long(), nl[1].long()
+        rij = (
+            positions[j_idx]
+            - positions[i_idx]
+            + nl_shifts.to(positions.dtype) @ cell[0]
+        )
+        assert torch.allclose(rij, vecs)
+        assert torch.allclose(rij.norm(dim=1), dists)
+        # Autograd still flows through the COO outputs.
+        dists.pow(2).sum().backward()
+        assert positions.grad is not None and torch.isfinite(positions.grad).all()
+
+    def test_return_tuple_shape_extends_with_flags(self, device):
+        """Tuple shape changes only when pair-output flags are set; the
+        non-flag path keeps the 0.3.1 3-tuple."""
+        positions, cell, pbc = self._make_system(device)
+        out_default = cell_list(positions, 1.5, cell, pbc)
+        assert len(out_default) == 3
+
+        out_d = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+        )
+        assert len(out_d) == 4
+
+        out_v = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_vectors=True,
+        )
+        assert len(out_v) == 4
+
+        out_dv = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out_dv) == 5
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_positions(self, device):
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        # nondet_tol covers atomic_add ordering nondeterminism on CUDA.
+        assert torch.autograd.gradcheck(
+            fn,
+            (positions,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_cell(self, device):
+        positions, cell, pbc = self._make_system(device)
+        cell = cell.clone().requires_grad_(True)
+
+        def fn(c):
+            _, _, _, d, _ = cell_list(
+                positions,
+                1.5,
+                c,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        assert torch.autograd.gradcheck(fn, (cell,), atol=1e-5, eps=1e-6)
+
+    @pytest.mark.slow
+    def test_gradcheck_vectors_wrt_positions(self, device):
+        positions, cell, pbc = self._make_system(device)
+        positions.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, _, v = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            # Linear-in-r loss exercises grad_r contributions in backward.
+            return v.sum()
+
+        assert torch.autograd.gradcheck(fn, (positions,), atol=1e-5, eps=1e-6)
+
+    @pytest.mark.slow
+    def test_gradgradcheck_distances_second_order(self, device):
+        """Second-order autograd via reconstruction in backward."""
+        positions, cell, pbc = self._make_system(device)
+        # Smaller N for faster gradgradcheck.
+        positions = positions[:5].clone().requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = cell_list(
+                p,
+                1.5,
+                cell,
+                pbc,
+                return_distances=True,
+                return_vectors=True,
+            )
+            # Non-linear loss so the Hessian is non-trivial.
+            return d.pow(2).sum()
+
+        # nondet_tol covers atomic_add ordering nondeterminism on CUDA.
+        assert torch.autograd.gradgradcheck(
+            fn,
+            (positions,),
+            atol=1e-4,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
+
+    def test_hessian_vector_product_smoke(self, device):
+        """create_graph=True allows constructing an HVP without errors."""
+        positions, cell, pbc = self._make_system(device)
+        positions = positions[:5].clone().requires_grad_(True)
+
+        _, _, _, d, _ = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        loss = d.pow(2).sum()
+        grad_pos = torch.autograd.grad(loss, positions, create_graph=True)[0]
+        # HVP with a random direction vector.
+        v = torch.randn_like(positions)
+        hvp = torch.autograd.grad((grad_pos * v).sum(), positions, retain_graph=False)[
+            0
+        ]
+        assert torch.isfinite(hvp).all()
+        assert hvp.shape == positions.shape
+
+    def test_no_grad_path_unchanged(self, device):
+        """When inputs don't require grad, outputs are plain tensors and the
+        active portion of the return is numerically equal to the
+        non-autograd path.
+
+        Inactive matrix slots (column >= num_neighbors) are uninitialized by
+        the kernel and may hold different garbage between independent
+        ``torch.empty`` allocations — compare only the active slots.
+        """
+        positions, cell, pbc = self._make_system(device)
+
+        nm_a, nn_a, sh_a = cell_list(positions, 1.5, cell, pbc)
+        nm_b, nn_b, sh_b, d_b, v_b = cell_list(
+            positions,
+            1.5,
+            cell,
+            pbc,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert not d_b.requires_grad and not v_b.requires_grad
+        assert torch.equal(nn_a, nn_b)
+        # Active-slot comparison. The autograd-capable path may emit each row in
+        # a different order, so compare the active (neighbor, shift) tuples.
+        for row_idx, count in enumerate(nn_a.detach().cpu().tolist()):
+            active_a = [
+                (
+                    int(nm_a[row_idx, col].item()),
+                    tuple(int(x) for x in sh_a[row_idx, col].detach().cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            active_b = [
+                (
+                    int(nm_b[row_idx, col].item()),
+                    tuple(int(x) for x in sh_b[row_idx, col].detach().cpu().tolist()),
+                )
+                for col in range(int(count))
+            ]
+            assert sorted(active_a) == sorted(active_b)

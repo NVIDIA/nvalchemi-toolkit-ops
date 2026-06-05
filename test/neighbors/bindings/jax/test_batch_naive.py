@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
@@ -452,3 +453,239 @@ class TestBatchNaiveSelectiveRebuildFlags:
         assert jnp.all(nn2 == nn_ref), (
             "num_neighbors should match full rebuild when all flags=True"
         )
+
+
+class TestJaxBatchNaiveAutograd:
+    """Differentiable per-pair distances/vectors for batch_naive_neighbor_list."""
+
+    def _make_batch(self, n_per=6, scale=0.5, dtype=jnp.float64):
+        key = jax.random.key(0)
+        pos = jax.random.normal(key, (2 * n_per, 3), dtype=dtype) * scale
+        batch_idx = jnp.concatenate(
+            [jnp.zeros(n_per, dtype=jnp.int32), jnp.ones(n_per, dtype=jnp.int32)]
+        )
+        cell = jnp.tile(jnp.eye(3, dtype=dtype)[None] * 4.0, (2, 1, 1))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+        return pos, cell, pbc, batch_idx, n_per
+
+    def test_forward_no_pbc(self):
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, _, _, batch_idx, _ = self._make_batch()
+        out = batch_naive_neighbor_list(
+            pos,
+            1.5,
+            batch_idx=batch_idx,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out) == 4
+
+    def test_grad_positions_pbc(self):
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+
+        def loss(p):
+            *_, d, _ = batch_naive_neighbor_list(
+                p,
+                1.5,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        g = jax.grad(loss)(pos)
+        assert g.shape == pos.shape
+        assert jnp.isfinite(g).all().item()
+
+    def test_grad_cell_pbc(self):
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+
+        def loss(c):
+            *_, d, _ = batch_naive_neighbor_list(
+                pos,
+                1.5,
+                batch_idx=batch_idx,
+                cell=c,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        g = jax.grad(loss)(cell)
+        assert g.shape == cell.shape
+        assert jnp.isfinite(g).all().item()
+
+    def test_check_grads_no_pbc(self):
+        from jax.test_util import check_grads
+
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, _, _, batch_idx, _ = self._make_batch()
+
+        def loss(p):
+            *_, d, _ = batch_naive_neighbor_list(
+                p,
+                1.5,
+                batch_idx=batch_idx,
+                max_neighbors=8,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        check_grads(loss, (pos,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"])
+
+    def test_half_fill_with_pair_outputs(self):
+        """half_fill=True now combines with per-pair geometry outputs (JAX batched)."""
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+        nm, _nn, _sh, dist, vec = batch_naive_neighbor_list(
+            pos,
+            1.5,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_distances=True,
+            return_vectors=True,
+            half_fill=True,
+        )
+        active = np.asarray(nm) != pos.shape[0]
+        assert int(active.sum()) > 0
+        d = np.asarray(dist)[active]
+        v = np.asarray(vec)[active]
+        assert np.all(d <= 1.5 + 1e-4)
+        np.testing.assert_allclose(d, np.linalg.norm(v, axis=-1), atol=1e-5, rtol=1e-5)
+
+    def test_pair_outputs_reject_rebuild_flags(self):
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+        num_systems = int(np.asarray(batch_idx).max()) + 1
+        with pytest.raises(NotImplementedError, match="rebuild_flags"):
+            batch_naive_neighbor_list(
+                pos,
+                1.5,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                rebuild_flags=jnp.ones((num_systems,), dtype=jnp.bool_),
+            )
+
+    def test_hessian_vector_product_smoke(self):
+        """Second-order HVP smoke — see TestJaxNaiveAutograd for rationale."""
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+        v = jax.random.normal(jax.random.key(1), pos.shape, dtype=pos.dtype)
+
+        def loss(p):
+            *_, d, _ = batch_naive_neighbor_list(
+                p,
+                1.5,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        hvp = jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos)
+        assert jnp.isfinite(hvp).all().item()
+        assert hvp.shape == pos.shape
+
+    def test_hvp_nonlinear_loss_matches_analytic(self):
+        """Regression: nonlinear-loss HVP matches the exact analytic Hessian on the
+        batched path — exercises the per-system cell-gather reconstruction branch
+        (``cell[batch_idx[i]]``) for a loss the old detached backward got wrong."""
+        import numpy as np
+
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        from .conftest import analytic_distance_sq_hvp
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+        v = jax.random.normal(jax.random.key(1), pos.shape, dtype=pos.dtype)
+
+        def loss(p):
+            *_, d, _ = batch_naive_neighbor_list(
+                p,
+                1.5,
+                batch_idx=batch_idx,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                max_atoms_per_system=n_per,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return (d**2).sum()
+
+        hvp = np.asarray(jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos))
+        nl, *_ = batch_naive_neighbor_list(
+            pos,
+            1.5,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_neighbor_list=True,
+        )
+        hvp_true = analytic_distance_sq_hvp(nl, v, pos.shape[0])
+        assert nl.shape[1] > 0
+        assert np.allclose(hvp, hvp_true, atol=1e-9, rtol=1e-9)
+
+    def test_no_grad_path_unchanged(self):
+        from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+        pos, cell, pbc, batch_idx, n_per = self._make_batch()
+        nm_a, nn_a, sh_a = batch_naive_neighbor_list(
+            pos,
+            1.5,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+        )
+        nm_b, nn_b, sh_b, d_b, v_b = batch_naive_neighbor_list(
+            pos,
+            1.5,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            max_atoms_per_system=n_per,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert jnp.all(nn_a == nn_b)
+        for i in range(nm_a.shape[0]):
+            n = int(nn_a[i])
+            row_a = sorted(int(x) for x in nm_a[i, :n])
+            row_b = sorted(int(x) for x in nm_b[i, :n])
+            assert row_a == row_b
+        assert jnp.isfinite(d_b).all().item()
+        assert jnp.isfinite(v_b).all().item()

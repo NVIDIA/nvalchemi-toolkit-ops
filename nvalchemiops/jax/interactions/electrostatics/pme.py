@@ -53,7 +53,14 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
     _pme_energy_corrections_with_charge_grad_kernel_overload,
     _pme_green_structure_factor_kernel_overload,
 )
-from nvalchemiops.jax.interactions.electrostatics.ewald import ewald_real_space
+from nvalchemiops.jax.interactions.electrostatics._utils import (
+    _build_electrostatic_result,
+    _combine_electrostatic_outputs,
+    _prepare_cell,
+)
+from nvalchemiops.jax.interactions.electrostatics.ewald import (
+    ewald_real_space,
+)
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_pme,
 )
@@ -61,6 +68,12 @@ from nvalchemiops.jax.interactions.electrostatics.parameters import (
     estimate_pme_mesh_dimensions,
     estimate_pme_parameters,
     mesh_spacing_to_dimensions,
+)
+from nvalchemiops.jax.interactions.electrostatics.slab import (
+    _prepare_pbc_for_slab,
+)
+from nvalchemiops.jax.interactions.electrostatics.slab import (
+    compute_slab_correction as _compute_slab_correction,
 )
 from nvalchemiops.jax.spline import (
     spline_gather,
@@ -785,17 +798,15 @@ def pme_reciprocal_space(
             if compute_virial
             else None
         )
-        # Build return tuple based on flags
-        result = [energies]
-        if compute_forces:
-            result.append(forces)
-        if compute_charge_gradients:
-            result.append(charge_grads)
-        if compute_virial:
-            result.append(virial)
-        if len(result) == 1:
-            return result[0]
-        return tuple(result)
+        return _build_electrostatic_result(
+            energies,
+            forces,
+            charge_grads,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
 
     # Determine mesh dimensions
     if mesh_dimensions is None:
@@ -932,24 +943,15 @@ def pme_reciprocal_space(
         # Compute forces: F = 2 * q * E
         forces = 2.0 * interpolated_field
 
-    # Build return tuple based on flags
-    # Order: energies, [forces], [charge_grads], [virial] (virial always last)
-    if compute_forces and compute_charge_gradients and compute_virial:
-        return energies, forces, charge_grads, virial
-    elif compute_forces and compute_charge_gradients:
-        return energies, forces, charge_grads
-    elif compute_forces and compute_virial:
-        return energies, forces, virial
-    elif compute_charge_gradients and compute_virial:
-        return energies, charge_grads, virial
-    elif compute_forces:
-        return energies, forces
-    elif compute_charge_gradients:
-        return energies, charge_grads
-    elif compute_virial:
-        return energies, virial
-    else:
-        return energies
+    return _build_electrostatic_result(
+        energies,
+        forces,
+        charge_grads,
+        virial,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )
 
 
 def particle_mesh_ewald(
@@ -973,6 +975,8 @@ def particle_mesh_ewald(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     accuracy: float = 1e-6,
+    pbc: jax.Array | None = None,
+    slab_correction: bool = False,
 ) -> (
     jax.Array
     | tuple[jax.Array, jax.Array]
@@ -1040,6 +1044,13 @@ def particle_mesh_ewald(
         Stress = virial / volume.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
+    pbc : jax.Array, shape (3,) or (B, 3), dtype=bool, optional
+        Per-system periodic boundary conditions. Required when
+        ``slab_correction=True``. True marks periodic directions and False
+        marks the non-periodic slab direction.
+    slab_correction : bool, default=False
+        If True, add the Yeh-Berkowitz/Ballenegger slab correction to the
+        3D-periodic PME outputs.
 
     Returns
     -------
@@ -1093,10 +1104,12 @@ def particle_mesh_ewald(
     """
     num_atoms = positions.shape[0]
 
-    # Prepare cell
-    if cell.ndim == 2:
-        cell = cell[jnp.newaxis, :, :]
-    num_systems = cell.shape[0]
+    # Prepare cell and slab pbc
+    cell, num_systems = _prepare_cell(cell)
+    if batch_idx is not None:
+        batch_idx = batch_idx.astype(jnp.int32)
+    if slab_correction:
+        pbc = _prepare_pbc_for_slab(pbc, num_systems)
 
     # Estimate parameters if not provided
     if alpha is None:
@@ -1157,16 +1170,24 @@ def particle_mesh_ewald(
         k_squared=k_squared,
     )
 
-    # Normalize return tuples for easy combination
-    # Both rs and rec return: energies, [forces], [charge_grads], [virial]
-    # where virial is always last if present
-    rs_tuple = rs if isinstance(rs, tuple) else (rs,)
-    rec_tuple = rec if isinstance(rec, tuple) else (rec,)
+    slab = None
+    if slab_correction:
+        slab = _compute_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            compute_forces=compute_forces,
+            compute_charge_gradients=compute_charge_gradients,
+            compute_virial=compute_virial,
+        )
 
-    # The number of outputs should match between rs and rec
-    # Combine element-wise
-    results = tuple(r + s for r, s in zip(rs_tuple, rec_tuple))
-
-    if len(results) == 1:
-        return results[0]
-    return results
+    return _combine_electrostatic_outputs(
+        rs,
+        rec,
+        slab,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )

@@ -18,6 +18,12 @@ High-Level Interface
 
 .. autofunction:: nvalchemiops.jax.neighbors.neighbor_list
 
+Method Selection
+^^^^^^^^^^^^^^^^
+
+.. autofunction:: nvalchemiops.jax.neighbors.estimate_neighbor_list_costs
+.. autofunction:: nvalchemiops.jax.neighbors.suggest_neighbor_list_method
+
 Unbatched Algorithms
 --------------------
 
@@ -32,6 +38,15 @@ Cell List Algorithm
 .. autofunction:: nvalchemiops.jax.neighbors.cell_list
 .. autofunction:: nvalchemiops.jax.neighbors.cell_list.build_cell_list
 .. autofunction:: nvalchemiops.jax.neighbors.cell_list.query_cell_list
+
+Cluster Tile Algorithm
+^^^^^^^^^^^^^^^^^^^^^^
+
+.. autofunction:: nvalchemiops.jax.neighbors.cluster_tile_neighbor_list
+.. autofunction:: nvalchemiops.jax.neighbors.cluster_tile.build_cluster_tile_list
+.. autofunction:: nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile
+.. autofunction:: nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile_coo
+.. autofunction:: nvalchemiops.jax.neighbors.estimate_cluster_tile_list_sizes
 
 Dual Cutoff Algorithm
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -53,6 +68,17 @@ Batched Cell List Algorithm
 .. autofunction:: nvalchemiops.jax.neighbors.batch_cell_list.batch_build_cell_list
 .. autofunction:: nvalchemiops.jax.neighbors.batch_cell_list.batch_query_cell_list
 
+Batched Cluster Tile Algorithm
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autofunction:: nvalchemiops.jax.neighbors.batch_cluster_tile_neighbor_list
+.. autofunction:: nvalchemiops.jax.neighbors.batch_cluster_tile.batch_build_cluster_tile_list
+.. autofunction:: nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile
+.. autofunction:: nvalchemiops.jax.neighbors.batch_cluster_tile.batch_query_cluster_tile_coo
+.. autofunction:: nvalchemiops.jax.neighbors.estimate_batch_cluster_tile_list_sizes
+.. autofunction:: nvalchemiops.jax.neighbors.estimate_batch_cluster_tile_segments
+.. autofunction:: nvalchemiops.jax.neighbors.batch_cluster_tile.allocate_batch_cluster_tile_list
+
 Batched Dual Cutoff Algorithm
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -72,6 +98,7 @@ Exceptions
 ----------
 
 .. autoexception:: nvalchemiops.jax.neighbors.NeighborOverflowError
+   :no-index:
    :show-inheritance:
 
 Utility Functions

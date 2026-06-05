@@ -24,7 +24,7 @@ from __future__ import annotations
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.rebuild_detection import (
+from nvalchemiops.neighbors.rebuild import (
     check_batch_cell_list_rebuild,
     check_batch_neighbor_list_rebuild,
     check_cell_list_rebuild,

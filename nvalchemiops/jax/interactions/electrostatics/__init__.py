@@ -58,12 +58,17 @@ from nvalchemiops.jax.interactions.electrostatics.pme import (
     pme_green_structure_factor,
     pme_reciprocal_space,
 )
+from nvalchemiops.jax.interactions.electrostatics.slab import (
+    compute_slab_correction,
+)
 
 __all__ = [
     # Coulomb
     "coulomb_energy",
     "coulomb_forces",
     "coulomb_energy_forces",
+    # Slab correction
+    "compute_slab_correction",
     # Ewald
     "ewald_real_space",
     "ewald_reciprocal_space",

@@ -106,7 +106,6 @@ from nvalchemiops.torch.autograd import (
     warp_from_torch,
 )
 from nvalchemiops.torch.interactions.electrostatics._util import (
-    ElectrostaticOutputs,
     _build_electrostatic_result,
     _combine_electrostatic_outputs,
     _InjectChargeGrad,
@@ -2722,7 +2721,10 @@ def ewald_real_space(
             )
 
         return _build_electrostatic_result(
-            ElectrostaticOutputs(energies, forces, charge_grads, virial),
+            energies,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -2793,7 +2795,10 @@ def ewald_real_space(
             raise ValueError("Either neighbor_list or neighbor_matrix must be provided")
 
         return _build_electrostatic_result(
-            ElectrostaticOutputs(energies, forces, charge_grads, virial),
+            energies,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -2816,8 +2821,12 @@ def ewald_real_space(
                     neighbor_shifts,
                     compute_virial=compute_virial,
                 )
+                charge_grads = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies, forces, virial=virial),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -2833,8 +2842,14 @@ def ewald_real_space(
                     neighbor_ptr,
                     neighbor_shifts,
                 )
+                forces = None
+                charge_grads = None
+                virial = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -2851,8 +2866,12 @@ def ewald_real_space(
                     neighbor_shifts,
                     compute_virial=compute_virial,
                 )
+                charge_grads = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies, forces, virial=virial),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -2867,8 +2886,14 @@ def ewald_real_space(
                     neighbor_ptr,
                     neighbor_shifts,
                 )
+                forces = None
+                charge_grads = None
+                virial = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -2887,8 +2912,12 @@ def ewald_real_space(
                     mask_value,
                     compute_virial=compute_virial,
                 )
+                charge_grads = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies, forces, virial=virial),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -2904,8 +2933,14 @@ def ewald_real_space(
                     neighbor_matrix_shifts,
                     mask_value,
                 )
+                forces = None
+                charge_grads = None
+                virial = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -2922,8 +2957,12 @@ def ewald_real_space(
                     mask_value,
                     compute_virial=compute_virial,
                 )
+                charge_grads = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies, forces, virial=virial),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -2938,8 +2977,14 @@ def ewald_real_space(
                     neighbor_matrix_shifts,
                     mask_value,
                 )
+                forces = None
+                charge_grads = None
+                virial = None
                 return _build_electrostatic_result(
-                    ElectrostaticOutputs(energies),
+                    energies,
+                    forces,
+                    charge_grads,
+                    virial,
                     compute_forces,
                     compute_charge_gradients,
                     compute_virial,
@@ -3052,7 +3097,10 @@ def ewald_reciprocal_space(
             )
 
         return _build_electrostatic_result(
-            ElectrostaticOutputs(energies, forces, charge_grads, virial),
+            energies,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -3084,7 +3132,10 @@ def ewald_reciprocal_space(
             )
 
         return _build_electrostatic_result(
-            ElectrostaticOutputs(energies, forces, charge_grads, virial),
+            energies,
+            forces,
+            charge_grads,
+            virial,
             compute_forces,
             compute_charge_gradients,
             compute_virial,
@@ -3102,8 +3153,12 @@ def ewald_reciprocal_space(
                 batch_idx,
                 compute_virial=compute_virial,
             )
+            charge_grads = None
             return _build_electrostatic_result(
-                ElectrostaticOutputs(energies, forces, virial=virial),
+                energies,
+                forces,
+                charge_grads,
+                virial,
                 compute_forces,
                 compute_charge_gradients,
                 compute_virial,
@@ -3118,8 +3173,13 @@ def ewald_reciprocal_space(
                 batch_idx,
                 compute_virial=compute_virial,
             )
+            forces = None
+            charge_grads = None
             return _build_electrostatic_result(
-                ElectrostaticOutputs(energies, virial=virial),
+                energies,
+                forces,
+                charge_grads,
+                virial,
                 compute_forces,
                 compute_charge_gradients,
                 compute_virial,
@@ -3134,8 +3194,12 @@ def ewald_reciprocal_space(
                 alpha,
                 compute_virial=compute_virial,
             )
+            charge_grads = None
             return _build_electrostatic_result(
-                ElectrostaticOutputs(energies, forces, virial=virial),
+                energies,
+                forces,
+                charge_grads,
+                virial,
                 compute_forces,
                 compute_charge_gradients,
                 compute_virial,
@@ -3149,8 +3213,13 @@ def ewald_reciprocal_space(
                 alpha,
                 compute_virial=compute_virial,
             )
+            forces = None
+            charge_grads = None
             return _build_electrostatic_result(
-                ElectrostaticOutputs(energies, virial=virial),
+                energies,
+                forces,
+                charge_grads,
+                virial,
                 compute_forces,
                 compute_charge_gradients,
                 compute_virial,
@@ -3362,26 +3431,25 @@ def ewald_summation(
                 compute_charge_gradients=True,
                 compute_virial=compute_virial,
             )
-            slab = _unpack_electrostatic_outputs(
-                slab_out,
-                compute_forces,
-                compute_charge_gradients=True,
-                compute_virial=compute_virial,
+            slab_energies, slab_forces, slab_charge_grads, slab_virial = (
+                _unpack_electrostatic_outputs(
+                    slab_out,
+                    compute_forces,
+                    compute_charge_gradients=True,
+                    compute_virial=compute_virial,
+                )
             )
-            slab_energies = slab.energies
 
             if charges.requires_grad:
                 slab_energies = _InjectChargeGrad.apply(
-                    slab_energies, charges, slab.charge_grads, batch_idx
+                    slab_energies, charges, slab_charge_grads, batch_idx
                 )
 
             slab_result = _build_electrostatic_result(
-                ElectrostaticOutputs(
-                    slab_energies,
-                    slab.forces,
-                    slab.charge_grads,
-                    slab.virial,
-                ),
+                slab_energies,
+                slab_forces,
+                slab_charge_grads,
+                slab_virial,
                 compute_forces,
                 compute_charge_gradients,
                 compute_virial,

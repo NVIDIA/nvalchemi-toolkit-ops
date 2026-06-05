@@ -20,12 +20,12 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.naive_dual_cutoff import (
-    _fill_naive_neighbor_matrix_dual_cutoff,
-    _fill_naive_neighbor_matrix_pbc_dual_cutoff,
+from nvalchemiops.neighbors.naive import (
+    get_naive_neighbor_matrix_dual_cutoff_kernel,
     naive_neighbor_matrix_dual_cutoff,
     naive_neighbor_matrix_pbc_dual_cutoff,
 )
+from nvalchemiops.neighbors.naive.launchers import _scalar_sentinels
 from nvalchemiops.neighbors.neighbor_utils import (
     compute_inv_cells,
     wrap_positions_single,
@@ -34,6 +34,25 @@ from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 from .test_utils import create_simple_cubic_system
+
+_FILL_NAIVE_DUAL = {
+    half_fill: {
+        t: get_naive_neighbor_matrix_dual_cutoff_kernel(
+            t, pbc_mode="none", batched=False, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
+}
+_FILL_NAIVE_PBC_DUAL_WRAP = {
+    half_fill: {
+        t: get_naive_neighbor_matrix_dual_cutoff_kernel(
+            t, pbc_mode="wrap_on_entry", batched=False, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
+}
 
 
 class TestNaiveDualCutoffKernels:
@@ -85,21 +104,53 @@ class TestNaiveDualCutoffKernels:
         wp_neighbor_matrix2 = wp.from_torch(neighbor_matrix2, dtype=wp.int32)
         wp_num_neighbors1 = wp.from_torch(num_neighbors1, dtype=wp.int32)
         wp_num_neighbors2 = wp.from_torch(num_neighbors2, dtype=wp.int32)
+        (
+            empty_offsets,
+            empty_cell,
+            empty_shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            empty_target_indices,
+            _empty_matrix,
+            empty_shifts,
+            _empty_num_neighbors,
+            empty_vectors,
+            empty_distances,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            empty_rebuild_flags,
+        ) = _scalar_sentinels(wp_dtype, wp_device)
 
         # Launch kernel
         wp.launch(
-            _fill_naive_neighbor_matrix_dual_cutoff,
-            dim=positions.shape[0],
+            _FILL_NAIVE_DUAL[half_fill][wp_dtype],
+            dim=(1, 1, positions.shape[0]),
             device=wp_device,
             inputs=[
                 wp_positions,
+                empty_offsets,
                 wp_dtype(cutoff1 * cutoff1),
                 wp_dtype(cutoff2 * cutoff2),
+                empty_cell,
+                empty_shift_range,
+                empty_num_shifts,
+                empty_batch_idx,
+                empty_batch_ptr,
+                empty_target_indices,
                 wp_neighbor_matrix1,
+                empty_shifts,
                 wp_num_neighbors1,
                 wp_neighbor_matrix2,
+                empty_shifts,
                 wp_num_neighbors2,
-                half_fill,
+                empty_vectors,
+                empty_distances,
+                empty_pair_params,
+                empty_energies,
+                empty_forces,
+                empty_rebuild_flags,
             ],
         )
 
@@ -220,11 +271,29 @@ class TestNaiveDualCutoffKernels:
         )
         wp_num_neighbors1 = wp.from_torch(num_neighbors1, dtype=wp.int32)
         wp_num_neighbors2 = wp.from_torch(num_neighbors2, dtype=wp.int32)
+        (
+            _empty_offsets,
+            _empty_cell,
+            _empty_shift_range,
+            empty_num_shifts,
+            empty_batch_idx,
+            empty_batch_ptr,
+            empty_target_indices,
+            _empty_matrix,
+            _empty_shifts,
+            _empty_num_neighbors,
+            empty_vectors,
+            empty_distances,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            empty_rebuild_flags,
+        ) = _scalar_sentinels(wp_dtype, wp_device)
 
         # Launch kernel
         wp.launch(
-            _fill_naive_neighbor_matrix_pbc_dual_cutoff,
-            dim=(max_shifts, positions.shape[0]),
+            _FILL_NAIVE_PBC_DUAL_WRAP[True][wp_dtype],
+            dim=(1, max_shifts, positions.shape[0]),
             device=wp_device,
             inputs=[
                 wp_positions_wrapped,
@@ -233,13 +302,22 @@ class TestNaiveDualCutoffKernels:
                 wp_dtype(cutoff2 * cutoff2),
                 wp_cell,
                 wp_shift_range,
+                empty_num_shifts,
+                empty_batch_idx,
+                empty_batch_ptr,
+                empty_target_indices,
                 wp_neighbor_matrix1,
-                wp_neighbor_matrix2,
                 wp_neighbor_matrix_shifts1,
-                wp_neighbor_matrix_shifts2,
                 wp_num_neighbors1,
+                wp_neighbor_matrix2,
+                wp_neighbor_matrix_shifts2,
                 wp_num_neighbors2,
-                True,  # half_fill
+                empty_vectors,
+                empty_distances,
+                empty_pair_params,
+                empty_energies,
+                empty_forces,
+                empty_rebuild_flags,
             ],
         )
 

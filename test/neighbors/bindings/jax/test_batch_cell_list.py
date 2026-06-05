@@ -161,16 +161,8 @@ class TestBatchCellListEdgeCases:
 class TestBatchCellListJIT:
     """Smoke tests for batch_cell_list compatibility with jax.jit."""
 
-    @pytest.mark.xfail(
-        reason="estimate_batch_cell_list_sizes derives array shapes from traced input "
-        "data (cell geometry), which is incompatible with jax.jit. Provide "
-        "max_total_cells explicitly to bypass. See TODO in "
-        "estimate_batch_cell_list_sizes.",
-        raises=TypeError,
-        strict=True,
-    )
-    def test_jit_with_pbc(self):
-        """Test batched cell list with PBC works with jax.jit."""
+    def test_jit_with_pbc_requires_precomputed_sizing(self):
+        """The traced sizing path should fail before allocating JAX buffers."""
         positions = jnp.vstack(
             [
                 jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32),
@@ -196,6 +188,42 @@ class TestBatchCellListJIT:
                 pbc=pbcs,
                 batch_idx=batch_idx,
                 batch_ptr=batch_ptr,
+            )
+
+        with pytest.raises(
+            jax.errors.TracerBoolConversionError,
+            match="Attempted boolean conversion",
+        ):
+            jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr)
+
+    def test_jit_with_pbc_precomputed_sizing(self):
+        """Batched PBC cell list should work under JIT with concrete sizing."""
+        positions = jnp.vstack(
+            [
+                jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32),
+                jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32),
+            ]
+        )
+        cells = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ]
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
+            return batch_cell_list(
+                positions,
+                cutoff=2.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_total_cells=16,
             )
 
         nm, nn, shifts = jitted_batch_cell_list(
@@ -607,3 +635,213 @@ class TestBatchCellListSelectiveRebuildFlags:
         assert jnp.all(nn2 == nn_ref), (
             "num_neighbors should match full rebuild when all flags=True"
         )
+
+
+class TestJaxBatchCellListAutograd:
+    """Differentiable per-pair distances/vectors via ``return_distances`` /
+    ``return_vectors`` flags.  Exercises the autograd primitive in
+    :mod:`nvalchemiops.jax.neighbors._autograd`.
+    """
+
+    def _make_two_systems(self, dtype=jnp.float64, n_per=6, box=5.0, scale=0.6):
+        key = jax.random.key(0)
+        pos = jax.random.normal(key, (2 * n_per, 3), dtype=dtype) * scale
+        batch_idx = jnp.concatenate(
+            [jnp.zeros(n_per, dtype=jnp.int32), jnp.ones(n_per, dtype=jnp.int32)]
+        )
+        cell = jnp.tile(jnp.eye(3, dtype=dtype)[None] * box, (2, 1, 1))
+        pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+        return pos, cell, pbc, batch_idx
+
+    def test_forward_returns_distances_and_vectors(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+        out = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out) == 5  # nm, nn, shifts, d, v
+        nm, nn, shifts, d, v = out
+        assert d.shape == (pos.shape[0], nm.shape[1])
+        assert v.shape == (pos.shape[0], nm.shape[1], 3)
+        assert d.dtype == pos.dtype
+        assert v.dtype == pos.dtype
+
+    def test_return_tuple_shape_extends_with_flags(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+        base = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+        )
+        assert len(base) == 3
+        plus_d = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_distances=True,
+        )
+        assert len(plus_d) == 4
+        plus_v = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_vectors=True,
+        )
+        assert len(plus_v) == 4
+        plus_both = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(plus_both) == 5
+
+    def test_grad_positions_finite(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+
+        def loss(p):
+            *_, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        g = jax.grad(loss)(pos)
+        assert g.shape == pos.shape
+        assert jnp.isfinite(g).all().item()
+
+    def test_grad_cell_finite(self):
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+
+        def loss(c):
+            *_, d, _ = batch_cell_list(
+                pos,
+                1.5,
+                cell=c,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        g = jax.grad(loss)(cell)
+        assert g.shape == cell.shape
+        assert jnp.isfinite(g).all().item()
+
+    def test_check_grads_against_finite_differences(self):
+        from jax.test_util import check_grads
+
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+
+        def loss(p):
+            *_, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        check_grads(loss, (pos,), order=1, atol=1e-4, rtol=1e-4, modes=["rev"])
+
+    def test_hessian_vector_product_smoke(self):
+        """Second-order HVP smoke — see TestJaxNaiveAutograd."""
+        pos, cell, pbc, batch_idx = self._make_two_systems()
+        v = jax.random.normal(jax.random.key(1), pos.shape, dtype=pos.dtype)
+
+        def loss(p):
+            *_, d, _ = batch_cell_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                batch_idx=batch_idx,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        hvp = jax.grad(lambda p: jnp.vdot(jax.grad(loss)(p), v))(pos)
+        assert jnp.isfinite(hvp).all().item()
+        assert hvp.shape == pos.shape
+
+    def test_target_indices_partial_matches_full_restricted(self):
+        """``target_indices`` (partial neighbor lists) is wired (task 5).
+
+        The compact output has ``num_targets`` rows (row ``r`` -> atom
+        ``target_indices[r]``); each row's neighbor set must equal the full
+        matrix restricted to that atom.  Targets span both systems, exercising
+        the per-target ``batch_idx`` lookup.  COO source index ``nl[0]`` is the
+        compact row in ``[0, num_targets)`` (matches the torch contract)."""
+        pos, cell, pbc, batch_idx = self._make_two_systems(n_per=6)
+        n = pos.shape[0]
+        # Targets in both systems (0..5 -> system 0, 6..11 -> system 1).
+        targets = jnp.array([0, 2, 7, 9], dtype=jnp.int32)
+        nt = int(targets.shape[0])
+        mn = 24
+
+        pnm, pnn, _ = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            max_neighbors=mn,
+            target_indices=targets,
+            fill_value=n,
+        )
+        assert pnm.shape == (nt, mn) and pnn.shape == (nt,)
+
+        fnm, fnn, _ = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            max_neighbors=mn,
+            fill_value=n,
+        )
+        pnm, pnn, fnm, fnn, tg = (np.asarray(x) for x in (pnm, pnn, fnm, fnn, targets))
+
+        def row_set(nm, count):
+            return {int(nm[k]) for k in range(int(count))}
+
+        for r in range(nt):
+            assert row_set(pnm[r], pnn[r]) == row_set(fnm[int(tg[r])], fnn[int(tg[r])])
+
+        nl, _nptr, _nls = batch_cell_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            max_neighbors=mn,
+            target_indices=targets,
+            return_neighbor_list=True,
+        )
+        nl = np.asarray(nl)
+        if nl.shape[1] > 0:
+            assert int(nl[0].max()) < nt

@@ -28,8 +28,6 @@ import math
 
 import jax
 import jax.numpy as jnp
-import warp as wp
-from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
@@ -58,11 +56,24 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     _ewald_reciprocal_space_virial_kernel_overload,
     _ewald_subtract_self_energy_kernel_overload,
 )
+from nvalchemiops.jax.interactions.electrostatics._utils import (
+    _build_electrostatic_result,
+    _combine_electrostatic_outputs,
+    _make_jax_kernels,
+    _normalize_dtype,
+    _prepare_cell,
+)
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
 from nvalchemiops.jax.interactions.electrostatics.parameters import (
     estimate_ewald_parameters,
+)
+from nvalchemiops.jax.interactions.electrostatics.slab import (
+    _prepare_pbc_for_slab,
+)
+from nvalchemiops.jax.interactions.electrostatics.slab import (
+    compute_slab_correction as _compute_slab_correction,
 )
 
 __all__ = [
@@ -72,72 +83,6 @@ __all__ = [
 ]
 
 PI = math.pi
-
-# ==============================================================================
-# Helper for Creating JAX Kernel Dictionaries
-# ==============================================================================
-
-# Dtype normalization for kernel lookup
-_DTYPE_MAP = {
-    jnp.float32: jnp.float32,
-    jnp.float64: jnp.float64,
-}
-
-
-def _normalize_dtype(dtype):
-    """Normalize dtype for kernel dictionary lookup.
-
-    Parameters
-    ----------
-    dtype : dtype-like
-        Input dtype from a JAX array.
-
-    Returns
-    -------
-    jnp.float32 or jnp.float64
-        Normalized JAX dtype for kernel lookup.
-    """
-    # Convert to JAX dtype if needed
-    if dtype == jnp.float32 or str(dtype) == "float32":
-        return jnp.float32
-    elif dtype == jnp.float64 or str(dtype) == "float64":
-        return jnp.float64
-    else:
-        raise ValueError(f"Unsupported dtype: {dtype}")
-
-
-def _make_jax_kernels(
-    wp_overload_dict: dict,
-    num_outputs: int,
-    in_out_argnames: list[str],
-) -> dict:
-    """Maps a ``jax`` data type to ``warp``.
-
-    Parameters
-    ----------
-    wp_overload_dict : dict
-        Warp kernel overload dictionary keyed by wp.float32/wp.float64.
-    num_outputs : int
-        Number of output arrays returned by the kernel.
-    in_out_argnames : list of str
-        Names of in-place output arguments.
-
-    Returns
-    -------
-    dict
-        Dictionary mapping jnp.float32/jnp.float64 to jax_kernel instances.
-    """
-    _JAX_TO_WP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
-    return {
-        jax_dtype: jax_kernel(
-            wp_overload_dict[wp_dtype],
-            num_outputs=num_outputs,
-            in_out_argnames=in_out_argnames,
-            enable_backward=False,
-        )
-        for jax_dtype, wp_dtype in _JAX_TO_WP.items()
-    }
-
 
 # ==============================================================================
 # JAX Kernel Wrappers - Real Space
@@ -306,7 +251,6 @@ _jax_batch_ewald_reciprocal_virial = _make_jax_kernels(
     1,
     ["virial"],
 )
-
 
 # ==============================================================================
 # Helper Functions
@@ -746,18 +690,6 @@ def ewald_real_space(
                     launch_dims=(num_atoms,),
                 )
 
-    # Return results (energies and charge_grads are float64, forces match input dtype)
-    # Virial is always last in the return tuple when requested
-    def _build_result():
-        result = [energies]
-        if compute_forces and forces is not None:
-            result.append(forces)
-        if compute_charge_gradients and charge_grads is not None:
-            result.append(charge_grads)
-        if compute_virial and virial is not None:
-            result.append(virial)
-        return tuple(result) if len(result) > 1 else result[0]
-
     # Initialize optional variables to None if not computed
     if not (compute_forces or compute_virial or compute_charge_gradients):
         forces = None
@@ -768,7 +700,15 @@ def ewald_real_space(
     if not compute_virial:
         virial = None
 
-    return _build_result()
+    return _build_electrostatic_result(
+        energies,
+        forces,
+        charge_grads,
+        virial,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )
 
 
 def ewald_reciprocal_space(
@@ -1118,18 +1058,6 @@ def ewald_reciprocal_space(
 
         charge_grads = charge_grads - self_energy_grad - background_grad
 
-    # Return results (energies and charge_grads are float64, forces match input dtype)
-    # Virial is always last in the return tuple when requested
-    def _build_result():
-        result = [energies]
-        if compute_forces and forces is not None:
-            result.append(forces)
-        if compute_charge_gradients and charge_grads is not None:
-            result.append(charge_grads)
-        if compute_virial and virial is not None:
-            result.append(virial)
-        return tuple(result) if len(result) > 1 else result[0]
-
     # Initialize optional variables to None if not computed
     if not (compute_forces or compute_charge_gradients):
         forces = None
@@ -1137,7 +1065,15 @@ def ewald_reciprocal_space(
     elif not compute_charge_gradients:
         charge_grads = None
 
-    return _build_result()
+    return _build_electrostatic_result(
+        energies,
+        forces,
+        charge_grads,
+        virial,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )
 
 
 def ewald_summation(
@@ -1157,8 +1093,11 @@ def ewald_summation(
     neighbor_matrix_shifts: jax.Array | None = None,
     mask_value: int | None = None,
     compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     accuracy: float = 1e-6,
+    pbc: jax.Array | None = None,
+    slab_correction: bool = False,
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute complete Ewald summation (real + reciprocal space).
 
@@ -1206,10 +1145,19 @@ def ewald_summation(
         Value indicating invalid entries in neighbor_matrix.
     compute_forces : bool, default=False
         Whether to compute forces.
+    compute_charge_gradients : bool, default=False
+        Whether to compute charge gradients dE/dq_i.
     compute_virial : bool, default=False
         Whether to compute the virial tensor.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
+    pbc : jax.Array, shape (3,) or (B, 3), dtype=bool, optional
+        Per-system periodic boundary conditions. Required when
+        ``slab_correction=True``. True marks periodic directions and False
+        marks the non-periodic slab direction.
+    slab_correction : bool, default=False
+        If True, add the Yeh-Berkowitz/Ballenegger slab correction to the
+        3D-periodic Ewald outputs.
 
     Returns
     -------
@@ -1217,6 +1165,8 @@ def ewald_summation(
         Per-atom total Ewald energy.
     forces : jax.Array, shape (N, 3), optional
         Forces (if compute_forces=True).
+    charge_gradients : jax.Array, shape (N,), optional
+        Charge gradients (if compute_charge_gradients=True).
     virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor (if compute_virial=True). Always last in the return tuple.
 
@@ -1230,14 +1180,17 @@ def ewald_summation(
     ...     compute_forces=True,
     ... )
     """
+    cell, num_systems = _prepare_cell(cell)
+    if batch_idx is not None:
+        batch_idx = batch_idx.astype(jnp.int32)
+    if slab_correction:
+        pbc = _prepare_pbc_for_slab(pbc, num_systems)
+
     # Auto-estimate alpha and k_cutoff if not provided
     if alpha is None or k_cutoff is None:
-        # Ensure cell is (B, 3, 3) for parameter estimation
-        cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
-
         params = estimate_ewald_parameters(
             positions=positions,
-            cell=cell_3d,
+            cell=cell,
             batch_idx=batch_idx,
             accuracy=accuracy,
         )
@@ -1249,15 +1202,12 @@ def ewald_summation(
 
     # Generate k_vectors if not provided
     if k_vectors is None:
-        # Ensure cell is (B, 3, 3)
-        cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
-
         # Ensure k_cutoff is defined
         if k_cutoff is None:
             raise ValueError("k_cutoff must be provided if k_vectors is None")
 
         k_vectors = generate_k_vectors_ewald_summation(
-            cell=cell_3d,
+            cell=cell,
             k_cutoff=k_cutoff,
             miller_bounds=miller_bounds,
         )
@@ -1276,7 +1226,7 @@ def ewald_summation(
         mask_value=mask_value,
         batch_idx=batch_idx,
         compute_forces=compute_forces,
-        compute_charge_gradients=False,
+        compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
     )
 
@@ -1290,34 +1240,28 @@ def ewald_summation(
         batch_idx=batch_idx,
         max_atoms_per_system=max_atoms_per_system,
         compute_forces=compute_forces,
-        compute_charge_gradients=False,
+        compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
     )
 
-    # Sum contributions
-    # Both real_result and recip_result have matching tuple structure based on flags
-    # The order is: (energies, [forces], [virial]) - virial always last when present
-    if compute_forces and compute_virial:
-        real_energies, real_forces, real_virial = real_result  # type: ignore[misc]
-        recip_energies, recip_forces, recip_virial = recip_result  # type: ignore[misc]
-        total_energies = real_energies + recip_energies
-        total_forces = real_forces + recip_forces
-        total_virial = real_virial + recip_virial
-        return total_energies, total_forces, total_virial
-    elif compute_forces:
-        real_energies, real_forces = real_result  # type: ignore[misc]
-        recip_energies, recip_forces = recip_result  # type: ignore[misc]
-        total_energies = real_energies + recip_energies
-        total_forces = real_forces + recip_forces
-        return total_energies, total_forces
-    elif compute_virial:
-        real_energies, real_virial = real_result  # type: ignore[misc]
-        recip_energies, recip_virial = recip_result  # type: ignore[misc]
-        total_energies = real_energies + recip_energies
-        total_virial = real_virial + recip_virial
-        return total_energies, total_virial
-    else:
-        real_energies = real_result  # type: ignore[assignment]
-        recip_energies = recip_result  # type: ignore[assignment]
-        total_energies = real_energies + recip_energies
-        return total_energies
+    slab_result = None
+    if slab_correction:
+        slab_result = _compute_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            compute_forces=compute_forces,
+            compute_charge_gradients=compute_charge_gradients,
+            compute_virial=compute_virial,
+        )
+
+    return _combine_electrostatic_outputs(
+        real_result,
+        recip_result,
+        slab_result,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
+    )

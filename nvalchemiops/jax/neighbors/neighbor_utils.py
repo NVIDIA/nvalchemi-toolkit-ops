@@ -29,8 +29,8 @@ from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
-    _compute_naive_num_shifts_overload,
     estimate_max_neighbors,
+    get_compute_naive_num_shifts_kernel,
 )
 
 __all__ = [
@@ -41,6 +41,58 @@ __all__ = [
     "estimate_max_neighbors",
     "NeighborOverflowError",
 ]
+
+
+def build_naive_kernel_tables(
+    operation: Literal["single_cutoff", "dual_cutoff"],
+    *,
+    batched: bool,
+    dtypes: tuple[type, ...],
+    half_fill: bool = False,
+) -> tuple[dict, dict, dict, dict, dict, dict]:
+    """Build the six naive Warp kernel tables the JAX wrappers need.
+
+    Returns per-dtype kernel tables for, in order:
+
+    1. no-PBC,
+    2. no-PBC selective-rebuild,
+    3. wrap-on-entry PBC,
+    4. wrap-on-entry PBC selective-rebuild,
+    5. prewrapped PBC,
+    6. prewrapped PBC selective-rebuild.
+    """
+    from nvalchemiops.neighbors.naive import (
+        get_naive_neighbor_matrix_dual_cutoff_kernel,
+        get_naive_neighbor_matrix_kernel,
+    )
+
+    if operation == "single_cutoff":
+        getter = get_naive_neighbor_matrix_kernel
+    elif operation == "dual_cutoff":
+        getter = get_naive_neighbor_matrix_dual_cutoff_kernel
+    else:
+        raise ValueError("operation must be 'single_cutoff' or 'dual_cutoff'")
+
+    def _table(pbc_mode: str, selective: bool) -> dict:
+        return {
+            t: getter(
+                t,
+                pbc_mode=pbc_mode,
+                batched=batched,
+                half_fill=bool(half_fill),
+                selective=selective,
+            )
+            for t in dtypes
+        }
+
+    return (
+        _table("none", False),
+        _table("none", True),
+        _table("wrap_on_entry", False),
+        _table("wrap_on_entry", True),
+        _table("prewrapped", False),
+        _table("prewrapped", True),
+    )
 
 
 def _validate_graph_mode(graph_mode: str) -> Literal["none", "warp"]:
@@ -70,17 +122,17 @@ def _validate_graph_mode(graph_mode: str) -> Literal["none", "warp"]:
 # JAX Kernel Wrappers
 # ==============================================================================
 
-# Wrap the original kernel overloads with jax_kernel
+# Wrap the original kernels with jax_kernel
 # jax_kernel handles the bool-to-int conversion internally
 _jax_compute_naive_num_shifts_f32 = jax_kernel(
-    _compute_naive_num_shifts_overload[wp.float32],
+    get_compute_naive_num_shifts_kernel(wp.float32),
     num_outputs=2,
     in_out_argnames=["num_shifts", "shift_range"],
     enable_backward=False,
 )
 
 _jax_compute_naive_num_shifts_f64 = jax_kernel(
-    _compute_naive_num_shifts_overload[wp.float64],
+    get_compute_naive_num_shifts_kernel(wp.float64),
     num_outputs=2,
     in_out_argnames=["num_shifts", "shift_range"],
     enable_backward=False,
@@ -127,7 +179,7 @@ def compute_naive_num_shifts(
 
     See Also
     --------
-    nvalchemiops.neighbors.neighbor_utils._compute_naive_num_shifts : Warp kernel
+    nvalchemiops.neighbors.neighbor_utils.get_compute_naive_num_shifts_kernel : Warp kernel factory
 
     Notes
     -----
@@ -272,6 +324,42 @@ def get_neighbor_list_from_neighbor_matrix(
         return neighbor_list, neighbor_ptr, neighbor_list_shifts
     else:
         return neighbor_list, neighbor_ptr
+
+
+def coo_pack_pair_geometry(
+    active_mask: jax.Array,
+    distances: jax.Array | None = None,
+    vectors: jax.Array | None = None,
+) -> tuple[jax.Array | None, jax.Array | None]:
+    """Repack matrix-layout per-pair geometry into COO order.
+
+    ``active_mask`` is ``neighbor_matrix != fill_value``.  Flattening it in
+    row-major order yields the active-slot indices in the same order
+    :func:`get_neighbor_list_from_neighbor_matrix` uses, so the gathered
+    distances ``(num_pairs,)`` and vectors ``(num_pairs, 3)`` index-align with
+    the returned neighbor list.  Eager-only, like the index conversion (the
+    pair count is data-dependent).
+
+    Parameters
+    ----------
+    active_mask : jax.Array, shape (total_atoms, max_neighbors), dtype=bool
+        Mask of active neighbor-matrix slots.
+    distances : jax.Array | None, shape (total_atoms, max_neighbors)
+        Per-pair distances in matrix layout, or ``None``.
+    vectors : jax.Array | None, shape (total_atoms, max_neighbors, 3)
+        Per-pair displacement vectors in matrix layout, or ``None``.
+
+    Returns
+    -------
+    tuple of (jax.Array | None, jax.Array | None)
+        ``(distances, vectors)`` in COO layout, each unchanged if ``None``.
+    """
+    flat_active = jnp.nonzero(active_mask.reshape(-1))[0]
+    if distances is not None:
+        distances = jnp.take(distances.reshape(-1), flat_active, axis=0)
+    if vectors is not None:
+        vectors = jnp.take(vectors.reshape(-1, vectors.shape[-1]), flat_active, axis=0)
+    return distances, vectors
 
 
 def prepare_batch_idx_ptr(

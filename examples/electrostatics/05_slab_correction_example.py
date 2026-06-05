@@ -111,13 +111,8 @@ print(f"  Total charge: {charges.sum().item():.1f}")
 # %%
 # Build the Real-Space Neighbor List
 # ----------------------------------
-# The slab correction modifies the long-range Ewald result after computing a
-# standard 3D Ewald sum in a cell with vacuum padding. The neighbor list controls
-# the real-space periodic images used by that 3D Ewald calculation.
-#
-# For this demonstration we use full 3D periodicity for the neighbor list and a
-# cutoff smaller than the vacuum gap, so no short-range neighbors cross the slab
-# normal.
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 
 alpha = 0.3
 real_space_cutoff = 5.0
@@ -125,12 +120,11 @@ k_cutoff = 2.5
 mesh_dimensions = (16, 16, 16)
 alpha_tensor = torch.tensor([alpha], dtype=torch.float64, device=device)
 
-pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
 neighbor_list, neighbor_ptr, neighbor_shifts = neighbor_list_fn(
     positions,
     real_space_cutoff,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 

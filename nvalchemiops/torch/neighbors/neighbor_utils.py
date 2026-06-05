@@ -38,6 +38,8 @@ __all__ = [
     "prepare_batch_idx_ptr",
     "allocate_cell_list",
     "estimate_max_neighbors",
+    "synthesize_cell_for_batch",
+    "synthesize_cell_for_ss",
     "NeighborOverflowError",
 ]
 
@@ -214,6 +216,42 @@ def get_neighbor_list_from_neighbor_matrix(
         return neighbor_list, neighbor_ptr
 
 
+def coo_pack_pair_geometry(
+    active_mask: torch.Tensor,
+    distances: torch.Tensor | None = None,
+    vectors: torch.Tensor | None = None,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Repack matrix-layout per-pair geometry into COO order.
+
+    ``active_mask`` is ``neighbor_matrix != fill_value``.  Flattening it in
+    row-major order yields the active-slot indices in the same order
+    :func:`get_neighbor_list_from_neighbor_matrix` uses, so the gathered
+    distances ``(num_pairs,)`` and vectors ``(num_pairs, 3)`` index-align with
+    the returned neighbor list.  ``index_select`` keeps the autograd link.
+
+    Parameters
+    ----------
+    active_mask : torch.Tensor, shape (total_atoms, max_neighbors), dtype=bool
+        Mask of active neighbor-matrix slots.
+    distances : torch.Tensor | None, shape (total_atoms, max_neighbors)
+        Per-pair distances in matrix layout, or ``None``.
+    vectors : torch.Tensor | None, shape (total_atoms, max_neighbors, 3)
+        Per-pair displacement vectors in matrix layout, or ``None``.
+
+    Returns
+    -------
+    tuple of (torch.Tensor | None, torch.Tensor | None)
+        ``(distances, vectors)`` in COO layout, each unchanged if it was
+        ``None``.
+    """
+    flat_active = active_mask.reshape(-1).nonzero(as_tuple=True)[0]
+    if distances is not None:
+        distances = distances.reshape(-1).index_select(0, flat_active)
+    if vectors is not None:
+        vectors = vectors.reshape(-1, vectors.shape[-1]).index_select(0, flat_active)
+    return distances, vectors
+
+
 @torch.compile
 def prepare_batch_idx_ptr(
     batch_idx: torch.Tensor | None,
@@ -292,6 +330,129 @@ def prepare_batch_idx_ptr(
         torch.cumsum(num_atoms_per_system, dim=0, out=batch_ptr[1:])
 
     return batch_idx, batch_ptr
+
+
+def synthesize_cell_for_ss(
+    positions: torch.Tensor,
+    cutoff: float,
+    padding_fraction: float = 0.1,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build an orthorhombic non-PBC cell around ``positions``.
+
+    Used by ``neighbor_list(method=..., cell=None)`` so callers without
+    a real simulation cell still get a tight bounding box.  The
+    returned positions are shifted so the minimum corner is at the
+    origin; the cell diagonal is the extent plus ``padding_fraction *
+    cutoff`` so atoms never sit on the boundary.
+
+    Parameters
+    ----------
+    positions : (N, 3) float
+        Atomic coordinates (any frame).
+    cutoff : float
+        Neighbor cutoff; only used to size the boundary padding.
+    padding_fraction : float, default 0.1
+        Padding around the bounding box, expressed as a fraction of
+        ``cutoff``.
+
+    Returns
+    -------
+    positions : (N, 3) float
+        Same dtype/device as input; shifted so ``min == 0``.
+    cell : (1, 3, 3) float
+        Orthorhombic cell whose diagonal is the (padded) extent.
+    pbc : (3,) bool
+        ``[False, False, False]`` — synthesized cells are non-periodic.
+    """
+    pbc = torch.zeros(3, dtype=torch.bool, device=positions.device)
+    if positions.shape[0] == 0:
+        cell = torch.eye(3, dtype=positions.dtype, device=positions.device).reshape(
+            1, 3, 3
+        )
+        return positions, cell, pbc
+    pos_min = positions.min(dim=0).values
+    positions = positions - pos_min
+    pos_max = positions.max(dim=0).values
+    cell_lengths = pos_max + padding_fraction * cutoff
+    cell = torch.diag(cell_lengths).reshape(1, 3, 3)
+    return positions, cell, pbc
+
+
+def synthesize_cell_for_batch(
+    positions: torch.Tensor,
+    batch_idx: torch.Tensor,
+    batch_ptr: torch.Tensor,
+    cutoff: float,
+    padding_fraction: float = 0.1,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Per-system bounding-box cells around ``positions`` for batched inputs.
+
+    Companion to :func:`synthesize_cell_for_ss` for the batched
+    entry points (``batch_cell_list``, ``batch_cluster_tile_neighbor_list``).
+    For each system, computes the tight ``(min, max)`` bbox via
+    ``scatter_reduce`` and synthesizes an orthorhombic non-PBC cell
+    with ``padding_fraction * cutoff`` of slack on each side.
+    Positions are shifted so each system's minimum corner is at the
+    origin.
+
+    Parameters
+    ----------
+    positions : (total_atoms, 3) float
+        Concatenated atomic coordinates.
+    batch_idx : (total_atoms,) int32
+        System index per atom.
+    batch_ptr : (num_systems + 1,) int32
+        CSR offsets — used only to derive ``num_systems``.
+    cutoff : float
+        Neighbor cutoff.
+    padding_fraction : float, default 0.1
+        Padding around each system's bbox.
+
+    Returns
+    -------
+    positions : (total_atoms, 3) float
+        Same dtype/device as input; shifted per-system so each system's
+        min corner is at the origin.
+    cell : (num_systems, 3, 3) float
+        Per-system orthorhombic cells.
+    pbc : (num_systems, 3) bool
+        All False — synthesized cells are non-periodic.
+    """
+    num_systems = int(batch_ptr.shape[0]) - 1
+    if positions.shape[0] == 0:
+        cell = (
+            torch.eye(3, dtype=positions.dtype, device=positions.device)
+            .reshape(1, 3, 3)
+            .expand(num_systems, -1, -1)
+            .contiguous()
+        )
+        pbc = torch.zeros((num_systems, 3), dtype=torch.bool, device=positions.device)
+        return positions, cell, pbc
+    expanded_idx = batch_idx.unsqueeze(1).expand_as(positions)
+    pos_min = torch.full(
+        (num_systems, 3),
+        float("inf"),
+        dtype=positions.dtype,
+        device=positions.device,
+    )
+    pos_min.scatter_reduce_(0, expanded_idx, positions, reduce="amin")
+    pos_max = torch.full(
+        (num_systems, 3),
+        float("-inf"),
+        dtype=positions.dtype,
+        device=positions.device,
+    )
+    pos_max.scatter_reduce_(0, expanded_idx, positions, reduce="amax")
+    # TODO: switch to segment_ops once #17 is merged
+    positions = positions - torch.index_select(pos_min, 0, batch_idx)
+    cell_lengths = pos_max - pos_min + padding_fraction * cutoff
+    cell = torch.diag_embed(cell_lengths)
+    pbc = torch.zeros(
+        (num_systems, 3),
+        dtype=torch.bool,
+        device=positions.device,
+    )
+    return positions, cell, pbc
 
 
 def allocate_cell_list(

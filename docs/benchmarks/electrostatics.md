@@ -390,7 +390,8 @@ python benchmark_electrostatics.py \
 
 `--backend {torch,jax,torchpme,torch_dsf,both}`
 : Computational backend (default: `torch`). `both` dispatches per-method:
-  `torch` + `torchpme` for Ewald/PME, `torch` + `torch_dsf` for DSF.
+  `torch` + `torchpme` for Ewald/PME, `torch` for Ewald/PME slab
+  methods, and `torch` + `torch_dsf` for DSF.
 
 `--method {ewald,ewald_slab,pme,pme_slab,dsf,both,all}`
 : Electrostatics method (default: `both`). `both` = Ewald + PME.
@@ -421,16 +422,28 @@ python benchmark_electrostatics.py \
 #### Slab Benchmarks
 
 ```bash
-# Ewald slab
+# Ewald slab (PyTorch)
 python benchmark_electrostatics.py \
     --config benchmark_config.yaml \
     --backend torch \
     --method ewald_slab
 
-# PME slab
+# Ewald slab (JAX)
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend jax \
+    --method ewald_slab
+
+# PME slab (PyTorch)
 python benchmark_electrostatics.py \
     --config benchmark_config.yaml \
     --backend torch \
+    --method pme_slab
+
+# PME slab (JAX)
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend jax \
     --method pme_slab
 ```
 
