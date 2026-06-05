@@ -72,6 +72,85 @@ def _make_batch(
     return positions, cell_batch, batch_ptr
 
 
+class TestBatchClusterTileValidation:
+    """Validate public option combinations rejected before kernel launch."""
+
+    def test_pair_outputs_reject_tile_format(self):
+        """Pair-output buffers are not supported with tile-format output."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+
+        with pytest.raises(NotImplementedError, match="format='tile'"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+                return_distances=True,
+            )
+
+    def test_cutoff2_rejects_non_matrix_and_pair_outputs(self):
+        """Dual cutoff is matrix-only and cannot request pair outputs."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+
+        with pytest.raises(ValueError, match="format='matrix'"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                cutoff2=3.0,
+            )
+
+        with pytest.raises(ValueError, match="cannot be combined with pair outputs"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                cutoff2=3.0,
+                return_vectors=True,
+            )
+
+    def test_segmented_offsets_are_all_or_nothing(self):
+        """Segmented tile/COO metadata must be passed as paired arrays."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0], device="cpu")
+        offsets = torch.tensor([0, 64], dtype=torch.int32)
+        counts = torch.zeros(1, dtype=torch.int32)
+
+        with pytest.raises(ValueError, match="pair_offsets"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                pair_offsets=offsets,
+            )
+
+        with pytest.raises(ValueError, match="tile_offsets"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                tile_offsets=offsets,
+            )
+
+        with pytest.raises(ValueError, match="format='tile'"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+                rebuild_flags=torch.ones(1, dtype=torch.bool),
+                tile_offsets=offsets,
+                tile_counts=counts,
+            )
+
+
 def test_batch_cluster_tile_max_tiles_per_group_bypasses_sizing(monkeypatch):
     """Explicit max_tiles_per_group skips geometry-aware sizing sync."""
 

@@ -54,6 +54,61 @@ def _make_batch(
     return positions, cell_batch, batch_ptr
 
 
+class TestJaxBatchClusterTileValidation:
+    """Validate public option combinations rejected before kernel launch."""
+
+    def test_pair_outputs_reject_tile_format(self):
+        """Pair-output requests are not supported with tile-format output."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0])
+
+        with pytest.raises(NotImplementedError, match="format='tile'"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+                return_distances=True,
+            )
+
+    def test_cutoff2_and_selective_reject_unsupported_formats(self):
+        """Dual cutoff and selective rebuild are restricted output modes."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0])
+
+        with pytest.raises(NotImplementedError, match="format='matrix'"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="coo",
+                cutoff2=3.0,
+            )
+
+        with pytest.raises(NotImplementedError, match="format='matrix' or segmented"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                format="tile",
+                rebuild_flags=jnp.ones(1, dtype=jnp.bool_),
+            )
+
+    def test_selective_requires_previous_state(self):
+        """Selective rebuild reports every required previous-state buffer."""
+        positions, cell_batch, batch_ptr = _make_batch([32], [8.0])
+
+        with pytest.raises(ValueError, match="previous batch_cluster_tile state"):
+            batch_cluster_tile_neighbor_list(
+                positions,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                rebuild_flags=jnp.ones(1, dtype=jnp.bool_),
+            )
+
+
 class TestBatchTileNeighborListCorrectness:
     """Smoke + multi-system tests."""
 
