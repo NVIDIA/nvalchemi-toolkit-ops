@@ -102,7 +102,7 @@ def _lj_reference(r_ij_np: np.ndarray, eps_i, sigma_i, eps_j, sigma_j):
 def _skip_missing_cuda(device: str) -> None:
     """Skip CUDA cases when the local test host has no CUDA device."""
     if device.startswith("cuda") and not torch.cuda.is_available():
-        pytest.skip("CUDA is not available")
+        pytest.skip("CUDA is required for this test parameter")
 
 
 def test_single_cutoff_kernel_uses_pair_fn_object_cache_key():

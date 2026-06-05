@@ -460,7 +460,7 @@ class TestBatchCellListAPI:
     ):
         """Test batch with various sizes and configurations."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions_list = []
         cells_list = []
@@ -871,7 +871,7 @@ class TestBatchEdgeCases:
     def test_batch_device_consistency(self, device, return_neighbor_list):
         """Test that outputs are on the same device as inputs."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions = torch.randn(10, 3, device=device)
         cell = torch.eye(3, device=device).reshape(1, 3, 3).repeat(2, 1, 1) * 2.0
@@ -902,7 +902,7 @@ class TestBatchCellListComponentsAPI:
     def test_batch_build_and_query_cell_list(self, device, dtype):
         """Test building and querying batch cell list separately."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Create batch with 2 systems
         positions_1, cell_1, pbc_1 = create_simple_cubic_system(
@@ -1005,7 +1005,7 @@ class TestBatchTorchCompilability:
     def test_batch_build_cell_list_compile(self, device, dtype):
         """Test that batch_build_cell_list can be compiled with torch.compile."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions_1, cell_1, pbc_1 = create_simple_cubic_system(
             dtype=dtype, device=device
@@ -1118,7 +1118,7 @@ class TestBatchTorchCompilability:
     def test_batch_query_cell_list_compile(self, device, dtype, pbc_flag):
         """Test that batch_query_cell_list can be compiled with torch.compile."""
         if device == "cuda:0" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions_1, cell_1, _ = create_simple_cubic_system(dtype=dtype, device=device)
         positions = torch.cat([positions_1, positions_1], dim=0)

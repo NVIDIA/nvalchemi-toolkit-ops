@@ -118,7 +118,7 @@ def _lj_reference(r_ij_np: np.ndarray, eps_i, sigma_i, eps_j, sigma_j):
 
 def _skip_missing_cuda(device: str) -> None:
     if device.startswith("cuda") and not torch.cuda.is_available():
-        pytest.skip("CUDA is not available")
+        pytest.skip("CUDA is required for this test parameter")
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +168,8 @@ def test_cluster_tile_lj_pair_fn(device):
     _skip_missing_cuda(device)
     if device == "cpu":
         pytest.skip(
-            "cluster_tile kernels use wp.tile_load/tile_sort which only "
-            "compile on CUDA in this environment"
+            "cluster_tile kernels use Warp tile primitives and are CUDA-only; "
+            "CPU parameter is not supported"
         )
 
     torch.manual_seed(0)
@@ -353,8 +353,8 @@ def test_cluster_tile_coo_pair_outputs(device):
     _skip_missing_cuda(device)
     if device == "cpu":
         pytest.skip(
-            "cluster_tile kernels use wp.tile_load/tile_sort which only "
-            "compile on CUDA in this environment"
+            "cluster_tile kernels use Warp tile primitives and are CUDA-only; "
+            "CPU parameter is not supported"
         )
 
     torch.manual_seed(2)
@@ -528,7 +528,7 @@ def test_torch_cluster_tile_neighbor_list_pair_fn_smoke():
     pair-output kernel.  Distinct from the warp-layer LJ test above.
     """
     if not torch.cuda.is_available():
-        pytest.skip("cluster_tile requires CUDA")
+        pytest.skip("torch cluster_tile pair-output smoke requires CUDA tensors")
     from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
 
     device = "cuda:0"
@@ -563,7 +563,7 @@ def test_torch_cluster_tile_neighbor_list_pair_fn_smoke():
 def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
     """Torch ``format='coo'`` fills caller-owned flat pair-output buffers."""
     if not torch.cuda.is_available():
-        pytest.skip("cluster_tile requires CUDA")
+        pytest.skip("torch cluster_tile COO pair-output smoke requires CUDA tensors")
     from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
 
     device = "cuda:0"
@@ -613,7 +613,9 @@ def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
 def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_require_buffers():
     """COO pair outputs require caller-owned flat output buffers."""
     if not torch.cuda.is_available():
-        pytest.skip("cluster_tile requires CUDA")
+        pytest.skip(
+            "torch cluster_tile COO buffer-validation test constructs CUDA inputs"
+        )
     from nvalchemiops.torch.neighbors.cluster_tile import cluster_tile_neighbor_list
 
     device = "cuda:0"
@@ -635,7 +637,9 @@ def test_torch_cluster_tile_neighbor_list_coo_pair_outputs_require_buffers():
 def test_torch_batch_cluster_tile_neighbor_list_coo_pair_outputs_smoke():
     """Batched Torch ``format='coo'`` fills flat pair-output buffers."""
     if not torch.cuda.is_available():
-        pytest.skip("batch_cluster_tile requires CUDA")
+        pytest.skip(
+            "torch batch_cluster_tile COO pair-output smoke requires CUDA tensors"
+        )
     from nvalchemiops.torch.neighbors.batch_cluster_tile import (
         batch_cluster_tile_neighbor_list,
     )

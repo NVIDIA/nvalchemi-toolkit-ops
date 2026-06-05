@@ -867,7 +867,7 @@ class TestCellListAtomCentricPathEquivalence:
 
     @pytest.mark.skipif(
         not torch.cuda.is_available(),
-        reason="atom-centric sorted/direct paths exercise CUDA kernels.",
+        reason="cell_list atom-centric direct/sorted path requires CUDA",
     )
     def test_sorted_matches_direct(self):
         """Sorted and direct atom-centric paths produce the same pair set."""

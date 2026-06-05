@@ -76,7 +76,10 @@ def create_batch_idx_and_ptr(
 def _skip_if_cpu(device: str) -> None:
     """Skip tiled kernel tests on CPU."""
     if "cpu" in str(device):
-        pytest.skip("Tiled kernels use wp.launch_tiled (requires GPU)")
+        pytest.skip(
+            "native_strategy='tile' uses wp.launch_tiled and is CUDA-only; "
+            "CPU parameter is not supported"
+        )
 
 
 def _neighbor_shift_sets(

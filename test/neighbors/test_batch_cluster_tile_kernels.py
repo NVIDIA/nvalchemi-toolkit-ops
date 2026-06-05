@@ -38,7 +38,7 @@ pytestmark = pytest.mark.gpu
 @pytest.fixture
 def device():
     if not torch.cuda.is_available():
-        pytest.skip("cluster_tile kernels require CUDA")
+        pytest.skip("batch_cluster_tile kernel tests require torch CUDA tensors")
     return "cuda:0"
 
 

@@ -309,7 +309,7 @@ def _torch_naive_or_skip():
     from nvalchemiops.torch.neighbors.naive import naive_neighbor_list as nl_torch
 
     if not torch.cuda.is_available():
-        pytest.skip("torch CUDA required for cross-backend check")
+        pytest.skip("Torch CUDA is required for this cross-backend check")
     return torch, nl_torch
 
 
@@ -669,7 +669,7 @@ def test_batch_naive_pair_fn_matches_torch(dtype):
     """Cross-backend: JAX vs Torch batch_naive ``pair_fn`` (order-independent COO)."""
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
-        pytest.skip("torch CUDA required for cross-backend check")
+        pytest.skip("Torch CUDA is required for this cross-backend check")
     from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list as bn_j
     from nvalchemiops.torch.neighbors.batch_naive import (
         batch_naive_neighbor_list as bn_t,
@@ -798,7 +798,7 @@ def test_cell_list_pair_fn_matches_torch(dtype):
     multi-image lattice)."""
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
-        pytest.skip("torch CUDA required for cross-backend check")
+        pytest.skip("Torch CUDA is required for this cross-backend check")
     from nvalchemiops.jax.neighbors.cell_list import cell_list as cl_j
     from nvalchemiops.torch.neighbors.cell_list import cell_list as cl_t
 
@@ -951,7 +951,7 @@ def test_cell_list_target_indices_pair_fn_matches_torch(dtype):
     order-independent COO compare must agree on (i, j, distance, pe, pf)."""
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
-        pytest.skip("torch CUDA required for cross-backend check")
+        pytest.skip("Torch CUDA is required for this cross-backend check")
     from nvalchemiops.jax.neighbors.cell_list import cell_list as cl_j
     from nvalchemiops.torch.neighbors.cell_list import cell_list as cl_t
 
@@ -1325,7 +1325,7 @@ def test_batch_cell_list_pair_fn_matches_torch(dtype):
     """Cross-backend: JAX vs Torch batch_cell_list ``pair_fn`` (order-independent COO)."""
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
-        pytest.skip("torch CUDA required for cross-backend check")
+        pytest.skip("Torch CUDA is required for this cross-backend check")
     from nvalchemiops.jax.neighbors.batch_cell_list import batch_cell_list as bcl_j
     from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list as bcl_t
 
@@ -1800,7 +1800,7 @@ def test_batch_naive_pair_fn_matches_torch_multi_image(dtype):
     Torch (the independent oracle)."""
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
-        pytest.skip("torch CUDA required for cross-backend check")
+        pytest.skip("Torch CUDA is required for this cross-backend check")
     from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list as bn_j
     from nvalchemiops.torch.neighbors.batch_naive import (
         batch_naive_neighbor_list as bn_t,

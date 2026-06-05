@@ -44,7 +44,7 @@ from .conftest import requires_vesin
 @pytest.fixture(params=["cuda:0"], ids=lambda d: d.replace(":", "_"))
 def device(request):
     if not torch.cuda.is_available():
-        pytest.skip("cluster_tile kernels require CUDA")
+        pytest.skip("cluster_tile kernel tests require torch CUDA tensors")
     return request.param
 
 

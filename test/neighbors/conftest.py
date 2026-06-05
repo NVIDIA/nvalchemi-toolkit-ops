@@ -64,7 +64,7 @@ def device(request):
     """
     Fixture providing both CPU and GPU devices.
 
-    GPU tests are skipped if CUDA is not available.
+    CUDA test parameters are skipped on hosts without CUDA.
 
     Returns
     -------
@@ -78,5 +78,5 @@ def device(request):
     """
     device_name = request.param
     if device_name == "cuda:0" and not wp.is_cuda_available():
-        pytest.skip("CUDA not available")
+        pytest.skip("CUDA is required for this test parameter")
     return device_name

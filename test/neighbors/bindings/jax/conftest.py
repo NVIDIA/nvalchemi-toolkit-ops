@@ -31,10 +31,13 @@ import numpy as np
 jax.config.update("jax_enable_x64", True)
 
 
-requires_gpu = pytest.mark.skipif(
-    not any(d.platform == "gpu" for d in jax.devices()),
-    reason="JAX Warp bindings require GPU",
-)
+requires_gpu = [
+    pytest.mark.gpu,
+    pytest.mark.skipif(
+        not any(d.platform == "gpu" for d in jax.devices()),
+        reason="JAX Warp neighbor bindings require a JAX GPU device",
+    ),
+]
 
 try:
     _ = import_module("vesin")

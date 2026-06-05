@@ -214,7 +214,9 @@ class TestReportNeighborListCosts:
         )
         assert "batch_cluster_tile" not in _names(rep)
 
-    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA is required for this test parameter"
+    )
     def test_cuda_dense_periodic_float32_selects_cluster_tile(self):
         """Dense fully periodic float32 geometry can auto-select cluster-tile."""
         batch_ptr = torch.tensor([0, 4096], dtype=torch.int32, device="cuda")

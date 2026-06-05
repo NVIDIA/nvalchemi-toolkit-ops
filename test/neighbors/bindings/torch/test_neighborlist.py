@@ -54,7 +54,7 @@ class TestNeighborListAutoSelection:
     def test_auto_select_cell_list_sparse_no_cell(self, dtype, device):
         """Cell-less auto dispatch is correct at method-dependent COO arity."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Small system: 100 atoms
         target_density = 0.25
@@ -84,7 +84,7 @@ class TestNeighborListAutoSelection:
     def test_auto_select_cell_list_sparse_with_pbc(self, dtype, device):
         """Auto-select cell_list for sparse systems with PBC."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             100, 10.0, dtype=dtype, device=device
@@ -109,7 +109,7 @@ class TestNeighborListAutoSelection:
     def test_auto_select_cell_list_large_sparse_system(self, dtype, device):
         """Auto-select cell_list for large sparse systems."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Large system: 2000 atoms
         positions = torch.randn(2000, 3, dtype=dtype, device=device) * 50.0
@@ -134,7 +134,7 @@ class TestNeighborListAutoSelection:
     def test_auto_select_naive_dual_cutoff(self, dtype, device):
         """Auto-select naive_dual_cutoff when cutoff2 is provided."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             100, 10.0, dtype=dtype, device=device
@@ -171,7 +171,7 @@ class TestNeighborListAutoSelection:
     def test_auto_select_batch_cell_list_sparse(self, dtype, device):
         """Auto-select batch_cell_list for sparse batched systems."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Create batch of small systems
         positions1, cell1, pbc1 = create_random_system(
@@ -218,7 +218,8 @@ class TestNeighborListAutoSelection:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -577,7 +578,7 @@ class TestNeighborListAutoSelection:
     def test_auto_select_batch_naive_dual_cutoff(self, dtype, device):
         """Auto-select batch_naive_dual_cutoff when both cutoff2 and batch_idx are provided."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Create batch of small systems
         positions1, cell1, pbc1 = create_random_system(
@@ -631,7 +632,7 @@ class TestNeighborListAutoSelection:
         """method=None + batch_ptr-only (no batch_idx, no cell) hits the
         ``elif batch_ptr is not None`` branch in __init__.py dispatch."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions = torch.randn(80, 3, dtype=dtype, device=device) * 5.0
         batch_ptr = torch.tensor([0, 50, 80], dtype=torch.int32, device=device)
@@ -654,7 +655,7 @@ class TestNeighborListAutoSelection:
         """method=None + batch_idx-only (no batch_ptr, no cell) hits the
         ``elif batch_idx is not None`` branch in __init__.py dispatch."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions = torch.randn(80, 3, dtype=dtype, device=device) * 5.0
         batch_idx = torch.cat(
@@ -800,7 +801,7 @@ class TestNeighborListExplicitMethod:
     def test_explicit_naive(self, dtype, device):
         """Test explicit naive method selection."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             100, 10.0, dtype=dtype, device=device
@@ -831,7 +832,7 @@ class TestNeighborListExplicitMethod:
     def test_explicit_cell_list(self, dtype, device):
         """Test explicit cell_list method selection."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             500, 20.0, dtype=dtype, device=device
@@ -866,7 +867,7 @@ class TestNeighborListBatchProcessing:
     def test_batch_naive(self, dtype, device):
         """Test batch naive method."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Create two small systems
         positions1, cell1, pbc1 = create_random_system(
@@ -924,7 +925,8 @@ class TestNeighborListBatchProcessing:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -981,7 +983,7 @@ class TestNeighborListDualCutoff:
     def test_naive_dual_cutoff(self, dtype, device):
         """Test naive dual cutoff method."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             100, 10.0, dtype=dtype, device=device
@@ -1022,7 +1024,7 @@ class TestNeighborListDualCutoff:
     def test_batch_naive_dual_cutoff(self, dtype, device):
         """Test batch naive dual cutoff method."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Create two small systems
         positions1, cell1, pbc1 = create_random_system(
@@ -1100,7 +1102,7 @@ class TestNeighborListReturnFormats:
     def test_return_neighbor_matrix(self, dtype, device):
         """Test returning neighbor matrix (default)."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             100, 10.0, dtype=dtype, device=device
@@ -1131,7 +1133,7 @@ class TestNeighborListReturnFormats:
     def test_return_neighbor_list_coo(self, dtype, device):
         """Test returning neighbor list in COO format."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             100, 10.0, dtype=dtype, device=device
@@ -1166,7 +1168,7 @@ class TestNeighborListHalfFill:
     def test_half_fill_parameter(self, dtype, device, half_fill):
         """Test half_fill parameter is passed through correctly."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             50, 10.0, dtype=dtype, device=device
@@ -1208,7 +1210,7 @@ class TestNeighborListNoPBC:
     def test_no_pbc_naive(self, dtype, device):
         """Test naive without PBC."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         # Create positions without PBC
         positions = torch.randn(100, 3, dtype=dtype, device=device) * 5.0
@@ -1247,7 +1249,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1278,7 +1281,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1306,7 +1310,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1356,7 +1361,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1407,7 +1413,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1457,7 +1464,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1507,7 +1515,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1548,7 +1557,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1578,7 +1588,8 @@ class TestNeighborListBoundingBoxCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1625,7 +1636,8 @@ class TestNeighborListFineGrainedMethodEquivalence:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1661,7 +1673,8 @@ class TestNeighborListFineGrainedMethodEquivalence:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1690,7 +1703,7 @@ class TestNeighborListFineGrainedMethodEquivalence:
         torch.testing.assert_close(_sorted_pairs(fine[0]), _sorted_pairs(base[0]))
 
     @pytest.mark.skipif(
-        not torch.cuda.is_available(), reason="pair_centric requires CUDA"
+        not torch.cuda.is_available(), reason="cell_list pair_centric requires CUDA"
     )
     def test_cell_list_pair_centric_matches_cell_list(self):
         """``cell_list_pair_centric`` (CUDA-only) matches the base ``cell_list``."""
@@ -1722,7 +1735,8 @@ class TestNeighborListFineGrainedMethodEquivalence:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1782,7 +1796,8 @@ class TestNeighborListEmptyNoCell:
             pytest.param(
                 "cuda",
                 marks=pytest.mark.skipif(
-                    not torch.cuda.is_available(), reason="Requires GPU."
+                    not torch.cuda.is_available(),
+                    reason="CUDA is required for this test parameter",
                 ),
             ),
         ],
@@ -1820,7 +1835,7 @@ class TestNeighborListKwargs:
     def test_kwargs_max_neighbors_naive(self, device):
         """Test passing max_neighbors kwarg to naive method."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             50, 10.0, dtype=torch.float32, device=device
@@ -1846,7 +1861,7 @@ class TestNeighborListKwargs:
     def test_kwargs_max_neighbors_cell_list(self, device):
         """Test passing max_neighbors kwarg to cell_list method."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             100, 15.0, dtype=torch.float32, device=device
@@ -1872,7 +1887,7 @@ class TestNeighborListKwargs:
     def test_kwargs_max_neighbors_dual_cutoff(self, device):
         """Test passing max_neighbors1 and max_neighbors2 kwargs to dual cutoff method."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             50, 10.0, dtype=torch.float32, device=device
@@ -1903,7 +1918,7 @@ class TestNeighborListKwargs:
     def test_kwargs_preallocated_tensors_naive(self, device):
         """Test passing pre-allocated tensors via kwargs to naive method."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             50, 10.0, dtype=torch.float32, device=device
@@ -1943,7 +1958,7 @@ class TestNeighborListKwargs:
     def test_kwargs_invalid_parameter_raises_error(self, device):
         """Test that invalid kwargs raise TypeError."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions = torch.randn(50, 3, dtype=torch.float32, device=device)
         cutoff = 2.0
@@ -1961,7 +1976,7 @@ class TestNeighborListKwargs:
     def test_kwargs_forwarded_with_auto_selection(self, device):
         """Test that kwargs are forwarded correctly with auto method selection."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions, cell, pbc = create_random_system(
             50, 10.0, dtype=torch.float32, device=device
@@ -1990,7 +2005,7 @@ class TestNeighborListEdgeCases:
     def test_empty_system(self, device):
         """Test with empty system (0 atoms)."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions = torch.empty(0, 3, dtype=torch.float32, device=device)
         cutoff = 2.0
@@ -2010,7 +2025,7 @@ class TestNeighborListEdgeCases:
     def test_single_atom(self, device):
         """Test with single atom system."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
 
         positions = torch.randn(1, 3, dtype=torch.float32, device=device)
         cutoff = 2.0
@@ -2040,7 +2055,7 @@ class TestPrepareBatchIdxPtr:
     def testprepare_batch_idx_ptr(self, device, batch_idx, batch_ptr):
         """Test prepare_batch_idx_ptr function."""
         if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
+            pytest.skip("CUDA is required for this test parameter")
         if batch_idx is not None:
             batch_idx = batch_idx.to(device=device)
         if batch_ptr is not None:

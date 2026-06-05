@@ -158,7 +158,10 @@ class TestCellListKernels:
         unit-test exercises the same primitive directly.
         """
         if str(device) == "cpu":
-            pytest.skip("wp.utils.array_scan requires CUDA")
+            pytest.skip(
+                "wp.utils.array_scan coverage is CUDA-only here; "
+                "CPU parameter is not supported"
+            )
 
         cell_atom_counts = torch.tensor(
             [3, 0, 2, 1, 4], dtype=torch.int32, device=device
@@ -784,7 +787,10 @@ class TestCellListPairCentric:
         from nvalchemiops.torch.neighbors.cell_list import cell_list
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA block scheduling")
+            pytest.skip(
+                "strategy='pair_centric' uses CUDA block scheduling; "
+                "CPU parameter is not supported"
+            )
 
         # 4×4×4 simple cubic, lattice spacing 0.5 → box=2.0, cutoff=0.6
         # captures only nearest-neighbor pairs (1 lattice spacing).
@@ -837,7 +843,10 @@ class TestCellListPairCentric:
         from nvalchemiops.torch.neighbors.cell_list import cell_list
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA block scheduling")
+            pytest.skip(
+                "strategy='pair_centric' uses CUDA block scheduling; "
+                "CPU parameter is not supported"
+            )
 
         positions, cell, pbc = create_simple_cubic_system(
             num_atoms=64, cell_size=2.0, dtype=dtype, device=device
@@ -976,14 +985,17 @@ class TestQueryCellListErrorPaths:
 
     def test_pair_centric_on_cpu_raises(self, device, dtype):
         if str(device) != "cpu":
-            pytest.skip("CPU-only error path")
+            pytest.skip("CPU-only error path; CUDA parameter is not supported")
         kwargs = _make_query_cell_list_kwargs(device, dtype)
         with pytest.raises(ValueError, match="not supported on CPU"):
             query_cell_list(**kwargs, strategy="pair_centric")
 
     def test_pair_centric_missing_n_outer_raises(self, device, dtype):
         if str(device) == "cpu":
-            pytest.skip("requires CUDA (pair_centric uses CUDA block scheduling)")
+            pytest.skip(
+                "strategy='pair_centric' n_outer validation is only reachable "
+                "on CUDA; CPU raises before n_outer validation"
+            )
         kwargs = _make_query_cell_list_kwargs(device, dtype)
         with pytest.raises(ValueError, match="n_outer"):
             query_cell_list(**kwargs, strategy="pair_centric", n_outer=None)
@@ -1003,7 +1015,10 @@ class TestQueryCellListErrorPaths:
         )
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA block scheduling")
+            pytest.skip(
+                "strategy='pair_centric' uses CUDA block scheduling; "
+                "CPU parameter is not supported"
+            )
         # Recompute the per-axis neighbor_search_radius the helper used so we
         # can derive n_outer.  Cheaper than reading back from the wp.array.
         _, cell, pbc = create_simple_cubic_system(

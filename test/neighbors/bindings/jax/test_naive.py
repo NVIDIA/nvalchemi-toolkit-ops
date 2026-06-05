@@ -1001,7 +1001,7 @@ class TestJaxNaiveAutograd:
         assert np.isfinite(g_j).all()
 
         if not torch.cuda.is_available():
-            pytest.skip("torch CUDA required for cross-backend check")
+            pytest.skip("Torch CUDA is required for this cross-backend check")
         pos_t = torch.tensor(
             pos_np, dtype=torch.float64, device="cuda", requires_grad=True
         )
@@ -1032,7 +1032,7 @@ class TestJaxNaiveAutograd:
         )
 
         if not torch.cuda.is_available():
-            pytest.skip("torch CUDA required for cross-backend check")
+            pytest.skip("Torch CUDA is required for this cross-backend check")
 
         rng = np.random.default_rng(0)
         pos_np = rng.normal(0, 0.3, size=(6, 3))

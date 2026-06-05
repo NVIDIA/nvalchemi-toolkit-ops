@@ -905,9 +905,12 @@ dtypes = [torch.float32, torch.float64]
 
 
 def _skip_if_cpu(device):
-    """Skip tiled kernel tests on CPU — wp.launch_tiled requires GPU."""
+    """Skip tiled kernel tests on CPU because wp.launch_tiled is CUDA-only."""
     if "cpu" in str(device):
-        pytest.skip("Tiled kernels use wp.launch_tiled (requires GPU)")
+        pytest.skip(
+            "native_strategy='tile' uses wp.launch_tiled and is CUDA-only; "
+            "CPU parameter is not supported"
+        )
 
 
 def _neighbor_shift_sets(

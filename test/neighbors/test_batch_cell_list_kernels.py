@@ -1422,7 +1422,10 @@ class TestBatchCellListPairCentric:
         from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list
 
         if str(device) == "cpu":
-            pytest.skip("pair-centric kernel uses CUDA block scheduling")
+            pytest.skip(
+                "strategy='pair_centric' uses CUDA block scheduling; "
+                "CPU parameter is not supported"
+            )
 
         positions, cell, pbc, _ptr = create_batch_systems(
             num_systems=4,
