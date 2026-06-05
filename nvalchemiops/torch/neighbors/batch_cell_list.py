@@ -168,6 +168,8 @@ def estimate_batch_cell_list_sizes(
     allocate_cell_list : Allocates tensors based on these estimates
     batch_build_cell_list : High-level wrapper that uses these estimates
     """
+    if max_nbins <= 0:
+        raise ValueError("max_nbins must be positive")
     if cell.numel() > 0 and torch.any(cell.det().abs() == 0.0):
         raise RuntimeError(
             "Cells with volume == 0.0 detected and are not supported."

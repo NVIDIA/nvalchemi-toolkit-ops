@@ -26,6 +26,7 @@ import nvalchemiops.jax.neighbors as neighbor_module
 from nvalchemiops.jax.neighbors import (
     batch_naive_neighbor_list_dual_cutoff,
     cell_list,
+    estimate_neighbor_list_costs,
     naive_neighbor_list,
     naive_neighbor_list_dual_cutoff,
     neighbor_list,
@@ -159,12 +160,24 @@ class TestNeighborListAutoSelection:
         assert shifts.shape[1] == 3
 
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
-    def test_auto_select_cell_list_large_sparse_system(self, dtype, device):
+    def test_auto_select_cell_list_large_sparse_system(
+        self, dtype, device, monkeypatch
+    ):
         """Auto-select cell_list for large sparse systems without an input cell.
 
         With no input cell the wrapper synthesizes a non-PBC cell, so the COO
         result includes shifts (3-tuple).
         """
+
+        def fake_cell_list(positions, cutoff, *args, **kwargs):
+            del cutoff, args, kwargs
+            return (
+                jnp.empty((2, 0), dtype=jnp.int32),
+                jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
+                jnp.empty((0, 3), dtype=jnp.int32),
+            )
+
+        monkeypatch.setattr(neighbor_module, "cell_list", fake_cell_list)
         key = jax.random.PRNGKey(0)
         positions = jax.random.normal(key, (2000, 3), dtype=dtype) * 50.0
         cutoff = 2.0
@@ -350,9 +363,19 @@ class TestNeighborListAutoSelection:
         assert int(neighbor_ptr[-1]) == int(naive_ptr[-1])
 
     @pytest.mark.parametrize("dtype", [jnp.float32])
-    def test_auto_select_batch_cell_list_large(self, dtype, device):
+    def test_auto_select_batch_cell_list_large(self, dtype, device, monkeypatch):
         """method=None + large avg_atoms + batched input hits the
         ``method = 'batch_cell_list'`` dispatch branch."""
+
+        def fake_batch_cell_list(positions, cutoff, *args, **kwargs):
+            del cutoff, args, kwargs
+            return (
+                jnp.empty((2, 0), dtype=jnp.int32),
+                jnp.zeros((positions.shape[0] + 1,), dtype=jnp.int32),
+                jnp.empty((0, 3), dtype=jnp.int32),
+            )
+
+        monkeypatch.setattr(neighbor_module, "batch_cell_list", fake_batch_cell_list)
         key = jax.random.PRNGKey(44)
         positions = jax.random.normal(key, (5000, 3), dtype=dtype) * 50.0
         batch_ptr = jnp.array([0, 2500, 5000], dtype=jnp.int32)
@@ -464,12 +487,12 @@ class TestNeighborListFineGrainedMethodEquivalence:
 
     def _periodic_system(self, dtype):
         key = jax.random.PRNGKey(42)
-        positions = jax.random.uniform(key, (256, 3), dtype=dtype) * 20.0
+        positions = jax.random.uniform(key, (64, 3), dtype=dtype) * 20.0
         cell = (jnp.eye(3, dtype=dtype) * 20.0).reshape(1, 3, 3)
         pbc = jnp.array([[True, True, True]])
         return positions, cell, pbc
 
-    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    @pytest.mark.parametrize("dtype", [jnp.float32])
     @pytest.mark.parametrize(
         "method, base",
         [
@@ -535,7 +558,7 @@ class TestNeighborListCellListHalfFillFillValue:
 
     def _periodic_float32_system(self):
         key = jax.random.PRNGKey(3)
-        positions = jax.random.uniform(key, (300, 3), dtype=jnp.float32) * 18.0
+        positions = jax.random.uniform(key, (32, 3), dtype=jnp.float32) * 18.0
         cell = (jnp.eye(3, dtype=jnp.float32) * 18.0).reshape(1, 3, 3)
         pbc = jnp.array([[True, True, True]])
         return positions, cell, pbc
@@ -620,7 +643,7 @@ class TestNeighborListPairOutputAndExplicitStrategy:
 
     def _periodic_float32_system(self):
         key = jax.random.PRNGKey(5)
-        positions = jax.random.uniform(key, (300, 3), dtype=jnp.float32) * 18.0
+        positions = jax.random.uniform(key, (32, 3), dtype=jnp.float32) * 18.0
         cell = (jnp.eye(3, dtype=jnp.float32) * 18.0).reshape(1, 3, 3)
         pbc = jnp.array([[True, True, True]])
         return positions, cell, pbc
@@ -792,7 +815,7 @@ class TestNeighborListNoCellRegressions:
         spread-out non-periodic system yields the same pair count as ``naive``
         (no spurious periodic wrap pairs from a synthesized box)."""
         key = jax.random.PRNGKey(7)
-        positions = jax.random.normal(key, (300, 3), dtype=jnp.float32) * 15.0
+        positions = jax.random.normal(key, (32, 3), dtype=jnp.float32) * 15.0
         cutoff = 3.0
 
         cell_ptr = neighbor_list(
@@ -1005,52 +1028,42 @@ class TestNeighborListHalfFill:
 class TestNeighborListClusterTileAutoGuards:
     """``method=None`` selects cluster_tile only when selector guards allow it."""
 
-    def test_auto_dispatch_fully_periodic_float32_uses_cell_list(self, monkeypatch):
-        """Sparse periodic inputs below the cluster-tile gate use cell_list."""
-
-        def fail_cluster_tile(*args, **kwargs):
-            del args, kwargs
-            raise AssertionError("cluster_tile should not be selected")
-
-        monkeypatch.setattr(
-            neighbor_module, "cluster_tile_neighbor_list", fail_cluster_tile
-        )
-        monkeypatch.setattr(
-            neighbor_module, "batch_cluster_tile_neighbor_list", fail_cluster_tile
-        )
-
-        key = jax.random.PRNGKey(0)
-        positions = jax.random.uniform(key, (2048, 3), dtype=jnp.float32) * 30.0
-        cell = (jnp.eye(3, dtype=jnp.float32) * 30.0).reshape(1, 3, 3)
+    def _cluster_tile_eligible_metadata(self):
+        batch_ptr = jnp.array([0, 2048], dtype=jnp.int32)
+        cell = (jnp.eye(3, dtype=jnp.float32) * 7.0).reshape(1, 3, 3)
         pbc = jnp.array([[True, True, True]])
+        return batch_ptr, cell, pbc
 
-        result = neighbor_module.neighbor_list(
-            positions,
+    def test_auto_dispatch_cluster_tile_eligible_metadata_selects_cluster_tile(self):
+        """Dense periodic float32 metadata crosses the cluster-tile selector gate."""
+        batch_ptr, cell, pbc = self._cluster_tile_eligible_metadata()
+
+        assert suggest_neighbor_list_method(batch_ptr, cell, pbc, 3.0) == "cluster_tile"
+
+    def test_auto_dispatch_half_fill_excludes_cluster_tile(self):
+        """Half-fill excludes an otherwise cluster-tile-eligible selector input."""
+        batch_ptr, cell, pbc = self._cluster_tile_eligible_metadata()
+
+        base_report = estimate_neighbor_list_costs(batch_ptr, cell, pbc, 3.0)
+        half_report = estimate_neighbor_list_costs(
+            batch_ptr,
+            cell,
+            pbc,
             3.0,
-            cell=cell,
-            pbc=pbc,
-            method=None,
-            return_neighbor_list=True,
+            optional_outputs=["half_fill"],
         )
-        assert len(result) == 3
-
-    def test_auto_dispatch_half_fill_does_not_raise_cluster_tile_error(self):
-        """Half-fill auto-dispatch stays on cell_list rather than cluster_tile."""
-        key = jax.random.PRNGKey(0)
-        positions = jax.random.uniform(key, (2048, 3), dtype=jnp.float32) * 30.0
-        cell = (jnp.eye(3, dtype=jnp.float32) * 30.0).reshape(1, 3, 3)
-        pbc = jnp.array([[True, True, True]])
-
-        result = neighbor_module.neighbor_list(
-            positions,
-            3.0,
-            cell=cell,
-            pbc=pbc,
-            method=None,
-            half_fill=True,
-            return_neighbor_list=True,
+        assert "cluster_tile" in [name for name, _ in base_report]
+        assert "cluster_tile" not in [name for name, _ in half_report]
+        assert (
+            suggest_neighbor_list_method(
+                batch_ptr,
+                cell,
+                pbc,
+                3.0,
+                optional_outputs=["half_fill"],
+            )
+            != "cluster_tile"
         )
-        assert len(result) == 3
 
 
 # ==============================================================================

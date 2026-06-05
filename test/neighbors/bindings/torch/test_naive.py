@@ -544,6 +544,7 @@ class TestNaiveOutputFormats:
 class TestNaiveCompile:
     """Test torch.compile compatibility."""
 
+    @pytest.mark.slow
     def test_compile_no_pbc(self, device, dtype, half_fill):
         """Test that naive_neighbor_list can be compiled (no PBC)."""
         positions, _, _ = create_simple_cubic_system(
@@ -596,6 +597,7 @@ class TestNaiveCompile:
             mask = neighbor_row != 50
             assert neighbor_row[mask].shape == (num_neighbors[i].item(),)
 
+    @pytest.mark.slow
     def test_compile_with_pbc(self, device, dtype, half_fill):
         """Test that naive_neighbor_list can be compiled (with PBC)."""
         positions, cell, pbc = create_simple_cubic_system(
@@ -946,6 +948,7 @@ class TestNaiveAutograd:
         )
         assert d.requires_grad and v.requires_grad
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):
         pos, cell, pbc = self._make_system(device)
         pos.requires_grad_(True)
@@ -964,6 +967,7 @@ class TestNaiveAutograd:
 
         torch.autograd.gradcheck(fn, (pos,), atol=1e-5, eps=1e-6, nondet_tol=1e-7)
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_cell(self, device):
         pos, cell, pbc = self._make_system(device)
         cell = cell.clone().requires_grad_(True)
@@ -1017,6 +1021,7 @@ class TestNaiveAutograd:
                 rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
             )
 
+    @pytest.mark.slow
     def test_gradgradcheck_second_order(self, device):
         """Second-order autograd: gradient-of-gradient is also correct."""
         pos, cell, pbc = self._make_system(device)

@@ -32,6 +32,8 @@ from nvalchemiops.neighbors.cluster_tile import (
     batch_query_cluster_tile,
 )
 
+pytestmark = pytest.mark.gpu
+
 
 @pytest.fixture
 def device():

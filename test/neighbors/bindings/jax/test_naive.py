@@ -356,17 +356,8 @@ class TestNaiveNeighborListJIT:
         assert num_neighbors.shape == (3,)
         assert jnp.all(num_neighbors >= 0)
 
-    @pytest.mark.xfail(
-        reason="PBC path calls compute_naive_num_shifts which uses int() on traced values. "
-        "Full JIT support for PBC neighbor lists is planned but not yet implemented.",
-        raises=(
-            jax.errors.ConcretizationTypeError,
-            jax.errors.TracerIntegerConversionError,
-        ),
-        strict=True,
-    )
-    def test_jit_with_pbc(self):
-        """Test naive_neighbor_list with PBC works with jax.jit."""
+    def test_jit_with_pbc_requires_precomputed_shifts(self):
+        """The traced shift-sizing path should fail with a JAX concrete error."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0]],
             dtype=jnp.float32,
@@ -378,6 +369,37 @@ class TestNaiveNeighborListJIT:
         def jitted_naive_pbc(positions, cell, pbc):
             return naive_neighbor_list(
                 positions, cutoff=1.0, cell=cell, pbc=pbc, max_neighbors=10
+            )
+
+        with pytest.raises(
+            jax.errors.ConcretizationTypeError,
+            match="Abstract tracer value encountered",
+        ):
+            jitted_naive_pbc(positions, cell, pbc)
+
+    def test_jit_with_pbc_precomputed_shifts(self):
+        """PBC naive neighbor list should work under JIT with concrete shifts."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [9.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        pbc = jnp.array([[True, True, True]])
+        shift_range, num_shifts_per_system, max_shifts_per_system = (
+            compute_naive_num_shifts(cell, 1.0, pbc)
+        )
+
+        @jax.jit
+        def jitted_naive_pbc(positions, cell, pbc):
+            return naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=10,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts_per_system,
+                max_shifts_per_system=max_shifts_per_system,
             )
 
         neighbor_matrix, num_neighbors, shifts = jitted_naive_pbc(positions, cell, pbc)

@@ -85,21 +85,19 @@ def test_cell_list_target_indices_matches_brute_force(device, dtype):
     assert _partial_pair_sets(nm_p, nn_p, targets) == ref_pairs
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="optional path is CUDA-heavy")
-def test_cell_list_target_indices_undersized_buffer_raises():
+def test_cell_list_target_indices_undersized_buffer_raises(device, dtype):
     """An output matrix smaller than ``num_targets`` rows must fail cleanly."""
-    device = "cuda:0"
     positions, cell, pbc = create_simple_cubic_system(
-        num_atoms=64, cell_size=2.0, dtype=torch.float32, device=device
+        num_atoms=8, cell_size=2.0, dtype=dtype, device=device
     )
     pbc = pbc.reshape(3)
     n = positions.shape[0]
-    w = 24
+    w = 8
     targets = torch.arange(0, n, 2, dtype=torch.int32, device=device)
     nt = int(targets.shape[0])
-    nm = torch.full((nt - 4, w), n, dtype=torch.int32, device=device)  # too small
-    nms = torch.zeros((nt - 4, w, 3), dtype=torch.int32, device=device)
-    nn = torch.zeros((nt - 4,), dtype=torch.int32, device=device)
+    nm = torch.full((nt - 1, w), n, dtype=torch.int32, device=device)  # too small
+    nms = torch.zeros((nt - 1, w, 3), dtype=torch.int32, device=device)
+    nn = torch.zeros((nt - 1,), dtype=torch.int32, device=device)
     with pytest.raises(ValueError, match="rows"):
         cell_list(
             positions,

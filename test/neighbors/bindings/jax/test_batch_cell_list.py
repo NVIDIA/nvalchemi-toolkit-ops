@@ -161,16 +161,8 @@ class TestBatchCellListEdgeCases:
 class TestBatchCellListJIT:
     """Smoke tests for batch_cell_list compatibility with jax.jit."""
 
-    @pytest.mark.xfail(
-        reason="estimate_batch_cell_list_sizes derives array shapes from traced input "
-        "data (cell geometry), which is incompatible with jax.jit. Provide "
-        "max_total_cells explicitly to bypass. See TODO in "
-        "estimate_batch_cell_list_sizes.",
-        raises=TypeError,
-        strict=True,
-    )
-    def test_jit_with_pbc(self):
-        """Test batched cell list with PBC works with jax.jit."""
+    def test_jit_with_pbc_requires_precomputed_sizing(self):
+        """The traced sizing path should fail before allocating JAX buffers."""
         positions = jnp.vstack(
             [
                 jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32),
@@ -196,6 +188,42 @@ class TestBatchCellListJIT:
                 pbc=pbcs,
                 batch_idx=batch_idx,
                 batch_ptr=batch_ptr,
+            )
+
+        with pytest.raises(
+            jax.errors.TracerBoolConversionError,
+            match="Attempted boolean conversion",
+        ):
+            jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr)
+
+    def test_jit_with_pbc_precomputed_sizing(self):
+        """Batched PBC cell list should work under JIT with concrete sizing."""
+        positions = jnp.vstack(
+            [
+                jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32),
+                jnp.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=jnp.float32),
+            ]
+        )
+        cells = jnp.array(
+            [
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+                [[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]],
+            ]
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
+            return batch_cell_list(
+                positions,
+                cutoff=2.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_total_cells=16,
             )
 
         nm, nn, shifts = jitted_batch_cell_list(

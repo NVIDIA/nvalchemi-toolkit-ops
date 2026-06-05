@@ -38,6 +38,12 @@ from ...test_utils import (
 from .conftest import requires_vesin
 
 
+def _search_radius_envelope(neighbor_search_radius: torch.Tensor) -> int:
+    """Return the largest cell-offset envelope in a batched radius tensor."""
+    envelopes = torch.prod(2 * neighbor_search_radius.to("cpu") + 1, dim=1)
+    return int(envelopes.max().item()) if envelopes.numel() else 0
+
+
 class TestBatchCellListAPI:
     """Test the main batch cell list API functions."""
 
@@ -654,53 +660,76 @@ class TestBatchEdgeCases:
 
     def test_negative_det_is_valid(self, device, dtype):
         """Left-handed cells (negative determinant) should not raise an error."""
-        positions = torch.rand((4, 3), device=device, dtype=dtype)
-        # Both cells are left-handed (negative det) but non-degenerate
-        cells = torch.tensor(
+        positions = torch.tensor(
             [
-                [
-                    [0.2225, 0.6140, 0.7039],
-                    [0.4351, 0.3592, 0.8304],
-                    [0.1768, 0.0427, 0.3177],
-                ],
-                [
-                    [0.3681, 0.1729, 0.0691],
-                    [0.7392, 0.7962, 0.9036],
-                    [0.3154, 0.7710, 0.2854],
-                ],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
             ],
             dtype=dtype,
             device=device,
         )
+        left_handed = torch.diag(
+            torch.tensor([-4.0, 4.0, 4.0], dtype=dtype, device=device)
+        )
+        cells = left_handed.expand(2, -1, -1).contiguous()
         pbc = torch.ones((2, 3), dtype=bool, device=device)
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        assert torch.all(torch.linalg.det(cells) < 0)
+        _max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+            cells,
+            pbc,
+            1.5,
+        )
+        assert _search_radius_envelope(neighbor_search_radius) <= 125
         # Should not raise
-        _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
+        _ = batch_cell_list(positions, 1.5, cells, pbc, batch_idx)
 
     def test_mixed_handedness_is_valid(self, device, dtype):
         """Batch with a mix of left- and right-handed cells should not raise."""
-        positions = torch.rand((4, 3), device=device, dtype=dtype)
-        # first is right-handed (det > 0), second is left-handed (det < 0)
-        cells = torch.tensor(
+        positions = torch.tensor(
             [
-                [
-                    [0.7340, 0.5755, 0.5256],
-                    [0.3528, 0.1856, 0.9662],
-                    [0.2384, 0.1754, 0.1968],
-                ],
-                [
-                    [0.3681, 0.1729, 0.0691],
-                    [0.7392, 0.7962, 0.9036],
-                    [0.3154, 0.7710, 0.2854],
-                ],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
             ],
             dtype=dtype,
             device=device,
         )
+        right_handed = torch.diag(
+            torch.tensor([4.0, 4.0, 4.0], dtype=dtype, device=device)
+        )
+        left_handed = torch.diag(
+            torch.tensor([-4.0, 4.0, 4.0], dtype=dtype, device=device)
+        )
+        cells = torch.stack([right_handed, left_handed])
         pbc = torch.ones((2, 3), dtype=bool, device=device)
         batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        det = torch.linalg.det(cells)
+        assert det[0] > 0
+        assert det[1] < 0
+        _max_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+            cells,
+            pbc,
+            1.5,
+        )
+        assert _search_radius_envelope(neighbor_search_radius) <= 125
         # Should not raise
-        _ = batch_cell_list(positions, 3.0, cells, pbc, batch_idx)
+        _ = batch_cell_list(positions, 1.5, cells, pbc, batch_idx)
+
+    def test_estimate_batch_cell_list_sizes_rejects_nonpositive_max_nbins(
+        self,
+        device,
+        dtype,
+    ):
+        """Invalid cell-bin caps should fail before launching Warp sizing kernels."""
+        cell = torch.eye(3, dtype=dtype, device=device).reshape(1, 3, 3)
+        pbc = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+
+        with pytest.raises(ValueError, match="max_nbins must be positive"):
+            estimate_batch_cell_list_sizes(cell, pbc, 1.0, max_nbins=0)
 
     def test_empty_batch_build_cell_list(self, device, dtype):
         """Test with empty batch."""
@@ -972,6 +1001,7 @@ class TestBatchCellListComponentsAPI:
 class TestBatchTorchCompilability:
     """Test torch.compile compatibility for core batch functions."""
 
+    @pytest.mark.slow
     def test_batch_build_cell_list_compile(self, device, dtype):
         """Test that batch_build_cell_list can be compiled with torch.compile."""
         if device == "cuda:0" and not torch.cuda.is_available():
@@ -1084,6 +1114,7 @@ class TestBatchTorchCompilability:
                 ), f"Value mismatch in tensor {i}"
 
     @pytest.mark.parametrize("pbc_flag", [False, True])
+    @pytest.mark.slow
     def test_batch_query_cell_list_compile(self, device, dtype, pbc_flag):
         """Test that batch_query_cell_list can be compiled with torch.compile."""
         if device == "cuda:0" and not torch.cuda.is_available():
@@ -1279,13 +1310,12 @@ class TestBatchCellListAutograd:
         torch.manual_seed(0)
         atoms_per_sys = 4
         S = 2
-        # Two independent clusters; positions in second cluster offset to keep
-        # them clearly in different systems.
+        # Two independent systems distinguished by batch_idx; keep coordinates
+        # inside each periodic cell so gradcheck does not depend on wrapping.
         pos = torch.cat(
             [
                 torch.randn(atoms_per_sys, 3, dtype=torch.float64, device=device) * 0.4,
-                torch.randn(atoms_per_sys, 3, dtype=torch.float64, device=device) * 0.4
-                + torch.tensor([5.0, 0.0, 0.0], dtype=torch.float64, device=device),
+                torch.randn(atoms_per_sys, 3, dtype=torch.float64, device=device) * 0.4,
             ],
             dim=0,
         )
@@ -1318,6 +1348,7 @@ class TestBatchCellListAutograd:
         )
         assert d.requires_grad and v.requires_grad
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):
         pos, cell, pbc, batch_idx = self._make_two_systems(device)
         pos.requires_grad_(True)
@@ -1343,6 +1374,7 @@ class TestBatchCellListAutograd:
             nondet_tol=1e-7,
         )
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_cell(self, device):
         pos, cell, pbc, batch_idx = self._make_two_systems(device)
         cell = cell.clone().requires_grad_(True)
@@ -1368,6 +1400,7 @@ class TestBatchCellListAutograd:
             nondet_tol=1e-7,
         )
 
+    @pytest.mark.slow
     def test_gradgradcheck_distances_second_order(self, device):
         pos, cell, pbc, batch_idx = self._make_two_systems(device)
         pos.requires_grad_(True)

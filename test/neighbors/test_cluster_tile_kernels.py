@@ -38,6 +38,8 @@ from nvalchemiops.neighbors.cluster_tile.launchers import (
     _tile_sort_pairs,
 )
 
+pytestmark = pytest.mark.gpu
+
 
 def _mat33f_from_torch(mat: torch.Tensor):
     """Zero-copy view a ``(1, 3, 3)`` or ``(3, 3)`` torch tensor as a

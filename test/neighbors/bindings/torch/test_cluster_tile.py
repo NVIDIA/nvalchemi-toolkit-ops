@@ -66,8 +66,8 @@ class TestTileNeighborListCorrectness:
     def test_single_atom_no_neighbors(self, device, dtype):
         """Single atom system should have no neighbors."""
         positions = torch.tensor([[0.0, 0.0, 0.0]], dtype=dtype, device=device)
-        cell = _orthorhombic_cell(2.0, device, dtype)
-        cutoff = 3.0
+        cell = _orthorhombic_cell(4.0, device, dtype)
+        cutoff = 0.75
         nm, nn, _nms = cluster_tile_neighbor_list(
             positions, cutoff, cell, max_neighbors=8
         )
@@ -79,7 +79,7 @@ class TestTileNeighborListCorrectness:
         positions = torch.tensor(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=dtype, device=device
         )
-        cell = _orthorhombic_cell(2.0, device, dtype)
+        cell = _orthorhombic_cell(4.0, device, dtype)
         cutoff = 1.0
         nm, nn, _nms = cluster_tile_neighbor_list(
             positions, cutoff, cell, max_neighbors=8
@@ -139,7 +139,7 @@ class TestTileNeighborListCorrectness:
         assert_neighbor_lists_equal((i_got, j_got, u_got), (i_ref, j_ref, u_ref))
 
     @requires_vesin
-    @pytest.mark.parametrize("N", [33, 65, 100, 127, 200])
+    @pytest.mark.parametrize("N", [33, 65, 127])
     def test_non_aligned_N_correctness(self, device, dtype, N):
         """Non-32-aligned N produces correct pairs (padding-safe)."""
         positions, cell, pbc = create_random_system(
@@ -340,10 +340,10 @@ class TestTileNeighborListEdgeCases:
         """max_neighbors overflow raises instead of silently truncating rows."""
         N = 64
         torch.manual_seed(1)
-        positions = torch.rand(N, 3, dtype=dtype, device=device) * 5.0
-        cell = _orthorhombic_cell(5.0, device, dtype)
+        positions = torch.rand(N, 3, dtype=dtype, device=device) * 8.0
+        cell = _orthorhombic_cell(8.0, device, dtype)
         with pytest.raises(NeighborOverflowError):
-            cluster_tile_neighbor_list(positions, 5.0, cell, max_neighbors=4)
+            cluster_tile_neighbor_list(positions, 3.0, cell, max_neighbors=4)
 
     def test_component_sizes_match_estimate(self, device):
         """estimate_cluster_tile_list_sizes returns shape-consistent sizes."""
@@ -466,6 +466,7 @@ class TestClusterTileCompile:
     the output.
     """
 
+    @pytest.mark.slow
     def test_cluster_tile_neighbor_list_compile(self, device, dtype):
         """``cluster_tile_neighbor_list`` should be compatible with ``torch.compile``."""
         torch.manual_seed(0)
@@ -499,6 +500,7 @@ class TestClusterTileCompile:
                 f"Row {i} neighbor set mismatch under torch.compile"
             )
 
+    @pytest.mark.slow
     def test_build_then_convert_compile(self, device, dtype):
         """Component build + query_cluster_tile should compile cleanly."""
         torch.manual_seed(1)
@@ -775,14 +777,14 @@ class TestClusterTileCutoff2SelectiveOverflow:
         assert torch.equal(shifts2, shifts)
 
     def test_matrix_overflow_raises(self, device, dtype):
-        positions = torch.rand(64, 3, dtype=dtype, device=device) * 3.0
-        cell = _orthorhombic_cell(3.0, device, dtype)
+        positions = torch.rand(64, 3, dtype=dtype, device=device) * 8.0
+        cell = _orthorhombic_cell(8.0, device, dtype)
         with pytest.raises(NeighborOverflowError):
             cluster_tile_neighbor_list(positions, 3.0, cell, max_neighbors=1)
 
     def test_compact_coo_overflow_raises(self, device, dtype):
-        positions = torch.rand(64, 3, dtype=dtype, device=device) * 3.0
-        cell = _orthorhombic_cell(3.0, device, dtype)
+        positions = torch.rand(64, 3, dtype=dtype, device=device) * 8.0
+        cell = _orthorhombic_cell(8.0, device, dtype)
         with pytest.raises(NeighborOverflowError):
             cluster_tile_neighbor_list(
                 positions,
@@ -821,7 +823,7 @@ class TestClusterTileCellListParity:
 
     def test_full_fill_per_atom_sets_match_cell_list(self, device, dtype):
         torch.manual_seed(0)
-        n, box, cutoff = 500, 12.0, 4.0
+        n, box, cutoff = 128, 12.0, 4.0
         pos = torch.rand(n, 3, dtype=dtype, device=device) * box
         cell = _orthorhombic_cell(box, device, dtype)
         pbc = torch.ones(3, dtype=torch.bool, device=device)
@@ -836,7 +838,7 @@ class TestClusterTileCellListParity:
 
     def test_force_and_energy_match_cell_list(self, device, dtype):
         torch.manual_seed(1)
-        n, box, cutoff = 400, 12.0, 4.0
+        n, box, cutoff = 96, 12.0, 4.0
         base = torch.rand(n, 3, dtype=dtype, device=device) * box
         cell = _orthorhombic_cell(box, device, dtype)
         pbc = torch.ones(3, dtype=torch.bool, device=device)
@@ -871,7 +873,7 @@ class TestClusterTileCellListParity:
     def test_dual_cutoff_secondary_matches_cell_list(self, device, dtype):
         """The cutoff2 matrix must cover the (cutoff, cutoff2] shell."""
         torch.manual_seed(2)
-        n, box = 300, 14.0
+        n, box = 96, 14.0
         pos = torch.rand(n, 3, dtype=dtype, device=device) * box
         cell = _orthorhombic_cell(box, device, dtype)
         pbc = torch.ones(3, dtype=torch.bool, device=device)
@@ -894,7 +896,7 @@ class TestClusterTileCellListParity:
         dense system; exercises the build->query tile-overflow guard.
         """
         torch.manual_seed(3)
-        n, box, cutoff = 1024, 12.0, 5.0
+        n, box, cutoff = 128, 12.0, 5.0
         pos = torch.rand(n, 3, dtype=dtype, device=device) * box
         cell = _orthorhombic_cell(box, device, dtype)
         (

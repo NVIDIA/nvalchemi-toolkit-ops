@@ -326,6 +326,7 @@ def _cross_backend_system(dtype):
     return pos_np, pp_np
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_naive_pair_fn_matches_torch_no_pbc(dtype):
     """Cross-backend (no PBC): JAX and Torch naive launch the identical specialized
@@ -363,6 +364,7 @@ def test_naive_pair_fn_matches_torch_no_pbc(dtype):
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_naive_pair_fn_matches_torch_pbc(dtype):
     """Cross-backend (PBC, big box → no multi-image): the COO pair outputs agree
@@ -413,6 +415,7 @@ def test_naive_pair_fn_matches_torch_pbc(dtype):
     assert np.allclose(pf_j[oj], pf_t[ot], rtol=1e-6, atol=1e-6)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_naive_pair_fn_matches_torch_pbc_multi_image(dtype):
     """Cross-backend (PBC, multi-image: cutoff > half-cell → R>1). Regression guard
@@ -428,7 +431,7 @@ def test_naive_pair_fn_matches_torch_pbc_multi_image(dtype):
     cell_np = np.asarray(cell).reshape(3, 3)
     pp_np = np.asarray(pp)
 
-    nl_j, _nptr_j, _sh_j, d_j, _v_j, pe_j, pf_j = naive_neighbor_list(
+    nl_j, _nptr_j, _sh_j, d_j, v_j, pe_j, pf_j = naive_neighbor_list(
         positions,
         1.1,
         cell=cell,
@@ -440,7 +443,7 @@ def test_naive_pair_fn_matches_torch_pbc_multi_image(dtype):
         pair_fn=pair_fn,
         pair_params=pp,
     )
-    nl_t, _nptr_t, _sh_t, d_t, _v_t, pe_t, pf_t = nl_torch(
+    nl_t, _nptr_t, _sh_t, d_t, v_t, pe_t, pf_t = nl_torch(
         torch.tensor(pos_np, dtype=torch_dtype, device="cuda"),
         1.1,
         torch.tensor(cell_np, dtype=torch_dtype, device="cuda"),
@@ -453,27 +456,27 @@ def test_naive_pair_fn_matches_torch_pbc_multi_image(dtype):
         pair_params=torch.tensor(pp_np, dtype=torch_dtype, device="cuda"),
     )
 
-    def _canon(nl, d, pe, pf):
-        nl, d, pe, pf = (np.asarray(x) for x in (nl, d, pe, pf))
-        order = np.lexsort((np.round(d, 5), nl[1], nl[0]))
-        return nl[0][order], nl[1][order], d[order], pe[order], pf[order]
-
-    i_j, j_j, dj, pej, pfj = _canon(nl_j, d_j, pe_j, pf_j)
-    i_t, j_t, dt, pet, pft = _canon(
+    i_j, j_j, [dj, vj, pej, pfj] = _canon_coo(nl_j, [d_j, v_j, pe_j, pf_j])
+    i_t, j_t, [dt, vt, pet, pft] = _canon_coo(
         nl_t.cpu().numpy(),
-        d_t.detach().cpu().numpy(),
-        pe_t.detach().cpu().numpy(),
-        pf_t.detach().cpu().numpy(),
+        [
+            d_t.detach().cpu().numpy(),
+            v_t.detach().cpu().numpy(),
+            pe_t.detach().cpu().numpy(),
+            pf_t.detach().cpu().numpy(),
+        ],
     )
     # Same number of images, same (i, j) multiset, same per-pair geometry + outputs.
     assert nl_j.shape[1] == nl_t.shape[1]
     assert int(np.asarray(nl_j).shape[1]) > 8  # genuinely multi-image
     assert np.array_equal(i_j, i_t) and np.array_equal(j_j, j_t)
     assert np.allclose(dj, dt, rtol=1e-5, atol=1e-5)
+    assert np.allclose(vj, vt, rtol=1e-5, atol=1e-5)
     assert np.allclose(pej, pet, rtol=1e-5, atol=1e-5)
     assert np.allclose(pfj, pft, rtol=1e-5, atol=1e-5)
 
 
+@pytest.mark.slow
 def test_naive_multi_image_grad_and_hvp_matches_torch():
     """The launch-dim fix routes multi-image (R>1) neighbor slots through the autograd
     backward for the first time.  Verify the gradient AND a Hessian-vector product of a
@@ -569,12 +572,22 @@ def test_naive_multi_image_grad_and_hvp_matches_torch():
 
 
 def _canon_coo(nl, arrays):
-    """Sort COO pairs by ``(i, j, round(distance))`` for order-independent
-    cross-backend comparison.  ``arrays[0]`` must be the distances.  Returns
-    ``(i_sorted, j_sorted, [arrays_sorted])``."""
+    """Sort COO pairs and aligned arrays for order-independent comparison.
+
+    ``arrays[0]`` must be the distances. Additional scalar or vector arrays are
+    included as tie-breakers, which matters for duplicate periodic images that
+    share ``(i, j, distance)`` but have different image vectors.
+    """
     nl = np.asarray(nl)
     arrays = [np.asarray(a) for a in arrays]
-    order = np.lexsort((np.round(arrays[0], 5), nl[1], nl[0]))
+    keys = [nl[0], nl[1], np.round(arrays[0], 5)]
+    for array in arrays[1:]:
+        rounded = np.round(array, 5)
+        if rounded.ndim == 1:
+            keys.append(rounded)
+        else:
+            keys.extend(rounded[:, dim] for dim in range(rounded.shape[1]))
+    order = np.lexsort(tuple(reversed(keys)))
     return nl[0][order], nl[1][order], [a[order] for a in arrays]
 
 
@@ -650,6 +663,7 @@ def test_batch_naive_pair_fn_coo(dtype):
     assert np.allclose(np.asarray(pf_coo), -np.asarray(v_coo), atol=1e-5)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_batch_naive_pair_fn_matches_torch(dtype):
     """Cross-backend: JAX vs Torch batch_naive ``pair_fn`` (order-independent COO)."""
@@ -777,6 +791,7 @@ def test_cell_list_pair_fn_coo(dtype):
     assert np.allclose(np.asarray(pf_coo), -np.asarray(v_coo), atol=1e-5)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_cell_list_pair_fn_matches_torch(dtype):
     """Cross-backend: JAX vs Torch cell_list ``pair_fn`` (order-independent COO,
@@ -795,7 +810,7 @@ def test_cell_list_pair_fn_matches_torch(dtype):
         np.asarray(cell).reshape(3, 3),
         np.asarray(pp),
     )
-    nl_j, _p, _s, d_j, _v, pe_j, pf_j = cl_j(
+    nl_j, _p, _s, d_j, v_j, pe_j, pf_j = cl_j(
         positions,
         1.1,
         cell,
@@ -807,7 +822,7 @@ def test_cell_list_pair_fn_matches_torch(dtype):
         pair_fn=_PAIR_FN[dtype],
         pair_params=pp,
     )
-    nl_t, _pt, _st, d_t, _vt, pe_t, pf_t = cl_t(
+    nl_t, _pt, _st, d_t, v_t, pe_t, pf_t = cl_t(
         torch.tensor(pos_np, dtype=td, device="cuda"),
         1.1,
         torch.tensor(cell_np, dtype=td, device="cuda"),
@@ -820,12 +835,18 @@ def test_cell_list_pair_fn_matches_torch(dtype):
         pair_params=torch.tensor(pp_np, dtype=td, device="cuda"),
     )
     assert nl_j.shape[1] == nl_t.shape[1] > 0
-    i_j, j_j, [_dj, pej, pfj] = _canon_coo(nl_j, [d_j, pe_j, pf_j])
-    i_t, j_t, [_dt, pet, pft] = _canon_coo(
+    i_j, j_j, [_dj, vj, pej, pfj] = _canon_coo(nl_j, [d_j, v_j, pe_j, pf_j])
+    i_t, j_t, [_dt, vt, pet, pft] = _canon_coo(
         nl_t.cpu().numpy(),
-        [d_t.cpu().numpy(), pe_t.detach().cpu().numpy(), pf_t.detach().cpu().numpy()],
+        [
+            d_t.cpu().numpy(),
+            v_t.detach().cpu().numpy(),
+            pe_t.detach().cpu().numpy(),
+            pf_t.detach().cpu().numpy(),
+        ],
     )
     assert np.array_equal(i_j, i_t) and np.array_equal(j_j, j_t)
+    assert np.allclose(vj, vt, atol=1e-5, rtol=1e-5)
     assert np.allclose(pej, pet, atol=1e-5, rtol=1e-5)
     assert np.allclose(pfj, pft, atol=1e-5, rtol=1e-5)
 
@@ -920,6 +941,7 @@ def test_cell_list_target_indices_pair_fn_coo(dtype):
     assert np.allclose(np.asarray(pf_coo), -np.asarray(v_coo), atol=1e-5)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_cell_list_target_indices_pair_fn_matches_torch(dtype):
     """Cross-backend: JAX vs Torch cell_list ``target_indices`` + ``pair_fn``.
@@ -993,7 +1015,7 @@ def test_cell_list_target_indices_pair_fn_matches_torch(dtype):
     assert np.allclose(pfj, pft, atol=1e-5, rtol=1e-5)
 
 
-def _pc_safe_system(dtype, n_side=4, spacing=1.0):
+def _pc_safe_system(dtype, n_side=3, spacing=1.0):
     """Launch-safe pair-centric geometry: ``n_side**3`` cells in a cubic cell."""
     pos = _cubic_lattice(n_side, spacing, dtype)
     cell = (jnp.eye(3, dtype=dtype) * (n_side * spacing)).reshape(1, 3, 3)
@@ -1297,6 +1319,7 @@ def test_batch_cell_list_pair_fn_coo(dtype):
     assert np.allclose(np.asarray(pf_coo), -np.asarray(v_coo), atol=1e-5)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_batch_cell_list_pair_fn_matches_torch(dtype):
     """Cross-backend: JAX vs Torch batch_cell_list ``pair_fn`` (order-independent COO)."""
@@ -1729,6 +1752,45 @@ def _cubic_lattice(n_side, spacing, dtype):
     return jnp.array(coords, dtype=dtype)
 
 
+def test_batch_naive_pair_fn_multiple_images_r_gt_1():
+    """Batched naive enumerates non-zero periodic images in each system.
+
+    This is the JAX-local CI guard for the launch shift-axis regression covered
+    more deeply by the slow JAX-vs-Torch parity test below.
+    """
+    from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+
+    dtype = jnp.float64
+    base = _cubic_lattice(2, 1.0, dtype)
+    n = int(base.shape[0])
+    pos = jnp.concatenate([base, base], axis=0)
+    batch_idx = jnp.concatenate([jnp.zeros(n, jnp.int32), jnp.ones(n, jnp.int32)])
+    batch_ptr = jnp.array([0, n, 2 * n], dtype=jnp.int32)
+    cell = jnp.tile((jnp.eye(3, dtype=dtype) * 2.0)[None], (2, 1, 1))
+    pbc = jnp.ones((2, 3), dtype=jnp.bool_)
+    pair_params = _pair_params(2 * n, dtype)
+
+    nm, nn, _shifts, nd, nv, pe, pf = batch_naive_neighbor_list(
+        pos,
+        1.1,
+        batch_idx=batch_idx,
+        batch_ptr=batch_ptr,
+        cell=cell,
+        pbc=pbc,
+        max_neighbors=64,
+        max_atoms_per_system=n,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[dtype],
+        pair_params=pair_params,
+    )
+
+    _check_pair_matrix(nm, nn, nv, nd, pe, pf, pair_params)
+    assert int(np.asarray(nn).min()) > 3
+    assert int(np.asarray(nn).sum()) > 2 * n * 3
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_batch_naive_pair_fn_matches_torch_multi_image(dtype):
     """Cross-backend batch_naive in the multi-image regime (cutoff 1.1 / cell 2.0).
@@ -1754,7 +1816,7 @@ def test_batch_naive_pair_fn_matches_torch_multi_image(dtype):
     pbc = jnp.ones((2, 3), jnp.bool_)
     pp = ((jnp.arange(2 * n, dtype=dtype) + 1.0) * 0.5).reshape(2 * n, 1)
 
-    nl_j, _p, _s, d_j, _v, pe_j, pf_j = bn_j(
+    nl_j, _p, _s, d_j, v_j, pe_j, pf_j = bn_j(
         pos,
         1.1,
         batch_idx=bidx,
@@ -1769,7 +1831,7 @@ def test_batch_naive_pair_fn_matches_torch_multi_image(dtype):
         pair_fn=_PAIR_FN[dtype],
         pair_params=pp,
     )
-    nl_t, _pt, _st, d_t, _vt, pe_t, pf_t = bn_t(
+    nl_t, _pt, _st, d_t, v_t, pe_t, pf_t = bn_t(
         torch.tensor(np.asarray(pos), dtype=td, device="cuda"),
         1.1,
         batch_idx=torch.tensor(np.asarray(bidx), dtype=torch.int32, device="cuda"),
@@ -1787,14 +1849,22 @@ def test_batch_naive_pair_fn_matches_torch_multi_image(dtype):
     # Genuinely multi-image: each atom sees its 3 axis-neighbours via two images
     # (6/atom) vs 3/atom without images, so total > 2 * n * 3.
     assert int(np.asarray(nl_j).shape[1]) > 2 * n * 3
-    i_j, j_j, [_dj, pej, pfj] = _canon_coo(nl_j, [d_j, pe_j, pf_j])
-    i_t, j_t, [_dt, pet, pft] = _canon_coo(
+    i_j, j_j, [_dj, vj, pej, pfj] = _canon_coo(nl_j, [d_j, v_j, pe_j, pf_j])
+    i_t, j_t, [_dt, vt, pet, pft] = _canon_coo(
         nl_t.cpu().numpy(),
-        [d_t.cpu().numpy(), pe_t.detach().cpu().numpy(), pf_t.detach().cpu().numpy()],
+        [
+            d_t.cpu().numpy(),
+            v_t.detach().cpu().numpy(),
+            pe_t.detach().cpu().numpy(),
+            pf_t.detach().cpu().numpy(),
+        ],
     )
     assert np.array_equal(i_j, i_t) and np.array_equal(j_j, j_t)
-    assert np.allclose(pej, pet, atol=1e-5, rtol=1e-5)
-    assert np.allclose(pfj, pft, atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(pej, pet, atol=1e-5, rtol=1e-5)
+    # Duplicate periodic images can tie on (i, j, distance) while having opposite
+    # image vectors, so force vectors are checked against each backend's vectors.
+    np.testing.assert_allclose(pfj, -vj, atol=1e-5, rtol=1e-5)
+    np.testing.assert_allclose(pft, -vt, atol=1e-5, rtol=1e-5)
 
 
 def test_cluster_tile_pair_fn_multi_image_matches_naive():

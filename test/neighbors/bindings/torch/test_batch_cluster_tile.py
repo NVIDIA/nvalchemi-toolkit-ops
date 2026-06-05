@@ -734,6 +734,7 @@ class TestBatchClusterTileCompile:
     ``torch.compile`` round-trip.
     """
 
+    @pytest.mark.slow
     def test_batch_cluster_tile_neighbor_list_compile(self, device, dtype):
         """``batch_cluster_tile_neighbor_list`` should be compatible with ``torch.compile``."""
         sizes = [64, 96]

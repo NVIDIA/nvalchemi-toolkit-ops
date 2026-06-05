@@ -762,6 +762,7 @@ class TestBatchCellListWpLaunchers:
                 assert sys_i == sys_j, "Neighbors should be from same system"
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("dtype", dtypes)
 @pytest.mark.parametrize(
     "pbc_flags",

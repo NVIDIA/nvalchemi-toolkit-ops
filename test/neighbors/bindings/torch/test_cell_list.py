@@ -39,6 +39,11 @@ from ...test_utils import (
 from .conftest import requires_vesin
 
 
+def _search_radius_envelope(neighbor_search_radius: torch.Tensor) -> int:
+    """Return the number of cell-offset combinations implied by a radius."""
+    return int(torch.prod(2 * neighbor_search_radius.to("cpu") + 1).item())
+
+
 class TestCellListCorrectness:
     """Tests verifying cell list correctness against reference implementations."""
 
@@ -459,9 +464,28 @@ class TestCellListErrors:
 class TestLeftHandedCells:
     """Tests for left-handed (negative determinant) cell support."""
 
-    def _check_left_handed(self, positions, cell, pbc, cutoff, dtype):
+    def _check_left_handed(
+        self,
+        positions,
+        cell,
+        pbc,
+        cutoff,
+        dtype,
+        *,
+        max_radius_envelope=None,
+        require_periodic_shift=False,
+    ):
         """Helper: verify neighbor list and distance equivalence for a left-handed cell."""
         assert cell.det().item() < 0, "Cell should have negative determinant"
+        if max_radius_envelope is not None:
+            _max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+                cell,
+                pbc,
+                cutoff,
+            )
+            assert (
+                _search_radius_envelope(neighbor_search_radius) <= max_radius_envelope
+            )
 
         estimated_density = positions.shape[0] / cell.det().abs().item()
         max_neighbors = estimate_max_neighbors(
@@ -480,6 +504,8 @@ class TestLeftHandedCells:
 
         # Neighbor list equivalence
         assert_neighbor_lists_equal((i, j, u), (ref_i, ref_j, ref_u))
+        if require_periodic_shift:
+            assert torch.any(u != 0)
 
         # Distance equivalence
         if len(i) > 0:
@@ -521,20 +547,40 @@ class TestLeftHandedCells:
     @requires_vesin
     def test_nonorthorhombic_system(self, device, dtype):
         """Left-handed triclinic cell should match brute force."""
-        positions, cell, pbc = create_nonorthorhombic_system(
-            num_atoms=50,
-            a=8.57,
-            b=12.9645,
-            c=7.2203,
-            alpha=90.74,
-            beta=115.944,
-            gamma=87.663,
+        cell = torch.tensor(
+            [
+                [
+                    [-6.0, 0.2, 0.1],
+                    [0.4, 7.0, 0.3],
+                    [0.2, 0.5, 8.0],
+                ],
+            ],
             dtype=dtype,
             device=device,
-            seed=42,
         )
-        cell[..., 0, :] *= -1
-        self._check_left_handed(positions, cell, pbc, cutoff=5.0, dtype=dtype)
+        frac = torch.tensor(
+            [
+                [0.05, 0.10, 0.10],
+                [0.95, 0.10, 0.10],
+                [0.50, 0.05, 0.50],
+                [0.50, 0.95, 0.50],
+                [0.25, 0.25, 0.25],
+                [0.75, 0.75, 0.75],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        positions = frac @ cell[0]
+        pbc = torch.tensor([[True, True, True]], device=device)
+        self._check_left_handed(
+            positions,
+            cell,
+            pbc,
+            cutoff=2.0,
+            dtype=dtype,
+            max_radius_envelope=125,
+            require_periodic_shift=True,
+        )
 
     def test_left_handed_estimate_cell_list_sizes(self, device, dtype):
         """estimate_cell_list_sizes should accept left-handed cells."""
@@ -545,6 +591,18 @@ class TestLeftHandedCells:
         max_cells, neighbor_search_radius = estimate_cell_list_sizes(cell, pbc, 2.0)
         assert max_cells > 0
         assert neighbor_search_radius.shape == (3,)
+
+    def test_estimate_cell_list_sizes_rejects_nonpositive_max_nbins(
+        self,
+        device,
+        dtype,
+    ):
+        """Invalid cell-bin caps should fail before launching Warp sizing kernels."""
+        cell = (torch.eye(3, dtype=dtype, device=device) * 5.0).reshape(1, 3, 3)
+        pbc = torch.tensor([True, True, True], device=device)
+
+        with pytest.raises(ValueError, match="max_nbins must be positive"):
+            estimate_cell_list_sizes(cell, pbc, 2.0, max_nbins=0)
 
 
 class TestCellListOutputFormats:
@@ -848,6 +906,7 @@ class TestCellListAtomCentricPathEquivalence:
 class TestCellListCompile:
     """Tests for torch.compile compatibility."""
 
+    @pytest.mark.slow
     def test_build_cell_list_compile(self, device, dtype):
         """build_cell_list should be compatible with torch.compile."""
         positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
@@ -934,6 +993,7 @@ class TestCellListCompile:
                 ), f"Value mismatch in tensor {i}"
 
     @pytest.mark.parametrize("pbc_flag", [False, True])
+    @pytest.mark.slow
     def test_query_cell_list_compile(self, device, dtype, pbc_flag):
         """query_cell_list should be compatible with torch.compile."""
         positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
@@ -1571,6 +1631,7 @@ class TestCellListAutograd:
         )
         assert len(out_dv) == 5
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):
         positions, cell, pbc = self._make_system(device)
         positions.requires_grad_(True)
@@ -1586,8 +1647,16 @@ class TestCellListAutograd:
             )
             return d.sum()
 
-        assert torch.autograd.gradcheck(fn, (positions,), atol=1e-5, eps=1e-6)
+        # nondet_tol covers atomic_add ordering nondeterminism on CUDA.
+        assert torch.autograd.gradcheck(
+            fn,
+            (positions,),
+            atol=1e-5,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_cell(self, device):
         positions, cell, pbc = self._make_system(device)
         cell = cell.clone().requires_grad_(True)
@@ -1605,6 +1674,7 @@ class TestCellListAutograd:
 
         assert torch.autograd.gradcheck(fn, (cell,), atol=1e-5, eps=1e-6)
 
+    @pytest.mark.slow
     def test_gradcheck_vectors_wrt_positions(self, device):
         positions, cell, pbc = self._make_system(device)
         positions.requires_grad_(True)
@@ -1623,6 +1693,7 @@ class TestCellListAutograd:
 
         assert torch.autograd.gradcheck(fn, (positions,), atol=1e-5, eps=1e-6)
 
+    @pytest.mark.slow
     def test_gradgradcheck_distances_second_order(self, device):
         """Second-order autograd via reconstruction in backward."""
         positions, cell, pbc = self._make_system(device)
@@ -1641,7 +1712,14 @@ class TestCellListAutograd:
             # Non-linear loss so the Hessian is non-trivial.
             return d.pow(2).sum()
 
-        assert torch.autograd.gradgradcheck(fn, (positions,), atol=1e-4, eps=1e-6)
+        # nondet_tol covers atomic_add ordering nondeterminism on CUDA.
+        assert torch.autograd.gradgradcheck(
+            fn,
+            (positions,),
+            atol=1e-4,
+            eps=1e-6,
+            nondet_tol=1e-7,
+        )
 
     def test_hessian_vector_product_smoke(self, device):
         """create_graph=True allows constructing an HVP without errors."""

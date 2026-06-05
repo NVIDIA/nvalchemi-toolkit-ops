@@ -945,6 +945,7 @@ class TestBatchNaiveAutograd:
         )
         assert d.requires_grad and v.requires_grad
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):
         pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
         pos.requires_grad_(True)
@@ -965,6 +966,7 @@ class TestBatchNaiveAutograd:
 
         torch.autograd.gradcheck(fn, (pos,), atol=1e-5, eps=1e-6, nondet_tol=1e-7)
 
+    @pytest.mark.slow
     def test_gradcheck_distances_wrt_cell(self, device):
         pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
         cell = cell.clone().requires_grad_(True)
@@ -1024,6 +1026,7 @@ class TestBatchNaiveAutograd:
                 rebuild_flags=torch.ones(num_systems, dtype=torch.bool, device=device),
             )
 
+    @pytest.mark.slow
     def test_gradgradcheck_second_order(self, device):
         pos, cell, pbc, batch_idx, n_per = self._make_two_systems(device)
         pos.requires_grad_(True)

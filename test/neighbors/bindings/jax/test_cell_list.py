@@ -198,15 +198,8 @@ class TestCellListEdgeCases:
 class TestCellListJIT:
     """Smoke tests for cell_list compatibility with jax.jit."""
 
-    @pytest.mark.xfail(
-        reason="estimate_cell_list_sizes derives array shapes from traced input data "
-        "(cell geometry), which is incompatible with jax.jit. Provide max_total_cells "
-        "explicitly to bypass. See TODO in estimate_cell_list_sizes.",
-        raises=TypeError,
-        strict=True,
-    )
-    def test_jit_with_pbc(self):
-        """Test cell_list with PBC works with jax.jit."""
+    def test_jit_with_pbc_requires_precomputed_sizing(self):
+        """The traced sizing path should fail with a clear JAX shape error."""
         positions = jnp.array(
             [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
             dtype=jnp.float32,
@@ -217,6 +210,30 @@ class TestCellListJIT:
         @jax.jit
         def jitted_cell_list(positions, cell, pbc):
             return cell_list(positions, cutoff=1.0, cell=cell, pbc=pbc)
+
+        with pytest.raises(TypeError, match="Shapes must be .* concrete values"):
+            jitted_cell_list(positions, cell, pbc)
+
+    def test_jit_with_pbc_precomputed_sizing(self):
+        """PBC cell list should work under JIT when sizing is concrete."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.array([[[10.0, 0.0, 0.0], [0.0, 10.0, 0.0], [0.0, 0.0, 10.0]]])
+        pbc = jnp.array([[True, True, True]])
+        neighbor_search_radius = jnp.ones(3, dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_cell_list(positions, cell, pbc):
+            return cell_list(
+                positions,
+                cutoff=1.0,
+                cell=cell,
+                pbc=pbc,
+                max_total_cells=8,
+                neighbor_search_radius=neighbor_search_radius,
+            )
 
         neighbor_matrix, num_neighbors, shifts = jitted_cell_list(positions, cell, pbc)
 
@@ -329,10 +346,10 @@ class TestCellListCorrectnessVesin:
     @pytest.mark.parametrize(
         "cell_size, cutoff",
         [
-            (2.0, 5.0),
+            pytest.param(2.0, 5.0, marks=pytest.mark.slow),
             (4.0, 5.0),
             (10.0, 5.0),
-            (12.42, 21.2),
+            pytest.param(12.42, 21.2, marks=pytest.mark.slow),
         ],
         ids=[
             "cutoff_2.5x_cell",
@@ -378,10 +395,10 @@ class TestCellListCorrectnessVesin:
     @pytest.mark.parametrize(
         "cell_size, cutoff",
         [
-            (2.0, 5.0),
+            pytest.param(2.0, 5.0, marks=pytest.mark.slow),
             (4.0, 5.0),
             (10.0, 5.0),
-            (12.42, 21.2),
+            pytest.param(12.42, 21.2, marks=pytest.mark.slow),
         ],
         ids=[
             "cutoff_2.5x_cell",

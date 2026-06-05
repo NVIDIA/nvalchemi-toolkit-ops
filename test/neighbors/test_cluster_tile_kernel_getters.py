@@ -38,6 +38,8 @@ from nvalchemiops.neighbors.cluster_tile.launchers import (
     _permute_gather_soa,
 )
 
+pytestmark = pytest.mark.gpu
+
 # ---------------------------------------------------------------------------
 # Module-scope @wp.func definitions (cache-key + LJ tests)
 # ---------------------------------------------------------------------------

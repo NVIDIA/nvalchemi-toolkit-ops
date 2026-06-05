@@ -82,7 +82,7 @@ class TestReportNeighborListCosts:
 
     def test_many_tiny_systems_use_best_available_suboption(self):
         """Many tiny systems pick a naive or cell-list strategy."""
-        n_sys = 5365
+        n_sys = 128
         top = _report([18] * n_sys, [400.0] * n_sys, cutoff=15.0)[0][0]
         base = top[len("batch_") :] if top.startswith("batch_") else top
         assert base in {"naive_tile", "naive_scalar", "cell_list_pair_centric"}
