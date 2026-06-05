@@ -26,6 +26,7 @@ on random systems. We'll cover:
 4. Comparison between algorithms
 5. Neighbor matrix vs neighbor list (COO) formats
 6. build_cell_list + query_cell_list: Lower-level API with caching
+7. return_distances / return_vectors: differentiable per-pair geometry (autograd)
 
 The neighbor list construction efficiently finds all atom pairs within a cutoff distance,
 which is essential for molecular simulations and materials science calculations.
@@ -35,7 +36,7 @@ import time
 
 import torch
 
-from nvalchemiops.torch.neighbors import neighbor_list
+from nvalchemiops.torch.neighbors import estimate_neighbor_list_costs, neighbor_list
 from nvalchemiops.torch.neighbors.cell_list import (
     build_cell_list,
     cell_list,
@@ -83,6 +84,27 @@ def _timed_loop(fn, n_iter=10, warmup=10):
         return (time.perf_counter() - t0) / n_iter * 1000.0
 
 
+def _dispatch_report(label, positions, cell, pbc, cutoff, **kwargs):
+    """Print sorted Torch neighbor-list strategy costs and return the cheapest."""
+    batch_ptr = torch.tensor(
+        [0, positions.shape[0]],
+        dtype=torch.int32,
+        device=positions.device,
+    )
+    report = estimate_neighbor_list_costs(
+        batch_ptr,
+        cell,
+        pbc,
+        cutoff,
+        positions_dtype=positions.dtype,
+        **kwargs,
+    )
+    print(f"\n{label}")
+    for strategy, cost in report:
+        print(f"  {strategy:24s} estimated cost (arbitrary units): {cost:.3g}")
+    return report[0][0]
+
+
 # %%
 # Create random systems of different sizes
 # ========================================
@@ -96,9 +118,9 @@ print("=" * 70)
 small_num_atoms = 100
 small_box_size = 10.0
 
-# Large system: requires cell list algorithm
-large_num_atoms = 30_000
-large_box_size = 100.0
+# Larger system: demonstrates cell-list scaling without expensive O(N²) timing
+large_num_atoms = 4096
+large_box_size = 40.0
 
 cutoff = 5.0
 
@@ -132,8 +154,8 @@ print("\n" + "=" * 70)
 print("METHOD 1: CELL LIST ALGORITHM (O(N))")
 print("=" * 70)
 
-# On large system (where cell list excels)
-print("\n--- Large System (30,000 atoms) ---")
+# On larger systems, spatial decomposition avoids all-pairs distance checks.
+print(f"\n--- Large System ({large_num_atoms:,} atoms) ---")
 
 # Return neighbor matrix format (default)
 neighbor_matrix, num_neighbors, shifts = cell_list(
@@ -235,7 +257,7 @@ print(
     f"Results match: {torch.equal(num_neighbors_cell_small, num_neighbors_naive_small)}"
 )
 
-print("\n--- Large System (30,000 atoms) ---")
+print(f"\n--- Large System ({large_num_atoms:,} atoms) ---")
 
 # Cell list on large system
 _, num_neighbors_cell_large, _ = cell_list(large_positions, cutoff, large_cell, pbc)
@@ -243,53 +265,58 @@ cell_time_large = _timed_loop(
     lambda: cell_list(large_positions, cutoff, large_cell, pbc)
 )
 
-# Naive on large system (will be slower)
-_, num_neighbors_naive_large, _ = naive_neighbor_list(
-    large_positions, cutoff, cell=large_cell, pbc=pbc
-)
-naive_time_large = _timed_loop(
-    lambda: naive_neighbor_list(large_positions, cutoff, cell=large_cell, pbc=pbc)
-)
-
 print(f"Cell list:  {cell_time_large:.3f} ms, {num_neighbors_cell_large.sum()} pairs")
-print(f"Naive:      {naive_time_large:.3f} ms, {num_neighbors_naive_large.sum()} pairs")
 print(
-    f"Results match: {torch.equal(num_neighbors_cell_large, num_neighbors_naive_large)}"
+    "Naive large-system timing skipped: the O(N²) path is only demonstrated "
+    "on the small system above."
 )
-print(f"\nSpeedup (cell list vs naive): {naive_time_large / cell_time_large:.1f}x")
 
 # %%
 # Method 3: Unified neighbor_list Wrapper (Recommended)
 # =====================================================
-# The neighbor_list() wrapper provides a unified API that automatically
-# selects the best algorithm based on system size and parameters
+# The neighbor_list() wrapper provides a unified API and can choose a strategy
+# from geometry-derived cost estimates. The same estimate can be printed once
+# and reused by passing the selected strategy as ``method=...``.
 
 print("\n" + "=" * 70)
 print("METHOD 3: UNIFIED neighbor_list() WRAPPER (RECOMMENDED)")
 print("=" * 70)
 
-print("\n--- Automatic Method Selection ---")
-# The wrapper automatically chooses the best algorithm:
-# - Small systems (< 2000 avg atoms per system): naive algorithm
-# - Large systems (>= 2000 avg atoms per system): cell_list algorithm
-# - If cutoff2 is provided: dual cutoff algorithms
-# - If batch_idx/batch_ptr is provided: batch algorithms
+print("\n--- Cost-Model Method Dispatch ---")
 
-# Small system - automatically uses naive algorithm
-print("\nSmall system (auto-selects naive):")
+small_strategy = _dispatch_report(
+    "Small system dispatch estimate:",
+    small_positions,
+    small_cell,
+    pbc,
+    cutoff,
+)
 nm_auto_small, num_auto_small, shifts_auto_small = neighbor_list(
-    small_positions, cutoff, cell=small_cell, pbc=pbc
+    small_positions,
+    cutoff,
+    cell=small_cell,
+    pbc=pbc,
+    method=small_strategy,
 )
 print(f"  Total pairs: {num_auto_small.sum()}")
-print("  Method selected: naive (auto)")
+print(f"  Selected strategy: {small_strategy}")
 
-# Large system - automatically uses cell_list algorithm
-print("\nLarge system (auto-selects cell_list):")
+large_strategy = _dispatch_report(
+    "Large system dispatch estimate:",
+    large_positions,
+    large_cell,
+    pbc,
+    cutoff,
+)
 nm_auto_large, num_auto_large, shifts_auto_large = neighbor_list(
-    large_positions, cutoff, cell=large_cell, pbc=pbc
+    large_positions,
+    cutoff,
+    cell=large_cell,
+    pbc=pbc,
+    method=large_strategy,
 )
 print(f"  Total pairs: {num_auto_large.sum()}")
-print("  Method selected: cell_list (auto)")
+print(f"  Selected strategy: {large_strategy}")
 
 print("\n--- Explicit Method Selection ---")
 # You can also explicitly specify the method
@@ -324,7 +351,7 @@ print(f"  Neighbor ptr: {neighbor_ptr_coo.shape}")
 
 print("\n--- Benefits of the Wrapper ---")
 print("✓ Unified API for all neighbor list methods")
-print("✓ Automatic algorithm selection based on system size")
+print("✓ Cost-model dispatch based on geometry and requested outputs")
 print("✓ Easy to switch between methods for testing")
 print("✓ Consistent return values across all methods")
 print("✓ Pass-through of method-specific kwargs")
@@ -471,6 +498,52 @@ if neighbor_list.shape[1] > 0:
         print("✓ All neighbor distances are within the cutoff")
     else:
         print("✗ Some distances are outside the cutoff")
+
+# %%
+# Differentiable distances and vectors
+# ====================================
+# The returned distance and vector tensors can participate in autograd.
+
+print("\n" + "=" * 70)
+print("DIFFERENTIABLE DISTANCES AND VECTORS")
+print("=" * 70)
+
+positions_for_gradients = small_positions.clone().detach().requires_grad_(True)
+
+(
+    neighbor_matrix,
+    neighbor_counts,
+    neighbor_shifts,
+    neighbor_distances,
+    neighbor_vectors,
+) = cell_list(
+    positions_for_gradients,
+    cutoff,
+    small_cell,
+    pbc,
+    return_distances=True,
+    return_vectors=True,
+)
+
+neighbor_slots = torch.arange(neighbor_distances.shape[1], device=device)
+valid_slots = neighbor_slots[None, :] < neighbor_counts[:, None]
+
+if valid_slots.any():
+    geometry_loss = (
+        neighbor_distances[valid_slots].pow(2).mean()
+        + 1.0e-4 * neighbor_vectors[valid_slots].pow(2).sum()
+    )
+    (position_gradients,) = torch.autograd.grad(
+        geometry_loss,
+        positions_for_gradients,
+    )
+
+    print(f"Neighbor matrix shape: {neighbor_matrix.shape}")
+    print(f"Neighbor shifts shape: {neighbor_shifts.shape}")
+    print(f"Geometry loss: {geometry_loss.item():.6f}")
+    print(f"Position gradient norm: {position_gradients.norm().item():.6f}")
+else:
+    print("No neighbor pairs found for the differentiable geometry example.")
 
 # %%
 print("\nExample completed successfully!")

@@ -31,10 +31,13 @@ import numpy as np
 jax.config.update("jax_enable_x64", True)
 
 
-requires_gpu = pytest.mark.skipif(
-    not any(d.platform == "gpu" for d in jax.devices()),
-    reason="JAX Warp bindings require GPU",
-)
+requires_gpu = [
+    pytest.mark.gpu,
+    pytest.mark.skipif(
+        not any(d.platform == "gpu" for d in jax.devices()),
+        reason="JAX Warp neighbor bindings require a JAX GPU device",
+    ),
+]
 
 try:
     _ = import_module("vesin")
@@ -70,6 +73,27 @@ def create_simple_cubic_system_jax(
     pbc = jnp.array([[True, True, True]])
 
     return positions, cell, pbc
+
+
+def analytic_distance_sq_hvp(neighbor_list, v, n_atoms):
+    """Exact Hessian-vector product of ``loss = (distances**2).sum()``.
+
+    ``loss`` is quadratic in positions (each ``r = p[j] - p[i] + shift @ cell`` is
+    linear), so its Hessian is constant and known in closed form: every directed
+    pair ``(i, j)`` in the COO neighbor list contributes ``hvp[i] -= 2*(v[j]-v[i])``
+    and ``hvp[j] += 2*(v[j]-v[i])``.  A backend-independent ground truth for the
+    higher-order-autograd regression tests (a loss nonlinear in distance is what the
+    old detached-distance ``custom_vjp`` got wrong).
+    """
+    i_idx = np.asarray(neighbor_list[0])
+    j_idx = np.asarray(neighbor_list[1])
+    v = np.asarray(v)
+    hvp = np.zeros((n_atoms, 3))
+    for i, j in zip(i_idx, j_idx):
+        dr = v[j] - v[i]
+        hvp[i] -= 2.0 * dr
+        hvp[j] += 2.0 * dr
+    return hvp
 
 
 def create_batch_idx_and_ptr_jax(atoms_per_system: list[int]):

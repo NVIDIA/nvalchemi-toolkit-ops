@@ -544,6 +544,7 @@ class TestNaiveOutputFormats:
 class TestNaiveCompile:
     """Test torch.compile compatibility."""
 
+    @pytest.mark.slow
     def test_compile_no_pbc(self, device, dtype, half_fill):
         """Test that naive_neighbor_list can be compiled (no PBC)."""
         positions, _, _ = create_simple_cubic_system(
@@ -596,6 +597,7 @@ class TestNaiveCompile:
             mask = neighbor_row != 50
             assert neighbor_row[mask].shape == (num_neighbors[i].item(),)
 
+    @pytest.mark.slow
     def test_compile_with_pbc(self, device, dtype, half_fill):
         """Test that naive_neighbor_list can be compiled (with PBC)."""
         positions, cell, pbc = create_simple_cubic_system(
@@ -908,3 +910,171 @@ class TestNaiveSelectiveRebuildFlags:
         assert torch.equal(nn_sel, nn_ref), (
             "num_neighbors should match full rebuild when flag=True"
         )
+
+
+class TestNaiveAutograd:
+    """Differentiable per-pair distances / vectors via the autograd primitive."""
+
+    def _make_system(self, device, n=6, box=4.0):
+        torch.manual_seed(0)
+        pos = torch.randn(n, 3, dtype=torch.float64, device=device) * 0.3
+        cell = torch.eye(3, dtype=torch.float64, device=device) * box
+        pbc = torch.tensor([True, True, True], device=device)
+        return pos, cell, pbc
+
+    def test_forward_returns_differentiable_no_pbc(self, device):
+        pos, _, _ = self._make_system(device)
+        pos.requires_grad_(True)
+        nm, nn, d, v = naive_neighbor_list(
+            pos,
+            1.5,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert d.requires_grad and v.requires_grad
+
+    def test_forward_returns_differentiable_pbc(self, device):
+        pos, cell, pbc = self._make_system(device)
+        pos.requires_grad_(True)
+        nm, nn, shifts, d, v = naive_neighbor_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert d.requires_grad and v.requires_grad
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_positions(self, device):
+        pos, cell, pbc = self._make_system(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            _, _, _, d, _ = naive_neighbor_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        torch.autograd.gradcheck(fn, (pos,), atol=1e-5, eps=1e-6, nondet_tol=1e-7)
+
+    @pytest.mark.slow
+    def test_gradcheck_distances_wrt_cell(self, device):
+        pos, cell, pbc = self._make_system(device)
+        cell = cell.clone().requires_grad_(True)
+
+        def fn(c):
+            _, _, _, d, _ = naive_neighbor_list(
+                pos,
+                1.5,
+                cell=c,
+                pbc=pbc,
+                max_neighbors=8,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        torch.autograd.gradcheck(fn, (cell,), atol=1e-5, eps=1e-6, nondet_tol=1e-7)
+
+    def test_half_fill_with_pair_outputs(self, device):
+        """half_fill=True now combines with per-pair geometry outputs; each emitted
+        pair carries a correct distance/vector (self-consistent: ``|vec| == dist``)."""
+        pos, cell, pbc = self._make_system(device)
+        nm, _nn, _sh, dist, vec = naive_neighbor_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+            half_fill=True,
+        )
+        active = nm != pos.shape[0]
+        assert int(active.sum()) > 0
+        assert torch.all(dist[active] <= 1.5 + 1e-4)
+        torch.testing.assert_close(
+            dist[active], vec[active].norm(dim=-1), atol=1e-5, rtol=1e-5
+        )
+
+    def test_pair_outputs_reject_rebuild_flags(self, device):
+        """rebuild_flags stays unsupported with pair outputs (stale cached geometry)."""
+        pos, cell, pbc = self._make_system(device)
+        with pytest.raises(NotImplementedError, match="rebuild_flags"):
+            naive_neighbor_list(
+                pos,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                return_distances=True,
+                rebuild_flags=torch.ones(1, dtype=torch.bool, device=device),
+            )
+
+    @pytest.mark.slow
+    def test_gradgradcheck_second_order(self, device):
+        """Second-order autograd: gradient-of-gradient is also correct."""
+        pos, cell, pbc = self._make_system(device)
+        pos.requires_grad_(True)
+
+        def fn(p):
+            *_, d, _ = naive_neighbor_list(
+                p,
+                1.5,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                return_distances=True,
+                return_vectors=True,
+            )
+            return d.sum()
+
+        torch.autograd.gradgradcheck(
+            fn,
+            (pos,),
+            atol=1e-4,
+            eps=1e-5,
+            nondet_tol=1e-7,
+        )
+
+    def test_no_grad_path_unchanged(self, device):
+        """Non-grad inputs through the autograd path: outputs are plain
+        tensors and the active slots match the non-autograd path.
+
+        The two kernel specializations may emit neighbors in different
+        orders, so compare as sets per row.
+        """
+        pos, cell, pbc = self._make_system(device)
+        nm_a, nn_a, sh_a = naive_neighbor_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+        )
+        nm_b, nn_b, sh_b, d_b, v_b = naive_neighbor_list(
+            pos,
+            1.5,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert not d_b.requires_grad and not v_b.requires_grad
+        assert torch.equal(nn_a, nn_b)
+        for i in range(nm_a.shape[0]):
+            n = nn_a[i].item()
+            row_a = sorted(nm_a[i, :n].tolist())
+            row_b = sorted(nm_b[i, :n].tolist())
+            assert row_a == row_b

@@ -28,6 +28,9 @@ In this example you will learn:
 - Using ``half_fill`` mode for symmetric neighbor lists
 - Validating neighbor distances are within cutoff
 - ``jax.jit`` compilation of the neighbor matrix
+- Estimating dispatch cost with ``estimate_neighbor_list_costs`` /
+  ``suggest_neighbor_list_method``
+- Evaluating an inline Warp ``pair_fn`` (per-pair energy and force)
 
 .. important::
 
@@ -48,7 +51,13 @@ except ImportError:
     sys.exit(0)
 
 try:
-    from nvalchemiops.jax.neighbors import neighbor_list
+    import warp as wp
+
+    from nvalchemiops.jax.neighbors import (
+        estimate_neighbor_list_costs,
+        neighbor_list,
+        suggest_neighbor_list_method,
+    )
 except Exception as exc:
     print(
         f"JAX/Warp backend unavailable ({exc}). This example requires a CUDA-backed runtime."
@@ -93,9 +102,9 @@ print(f"  PBC shape: {pbc.shape}")
 # %%
 # Unified API - Matrix Format (default)
 # =====================================
-# The ``neighbor_list()`` function automatically selects the best algorithm
-# based on system size. For small systems (< 5000 atoms), it uses the naive
-# O(N²) algorithm. For larger systems, it uses the cell list O(N) algorithm.
+# The ``neighbor_list()`` function provides a consistent entry point for JAX
+# neighbor-list construction while preserving the same matrix-format outputs
+# used by the direct algorithms.
 
 print("\n" + "=" * 70)
 print("UNIFIED API - MATRIX FORMAT")
@@ -162,9 +171,9 @@ for i in range(min(5, neighbor_list_coo.shape[1])):
 # %%
 # Algorithm Comparison
 # ====================
-# The nvalchemiops library provides two main algorithms:
-# - ``naive_neighbor_list``: O(N²) - best for small systems
-# - ``cell_list``: O(N) - best for large systems
+# The nvalchemiops library provides direct access to two main algorithms:
+# - ``naive_neighbor_list``: O(N²) all-pairs distance checks
+# - ``cell_list``: spatial decomposition for larger systems
 #
 # Both should produce identical results.
 
@@ -303,24 +312,119 @@ all_neighbors = run_compute_loop(positions, cell, pbc)
 print(f"Returned neighbor matrix shape: {all_neighbors.shape}")
 
 # %%
+# Cost-model dispatch
+# ===================
+# ``estimate_neighbor_list_costs`` and ``suggest_neighbor_list_method`` expose the
+# geometry cost model that ``neighbor_list(method=None)`` uses internally. Call them
+# once on per-system geometry (``batch_ptr``, ``cell``, ``pbc``, ``cutoff``) and pass
+# the returned name as an explicit ``method=`` so repeated builds skip the
+# auto-dispatch host read. They synchronize on the host (a small selector kernel runs
+# on the device and its result is read back), so call them outside ``jax.jit``.
+
+print("\n" + "=" * 70)
+print("COST-MODEL DISPATCH")
+print("=" * 70)
+
+batch_ptr = jnp.array([0, num_atoms], dtype=jnp.int32)
+cost_report = estimate_neighbor_list_costs(batch_ptr, cell, pbc, cutoff)
+print("\nFeasible strategies (cheapest first):")
+for strategy, cost in cost_report:
+    print(f"  {strategy:24s} estimated cost (arbitrary units): {cost:.3g}")
+
+suggested_method = suggest_neighbor_list_method(batch_ptr, cell, pbc, cutoff)
+print(f"\nSuggested method: {suggested_method}")
+
+# Reuse the suggestion as an explicit ``method=`` on the unified entry point.
+nm_suggested, num_suggested, _ = neighbor_list(
+    positions, cutoff, cell=cell, pbc=pbc, method=suggested_method
+)
+print(f"Total pairs via suggested method: {int(num_suggested.sum())}")
+
+# %%
+# Inline pair potentials with ``pair_fn``
+# =======================================
+# A Warp ``pair_fn`` evaluates a pairwise potential as neighbors are enumerated,
+# returning per-pair energy and force in the same pass (no second loop over the
+# list). On JAX, ``pair_fn`` is exposed through the direct algorithm bindings
+# (``naive_neighbor_list`` / ``cell_list``), not the unified ``neighbor_list``. The
+# ``pair_energies`` / ``pair_forces`` buffers are auto-allocated, appended to the
+# return tuple, and forward-only (use ``return_distances`` / ``return_vectors`` for
+# differentiable geometry).
+
+print("\n" + "=" * 70)
+print("INLINE PAIR POTENTIALS (pair_fn)")
+print("=" * 70)
+
+
+@wp.func
+def lj_pair_fn(
+    r_ij: wp.vec3f,
+    distance: wp.float32,
+    pair_params: wp.array2d(dtype=wp.float32),
+    i: int,
+    j: int,
+):
+    """Lennard-Jones per-pair energy and force from per-atom (epsilon, sigma)."""
+    epsilon = wp.sqrt(pair_params[i, 0] * pair_params[j, 0])
+    sigma = 0.5 * (pair_params[i, 1] + pair_params[j, 1])
+    sr = sigma / distance
+    sr2 = sr * sr
+    sr6 = sr2 * sr2 * sr2
+    sr12 = sr6 * sr6
+    energy = 4.0 * epsilon * (sr12 - sr6)
+    force = (24.0 * epsilon * (sr6 - 2.0 * sr12) / (distance * distance)) * r_ij
+    return energy, force
+
+
+# Per-atom (epsilon, sigma) table, shape (num_atoms, 2), float32.
+pair_params = jnp.stack(
+    [
+        jnp.full((num_atoms,), 0.0104, dtype=jnp.float32),  # epsilon
+        jnp.full((num_atoms,), 3.40, dtype=jnp.float32),  # sigma
+    ],
+    axis=1,
+)
+
+# pair_fn returns auto-allocated energy/force buffers appended after the matrix
+# outputs: (neighbor_matrix, num_neighbors, shifts, pair_energies, pair_forces).
+nm_pair, num_pair, _shifts_pair, pair_energies, pair_forces = naive_neighbor_list(
+    positions,
+    cutoff,
+    cell=cell,
+    pbc=pbc,
+    max_neighbors=128,
+    pair_fn=lj_pair_fn,
+    pair_params=pair_params,
+)
+
+print("\nPair-output buffers (matrix-aligned with the neighbor matrix):")
+print(f"  pair_energies shape: {pair_energies.shape}")
+print(f"  pair_forces shape:   {pair_forces.shape}")
+print("  Auto-allocated, returned, and forward-only.")
+
+# %%
 # Summary
 # =======
 # This example demonstrated the JAX neighbor list API in nvalchemiops:
 #
-# - **Unified API**: ``neighbor_list()`` automatically selects the best algorithm
+# - **Unified API**: ``neighbor_list()`` provides a single entry point
 # - **Matrix format**: Dense (N, max_neighbors) format for neighbor indices
 # - **COO format**: Sparse (2, num_pairs) format for graph neural networks
-# - **Algorithm choice**: O(N²) naive vs O(N) cell list for different system sizes
+# - **Algorithm choice**: Direct naive and cell-list calls for comparison
 # - **Half-fill mode**: Store only unique pairs to save memory
 # - **Distance validation**: Verify all pairs are within cutoff
+# - **Cost-model dispatch**: ``estimate``/``suggest`` helpers pick a method
+# - **Inline pair_fn**: Per-pair energy/force via the direct algorithm bindings
 
 print("\n" + "=" * 70)
 print("SUMMARY")
 print("=" * 70)
 print("\nKey takeaways:")
-print("  - Use neighbor_list() for automatic algorithm selection")
+print("  - Use neighbor_list() as the unified JAX entry point")
 print("  - Use return_neighbor_list=True for COO format (GNNs)")
 print("  - Use half_fill=True to store only unique pairs")
-print("  - naive_neighbor_list: O(N²), best for < 5000 atoms")
-print("  - cell_list: O(N), best for >= 5000 atoms")
+print("  - naive_neighbor_list performs O(N²) all-pairs checks")
+print("  - cell_list uses spatial decomposition")
+print("  - suggest_neighbor_list_method picks a method from geometry")
+print("  - pair_fn evaluates a pairwise potential during enumeration")
 print("\nExample completed successfully!")

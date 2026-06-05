@@ -22,10 +22,28 @@ from __future__ import annotations
 
 import torch
 
+from nvalchemiops.neighbors.base_dispatch import (
+    NEIGHBOR_LIST_STRATEGIES,
+    neighbor_list_strategy_run_args,
+)
+from nvalchemiops.torch.neighbors._dispatch import (
+    _auto_method_from_geometry,
+    _reject_unsupported_cluster_tile_combo,
+    _squeeze_single_system_cell_pbc,
+    broadcast_shared_cell_for_batch,
+    estimate_neighbor_list_costs,
+    suggest_neighbor_list_method,
+)
+
 # Batch cell list functions
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
     estimate_batch_cell_list_sizes,
+)
+
+# Batched cluster-pair tile functions
+from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+    batch_cluster_tile_neighbor_list,
 )
 
 # Batch naive functions
@@ -44,6 +62,11 @@ from nvalchemiops.torch.neighbors.cell_list import (
     estimate_cell_list_sizes,
 )
 
+# Unbatched cluster-pair tile functions
+from nvalchemiops.torch.neighbors.cluster_tile import (
+    cluster_tile_neighbor_list,
+)
+
 # Unbatched naive functions
 from nvalchemiops.torch.neighbors.naive import (
     naive_neighbor_list,
@@ -55,7 +78,11 @@ from nvalchemiops.torch.neighbors.naive_dual_cutoff import (
 )
 
 # Utility functions
-from nvalchemiops.torch.neighbors.neighbor_utils import prepare_batch_idx_ptr
+from nvalchemiops.torch.neighbors.neighbor_utils import (
+    prepare_batch_idx_ptr,
+    synthesize_cell_for_batch,
+    synthesize_cell_for_ss,
+)
 
 
 def neighbor_list(
@@ -94,7 +121,12 @@ def neighbor_list(
     pbc : torch.Tensor, shape (3,) or (num_systems, 3), dtype=torch.bool, optional
         Periodic boundary condition flags for each dimension.
     batch_idx : torch.Tensor, shape (total_atoms,), dtype=torch.int32, optional
-        System index for each atom.
+        System index for each atom.  Must be **sorted by system** (i.e.,
+        atoms in system 0 first, then system 1, and so on).  Interleaved
+        layouts are not supported by ``cluster_tile`` / ``batch_cluster_tile``
+        and will silently emit cross-system pairs.  For ``cell_list`` /
+        ``naive`` methods, interleaved layouts work but ``batch_ptr``
+        will still be derived assuming a contiguous layout.
     batch_ptr : torch.Tensor, shape (num_systems + 1,), dtype=torch.int32, optional
         Cumulative atom counts defining system boundaries.
     cutoff2 : float, optional
@@ -112,13 +144,17 @@ def neighbor_list(
         and only convert to a neighbor list format if absolutely necessary.
     method : str | None, optional
         Method to use for neighbor list computation.
-        Choices: "naive", "cell_list", "batch_naive", "batch_cell_list", "naive_dual_cutoff", "batch_naive_dual_cutoff".
-        If None, a default method will be chosen based on average atoms per
-        system (cell_list when >= 2000, naive otherwise). When only
-        ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
-        auto-selection reads ``batch_idx[-1]`` which triggers a
-        device-to-host synchronization. To avoid this, pass ``batch_ptr``,
-        a 3-D ``cell`` array, or specify ``method`` explicitly.
+        Choices: "naive", "cell_list", "cluster_tile", "batch_naive",
+        "batch_cell_list", "batch_cluster_tile", "naive_dual_cutoff",
+        "batch_naive_dual_cutoff". If None, a default method is chosen by
+        comparing estimated work from per-system atom counts and cell (or
+        bounding-box) volumes and can select cluster-tile when the CUDA,
+        float32, fully-periodic, contiguous-batch, and output-option guards
+        allow it. When only ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
+        auto-selection computes ``batch_idx.max() + 1`` (and a ``bincount``)
+        which triggers a device-to-host
+        synchronization. To avoid this, pass ``batch_ptr``, a 3-D ``cell``
+        array, or specify ``method`` explicitly.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -179,6 +215,30 @@ def neighbor_list(
             Maximum number of atoms per system. Used in batch naive implementation
             with PBC. If not provided, it will be computed automatically.
             Can be provided to avoid CUDA synchronization.
+        target_indices : torch.Tensor, optional
+            Restrict the source rows of the neighbor list to this subset of atom
+            indices (partial neighbor list). Supported by naive and cell-list
+            methods; not by cluster_tile.
+        return_distances : bool, default=False
+            Also return per-pair distances ``|r_ij|`` in matrix layout
+            ``(total_atoms, max_neighbors)``, differentiable w.r.t. positions
+            (and cell). See the user guide for layout notes.
+        return_vectors : bool, default=False
+            Also return per-pair displacement vectors ``r_ij`` in matrix layout
+            ``(total_atoms, max_neighbors, 3)``, differentiable w.r.t. positions
+            (and cell).
+        rebuild_flags : torch.Tensor, optional
+            Boolean flags selecting which systems to re-enumerate; systems whose
+            flag is ``False`` keep their previous output (per-system skip for the
+            batched methods, whole-list flag for single-system methods).
+        pair_fn : warp.Function, optional
+            Inline Warp pair potential evaluated as neighbors are enumerated;
+            requires ``pair_params`` and fills ``pair_energies`` / ``pair_forces``.
+            Forward-only (not differentiable). See
+            ``examples/neighbors/06_pair_outputs_lj.py``.
+        pair_params, pair_energies, pair_forces : torch.Tensor, optional
+            Per-atom parameter table and per-pair energy / force output buffers
+            consumed and filled by ``pair_fn``.
 
     Returns
     -------
@@ -257,36 +317,91 @@ def neighbor_list(
             "e.g. pbc=torch.tensor([True, True, True])."
         )
 
+    use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
+    explicit_cell_strategy = str(kwargs.pop("strategy", "auto"))
+    explicit_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
+    explicit_native_strategy = str(kwargs.pop("native_strategy", "auto"))
+    target_indices = kwargs.get("target_indices")
+    return_vectors = bool(kwargs.get("return_vectors", False))
+    return_distances = bool(kwargs.get("return_distances", False))
+    use_pair_fn = (
+        use_pair_fn_option
+        or kwargs.get("pair_fn") is not None
+        or kwargs.get("pair_params") is not None
+        or kwargs.get("pair_energies") is not None
+        or kwargs.get("pair_forces") is not None
+    )
+    rebuild_flags = kwargs.get("rebuild_flags")
+    selected_native_strategy = explicit_native_strategy
+    selected_cell_strategy = explicit_cell_strategy
+    selected_atom_centric_path = explicit_atom_centric_path
+
+    def _apply_auto_suboptions(
+        native_strategy: str, cell_strategy: str, path: str
+    ) -> None:
+        nonlocal selected_native_strategy, selected_cell_strategy
+        nonlocal selected_atom_centric_path
+        if selected_native_strategy == "auto" and native_strategy != "auto":
+            selected_native_strategy = native_strategy
+        if selected_cell_strategy == "auto" and cell_strategy != "auto":
+            selected_cell_strategy = cell_strategy
+        if selected_atom_centric_path == "auto" and path != "auto":
+            selected_atom_centric_path = path
+
     if method is None:
         total_atoms = positions.shape[0]
+        has_batch_inputs = batch_idx is not None or batch_ptr is not None
 
-        # Compute average atoms per system for method selection.
-        num_systems = 1
-        if cell is not None and cell.ndim == 3:
-            # cell shape is (num_systems, 3, 3)
-            num_systems = cell.shape[0]
-        elif batch_ptr is not None:
-            # batch_ptr shape is (num_systems + 1,)
-            num_systems = batch_ptr.shape[0] - 1
-        elif batch_idx is not None:
-            # NOTE: reading batch_idx[-1] triggers a GPU-to-CPU sync
-            # assume sorted batch_idx
-            num_systems = max(1, batch_idx[-1].item() + 1)
-        avg_atoms = total_atoms // num_systems
-
-        if cutoff2 is not None:
-            method = "naive_dual_cutoff"
-
-        elif avg_atoms >= 2000:
-            method = "cell_list"
-        else:
-            method = "naive"
-
-        if batch_idx is not None or batch_ptr is not None:
-            method = "batch_" + method
+        if has_batch_inputs:
             batch_idx, batch_ptr = prepare_batch_idx_ptr(
                 batch_idx, batch_ptr, total_atoms, positions.device
             )
+            num_systems = batch_ptr.shape[0] - 1
+        elif cell is not None and cell.ndim == 3:
+            num_systems = cell.shape[0]
+        else:
+            num_systems = 1
+
+        strategy_name = _auto_method_from_geometry(
+            positions,
+            max(
+                float(cutoff), float(cutoff2) if cutoff2 is not None else float(cutoff)
+            ),
+            cell,
+            pbc,
+            batch_idx if has_batch_inputs else None,
+            batch_ptr if has_batch_inputs else None,
+            num_systems,
+            cutoff2=cutoff2,
+            half_fill=half_fill,
+            return_neighbor_list=return_neighbor_list,
+            target_indices=target_indices,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            use_pair_fn=use_pair_fn,
+            rebuild_flags=rebuild_flags,
+            wrap_positions=wrap_positions,
+        )
+        method, auto_native, auto_cell, auto_path = neighbor_list_strategy_run_args(
+            strategy_name
+        )
+        if cutoff2 is not None and method in ("naive", "cell_list"):
+            method = "naive_dual_cutoff"
+        _apply_auto_suboptions(auto_native, auto_cell, auto_path)
+
+        if has_batch_inputs and num_systems > 1:
+            method = "batch_" + method
+        elif has_batch_inputs:
+            cell, pbc = _squeeze_single_system_cell_pbc(cell, pbc)
+    else:
+        base = method[len("batch_") :] if method.startswith("batch_") else method
+        if base in NEIGHBOR_LIST_STRATEGIES:
+            # Fine-grained strategy name (e.g. from suggest/report): decompose
+            # to the base method plus its sub-options, honoring batch_ prefix.
+            method, fg_native, fg_cell, fg_path = neighbor_list_strategy_run_args(
+                method
+            )
+            _apply_auto_suboptions(fg_native, fg_cell, fg_path)
     match method:
         case "naive":
             return naive_neighbor_list(
@@ -298,18 +413,12 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
+                native_strategy=selected_native_strategy,
                 **kwargs,
             )
         case "cell_list":
             if cell is None:
-                pos_min = positions.min(dim=0).values
-                positions = positions - pos_min
-                pos_max = positions.max(dim=0).values
-                cell_lengths = pos_max + 0.1 * cutoff
-                cell = torch.diag(cell_lengths).reshape(1, 3, 3)
-                pbc = torch.tensor(
-                    [False, False, False], dtype=torch.bool, device=positions.device
-                )
+                positions, cell, pbc = synthesize_cell_for_ss(positions, cutoff)
             return cell_list(
                 positions,
                 cutoff,
@@ -318,6 +427,8 @@ def neighbor_list(
                 half_fill=half_fill,
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
+                strategy=selected_cell_strategy,
+                atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
         case "batch_naive":
@@ -332,6 +443,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
+                native_strategy=selected_native_strategy,
                 **kwargs,
             )
         case "batch_cell_list":
@@ -340,30 +452,8 @@ def neighbor_list(
                     batch_idx, batch_ptr, positions.shape[0], positions.device
                 )
             if cell is None:
-                num_systems = batch_ptr.shape[0] - 1
-                expanded_idx = batch_idx.unsqueeze(1).expand_as(positions)
-                pos_min = torch.full(
-                    (num_systems, 3),
-                    float("inf"),
-                    dtype=positions.dtype,
-                    device=positions.device,
-                )
-                pos_min.scatter_reduce_(0, expanded_idx, positions, reduce="amin")
-                pos_max = torch.full(
-                    (num_systems, 3),
-                    float("-inf"),
-                    dtype=positions.dtype,
-                    device=positions.device,
-                )
-                pos_max.scatter_reduce_(0, expanded_idx, positions, reduce="amax")
-                # TODO: switch to segment_ops once #17 is merged
-                positions = positions - torch.index_select(pos_min, 0, batch_idx)
-                cell_lengths = pos_max - pos_min + 0.1 * cutoff
-                cell = torch.diag_embed(cell_lengths)
-                pbc = torch.zeros(
-                    (num_systems, 3),
-                    dtype=torch.bool,
-                    device=positions.device,
+                positions, cell, pbc = synthesize_cell_for_batch(
+                    positions, batch_idx, batch_ptr, cutoff
                 )
             return batch_cell_list(
                 positions,
@@ -374,6 +464,46 @@ def neighbor_list(
                 half_fill=half_fill,
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
+                strategy=selected_cell_strategy,
+                atom_centric_path=selected_atom_centric_path,
+                **kwargs,
+            )
+        case "cluster_tile":
+            # format="tile" is reachable only via cluster_tile_neighbor_list directly.
+            # Reject before any cell handling (mirrors the JAX dispatch): cluster_tile is
+            # PBC-implicit, so a missing cell / non-periodic input must error rather than
+            # synthesize a tiny box and force PBC (which would emit spurious wrap-around pairs).
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            if cell is None:
+                raise ValueError("cell is required for method='cluster_tile'")
+            return cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                fill_value=fill_value,
+                format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
+                **kwargs,
+            )
+        case "batch_cluster_tile":
+            # Reject before any cell handling (mirrors the JAX dispatch); see the
+            # single-system case above for why cluster_tile must not synthesize a cell.
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            if batch_idx is None or batch_ptr is None:
+                batch_idx, batch_ptr = prepare_batch_idx_ptr(
+                    batch_idx, batch_ptr, positions.shape[0], positions.device
+                )
+            if cell is None:
+                raise ValueError("cell is required for method='batch_cluster_tile'")
+            cell = broadcast_shared_cell_for_batch(cell, batch_ptr.shape[0] - 1)
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                batch_ptr,
+                fill_value=fill_value,
+                format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
                 **kwargs,
             )
         case "naive_dual_cutoff":
@@ -411,14 +541,18 @@ def neighbor_list(
 __all__ = [
     # High-level API
     "neighbor_list",
+    "estimate_neighbor_list_costs",
+    "suggest_neighbor_list_method",
     # Unbatched algorithms
     "cell_list",
     "naive_neighbor_list",
     "naive_neighbor_list_dual_cutoff",
+    "cluster_tile_neighbor_list",
     "estimate_cell_list_sizes",
     # Batched algorithms
     "batch_cell_list",
     "batch_naive_neighbor_list",
     "batch_naive_neighbor_list_dual_cutoff",
+    "batch_cluster_tile_neighbor_list",
     "estimate_batch_cell_list_sizes",
 ]

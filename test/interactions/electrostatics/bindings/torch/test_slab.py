@@ -107,31 +107,26 @@ def _make_triclinic_slab_system(dtype=torch.float64, device="cpu"):
 
 
 def _make_cscl_ewald_inputs(dtype=torch.float64, device="cpu"):
-    """Create CsCl slab inputs plus the full-3D real-space neighbor list."""
+    """Create CsCl slab inputs plus a T/T/F real-space neighbor list."""
     positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
     neighbor_list, neighbor_ptr, neighbor_shifts = _build_neighbor_list(
-        positions, cell, REAL_SPACE_CUTOFF, [True, True, True], device
+        positions, cell, REAL_SPACE_CUTOFF, [True, True, False], device
     )
     return positions, charges, cell, pbc, neighbor_list, neighbor_ptr, neighbor_shifts
 
 
 def _make_triclinic_ewald_inputs(dtype=torch.float64, device="cpu"):
-    """Create triclinic slab inputs plus the full-3D real-space neighbor list."""
+    """Create triclinic slab inputs plus a T/T/F real-space neighbor list."""
     positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
     neighbor_list, neighbor_ptr, neighbor_shifts = _build_neighbor_list(
-        positions, cell, REAL_SPACE_CUTOFF, [True, True, True], device
+        positions, cell, REAL_SPACE_CUTOFF, [True, True, False], device
     )
     return positions, charges, cell, pbc, neighbor_list, neighbor_ptr, neighbor_shifts
 
 
-def _build_neighbor_list(positions, cell, cutoff, pbc_full3d, device="cpu"):
-    """Build neighbor list using cell_list with full 3D pbc.
-
-    The slab correction handles the 2D periodicity separately; for the
-    real-space neighbor list we use full 3D periodicity (the vacuum gap
-    in z guarantees no real-space neighbors leak across).
-    """
-    pbc_tensor = torch.tensor(pbc_full3d, dtype=torch.bool, device=device).unsqueeze(0)
+def _build_neighbor_list(positions, cell, cutoff, pbc, device="cpu"):
+    """Build neighbor list using cell_list with explicit pbc."""
+    pbc_tensor = torch.tensor(pbc, dtype=torch.bool, device=device).unsqueeze(0)
     neighbor_list, neighbor_ptr, unit_shifts = cell_list(
         positions, cutoff, cell, pbc_tensor, return_neighbor_list=True
     )
@@ -635,6 +630,126 @@ class TestTriclinicCells:
         torch.testing.assert_close(cg1, cg0, rtol=1e-12, atol=1e-15)
 
 
+class TestSlabNeighborPbc:
+    """Vacuum slab neighbor lists should agree for T/T/F and T/T/T pbc."""
+
+    def test_ewald_neighbor_pbc_ttf_matches_ttt_with_vacuum(self, device):
+        """Ewald slab outputs are unchanged by T/T/F vs T/T/T vacuum neighbors."""
+        dtype = torch.float64
+        positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
+        pbc_slab = pbc.unsqueeze(0)
+        pbc_3d = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+
+        nl_slab, ptr_slab, shifts_slab = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc_slab,
+            return_neighbor_list=True,
+        )
+        nl_3d, ptr_3d, shifts_3d = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc_3d,
+            return_neighbor_list=True,
+        )
+        common_kwargs = {
+            "alpha": EWALD_ALPHA,
+            "k_cutoff": EWALD_K_CUTOFF,
+            "compute_forces": True,
+            "compute_charge_gradients": True,
+            "compute_virial": True,
+            "pbc": pbc,
+            "slab_correction": True,
+        }
+
+        outputs_slab = ewald_summation(
+            positions,
+            charges,
+            cell,
+            neighbor_list=nl_slab,
+            neighbor_ptr=ptr_slab,
+            neighbor_shifts=shifts_slab,
+            **common_kwargs,
+        )
+        outputs_3d = ewald_summation(
+            positions,
+            charges,
+            cell,
+            neighbor_list=nl_3d,
+            neighbor_ptr=ptr_3d,
+            neighbor_shifts=shifts_3d,
+            **common_kwargs,
+        )
+
+        for actual, expected in zip(outputs_slab, outputs_3d, strict=True):
+            torch.testing.assert_close(
+                actual,
+                expected,
+                rtol=SLAB_STRICT_RTOL,
+                atol=SLAB_STRICT_ATOL,
+            )
+
+    def test_pme_neighbor_pbc_ttf_matches_ttt_with_vacuum(self, device):
+        """PME slab outputs are unchanged by T/T/F vs T/T/T vacuum neighbors."""
+        dtype = torch.float64
+        positions, charges, cell, pbc = _make_cscl_slab_system(dtype, device)
+        pbc_slab = pbc.unsqueeze(0)
+        pbc_3d = torch.tensor([[True, True, True]], dtype=torch.bool, device=device)
+
+        nl_slab, ptr_slab, shifts_slab = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc_slab,
+            return_neighbor_list=True,
+        )
+        nl_3d, ptr_3d, shifts_3d = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc_3d,
+            return_neighbor_list=True,
+        )
+        common_kwargs = {
+            "alpha": torch.tensor([EWALD_ALPHA], dtype=dtype, device=device),
+            "mesh_dimensions": (16, 16, 16),
+            "compute_forces": True,
+            "compute_charge_gradients": True,
+            "compute_virial": True,
+            "pbc": pbc,
+            "slab_correction": True,
+        }
+
+        outputs_slab = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            neighbor_list=nl_slab,
+            neighbor_ptr=ptr_slab,
+            neighbor_shifts=shifts_slab,
+            **common_kwargs,
+        )
+        outputs_3d = particle_mesh_ewald(
+            positions,
+            charges,
+            cell,
+            neighbor_list=nl_3d,
+            neighbor_ptr=ptr_3d,
+            neighbor_shifts=shifts_3d,
+            **common_kwargs,
+        )
+
+        for actual, expected in zip(outputs_slab, outputs_3d, strict=True):
+            torch.testing.assert_close(
+                actual,
+                expected,
+                rtol=SLAB_STRICT_RTOL,
+                atol=SLAB_STRICT_ATOL,
+            )
+
+
 # ==============================================================================
 # Ewald slab dtype behavior
 # ==============================================================================
@@ -688,7 +803,7 @@ class TestPbcNoneHandling:
 
         positions, charges, cell, _ = _make_cscl_slab_system(dtype, device)
         nl, ptr, shifts = _build_neighbor_list(
-            positions, cell, 5.0, [True, True, True], device
+            positions, cell, 5.0, [True, True, False], device
         )
 
         with pytest.raises(ValueError, match="pbc"):
@@ -870,7 +985,7 @@ class TestSlabHybridForces:
             positions.detach(),
             cell.detach(),
             REAL_SPACE_CUTOFF,
-            [True, True, True],
+            [True, True, False],
             device,
         )
         k_vectors = generate_k_vectors_ewald_summation(cell.detach(), EWALD_K_CUTOFF)
@@ -1534,11 +1649,6 @@ class TestPMESlabIntegration:
             dtype=torch.int32,
             device=device,
         )
-        pbc_3d = torch.tensor(
-            [[True, True, True], [True, True, True]],
-            dtype=torch.bool,
-            device=device,
-        )
         pbc_slab_mixed = torch.tensor(
             [[True, True, False], [True, True, True]],
             dtype=torch.bool,
@@ -1548,7 +1658,7 @@ class TestPMESlabIntegration:
             positions,
             cutoff=REAL_SPACE_CUTOFF,
             cell=cell,
-            pbc=pbc_3d,
+            pbc=pbc_slab_mixed,
             batch_idx=batch_idx,
             return_neighbor_list=True,
         )

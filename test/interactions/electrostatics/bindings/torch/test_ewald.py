@@ -5044,14 +5044,20 @@ class TestEwaldRealSpaceVirial:
                 compute_forces=False,
             ).sum()
 
+        # ``get_virial_neighbor_data`` calls ``cell_list`` which is
+        # non-deterministic in the per-row column ordering across calls
+        # (pair-centric kernel uses ``wp.atomic_add`` for slot assignment).
+        # Call once and unpack so the (nl, ptr, shifts) triplet is mutually
+        # consistent.
+        nl_v, nptr_v, us_v = get_virial_neighbor_data(positions, cell, cutoff)
         result = ewald_real_space(
             positions,
             charges,
             cell,
             alpha,
-            neighbor_list=get_virial_neighbor_data(positions, cell, cutoff)[0],
-            neighbor_ptr=get_virial_neighbor_data(positions, cell, cutoff)[1],
-            neighbor_shifts=get_virial_neighbor_data(positions, cell, cutoff)[2],
+            neighbor_list=nl_v,
+            neighbor_ptr=nptr_v,
+            neighbor_shifts=us_v,
             compute_forces=True,
             compute_virial=True,
         )
@@ -6877,7 +6883,12 @@ class TestRetainGraph:
         energy.backward()
         grad_second = charges_1.grad.clone()
 
-        torch.testing.assert_close(grad_first, grad_second, rtol=0.0, atol=0.0)
+        # Ewald backward uses ``wp.atomic_add`` reductions whose ordering
+        # is warp-schedule dependent; replaying the same retained graph
+        # twice can produce ULP-scale differences (FP64 eps ≈ 5.55e-17).
+        # Single-ULP tolerance still validates that retain_graph replays
+        # the same computation (not a fresh autograd graph).
+        torch.testing.assert_close(grad_first, grad_second, rtol=1e-14, atol=1e-14)
 
 
 ###########################################################################################

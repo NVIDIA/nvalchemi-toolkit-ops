@@ -1,32 +1,91 @@
 # Neighbor List Benchmark Configuration
 # =====================================
 # This file defines which methods to benchmark and their parameters.
+#
+# Backend selection is config-driven:
+#   - ``parameters.backends`` is the default list applied to all methods.
+#   - Per-method ``backends: [...]`` overrides the parameter-level
+#     list (use this for methods that don't exist in every backend).
+#   - The CLI ``--backend torch|jax`` flag, if passed, forces a single
+#     backend for the whole run and overrides both YAML levels.
+#
+# Cutoff selection: ``parameters.cutoff`` accepts either a single float
+# or a list of floats.  When a list is given, each method runs the full
+# (atoms x batch_size x cutoff) grid and stamps the cutoff into each
+# CSV row.  A per-cutoff memory cap (~7 GB per ``nm+nms`` allocation)
+# skips cells that would OOM at large cutoffs.
 
 parameters:
-  cutoff: 5.0  # Angstrom
+  # 6-point default for the cell_list / cluster_tile family-crossover
+  # calibration sweep.  Narrow this list (e.g. ``[5.0]``) for the
+  # documentation-style single-cutoff runs the bench was originally
+  # built for.
+  cutoff: [6.0, 8.0, 10.0, 12.0, 16.0, 20.0]
   warmup_iterations: 10
   timing_iterations: 100
-  dtype: float32  #  float32, or float64
+  dtype: float32  # float32 or float64
+
+  # Default backends for every method that doesn't override.  Add
+  # ``jax`` here to also run the JAX implementations (where they exist).
+  backends: [torch]
 
 methods:
-  # Naive algorithm: O(N²) scaling - only test small systems
+  # ----- Naive (O(N^2)) baselines -------------------------------------
   - name: naive
     atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384]
     batch_sizes: [1]
     wrap_positions: true
 
-  # Cell list algorithm: O(N) scaling - test larger systems
-  - name: cell_list
-    atom_counts: [64, 256, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 256000, 524288, 1048576]
-    batch_sizes: [1]
-
-  # Batch naive: small systems, various batch sizes
   - name: batch_naive
     atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
     batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]
     wrap_positions: true
 
-  # # Batch cell list: larger systems, various batch sizes
-  - name: batch_cell_list
+  # Cell list (O(N)) — atom-centric / pair-centric / auto timed
+  # separately so the NVALCHEMI_NEIGHLIST_ALGO thresholds can be
+  # recalibrated per GPU.
+  - name: cell_list_auto
+    method: cell_list                # canonical method name for the dispatcher
+    kwargs: {algorithm: auto}        # passes through to cell_list(algorithm=...)
+    atom_counts: [64, 256, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 256000, 524288, 1048576]
+    batch_sizes: [1]
+
+  - name: cell_list_atom_centric
+    method: cell_list
+    kwargs: {algorithm: atom_centric}
+    atom_counts: [64, 256, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 256000, 524288, 1048576]
+    batch_sizes: [1]
+
+  - name: cell_list_pair_centric
+    method: cell_list
+    kwargs: {algorithm: pair_centric}
+    atom_counts: [64, 256, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 256000, 524288, 1048576]
+    batch_sizes: [1]
+
+  - name: batch_cell_list_auto
+    method: batch_cell_list
+    kwargs: {algorithm: auto}
+    atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072]
+    batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]
+
+  - name: batch_cell_list_atom_centric
+    method: batch_cell_list
+    kwargs: {algorithm: atom_centric}
+    atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072]
+    batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]
+
+  - name: batch_cell_list_pair_centric
+    method: batch_cell_list
+    kwargs: {algorithm: pair_centric}
+    atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072]
+    batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]
+
+  # ----- Cluster-pair tile (cluster_tile) -----------------------------
+  # Runs on both torch (Warp kernels) and JAX backends.
+  - name: cluster_tile
+    atom_counts: [64, 256, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 256000, 524288, 1048576]
+    batch_sizes: [1]
+
+  - name: batch_cluster_tile
     atom_counts: [64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072]
     batch_sizes: [2, 4, 8, 16, 32, 64, 128, 256, 512]

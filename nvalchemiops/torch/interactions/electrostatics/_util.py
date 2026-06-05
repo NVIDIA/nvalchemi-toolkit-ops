@@ -17,27 +17,15 @@
 
 from __future__ import annotations
 
-from typing import NamedTuple
-
 import torch
 
 __all__ = [
-    "ElectrostaticOutputs",
     "_InjectChargeGrad",
     "_build_electrostatic_result",
     "_combine_electrostatic_outputs",
     "_sum_charge_gradients",
     "_unpack_electrostatic_outputs",
 ]
-
-
-class ElectrostaticOutputs(NamedTuple):
-    """Named electrostatics outputs in public API order."""
-
-    energies: torch.Tensor
-    forces: torch.Tensor | None = None
-    charge_grads: torch.Tensor | None = None
-    virial: torch.Tensor | None = None
 
 
 @torch.compiler.disable
@@ -50,19 +38,22 @@ def _sum_charge_gradients(
 
 
 def _build_electrostatic_result(
-    outputs: ElectrostaticOutputs,
+    energies: torch.Tensor,
+    forces: torch.Tensor | None,
+    charge_grads: torch.Tensor | None,
+    virial: torch.Tensor | None,
     compute_forces: bool,
     compute_charge_gradients: bool,
     compute_virial: bool,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Build an output tuple in electrostatics API order."""
-    result = [outputs.energies]
-    if compute_forces and outputs.forces is not None:
-        result.append(outputs.forces)
-    if compute_charge_gradients and outputs.charge_grads is not None:
-        result.append(outputs.charge_grads)
-    if compute_virial and outputs.virial is not None:
-        result.append(outputs.virial)
+    result = [energies]
+    if compute_forces and forces is not None:
+        result.append(forces)
+    if compute_charge_gradients and charge_grads is not None:
+        result.append(charge_grads)
+    if compute_virial and virial is not None:
+        result.append(virial)
     return tuple(result) if len(result) > 1 else result[0]
 
 
@@ -71,7 +62,7 @@ def _unpack_electrostatic_outputs(
     compute_forces: bool,
     compute_charge_gradients: bool,
     compute_virial: bool,
-) -> ElectrostaticOutputs:
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
     """Unpack electrostatics outputs by flag combination without cursor logic."""
     output_tuple = outputs if isinstance(outputs, tuple) else (outputs,)
 
@@ -104,7 +95,7 @@ def _unpack_electrostatic_outputs(
         charge_grads = None
         virial = None
 
-    return ElectrostaticOutputs(energies, forces, charge_grads, virial)
+    return energies, forces, charge_grads, virial
 
 
 def _combine_electrostatic_outputs(
@@ -116,58 +107,79 @@ def _combine_electrostatic_outputs(
     compute_virial: bool,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Combine real, reciprocal, and optional slab outputs by named fields."""
-    real = _unpack_electrostatic_outputs(
-        real_outputs, compute_forces, compute_charge_gradients, compute_virial
+    real_energies, real_forces, real_charge_grads, real_virial = (
+        _unpack_electrostatic_outputs(
+            real_outputs,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
     )
-    reciprocal = _unpack_electrostatic_outputs(
-        reciprocal_outputs, compute_forces, compute_charge_gradients, compute_virial
+    (
+        reciprocal_energies,
+        reciprocal_forces,
+        reciprocal_charge_grads,
+        reciprocal_virial,
+    ) = _unpack_electrostatic_outputs(
+        reciprocal_outputs,
+        compute_forces,
+        compute_charge_gradients,
+        compute_virial,
     )
 
-    energies = real.energies + reciprocal.energies
+    energies = real_energies + reciprocal_energies
     forces = (
-        real.forces + reciprocal.forces
-        if compute_forces and real.forces is not None and reciprocal.forces is not None
+        real_forces + reciprocal_forces
+        if compute_forces and real_forces is not None and reciprocal_forces is not None
         else None
     )
 
     if (
         compute_charge_gradients
-        and real.charge_grads is not None
-        and reciprocal.charge_grads is not None
+        and real_charge_grads is not None
+        and reciprocal_charge_grads is not None
     ):
         if torch.compiler.is_compiling():
             charge_grads = _sum_charge_gradients(
-                real.charge_grads, reciprocal.charge_grads
+                real_charge_grads, reciprocal_charge_grads
             )
         else:
-            charge_grads = real.charge_grads + reciprocal.charge_grads
+            charge_grads = real_charge_grads + reciprocal_charge_grads
     else:
         charge_grads = None
 
     virial = (
-        real.virial + reciprocal.virial
-        if compute_virial and real.virial is not None and reciprocal.virial is not None
+        real_virial + reciprocal_virial
+        if compute_virial and real_virial is not None and reciprocal_virial is not None
         else None
     )
 
     if slab_outputs is not None:
-        slab = _unpack_electrostatic_outputs(
-            slab_outputs, compute_forces, compute_charge_gradients, compute_virial
+        slab_energies, slab_forces, slab_charge_grads, slab_virial = (
+            _unpack_electrostatic_outputs(
+                slab_outputs,
+                compute_forces,
+                compute_charge_gradients,
+                compute_virial,
+            )
         )
-        energies = energies + slab.energies
-        if compute_forces and forces is not None and slab.forces is not None:
-            forces = forces + slab.forces
+        energies = energies + slab_energies
+        if compute_forces and forces is not None and slab_forces is not None:
+            forces = forces + slab_forces
         if (
             compute_charge_gradients
             and charge_grads is not None
-            and slab.charge_grads is not None
+            and slab_charge_grads is not None
         ):
-            charge_grads = charge_grads + slab.charge_grads
-        if compute_virial and virial is not None and slab.virial is not None:
-            virial = virial + slab.virial
+            charge_grads = charge_grads + slab_charge_grads
+        if compute_virial and virial is not None and slab_virial is not None:
+            virial = virial + slab_virial
 
     return _build_electrostatic_result(
-        ElectrostaticOutputs(energies, forces, charge_grads, virial),
+        energies,
+        forces,
+        charge_grads,
+        virial,
         compute_forces,
         compute_charge_gradients,
         compute_virial,

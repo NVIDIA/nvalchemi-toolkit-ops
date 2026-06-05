@@ -24,12 +24,31 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from nvalchemiops.jax.neighbors._dispatch import (
+    _auto_method_from_geometry,
+    _reject_unsupported_cluster_tile_combo,
+    estimate_neighbor_list_costs,
+    suggest_neighbor_list_method,
+    synthesize_cell_for_cell_list,
+)
+
 # Batch cell list functions
 from nvalchemiops.jax.neighbors.batch_cell_list import (
     batch_build_cell_list,
     batch_cell_list,
     batch_query_cell_list,
     estimate_batch_cell_list_sizes,
+)
+
+# Batched cluster-pair tile neighbor list
+from nvalchemiops.jax.neighbors.batch_cluster_tile import (
+    allocate_batch_cluster_tile_list,
+    batch_build_cluster_tile_list,
+    batch_cluster_tile_neighbor_list,
+    batch_query_cluster_tile,
+    batch_query_cluster_tile_coo,
+    estimate_batch_cluster_tile_list_sizes,
+    estimate_batch_cluster_tile_segments,
 )
 
 # Batch naive functions
@@ -48,6 +67,15 @@ from nvalchemiops.jax.neighbors.cell_list import (
     cell_list,
     estimate_cell_list_sizes,
     query_cell_list,
+)
+
+# Single-system cluster-pair tile neighbor list
+from nvalchemiops.jax.neighbors.cluster_tile import (
+    build_cluster_tile_list,
+    cluster_tile_neighbor_list,
+    estimate_cluster_tile_list_sizes,
+    query_cluster_tile,
+    query_cluster_tile_coo,
 )
 
 # Unbatched naive functions
@@ -80,6 +108,10 @@ from nvalchemiops.jax.neighbors.rebuild_detection import (
     check_cell_list_rebuild_needed,
     check_neighbor_list_rebuild_needed,
     neighbor_list_needs_rebuild,
+)
+from nvalchemiops.neighbors.base_dispatch import (
+    NEIGHBOR_LIST_STRATEGIES,
+    neighbor_list_strategy_run_args,
 )
 
 
@@ -135,15 +167,20 @@ def neighbor_list(
         creating a mask over the fill_value, which can incur a performance penalty.
         We recommend using the neighbor matrix format,
         and only convert to a neighbor list format if absolutely necessary.
+
     method : str | None, optional
         Method to use for neighbor list computation.
-        Choices: "naive", "cell_list", "batch_naive", "batch_cell_list", "naive_dual_cutoff", "batch_naive_dual_cutoff".
-        If None, a default method will be chosen based on average atoms per
-        system (cell_list when >= 2000, naive otherwise). When only
-        ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
-        auto-selection reads ``batch_idx[-1]`` which triggers a
-        device-to-host synchronization. To avoid this, pass ``batch_ptr``,
-        a 3-D ``cell`` array, or specify ``method`` explicitly.
+        Choices: "naive", "cell_list", "cluster_tile", "batch_naive",
+        "batch_cell_list", "batch_cluster_tile", "naive_dual_cutoff",
+        "batch_naive_dual_cutoff". If None, a default method is chosen by
+        comparing estimated work from per-system atom counts and cell (or
+        bounding-box) volumes and can select cluster-tile when the CUDA,
+        float32, fully-periodic, contiguous-batch, and output-option guards
+        allow it. When only ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
+        auto-selection computes ``batch_idx.max() + 1`` (and a ``bincount``)
+        which triggers a device-to-host
+        synchronization. To avoid this, pass ``batch_ptr``, a 3-D ``cell``
+        array, or specify ``method`` explicitly.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -204,6 +241,24 @@ def neighbor_list(
             Maximum number of atoms per system. Used in batch naive implementation
             with PBC. If not provided, it will be computed automatically.
             Can be provided to avoid CUDA synchronization.
+        return_distances : bool, default=False
+            Also return per-pair distances ``|r_ij|``, differentiable w.r.t.
+            positions (and cell). Matrix layout ``(total_atoms, max_neighbors)``,
+            or flat COO ``(num_pairs,)`` when ``return_neighbor_list=True``
+            (``naive`` / ``cell_list``).
+        return_vectors : bool, default=False
+            Also return per-pair displacement vectors ``r_ij``, differentiable
+            w.r.t. positions (and cell). Matrix layout
+            ``(total_atoms, max_neighbors, 3)`` or flat COO ``(num_pairs, 3)``.
+        rebuild_flags : jax.Array, optional
+            Boolean flags selecting which systems to re-enumerate; systems whose
+            flag is ``False`` keep their previous output.
+
+    Note
+    ----
+    ``pair_fn`` and ``target_indices`` are not supported by the JAX bindings and
+    raise ``NotImplementedError`` (a Python ``pair_fn`` callable cannot cross the
+    ``jax_callable`` trace boundary); use the PyTorch binding for those.
 
     Returns
     -------
@@ -272,37 +327,114 @@ def neighbor_list(
     --------
     naive_neighbor_list : Direct access to naive O(N²) algorithm
     cell_list : Direct access to cell list O(N) algorithm
+    cluster_tile_neighbor_list : Direct access to cluster-pair tile algorithm
     batch_naive_neighbor_list : Batched naive algorithm
     batch_cell_list : Batched cell list algorithm
+    batch_cluster_tile_neighbor_list : Batched cluster-pair tile algorithm
     """
+    use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
+    explicit_cell_strategy = str(kwargs.pop("strategy", "auto"))
+    explicit_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
+    explicit_native_strategy = str(kwargs.pop("native_strategy", "auto"))
+    target_indices = kwargs.get("target_indices")
+    return_vectors = bool(kwargs.get("return_vectors", False))
+    return_distances = bool(kwargs.get("return_distances", False))
+    use_pair_fn = (
+        use_pair_fn_option
+        or kwargs.get("pair_fn") is not None
+        or kwargs.get("pair_params") is not None
+        or kwargs.get("pair_energies") is not None
+        or kwargs.get("pair_forces") is not None
+    )
+    rebuild_flags = kwargs.get("rebuild_flags")
+    selected_native_strategy = explicit_native_strategy
+    selected_cell_strategy = explicit_cell_strategy
+    selected_atom_centric_path = explicit_atom_centric_path
+    explicit_pair_centric = explicit_cell_strategy == "pair_centric"
+
+    def _apply_auto_suboptions(
+        native_strategy: str, cell_strategy: str, path: str
+    ) -> None:
+        nonlocal selected_native_strategy, selected_cell_strategy
+        nonlocal selected_atom_centric_path
+        if selected_native_strategy == "auto" and native_strategy != "auto":
+            selected_native_strategy = native_strategy
+        if selected_cell_strategy == "auto" and cell_strategy != "auto":
+            selected_cell_strategy = cell_strategy
+        if selected_atom_centric_path == "auto" and path != "auto":
+            selected_atom_centric_path = path
+
     if method is None:
         total_atoms = positions.shape[0]
+        has_batch_inputs = batch_idx is not None or batch_ptr is not None
 
         num_systems = 1
-        if cell is not None and cell.ndim == 3:
-            num_systems = cell.shape[0]
-        elif batch_ptr is not None:
-            num_systems = batch_ptr.shape[0] - 1
-        elif batch_idx is not None:
-            num_systems = max(1, int(batch_idx[-1]) + 1)
-        avg_atoms = total_atoms // num_systems
-
-        if cutoff2 is not None:
-            method = "naive_dual_cutoff"
-
-        elif avg_atoms >= 2000:
-            method = "cell_list"
-            if cell is None or pbc is None:
-                cell = jnp.eye(3, dtype=positions.dtype).reshape(1, 3, 3)
-                pbc = jnp.array([[False, False, False]])
-        else:
-            method = "naive"
-
-        if batch_idx is not None or batch_ptr is not None:
-            method = "batch_" + method
+        if has_batch_inputs:
             batch_idx, batch_ptr = prepare_batch_idx_ptr(
                 batch_idx, batch_ptr, total_atoms
             )
+            num_systems = batch_ptr.shape[0] - 1
+        elif cell is not None and cell.ndim == 3:
+            num_systems = cell.shape[0]
+
+        strategy_name = _auto_method_from_geometry(
+            positions,
+            max(
+                float(cutoff), float(cutoff2) if cutoff2 is not None else float(cutoff)
+            ),
+            cell,
+            pbc,
+            batch_idx if has_batch_inputs else None,
+            batch_ptr if has_batch_inputs else None,
+            num_systems,
+            cutoff2=cutoff2,
+            half_fill=half_fill,
+            return_neighbor_list=return_neighbor_list,
+            target_indices=target_indices,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            use_pair_fn=use_pair_fn,
+            rebuild_flags=rebuild_flags,
+            wrap_positions=wrap_positions,
+        )
+        method, auto_native, auto_cell, auto_path = neighbor_list_strategy_run_args(
+            strategy_name
+        )
+        if total_atoms == 0:
+            # The JAX cell-list path cannot size a 0-atom grid; the naive
+            # family returns correctly-shaped empty outputs for any format.
+            method = "naive_dual_cutoff" if cutoff2 is not None else "naive"
+        elif cutoff2 is not None and method in ("naive", "cell_list"):
+            method = "naive_dual_cutoff"
+        elif method == "cell_list" and cell is None:
+            positions, cell, pbc = synthesize_cell_for_cell_list(
+                positions,
+                cutoff,
+                batch_idx=batch_idx if has_batch_inputs else None,
+                batch_ptr=batch_ptr if has_batch_inputs else None,
+                num_systems=num_systems,
+            )
+        _apply_auto_suboptions(auto_native, auto_cell, auto_path)
+
+        if has_batch_inputs:
+            method = "batch_" + method
+    else:
+        base = method[len("batch_") :] if method.startswith("batch_") else method
+        if base in NEIGHBOR_LIST_STRATEGIES:
+            # Fine-grained strategy name (e.g. from suggest/report): decompose to
+            # the base method plus its sub-options, honoring the batch_ prefix.
+            method, fg_native, fg_cell, fg_path = neighbor_list_strategy_run_args(
+                method
+            )
+            _apply_auto_suboptions(fg_native, fg_cell, fg_path)
+            if fg_cell == "pair_centric":
+                explicit_pair_centric = True
+    if (
+        half_fill
+        and selected_cell_strategy == "pair_centric"
+        and not explicit_pair_centric
+    ):
+        selected_cell_strategy = "atom_centric"
     match method:
         case "naive":
             return naive_neighbor_list(
@@ -314,18 +446,24 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
+                native_strategy=selected_native_strategy,
                 **kwargs,
             )
         case "cell_list":
-            # NOTE: JAX cell_list does not yet support half_fill/fill_value
-            # (unlike Torch). These parameters are silently ignored here.
-            # See JAX_FINAL.md for tracking.
+            if cell is None:
+                positions, cell, pbc = synthesize_cell_for_cell_list(
+                    positions, cutoff, num_systems=1
+                )
             return cell_list(
                 positions,
                 cutoff,
                 cell,
                 pbc,
+                half_fill=half_fill,
+                fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
+                strategy=selected_cell_strategy,
+                atom_centric_path=selected_atom_centric_path,
                 **kwargs,
             )
         case "batch_naive":
@@ -340,11 +478,21 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
+                native_strategy=selected_native_strategy,
                 **kwargs,
             )
         case "batch_cell_list":
-            # NOTE: JAX batch_cell_list does not yet support half_fill/fill_value
-            # (unlike Torch). These parameters are silently ignored here.
+            if cell is None:
+                batch_idx, batch_ptr = prepare_batch_idx_ptr(
+                    batch_idx, batch_ptr, positions.shape[0]
+                )
+                positions, cell, pbc = synthesize_cell_for_cell_list(
+                    positions,
+                    cutoff,
+                    batch_idx=batch_idx,
+                    batch_ptr=batch_ptr,
+                    num_systems=batch_ptr.shape[0] - 1,
+                )
             return batch_cell_list(
                 positions,
                 cutoff,
@@ -352,7 +500,45 @@ def neighbor_list(
                 pbc,
                 batch_idx,
                 batch_ptr=batch_ptr,
+                half_fill=half_fill,
+                fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
+                strategy=selected_cell_strategy,
+                atom_centric_path=selected_atom_centric_path,
+                **kwargs,
+            )
+        case "cluster_tile":
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            if cell is None:
+                raise ValueError("cell is required for method='cluster_tile'")
+            return cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                fill_value=fill_value,
+                format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
+                **kwargs,
+            )
+        case "batch_cluster_tile":
+            _reject_unsupported_cluster_tile_combo(pbc, half_fill)
+            if batch_idx is None or batch_ptr is None:
+                batch_idx, batch_ptr = prepare_batch_idx_ptr(
+                    batch_idx, batch_ptr, positions.shape[0]
+                )
+            if cell is None:
+                raise ValueError("cell is required for method=batch_cluster_tile")
+            if cell.ndim == 2:
+                num_systems = batch_ptr.shape[0] - 1
+                cell = jnp.broadcast_to(cell, (num_systems, 3, 3))
+            return batch_cluster_tile_neighbor_list(
+                positions,
+                cutoff,
+                cell,
+                batch_ptr,
+                fill_value=fill_value,
+                format="coo" if return_neighbor_list else "matrix",
+                cutoff2=cutoff2,
                 **kwargs,
             )
         case "naive_dual_cutoff":
@@ -398,6 +584,8 @@ def neighbor_list(
 __all__ = [
     # High-level API
     "neighbor_list",
+    "estimate_neighbor_list_costs",
+    "suggest_neighbor_list_method",
     # Unbatched neighbor list
     "naive_neighbor_list",
     "naive_neighbor_list_dual_cutoff",
@@ -405,6 +593,11 @@ __all__ = [
     "build_cell_list",
     "query_cell_list",
     "cell_list",
+    "estimate_cluster_tile_list_sizes",
+    "build_cluster_tile_list",
+    "query_cluster_tile",
+    "query_cluster_tile_coo",
+    "cluster_tile_neighbor_list",
     # Batched neighbor list
     "batch_naive_neighbor_list",
     "batch_naive_neighbor_list_dual_cutoff",
@@ -412,6 +605,13 @@ __all__ = [
     "batch_build_cell_list",
     "batch_query_cell_list",
     "batch_cell_list",
+    "estimate_batch_cluster_tile_list_sizes",
+    "estimate_batch_cluster_tile_segments",
+    "allocate_batch_cluster_tile_list",
+    "batch_build_cluster_tile_list",
+    "batch_query_cluster_tile",
+    "batch_query_cluster_tile_coo",
+    "batch_cluster_tile_neighbor_list",
     # Rebuild detection
     "cell_list_needs_rebuild",
     "neighbor_list_needs_rebuild",
