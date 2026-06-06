@@ -58,9 +58,9 @@ won't otherwise leave it fully defined.**  Concretely:
   stale.  Launchers must still zero on the empty-input early-return path.
   Several launchers do this by zeroing inside the ``if N == 0: return``
   branch; the three fused-double-backward ``grad_g_out`` outputs
-  (``_launch_segmented_add_double_backward``,
-  ``_launch_segmented_axpy_double_backward``,
-  ``_launch_segmented_matvec_double_backward``) keep an unconditional
+  (``segmented_add_double_backward``,
+  ``segmented_axpy_double_backward``,
+  ``segmented_matvec_double_backward``) keep an unconditional
   pre-guard zero, pinned by
   ``test_empty_fused_double_backward_zeros_grad_g_out``.
 
@@ -524,7 +524,7 @@ def _segmented_max_norm_argmax_kernel(
     than every valid index) — the ``atomic_max`` only keeps the *largest* index
     it sees, so a buffer left at zero or stuffed with stale values from a
     previous call will silently retain the wrong index when the true argmax has
-    a smaller ``i``.  ``_launch_segmented_max_norm_forward_precompute`` handles
+    a smaller ``i``.  ``segmented_max_norm_forward_precompute`` handles
     the initialization; callers must not invoke this kernel directly without
     that pre-fill.
     """
@@ -1057,7 +1057,7 @@ _segmented_add_dbl_bwd_grad_out_overloads = register_overloads(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_sum_backward(
+def segmented_sum_backward(
     g_out: wp.array,
     idx: wp.array,
     grad_x: wp.array,
@@ -1081,12 +1081,12 @@ def _launch_segmented_sum_backward(
 
     See Also
     --------
-    _launch_segmented_sum_double_backward : Symmetric scatter-sum.
+    segmented_sum_double_backward : Symmetric scatter-sum.
     """
     _launch_broadcast(g_out, idx, grad_x)
 
 
-def _launch_segmented_sum_double_backward(
+def segmented_sum_double_backward(
     gg_x: wp.array,
     idx: wp.array,
     M: int,
@@ -1113,7 +1113,7 @@ def _launch_segmented_sum_double_backward(
 
     See Also
     --------
-    _launch_segmented_sum_backward : First-order backward (gather).
+    segmented_sum_backward : First-order backward (gather).
     """
     _launch_sum(gg_x, idx, grad_g_out)
 
@@ -1123,7 +1123,7 @@ def _launch_segmented_sum_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_broadcast_backward(
+def segmented_broadcast_backward(
     g_out: wp.array,
     idx: wp.array,
     M: int,
@@ -1149,12 +1149,12 @@ def _launch_segmented_broadcast_backward(
 
     See Also
     --------
-    _launch_segmented_broadcast_double_backward : Symmetric gather.
+    segmented_broadcast_double_backward : Symmetric gather.
     """
     _launch_sum(g_out, idx, grad_values)
 
 
-def _launch_segmented_broadcast_double_backward(
+def segmented_broadcast_double_backward(
     gg_values: wp.array,
     idx: wp.array,
     grad_g_out: wp.array,
@@ -1176,7 +1176,7 @@ def _launch_segmented_broadcast_double_backward(
 
     See Also
     --------
-    _launch_segmented_broadcast_backward : First-order backward (scatter-sum).
+    segmented_broadcast_backward : First-order backward (scatter-sum).
     """
     _launch_broadcast(gg_values, idx, grad_g_out)
 
@@ -1186,7 +1186,7 @@ def _launch_segmented_broadcast_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_component_sum_backward(
+def segmented_component_sum_backward(
     g_out: wp.array,
     idx: wp.array,
     grad_x: wp.array,
@@ -1211,7 +1211,7 @@ def _launch_segmented_component_sum_backward(
 
     See Also
     --------
-    _launch_segmented_component_sum_double_backward : Symmetric reduction.
+    segmented_component_sum_double_backward : Symmetric reduction.
     """
     N = grad_x.shape[0]
     if N == 0:
@@ -1224,7 +1224,7 @@ def _launch_segmented_component_sum_backward(
     )
 
 
-def _launch_segmented_component_sum_double_backward(
+def segmented_component_sum_double_backward(
     gg_x: wp.array,
     idx: wp.array,
     M: int,
@@ -1252,7 +1252,7 @@ def _launch_segmented_component_sum_double_backward(
 
     See Also
     --------
-    _launch_segmented_component_sum_backward : First-order backward (broadcast).
+    segmented_component_sum_backward : First-order backward (broadcast).
     """
     grad_g_out.zero_()
     N = gg_x.shape[0]
@@ -1274,7 +1274,7 @@ def _launch_segmented_component_sum_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_add_backward(
+def segmented_add_backward(
     g_out: wp.array,
     idx: wp.array,
     M: int,
@@ -1308,7 +1308,7 @@ def _launch_segmented_add_backward(
 
     See Also
     --------
-    _launch_segmented_add_double_backward : Fused gather-and-add second order.
+    segmented_add_double_backward : Fused gather-and-add second order.
     """
     if g_out.shape[0] == 0:
         grad_y.zero_()
@@ -1317,7 +1317,7 @@ def _launch_segmented_add_backward(
     _launch_sum(g_out, idx, grad_y)
 
 
-def _launch_segmented_add_double_backward(
+def segmented_add_double_backward(
     gg_x: wp.array,
     gg_y: wp.array,
     idx: wp.array,
@@ -1349,7 +1349,7 @@ def _launch_segmented_add_double_backward(
 
     See Also
     --------
-    _launch_segmented_add_backward : First-order backward.
+    segmented_add_backward : First-order backward.
     """
     grad_g_out.zero_()
     N = gg_x.shape[0]
@@ -1368,7 +1368,7 @@ def _launch_segmented_add_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_mul_backward(
+def segmented_mul_backward(
     g_out: wp.array,
     x: wp.array,
     y: wp.array,
@@ -1407,7 +1407,7 @@ def _launch_segmented_mul_backward(
 
     See Also
     --------
-    _launch_segmented_mul_double_backward : Second-order backward.
+    segmented_mul_double_backward : Second-order backward.
     """
     # grad_x[i] = g_out[i] * y[s]
     N = g_out.shape[0]
@@ -1415,6 +1415,8 @@ def _launch_segmented_mul_backward(
         grad_x.zero_()
         grad_y.zero_()
         return
+    # grad_y accumulates via atomic_add in segmented_dot, so it must start zeroed.
+    grad_y.zero_()
     wp.launch(
         _segmented_mul_overloads[(g_out.dtype, y.dtype)],
         dim=N,
@@ -1433,7 +1435,7 @@ def _launch_segmented_mul_backward(
     )
 
 
-def _launch_segmented_mul_double_backward(
+def segmented_mul_double_backward(
     gg_gx: wp.array,
     gg_gy: wp.array,
     g_out: wp.array,
@@ -1482,7 +1484,7 @@ def _launch_segmented_mul_double_backward(
 
     See Also
     --------
-    _launch_segmented_mul_backward : First-order backward.
+    segmented_mul_backward : First-order backward.
     """
     N = g_out.shape[0]
     if N == 0:
@@ -1523,7 +1525,7 @@ def _launch_segmented_mul_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_dot_backward(
+def segmented_dot_backward(
     g_out: wp.array,
     x: wp.array,
     y: wp.array,
@@ -1552,7 +1554,7 @@ def _launch_segmented_dot_backward(
 
     See Also
     --------
-    _launch_segmented_dot_double_backward : Second-order backward.
+    segmented_dot_double_backward : Second-order backward.
     """
     # grad_x[i] = y[i] * g_out[s]  → _segmented_mul(y, g_out, idx, grad_x)
     N = x.shape[0]
@@ -1575,7 +1577,7 @@ def _launch_segmented_dot_backward(
     )
 
 
-def _launch_segmented_dot_double_backward(
+def segmented_dot_double_backward(
     gg_gx: wp.array,
     gg_gy: wp.array,
     g_out: wp.array,
@@ -1620,7 +1622,7 @@ def _launch_segmented_dot_double_backward(
 
     See Also
     --------
-    _launch_segmented_dot_backward : First-order backward.
+    segmented_dot_backward : First-order backward.
     """
     N = x.shape[0]
     if N == 0:
@@ -1668,7 +1670,7 @@ def _launch_segmented_dot_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_inner_products_backward(
+def segmented_inner_products_backward(
     x: wp.array,
     y: wp.array,
     idx: wp.array,
@@ -1703,7 +1705,7 @@ def _launch_segmented_inner_products_backward(
 
     See Also
     --------
-    _launch_segmented_inner_products_double_backward : Second-order backward.
+    segmented_inner_products_double_backward : Second-order backward.
     """
     N = x.shape[0]
     if N == 0:
@@ -1718,7 +1720,7 @@ def _launch_segmented_inner_products_backward(
     )
 
 
-def _launch_segmented_inner_products_double_backward(
+def segmented_inner_products_double_backward(
     gg_gx: wp.array,
     gg_gy: wp.array,
     x: wp.array,
@@ -1778,8 +1780,8 @@ def _launch_segmented_inner_products_double_backward(
 
     See Also
     --------
-    _launch_segmented_inner_products_backward : First-order backward.
-    _launch_segmented_dot_double_backward : Same RLE-reduction pattern.
+    segmented_inner_products_backward : First-order backward.
+    segmented_dot_double_backward : Same RLE-reduction pattern.
     """
     for arr in (
         grad_x_extra,
@@ -1840,7 +1842,7 @@ def _launch_segmented_inner_products_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_axpy_backward(
+def segmented_axpy_backward(
     g_out: wp.array,
     x: wp.array,
     a: wp.array,
@@ -1885,8 +1887,8 @@ def _launch_segmented_axpy_backward(
 
     See Also
     --------
-    _launch_segmented_axpy_double_backward : Second-order backward.
-    _launch_segmented_axpby_backward : Two-coefficient variant.
+    segmented_axpy_double_backward : Second-order backward.
+    segmented_axpby_backward : Two-coefficient variant.
     """
     N = g_out.shape[0]
     if N == 0:
@@ -1916,7 +1918,7 @@ def _launch_segmented_axpy_backward(
     )
 
 
-def _launch_segmented_axpy_double_backward(
+def segmented_axpy_double_backward(
     gg_gy_in: wp.array,
     gg_gx: wp.array,
     gg_ga: wp.array,
@@ -1970,8 +1972,8 @@ def _launch_segmented_axpy_double_backward(
 
     See Also
     --------
-    _launch_segmented_axpy_backward : First-order backward.
-    _launch_segmented_axpby_double_backward : Two-coefficient variant.
+    segmented_axpy_backward : First-order backward.
+    segmented_axpby_double_backward : Two-coefficient variant.
     """
     grad_g_out.zero_()
     N = g_out.shape[0]
@@ -2012,7 +2014,7 @@ def _launch_segmented_axpy_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_axpby_backward(
+def segmented_axpby_backward(
     g_out: wp.array,
     a: wp.array,
     x: wp.array,
@@ -2059,8 +2061,8 @@ def _launch_segmented_axpby_backward(
 
     See Also
     --------
-    _launch_segmented_axpby_double_backward : Second-order backward.
-    _launch_segmented_axpy_backward : Single-coefficient variant.
+    segmented_axpby_double_backward : Second-order backward.
+    segmented_axpy_backward : Single-coefficient variant.
     """
     for arr in (grad_x, grad_y, grad_a, grad_b):
         arr.zero_()
@@ -2096,7 +2098,7 @@ def _launch_segmented_axpby_backward(
     )
 
 
-def _launch_segmented_axpby_double_backward(
+def segmented_axpby_double_backward(
     gg_gx: wp.array,
     gg_gy: wp.array,
     gg_ga: wp.array,
@@ -2157,8 +2159,8 @@ def _launch_segmented_axpby_double_backward(
 
     See Also
     --------
-    _launch_segmented_axpby_backward : First-order backward.
-    _launch_segmented_axpy_double_backward : Single-coefficient variant.
+    segmented_axpby_backward : First-order backward.
+    segmented_axpy_double_backward : Single-coefficient variant.
     """
     for arr in (grad_g_out, grad_x_extra, grad_y_extra, grad_a_extra, grad_b_extra):
         arr.zero_()
@@ -2210,7 +2212,7 @@ def _launch_segmented_axpby_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_mean_backward(
+def segmented_mean_backward(
     g_out: wp.array,
     counts: wp.array,
     idx: wp.array,
@@ -2240,7 +2242,7 @@ def _launch_segmented_mean_backward(
 
     See Also
     --------
-    _launch_segmented_mean_double_backward : Symmetric mean of ``gg_x``.
+    segmented_mean_double_backward : Symmetric mean of ``gg_x``.
     """
     N = grad_x.shape[0]
     if N == 0:
@@ -2262,7 +2264,7 @@ def _launch_segmented_mean_backward(
         )
 
 
-def _launch_segmented_mean_double_backward(
+def segmented_mean_double_backward(
     gg_x: wp.array,
     counts: wp.array,
     idx: wp.array,
@@ -2293,7 +2295,7 @@ def _launch_segmented_mean_double_backward(
 
     See Also
     --------
-    _launch_segmented_mean_backward : First-order backward.
+    segmented_mean_backward : First-order backward.
     """
     M = grad_g_out.shape[0]
     grad_g_out.zero_()
@@ -2324,7 +2326,7 @@ def _launch_segmented_mean_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_rms_norm_forward_precompute(
+def segmented_rms_norm_forward_precompute(
     x: wp.array,
     idx: wp.array,
     sum_sq: wp.array,
@@ -2362,7 +2364,7 @@ def _launch_segmented_rms_norm_forward_precompute(
 
     See Also
     --------
-    _launch_segmented_rms_norm_backward : Consumes ``inv_norm`` to skip a divide.
+    segmented_rms_norm_backward : Consumes ``inv_norm`` to skip a divide.
     """
     N = x.shape[0]
     M = out.shape[0]
@@ -2380,7 +2382,7 @@ def _launch_segmented_rms_norm_forward_precompute(
     )
 
 
-def _launch_segmented_rms_norm_backward(
+def segmented_rms_norm_backward(
     g_out: wp.array,
     x: wp.array,
     inv_norm: wp.array,
@@ -2390,7 +2392,7 @@ def _launch_segmented_rms_norm_backward(
     """First-order backward of segmented_rms_norm.
 
     ``grad_x[i] = g_out[idx[i]] * x[i] * inv_norm[idx[i]]``.  Reuses the
-    ``inv_norm`` term saved by :func:`_launch_segmented_rms_norm_forward_precompute`
+    ``inv_norm`` term saved by :func:`segmented_rms_norm_forward_precompute`
     to skip a per-element divide.
 
     Parameters
@@ -2401,7 +2403,7 @@ def _launch_segmented_rms_norm_backward(
         Per-element input vectors from the forward.
     inv_norm : wp.array, shape ``(M,)``, dtype matches ``g_out``
         Saved state from the precompute forward.  Required to be the output of
-        :func:`_launch_segmented_rms_norm_forward_precompute` against the same
+        :func:`segmented_rms_norm_forward_precompute` against the same
         ``(x, idx)``.
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
@@ -2414,8 +2416,8 @@ def _launch_segmented_rms_norm_backward(
 
     See Also
     --------
-    _launch_segmented_rms_norm_forward_precompute : Produces ``inv_norm``.
-    _launch_segmented_rms_norm_double_backward : Second-order backward.
+    segmented_rms_norm_forward_precompute : Produces ``inv_norm``.
+    segmented_rms_norm_double_backward : Second-order backward.
     """
     N = grad_x.shape[0]
     if N == 0:
@@ -2428,7 +2430,7 @@ def _launch_segmented_rms_norm_backward(
     )
 
 
-def _launch_segmented_rms_norm_double_backward(
+def segmented_rms_norm_double_backward(
     gg_x: wp.array,
     x: wp.array,
     g_out: wp.array,
@@ -2476,7 +2478,7 @@ def _launch_segmented_rms_norm_double_backward(
 
     See Also
     --------
-    _launch_segmented_rms_norm_backward : First-order backward.
+    segmented_rms_norm_backward : First-order backward.
     """
     N = x.shape[0]
     if N == 0:
@@ -2509,7 +2511,7 @@ def _launch_segmented_rms_norm_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_max_norm_forward_precompute(
+def segmented_max_norm_forward_precompute(
     x: wp.array,
     idx: wp.array,
     out: wp.array,
@@ -2546,7 +2548,7 @@ def _launch_segmented_max_norm_forward_precompute(
 
     See Also
     --------
-    _launch_segmented_max_norm_backward : Consumes ``argmax_idx``.
+    segmented_max_norm_backward : Consumes ``argmax_idx``.
     """
     from nvalchemiops.segment_ops import segmented_max_norm as _fwd_max_norm
 
@@ -2569,7 +2571,7 @@ def _launch_segmented_max_norm_forward_precompute(
     )
 
 
-def _launch_segmented_max_norm_backward(
+def segmented_max_norm_backward(
     g_out: wp.array,
     x: wp.array,
     argmax_idx: wp.array,
@@ -2590,7 +2592,7 @@ def _launch_segmented_max_norm_backward(
         Per-element input vectors from the forward.
     argmax_idx : wp.array, shape ``(M,)``, dtype int32
         Per-segment argmax indices.  MUST be the output of
-        :func:`_launch_segmented_max_norm_forward_precompute` against the same
+        :func:`segmented_max_norm_forward_precompute` against the same
         ``(x, idx)``; passing a zero-initialized or stale buffer produces wrong
         gradients silently (the kernel writes at ``i == argmax_idx[s]`` — with
         zeros that's always ``i = 0``).
@@ -2608,8 +2610,8 @@ def _launch_segmented_max_norm_backward(
 
     See Also
     --------
-    _launch_segmented_max_norm_forward_precompute : Produces ``argmax_idx``.
-    _launch_segmented_max_norm_double_backward : Second-order backward.
+    segmented_max_norm_forward_precompute : Produces ``argmax_idx``.
+    segmented_max_norm_double_backward : Second-order backward.
     """
     grad_x.zero_()
     N = grad_x.shape[0]
@@ -2623,7 +2625,7 @@ def _launch_segmented_max_norm_backward(
     )
 
 
-def _launch_segmented_max_norm_double_backward(
+def segmented_max_norm_double_backward(
     gg_gx: wp.array,
     g_out: wp.array,
     x: wp.array,
@@ -2651,8 +2653,8 @@ def _launch_segmented_max_norm_double_backward(
         Per-element forward operand.
     argmax_idx : wp.array, shape ``(M,)``, dtype int32
         Per-segment argmax indices.  MUST come from
-        :func:`_launch_segmented_max_norm_forward_precompute` — see the
-        contract on :func:`_launch_segmented_max_norm_backward` for the failure
+        :func:`segmented_max_norm_forward_precompute` — see the
+        contract on :func:`segmented_max_norm_backward` for the failure
         mode if the buffer is constructed any other way.
     idx : wp.array, shape ``(N,)``, dtype int32
         Sorted segment indices in ``[0, M)``.
@@ -2670,7 +2672,7 @@ def _launch_segmented_max_norm_double_backward(
 
     See Also
     --------
-    _launch_segmented_max_norm_backward : First-order backward.
+    segmented_max_norm_backward : First-order backward.
     """
     grad_x_extra.zero_()
     grad_g_out.zero_()
@@ -2690,7 +2692,7 @@ def _launch_segmented_max_norm_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segmented_matvec_backward(
+def segmented_matvec_backward(
     g_out: wp.array,
     v: wp.array,
     m: wp.array,
@@ -2728,7 +2730,7 @@ def _launch_segmented_matvec_backward(
 
     See Also
     --------
-    _launch_segmented_matvec_double_backward : Second-order backward.
+    segmented_matvec_double_backward : Second-order backward.
     """
     N = v.shape[0]
     if N == 0:
@@ -2754,7 +2756,7 @@ def _launch_segmented_matvec_backward(
     )
 
 
-def _launch_segmented_matvec_double_backward(
+def segmented_matvec_double_backward(
     gg_gv: wp.array,
     gg_gM: wp.array,
     g_out: wp.array,
@@ -2805,7 +2807,7 @@ def _launch_segmented_matvec_double_backward(
 
     See Also
     --------
-    _launch_segmented_matvec_backward : First-order backward.
+    segmented_matvec_backward : First-order backward.
     """
     grad_g_out.zero_()
     N = v.shape[0]
@@ -2849,7 +2851,7 @@ def _launch_segmented_matvec_double_backward(
 # ---------------------------------------------------------------------------
 
 
-def _launch_segment_div_backward(
+def segment_div_backward(
     g_result: wp.array,
     denominator: wp.array,
     grad_numerator: wp.array,
@@ -2873,7 +2875,7 @@ def _launch_segment_div_backward(
 
     See Also
     --------
-    _launch_segment_div_double_backward : Symmetric divide.
+    segment_div_double_backward : Symmetric divide.
     """
     N = g_result.shape[0]
     if N == 0:
@@ -2886,7 +2888,7 @@ def _launch_segment_div_backward(
     )
 
 
-def _launch_segment_div_double_backward(
+def segment_div_double_backward(
     gg_numerator: wp.array,
     denominator: wp.array,
     grad_g_result: wp.array,
@@ -2908,14 +2910,14 @@ def _launch_segment_div_double_backward(
 
     Notes
     -----
-    Delegates to :func:`_launch_segment_div_backward`; one element-wise launch
+    Delegates to :func:`segment_div_backward`; one element-wise launch
     with ``dim=N``.
 
     See Also
     --------
-    _launch_segment_div_backward : First-order backward (identical math).
+    segment_div_backward : First-order backward (identical math).
     """
-    _launch_segment_div_backward(gg_numerator, denominator, grad_g_result)
+    segment_div_backward(gg_numerator, denominator, grad_g_result)
 
 
 # ===========================================================================

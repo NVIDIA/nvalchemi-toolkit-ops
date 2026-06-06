@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import csv
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -51,20 +52,20 @@ from nvalchemiops.segment_ops import (
     segmented_sum,
 )
 from nvalchemiops.segment_ops_backward import (
-    _launch_segmented_dot_backward,
-    _launch_segmented_dot_double_backward,
-    _launch_segmented_matvec_backward,
-    _launch_segmented_matvec_double_backward,
-    _launch_segmented_max_norm_backward,
-    _launch_segmented_max_norm_double_backward,
-    _launch_segmented_max_norm_forward_precompute,
-    _launch_segmented_mul_backward,
-    _launch_segmented_mul_double_backward,
-    _launch_segmented_rms_norm_backward,
-    _launch_segmented_rms_norm_double_backward,
-    _launch_segmented_rms_norm_forward_precompute,
-    _launch_segmented_sum_backward,
-    _launch_segmented_sum_double_backward,
+    segmented_dot_backward,
+    segmented_dot_double_backward,
+    segmented_matvec_backward,
+    segmented_matvec_double_backward,
+    segmented_max_norm_backward,
+    segmented_max_norm_double_backward,
+    segmented_max_norm_forward_precompute,
+    segmented_mul_backward,
+    segmented_mul_double_backward,
+    segmented_rms_norm_backward,
+    segmented_rms_norm_double_backward,
+    segmented_rms_norm_forward_precompute,
+    segmented_sum_backward,
+    segmented_sum_double_backward,
 )
 
 # ---------------------------------------------------------------------------
@@ -141,15 +142,26 @@ def _bench_cuda_graph(setup, fn, torch_device, warmup, runs, wp_device) -> float
     """Return median time (ms) of replaying ``(setup, fn)`` from a captured CUDA graph.
 
     Captures ``setup(); fn()`` once into a Warp CUDA graph and times
-    ``wp.capture_launch`` of the replay over *runs* iterations.  The graph is
-    captured on Warp's default device stream (the docstring's note about
-    ``wp.ScopedStream(stream_from_torch(...))`` does **not** apply here —
-    ``ScopedCapture`` requires a Warp-managed stream).  Returns ``None`` if
-    capture fails for any reason (some op chains aren't capturable).
+    ``wp.capture_launch`` of the replay over *runs* iterations.  Returns
+    ``None`` if capture fails (some op chains aren't capturable).
 
-    Timing uses ``torch.cuda.Event`` plus a final ``torch.cuda.synchronize``;
-    the sync ensures the event end-time reflects graph completion regardless
-    of which stream the graph ran on.
+    Timing methodology
+    ------------------
+    The graph runs on Warp's default device stream, which is not necessarily
+    the same as torch's current stream.  Using ``torch.cuda.Event`` on
+    torch's stream would therefore record only host-side issue time —
+    correct only if the two libraries happen to share a stream handle, which
+    is fragile to depend on.
+
+    Instead we time with ``time.perf_counter`` bracketed by
+    ``wp.synchronize_device``: the leading sync drains any prior work on
+    Warp's stream, and the trailing sync blocks until the graph has fully
+    executed.  The wall-clock delta between the two ``perf_counter`` calls
+    is therefore the graph's GPU execution time, by construction, regardless
+    of stream aliasing.  The trade-off is ~1-2 µs of host overhead per
+    sample from the syncs themselves — invisible against ms-scale graph
+    times and acceptable against µs-scale ones because we report the
+    median over ``runs`` samples.
     """
     # Pre-capture warmup so all Warp modules are loaded and any first-call
     # work (overload compilation, mempool init) happens outside the capture.
@@ -167,18 +179,17 @@ def _bench_cuda_graph(setup, fn, torch_device, warmup, runs, wp_device) -> float
 
     for _ in range(warmup):
         wp.capture_launch(cap.graph)
-    torch.cuda.synchronize(torch_device)
+    wp.synchronize_device(wp_device)
 
     times = []
     for _ in range(runs):
-        torch.cuda.synchronize(torch_device)
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
+        wp.synchronize_device(wp_device)
+        start = time.perf_counter()
         wp.capture_launch(cap.graph)
-        end.record()
-        torch.cuda.synchronize(torch_device)
-        times.append(start.elapsed_time(end))
+        wp.synchronize_device(wp_device)
+        # perf_counter returns seconds; convert to ms to match the rest of
+        # the benchmark output (CUDA-event elapsed_time is already ms).
+        times.append((time.perf_counter() - start) * 1000.0)
     return float(np.median(times))
 
 
@@ -618,7 +629,7 @@ def bench_segmented_sum_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
 
         ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
-            lambda: _launch_segmented_sum_backward(g_out, idx, grad_x),
+            lambda: segmented_sum_backward(g_out, idx, grad_x),
             torch_device,
             warmup,
             runs,
@@ -658,7 +669,7 @@ def bench_segmented_sum_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
 
         ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
-            lambda: _launch_segmented_sum_double_backward(gg_x, idx, M, grad_g_out),
+            lambda: segmented_sum_double_backward(gg_x, idx, M, grad_g_out),
             torch_device,
             warmup,
             runs,
@@ -772,7 +783,7 @@ def bench_segmented_dot_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
 
         ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
-            lambda: _launch_segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y),
+            lambda: segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y),
             torch_device,
             warmup,
             runs,
@@ -830,7 +841,7 @@ def bench_segmented_dot_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
 
         ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
-            lambda: _launch_segmented_dot_double_backward(
+            lambda: segmented_dot_double_backward(
                 gg_gx, gg_gy, g_out, x, y, idx, M, grad_g_out, grad_x_ex, grad_y_ex
             ),
             torch_device,
@@ -965,7 +976,7 @@ def bench_segmented_mul_bwd(N, M, device, torch_device, rng, warmup, runs, **_kw
 
         ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
-            lambda: _launch_segmented_mul_backward(g_out, x, y, idx, M, grad_x, grad_y),
+            lambda: segmented_mul_backward(g_out, x, y, idx, M, grad_x, grad_y),
             torch_device,
             warmup,
             runs,
@@ -1026,7 +1037,7 @@ def bench_segmented_mul_dbl(N, M, device, torch_device, rng, warmup, runs, **_kw
 
         ms_wp, ms_wp_graph = _bench_warp_both(
             _noop,
-            lambda: _launch_segmented_mul_double_backward(
+            lambda: segmented_mul_double_backward(
                 gg_gx, gg_gy, g_out, x, y, idx, grad_g_out, grad_x_ex, grad_y_ex
             ),
             torch_device,
@@ -1141,7 +1152,7 @@ def bench_segmented_matvec_bwd(
 
     ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
-        lambda: _launch_segmented_matvec_backward(g_out, v, m, idx, grad_v, grad_M),
+        lambda: segmented_matvec_backward(g_out, v, m, idx, grad_v, grad_M),
         torch_device,
         warmup,
         runs,
@@ -1188,7 +1199,7 @@ def bench_segmented_matvec_dbl(
 
     ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
-        lambda: _launch_segmented_matvec_double_backward(
+        lambda: segmented_matvec_double_backward(
             gg_gv, gg_gM, g_out, v, m, idx, grad_g_out, grad_v_ex, grad_M_ex
         ),
         torch_device,
@@ -1231,7 +1242,7 @@ def _setup_max_norm_arrays(N, M, device, torch_device, rng):
     grad_x_ex = wp.zeros(N, dtype=wp.vec3f, device=device)
     grad_g_out = wp.zeros(M, dtype=wp.float32, device=device)
     # Populate argmax via precompute fwd before any bwd benchmark.
-    _launch_segmented_max_norm_forward_precompute(x, idx, out, argmax_idx)
+    segmented_max_norm_forward_precompute(x, idx, out, argmax_idx)
 
     t_x = torch.from_numpy(x_np).to(torch_device)
     t_idx = torch.from_numpy(idx_np.astype(np.int64)).to(torch_device)
@@ -1282,7 +1293,7 @@ def bench_segmented_max_norm_bwd(
 
     ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
-        lambda: _launch_segmented_max_norm_backward(g_out, x, argmax_idx, idx, grad_x),
+        lambda: segmented_max_norm_backward(g_out, x, argmax_idx, idx, grad_x),
         torch_device,
         warmup,
         runs,
@@ -1330,7 +1341,7 @@ def bench_segmented_max_norm_dbl(
 
     ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
-        lambda: _launch_segmented_max_norm_double_backward(
+        lambda: segmented_max_norm_double_backward(
             gg_gx, g_out, x, argmax_idx, idx, grad_x_ex, grad_g_out
         ),
         torch_device,
@@ -1376,7 +1387,7 @@ def _setup_rms_norm_arrays(N, M, device, torch_device, rng):
     grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
     grad_x_ex = wp.zeros(N, dtype=wp.vec3f, device=device)
     grad_g_out_ex = wp.zeros(M, dtype=wp.float32, device=device)
-    _launch_segmented_rms_norm_forward_precompute(x, idx, sum_sq, counts, out, inv_norm)
+    segmented_rms_norm_forward_precompute(x, idx, sum_sq, counts, out, inv_norm)
 
     t_x = torch.from_numpy(x_np).to(torch_device)
     t_idx = torch.from_numpy(idx_np.astype(np.int64)).to(torch_device)
@@ -1430,7 +1441,7 @@ def bench_segmented_rms_norm_bwd(
 
     ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
-        lambda: _launch_segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x),
+        lambda: segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x),
         torch_device,
         warmup,
         runs,
@@ -1469,7 +1480,7 @@ def bench_segmented_rms_norm_dbl(
 
     ms_wp, ms_wp_graph = _bench_warp_both(
         _noop,
-        lambda: _launch_segmented_rms_norm_double_backward(
+        lambda: segmented_rms_norm_double_backward(
             gg_x, x, g_out, inv_norm, counts, idx, M, grad_x_ex, grad_g_out_ex
         ),
         torch_device,

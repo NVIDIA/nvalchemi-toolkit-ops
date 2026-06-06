@@ -58,19 +58,19 @@ from nvalchemiops.segment_ops import (
     segmented_sum as _wp_segmented_sum,
 )
 from nvalchemiops.segment_ops_backward import (
-    _launch_segmented_dot_backward,
-    _launch_segmented_dot_double_backward,
-    _launch_segmented_matvec_backward,
-    _launch_segmented_matvec_double_backward,
-    _launch_segmented_mean_backward,
-    _launch_segmented_mean_double_backward,
-    _launch_segmented_mul_backward,
-    _launch_segmented_mul_double_backward,
-    _launch_segmented_rms_norm_backward,
-    _launch_segmented_rms_norm_double_backward,
-    _launch_segmented_rms_norm_forward_precompute,
-    _launch_segmented_sum_backward,
-    _launch_segmented_sum_double_backward,
+    segmented_dot_backward,
+    segmented_dot_double_backward,
+    segmented_matvec_backward,
+    segmented_matvec_double_backward,
+    segmented_mean_backward,
+    segmented_mean_double_backward,
+    segmented_mul_backward,
+    segmented_mul_double_backward,
+    segmented_rms_norm_backward,
+    segmented_rms_norm_double_backward,
+    segmented_rms_norm_forward_precompute,
+    segmented_sum_backward,
+    segmented_sum_double_backward,
 )
 from nvalchemiops.torch.autograd import warp_stream_from_torch
 
@@ -203,7 +203,7 @@ class SegmentedSumBwd(torch.autograd.Function):
         out_shape = (N, 3) if g_out.ndim == 2 else (N,)
         grad_x = g_out.new_zeros(out_shape)
         with warp_stream_from_torch(g_out):
-            _launch_segmented_sum_backward(_inp(g_out), _inp_int(idx), _out(grad_x))
+            segmented_sum_backward(_inp(g_out), _inp_int(idx), _out(grad_x))
         return grad_x
 
     @staticmethod
@@ -221,7 +221,7 @@ class SegmentedSumBwd(torch.autograd.Function):
         out_shape = (num_segments, 3) if gg_x.ndim == 2 else (num_segments,)
         grad_g_out = gg_x.new_zeros(out_shape)
         with warp_stream_from_torch(gg_x):
-            _launch_segmented_sum_double_backward(
+            segmented_sum_double_backward(
                 _inp(gg_x), _inp_int(idx), num_segments, _out(grad_g_out)
             )
         return grad_g_out, None, None
@@ -319,7 +319,7 @@ class SegmentedDotBwd(torch.autograd.Function):
         grad_x = x.new_zeros(out_shape)
         grad_y = y.new_zeros(out_shape)
         with warp_stream_from_torch(g_out):
-            _launch_segmented_dot_backward(
+            segmented_dot_backward(
                 _inp(g_out), _inp(x), _inp(y), _inp_int(idx), _out(grad_x), _out(grad_y)
             )
         return grad_x, grad_y
@@ -340,7 +340,7 @@ class SegmentedDotBwd(torch.autograd.Function):
         grad_x_extra = x.new_zeros(x.shape)
         grad_y_extra = y.new_zeros(y.shape)
         with warp_stream_from_torch(gg_gx):
-            _launch_segmented_dot_double_backward(
+            segmented_dot_double_backward(
                 _inp(gg_gx),
                 _inp(gg_gy),
                 _inp(g_out),
@@ -447,7 +447,7 @@ class SegmentedMulBwd(torch.autograd.Function):
         grad_x = x.new_zeros(x.shape)
         grad_y = y.new_zeros((num_segments,))
         with warp_stream_from_torch(g_out):
-            _launch_segmented_mul_backward(
+            segmented_mul_backward(
                 _inp(g_out),
                 _inp(x),
                 _inp(y),
@@ -474,7 +474,7 @@ class SegmentedMulBwd(torch.autograd.Function):
         grad_x_extra = x.new_zeros(x.shape)
         grad_y_extra = y.new_zeros((num_segments,))
         with warp_stream_from_torch(gg_gx):
-            _launch_segmented_mul_double_backward(
+            segmented_mul_double_backward(
                 _inp(gg_gx),
                 _inp(gg_gy),
                 _inp(g_out),
@@ -590,7 +590,7 @@ class SegmentedMeanBwd(torch.autograd.Function):
         out_shape = (N, 3) if g_out.ndim == 2 else (N,)
         grad_x = g_out.new_zeros(out_shape)
         with warp_stream_from_torch(g_out):
-            _launch_segmented_mean_backward(
+            segmented_mean_backward(
                 _inp(g_out), _inp_int(counts), _inp_int(idx), _out(grad_x)
             )
         return grad_x
@@ -610,7 +610,7 @@ class SegmentedMeanBwd(torch.autograd.Function):
         out_shape = (num_segments, 3) if gg_x.ndim == 2 else (num_segments,)
         grad_g_out = gg_x.new_zeros(out_shape)
         with warp_stream_from_torch(gg_x):
-            _launch_segmented_mean_double_backward(
+            segmented_mean_double_backward(
                 _inp(gg_x), _inp_int(counts), _inp_int(idx), _out(grad_g_out)
             )
         return grad_g_out, None, None
@@ -715,7 +715,7 @@ class SegmentedRmsNormBwd(torch.autograd.Function):
         """Launch the segmented_rms_norm first-order backward kernel."""
         grad_x = x.new_zeros(x.shape)
         with warp_stream_from_torch(g_out):
-            _launch_segmented_rms_norm_backward(
+            segmented_rms_norm_backward(
                 _inp(g_out), _inp(x), _inp(inv_norm), _inp_int(idx), _out(grad_x)
             )
         return grad_x
@@ -735,7 +735,7 @@ class SegmentedRmsNormBwd(torch.autograd.Function):
         grad_x_extra = x.new_zeros(x.shape)
         grad_g_out = g_out.new_zeros((num_segments,))
         with warp_stream_from_torch(gg_x):
-            _launch_segmented_rms_norm_double_backward(
+            segmented_rms_norm_double_backward(
                 _inp(gg_x),
                 _inp(x),
                 _inp(g_out),
@@ -769,7 +769,7 @@ class SegmentedRmsNorm(torch.autograd.Function):
         counts = x.new_zeros((num_segments,), dtype=torch.int32)
         inv_norm = x.new_zeros((num_segments,))
         with warp_stream_from_torch(x):
-            _launch_segmented_rms_norm_forward_precompute(
+            segmented_rms_norm_forward_precompute(
                 _inp(x),
                 _inp_int(idx),
                 _out(sum_sq),
@@ -859,7 +859,7 @@ class SegmentedMatvecBwd(torch.autograd.Function):
         grad_v = v.new_zeros(v.shape)
         grad_m = m.new_zeros(m.shape)
         with warp_stream_from_torch(g_out):
-            _launch_segmented_matvec_backward(
+            segmented_matvec_backward(
                 _inp(g_out),
                 _inp(v),
                 _inp(m),
@@ -885,7 +885,7 @@ class SegmentedMatvecBwd(torch.autograd.Function):
         grad_v_extra = v.new_zeros(v.shape)
         grad_m_extra = m.new_zeros(m.shape)
         with warp_stream_from_torch(gg_gv):
-            _launch_segmented_matvec_double_backward(
+            segmented_matvec_double_backward(
                 _inp(gg_gv),
                 _inp(gg_gm),
                 _inp(g_out),

@@ -65,19 +65,19 @@ from nvalchemiops.segment_ops import (
     segmented_sum as _wp_segmented_sum,
 )
 from nvalchemiops.segment_ops_backward import (
-    _launch_segmented_dot_backward,
-    _launch_segmented_dot_double_backward,
-    _launch_segmented_matvec_backward,
-    _launch_segmented_matvec_double_backward,
-    _launch_segmented_mean_backward,
-    _launch_segmented_mean_double_backward,
-    _launch_segmented_mul_backward,
-    _launch_segmented_mul_double_backward,
-    _launch_segmented_rms_norm_backward,
-    _launch_segmented_rms_norm_double_backward,
-    _launch_segmented_rms_norm_forward_precompute,
-    _launch_segmented_sum_backward,
-    _launch_segmented_sum_double_backward,
+    segmented_dot_backward,
+    segmented_dot_double_backward,
+    segmented_matvec_backward,
+    segmented_matvec_double_backward,
+    segmented_mean_backward,
+    segmented_mean_double_backward,
+    segmented_mul_backward,
+    segmented_mul_double_backward,
+    segmented_rms_norm_backward,
+    segmented_rms_norm_double_backward,
+    segmented_rms_norm_forward_precompute,
+    segmented_sum_backward,
+    segmented_sum_double_backward,
 )
 
 
@@ -164,7 +164,7 @@ def _make_sum_bwd(wp_dtype):
         idx: wp.array(dtype=wp.int32),
         grad_x: wp.array(dtype=wp_dtype),
     ):
-        _launch_segmented_sum_backward(g_out, idx, grad_x)
+        segmented_sum_backward(g_out, idx, grad_x)
 
     return fn
 
@@ -175,9 +175,7 @@ def _make_sum_dbl_bwd(wp_dtype):
         idx: wp.array(dtype=wp.int32),
         grad_g_out: wp.array(dtype=wp_dtype),
     ):
-        _launch_segmented_sum_double_backward(
-            gg_x, idx, grad_g_out.shape[0], grad_g_out
-        )
+        segmented_sum_double_backward(gg_x, idx, grad_g_out.shape[0], grad_g_out)
 
     return fn
 
@@ -299,7 +297,7 @@ def _make_dot_bwd(vec_t):
         grad_x: wp.array(dtype=vec_t),
         grad_y: wp.array(dtype=vec_t),
     ):
-        _launch_segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y)
+        segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y)
 
     return fn
 
@@ -318,7 +316,7 @@ def _make_dot_dbl_bwd(vec_t):
         grad_x_extra: wp.array(dtype=vec_t),
         grad_y_extra: wp.array(dtype=vec_t),
     ):
-        _launch_segmented_dot_double_backward(
+        segmented_dot_double_backward(
             gg_gx,
             gg_gy,
             g_out,
@@ -445,9 +443,7 @@ def _make_mul_bwd(vec_t, scalar_t):
         grad_x: wp.array(dtype=vec_t),
         grad_y: wp.array(dtype=scalar_t),
     ):
-        _launch_segmented_mul_backward(
-            g_out, x, y, idx, grad_y.shape[0], grad_x, grad_y
-        )
+        segmented_mul_backward(g_out, x, y, idx, grad_y.shape[0], grad_x, grad_y)
 
     return fn
 
@@ -464,7 +460,7 @@ def _make_mul_dbl_bwd(vec_t, scalar_t):
         grad_x_extra: wp.array(dtype=vec_t),
         grad_y_extra: wp.array(dtype=scalar_t),
     ):
-        _launch_segmented_mul_double_backward(
+        segmented_mul_double_backward(
             gg_gx,
             gg_gy,
             g_out,
@@ -603,7 +599,7 @@ def _make_mean_bwd(wp_dtype):
         idx: wp.array(dtype=wp.int32),
         grad_x: wp.array(dtype=wp_dtype),
     ):
-        _launch_segmented_mean_backward(g_out, counts, idx, grad_x)
+        segmented_mean_backward(g_out, counts, idx, grad_x)
 
     return fn
 
@@ -615,7 +611,7 @@ def _make_mean_dbl_bwd(wp_dtype):
         idx: wp.array(dtype=wp.int32),
         grad_g_out: wp.array(dtype=wp_dtype),
     ):
-        _launch_segmented_mean_double_backward(gg_x, counts, idx, grad_g_out)
+        segmented_mean_double_backward(gg_x, counts, idx, grad_g_out)
 
     return fn
 
@@ -697,7 +693,7 @@ def segmented_mean(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array
 # Forward (precompute): out[s] = sqrt(mean(||x[i]||² for i in s))
 #                       and saves inv_norm[s], counts[s] for the backward.
 # Bwd:    grad_x[i] = g_out[s] * x[i] * inv_norm[s]
-# Dbl-bwd: (see _launch_segmented_rms_norm_double_backward)
+# Dbl-bwd: (see segmented_rms_norm_double_backward)
 
 
 def _make_rms_fwd(vec_t):
@@ -715,9 +711,7 @@ def _make_rms_fwd(vec_t):
         # and the bincount on the host.
         num_segments = out.shape[0]
         sum_sq = wp.zeros(num_segments, dtype=scalar_t, device=x.device)
-        _launch_segmented_rms_norm_forward_precompute(
-            x, idx, sum_sq, counts, out, inv_norm
-        )
+        segmented_rms_norm_forward_precompute(x, idx, sum_sq, counts, out, inv_norm)
 
     return fn
 
@@ -732,7 +726,7 @@ def _make_rms_bwd(vec_t):
         idx: wp.array(dtype=wp.int32),
         grad_x: wp.array(dtype=vec_t),
     ):
-        _launch_segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x)
+        segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x)
 
     return fn
 
@@ -750,7 +744,7 @@ def _make_rms_dbl_bwd(vec_t):
         grad_x_extra: wp.array(dtype=vec_t),
         grad_g_out_extra: wp.array(dtype=scalar_t),
     ):
-        _launch_segmented_rms_norm_double_backward(
+        segmented_rms_norm_double_backward(
             gg_x,
             x,
             g_out,
@@ -896,7 +890,7 @@ def _make_matvec_bwd(vec_t, mat_t):
         grad_v: wp.array(dtype=vec_t),
         grad_M: wp.array(dtype=mat_t),
     ):
-        _launch_segmented_matvec_backward(g_out, v, m, idx, grad_v, grad_M)
+        segmented_matvec_backward(g_out, v, m, idx, grad_v, grad_M)
 
     return fn
 
@@ -913,7 +907,7 @@ def _make_matvec_dbl_bwd(vec_t, mat_t):
         grad_v_extra: wp.array(dtype=vec_t),
         grad_M_extra: wp.array(dtype=mat_t),
     ):
-        _launch_segmented_matvec_double_backward(
+        segmented_matvec_double_backward(
             gg_gv,
             gg_gM,
             g_out,

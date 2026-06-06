@@ -92,11 +92,40 @@ graph replay claws back the biggest fraction. At large N the kernel work
 dominates and the relative win is smaller (but the absolute work is also where
 our launchers already beat torch by 10-25×).
 
+### What About `torch.compile`?
+
+A natural first question is whether ``torch.compile(segmented_sum,
+fullgraph=True)`` does this for you automatically. **Today, no.** The Torch
+wrapper validates ``idx`` on the host with ``idx.min().item()`` /
+``idx.max().item()``, which is a data-dependent op that
+``torch.compile(..., fullgraph=True)`` refuses to trace:
+
+```python
+>>> torch.compile(segmented_sum, fullgraph=True)(x, idx, M)
+torch._dynamo.exc.UserError: Could not guard on data-dependent expression
+u0 < 0 (unhinted: u0 < 0)
+```
+
+``mode="reduce-overhead"`` (Torch's own CUDA-graph mode) does run, but the
+graph break around the validation forces Torch back into eager between
+subgraphs — empirically it ends up **~2-3× slower than plain eager** at
+N=10k, M=1000 (236 µs vs 96 µs in our measurements). The wins reported in
+the table above come from explicit ``wp.ScopedCapture`` around the raw
+launchers, not from ``torch.compile``.
+
+If you really want a single-call ``torch.compile``-friendly entry point
+today, the working recipe is to call the renamed launcher
+(``segmented_sum_backward`` and friends) directly: those are pure kernel
+dispatchers with no host-side validation. Wrap them in
+``wp.ScopedCapture`` as shown below for the speedups above. A future
+release that registers the public ops via ``torch.library.custom_op``
+would make ``torch.compile`` capable too, but that work isn't in this PR.
+
 ### Minimal Pattern
 
 ```python
 import warp as wp
-from nvalchemiops.segment_ops_backward import _launch_segmented_sum_backward
+from nvalchemiops.segment_ops_backward import segmented_sum_backward
 
 wp_device = wp.get_device("cuda:0")
 
@@ -104,13 +133,13 @@ wp_device = wp.get_device("cuda:0")
 #    BEFORE capture.  If you skip this, the graph records the first-call
 #    compile work and replay is much slower.
 for _ in range(3):
-    _launch_segmented_sum_backward(g_out, idx, grad_x)
+    segmented_sum_backward(g_out, idx, grad_x)
 wp.synchronize_device(wp_device)
 
 # 2. Capture the op chain into a graph.  Every kernel launch and memset
 #    inside the with-block is recorded, not executed.
 with wp.ScopedCapture(device=wp_device) as cap:
-    _launch_segmented_sum_backward(g_out, idx, grad_x)
+    segmented_sum_backward(g_out, idx, grad_x)
 
 # 3. Replay the graph from the hot loop.  One submission, no Python dispatch.
 for step in range(num_steps):
@@ -162,7 +191,7 @@ doesn't capture cleanly.  Two patterns work:
 
 1. **Capture only the forward**, run the backward eagerly.  Works well when
    you want graph speedup for inference loops.
-2. **Capture the launcher calls directly** (e.g. ``_launch_segmented_sum_backward``)
+2. **Capture the launcher calls directly** (e.g. ``segmented_sum_backward``)
    bypassing the autograd wrappers entirely.  This is what the benchmark
    harness does — it's the shortest path to the speedup numbers above.
 
@@ -175,7 +204,7 @@ same CUDA stream.  Hand-off mechanics are documented in the
 ### Caveats and Gotchas
 
 - **Internal allocations**: Some second-order backward launchers (e.g.
-  ``_launch_segmented_rms_norm_double_backward``) allocate small scratch
+  ``segmented_rms_norm_double_backward``) allocate small scratch
   buffers via {func}`warp.zeros`.  These are capturable because Warp routes
   through CUDA's stream-ordered memory pool — but the allocator itself is the
   only guaranteed-graph-safe path.  Don't add per-call ``torch.zeros``

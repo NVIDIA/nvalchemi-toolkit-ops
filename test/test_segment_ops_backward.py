@@ -22,36 +22,36 @@ import pytest
 import warp as wp
 
 from nvalchemiops.segment_ops_backward import (
-    _launch_segment_div_backward,
-    _launch_segment_div_double_backward,
-    _launch_segmented_add_backward,
-    _launch_segmented_add_double_backward,
-    _launch_segmented_axpby_backward,
-    _launch_segmented_axpby_double_backward,
-    _launch_segmented_axpy_backward,
-    _launch_segmented_axpy_double_backward,
-    _launch_segmented_broadcast_backward,
-    _launch_segmented_broadcast_double_backward,
-    _launch_segmented_component_sum_backward,
-    _launch_segmented_component_sum_double_backward,
-    _launch_segmented_dot_backward,
-    _launch_segmented_dot_double_backward,
-    _launch_segmented_inner_products_backward,
-    _launch_segmented_inner_products_double_backward,
-    _launch_segmented_matvec_backward,
-    _launch_segmented_matvec_double_backward,
-    _launch_segmented_max_norm_backward,
-    _launch_segmented_max_norm_double_backward,
-    _launch_segmented_max_norm_forward_precompute,
-    _launch_segmented_mean_backward,
-    _launch_segmented_mean_double_backward,
-    _launch_segmented_mul_backward,
-    _launch_segmented_mul_double_backward,
-    _launch_segmented_rms_norm_backward,
-    _launch_segmented_rms_norm_double_backward,
-    _launch_segmented_rms_norm_forward_precompute,
-    _launch_segmented_sum_backward,
-    _launch_segmented_sum_double_backward,
+    segment_div_backward,
+    segment_div_double_backward,
+    segmented_add_backward,
+    segmented_add_double_backward,
+    segmented_axpby_backward,
+    segmented_axpby_double_backward,
+    segmented_axpy_backward,
+    segmented_axpy_double_backward,
+    segmented_broadcast_backward,
+    segmented_broadcast_double_backward,
+    segmented_component_sum_backward,
+    segmented_component_sum_double_backward,
+    segmented_dot_backward,
+    segmented_dot_double_backward,
+    segmented_inner_products_backward,
+    segmented_inner_products_double_backward,
+    segmented_matvec_backward,
+    segmented_matvec_double_backward,
+    segmented_max_norm_backward,
+    segmented_max_norm_double_backward,
+    segmented_max_norm_forward_precompute,
+    segmented_mean_backward,
+    segmented_mean_double_backward,
+    segmented_mul_backward,
+    segmented_mul_double_backward,
+    segmented_rms_norm_backward,
+    segmented_rms_norm_double_backward,
+    segmented_rms_norm_forward_precompute,
+    segmented_sum_backward,
+    segmented_sum_double_backward,
 )
 
 # ---------------------------------------------------------------------------
@@ -117,7 +117,7 @@ class TestSegmentedSumBackward:
         ref = g_out[idx]
 
         grad_x = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segmented_sum_backward(
+        segmented_sum_backward(
             _wpa(g_out, wp.float32, device), _wpa(idx, wp.int32, device), grad_x
         )
         np.testing.assert_allclose(_np(grad_x), ref, rtol=1e-5)
@@ -129,7 +129,7 @@ class TestSegmentedSumBackward:
         ref = g_out[idx]
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
-        _launch_segmented_sum_backward(
+        segmented_sum_backward(
             _wpv(g_out, wp.vec3f, device), _wpa(idx, wp.int32, device), grad_x
         )
         np.testing.assert_allclose(_np(grad_x), ref, rtol=1e-5)
@@ -141,7 +141,7 @@ class TestSegmentedSumBackward:
         ref = _seg_sum(gg_x, idx, M)
 
         grad_g_out = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_sum_double_backward(
+        segmented_sum_double_backward(
             _wpa(gg_x, wp.float32, device), _wpa(idx, wp.int32, device), M, grad_g_out
         )
         np.testing.assert_allclose(_np(grad_g_out), ref, rtol=1e-5)
@@ -153,7 +153,7 @@ class TestSegmentedSumBackward:
         ref = _seg_sum(gg_x, idx, M)
 
         grad_g_out = wp.zeros(M, dtype=wp.vec3f, device=device)
-        _launch_segmented_sum_double_backward(
+        segmented_sum_double_backward(
             _wpv(gg_x, wp.vec3f, device), _wpa(idx, wp.int32, device), M, grad_g_out
         )
         np.testing.assert_allclose(_np(grad_g_out), ref, rtol=1e-4)
@@ -172,7 +172,7 @@ class TestSegmentedBroadcastBackward:
         ref = _seg_sum(g_out, idx, M)
 
         grad_values = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_broadcast_backward(
+        segmented_broadcast_backward(
             _wpa(g_out, wp.float32, device), _wpa(idx, wp.int32, device), M, grad_values
         )
         np.testing.assert_allclose(_np(grad_values), ref, rtol=1e-5)
@@ -184,7 +184,7 @@ class TestSegmentedBroadcastBackward:
         ref = _seg_sum(g_out, idx, M)
 
         grad_values = wp.zeros(M, dtype=wp.vec3f, device=device)
-        _launch_segmented_broadcast_backward(
+        segmented_broadcast_backward(
             _wpv(g_out, wp.vec3f, device), _wpa(idx, wp.int32, device), M, grad_values
         )
         np.testing.assert_allclose(_np(grad_values), ref, rtol=1e-4)
@@ -196,7 +196,7 @@ class TestSegmentedBroadcastBackward:
         ref = gg_values[idx]
 
         grad_g_out = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segmented_broadcast_double_backward(
+        segmented_broadcast_double_backward(
             _wpa(gg_values, wp.float32, device), _wpa(idx, wp.int32, device), grad_g_out
         )
         np.testing.assert_allclose(_np(grad_g_out), ref, rtol=1e-5)
@@ -215,7 +215,7 @@ class TestSegmentedComponentSumBackward:
         ref = np.stack([g_out[idx]] * 3, axis=1)
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
-        _launch_segmented_component_sum_backward(
+        segmented_component_sum_backward(
             _wpa(g_out, wp.float32, device), _wpa(idx, wp.int32, device), grad_x
         )
         np.testing.assert_allclose(_np(grad_x), ref, rtol=1e-5)
@@ -227,7 +227,7 @@ class TestSegmentedComponentSumBackward:
         ref = _seg_sum(gg_x.sum(axis=1), idx, M)
 
         grad_g_out = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_component_sum_double_backward(
+        segmented_component_sum_double_backward(
             _wpv(gg_x, wp.vec3f, device), _wpa(idx, wp.int32, device), M, grad_g_out
         )
         np.testing.assert_allclose(_np(grad_g_out), ref, rtol=1e-4)
@@ -246,7 +246,7 @@ class TestSegmentedAddBackward:
 
         grad_x = wp.zeros(N, dtype=wp.float32, device=device)
         grad_y = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_add_backward(
+        segmented_add_backward(
             _wpa(g_out, wp.float32, device),
             _wpa(idx, wp.int32, device),
             M,
@@ -263,7 +263,7 @@ class TestSegmentedAddBackward:
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_y = wp.zeros(M, dtype=wp.vec3f, device=device)
-        _launch_segmented_add_backward(
+        segmented_add_backward(
             _wpv(g_out, wp.vec3f, device),
             _wpa(idx, wp.int32, device),
             M,
@@ -281,7 +281,7 @@ class TestSegmentedAddBackward:
         ref = gg_x + gg_y[idx]
 
         grad_g_out = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segmented_add_double_backward(
+        segmented_add_double_backward(
             _wpa(gg_x, wp.float32, device),
             _wpa(gg_y, wp.float32, device),
             _wpa(idx, wp.int32, device),
@@ -312,7 +312,7 @@ class TestSegmentedMulBackward:
 
         grad_x = wp.zeros(N, dtype=wp_type, device=device)
         grad_y = wp.zeros(M, dtype=wp_type, device=device)
-        _launch_segmented_mul_backward(
+        segmented_mul_backward(
             _wpa(g_out, wp_type, device),
             _wpa(x, wp_type, device),
             _wpa(y, wp_type, device),
@@ -336,7 +336,7 @@ class TestSegmentedMulBackward:
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_y = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_mul_backward(
+        segmented_mul_backward(
             _wpv(g_out, wp.vec3f, device),
             _wpv(x, wp.vec3f, device),
             _wpa(y, wp.float32, device),
@@ -364,7 +364,7 @@ class TestSegmentedMulBackward:
         grad_g_out = wp.zeros(N, dtype=wp.float32, device=device)
         grad_x_extra = wp.zeros(N, dtype=wp.float32, device=device)
         grad_y_extra = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_mul_double_backward(
+        segmented_mul_double_backward(
             _wpa(gg_gx, wp.float32, device),
             _wpa(gg_gy, wp.float32, device),
             _wpa(g_out, wp.float32, device),
@@ -395,7 +395,7 @@ class TestSegmentedDotBackward:
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_y = wp.zeros(N, dtype=wp.vec3f, device=device)
-        _launch_segmented_dot_backward(
+        segmented_dot_backward(
             _wpa(g_out, wp.float32, device),
             _wpv(x, wp.vec3f, device),
             _wpv(y, wp.vec3f, device),
@@ -415,7 +415,7 @@ class TestSegmentedDotBackward:
 
         grad_x = wp.zeros(N, dtype=wp.float32, device=device)
         grad_y = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segmented_dot_backward(
+        segmented_dot_backward(
             _wpa(g_out, wp.float32, device),
             _wpa(x, wp.float32, device),
             _wpa(y, wp.float32, device),
@@ -442,7 +442,7 @@ class TestSegmentedDotBackward:
         grad_g_out = wp.zeros(M, dtype=wp.float32, device=device)
         grad_x_extra = wp.zeros(N, dtype=wp.float32, device=device)
         grad_y_extra = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segmented_dot_double_backward(
+        segmented_dot_double_backward(
             _wpa(gg_gx, wp.float32, device),
             _wpa(gg_gy, wp.float32, device),
             _wpa(g_out, wp.float32, device),
@@ -479,7 +479,7 @@ class TestSegmentedInnerProductsBackward:
 
         grad_x = wp.zeros(N, dtype=wp.float32, device=device)
         grad_y = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segmented_inner_products_backward(
+        segmented_inner_products_backward(
             _wpa(x, wp.float32, device),
             _wpa(y, wp.float32, device),
             _wpa(idx, wp.int32, device),
@@ -506,7 +506,7 @@ class TestSegmentedInnerProductsBackward:
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_y = wp.zeros(N, dtype=wp.vec3f, device=device)
-        _launch_segmented_inner_products_backward(
+        segmented_inner_products_backward(
             _wpv(x, wp.vec3f, device),
             _wpv(y, wp.vec3f, device),
             _wpa(idx, wp.int32, device),
@@ -541,7 +541,7 @@ class TestSegmentedInnerProductsBackward:
         grad_g_xy = wp.zeros(M, dtype=wp.float32, device=device)
         grad_g_xx = wp.zeros(M, dtype=wp.float32, device=device)
         grad_g_yy = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_inner_products_double_backward(
+        segmented_inner_products_double_backward(
             _wpa(gg_gx, wp.float32, device),
             _wpa(gg_gy, wp.float32, device),
             _wpa(x, wp.float32, device),
@@ -587,7 +587,7 @@ class TestSegmentedInnerProductsBackward:
         grad_g_xy = wp.zeros(M, dtype=wp.float32, device=device)
         grad_g_xx = wp.zeros(M, dtype=wp.float32, device=device)
         grad_g_yy = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_inner_products_double_backward(
+        segmented_inner_products_double_backward(
             _wpv(gg_gx, wp.vec3f, device),
             _wpv(gg_gy, wp.vec3f, device),
             _wpv(x, wp.vec3f, device),
@@ -624,7 +624,7 @@ class TestSegmentedMeanBackward:
         ref = g_out[idx] / counts[idx].astype(np.float32)
 
         grad_x = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segmented_mean_backward(
+        segmented_mean_backward(
             _wpa(g_out, wp.float32, device),
             _wpa(counts, wp.int32, device),
             _wpa(idx, wp.int32, device),
@@ -640,7 +640,7 @@ class TestSegmentedMeanBackward:
         ref = g_out[idx] / counts[idx, None].astype(np.float32)
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
-        _launch_segmented_mean_backward(
+        segmented_mean_backward(
             _wpv(g_out, wp.vec3f, device),
             _wpa(counts, wp.int32, device),
             _wpa(idx, wp.int32, device),
@@ -656,7 +656,7 @@ class TestSegmentedMeanBackward:
         ref = _seg_sum(gg_x, idx, M) / counts.astype(np.float32)
 
         grad_g_out = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_mean_double_backward(
+        segmented_mean_double_backward(
             _wpa(gg_x, wp.float32, device),
             _wpa(counts, wp.int32, device),
             _wpa(idx, wp.int32, device),
@@ -695,7 +695,7 @@ class TestSegmentedRmsNormBackward:
         counts = wp.zeros(M, dtype=wp.int32, device=device)
         out = wp.zeros(M, dtype=wp.float32, device=device)
         inv_norm = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_rms_norm_forward_precompute(
+        segmented_rms_norm_forward_precompute(
             _wpv(x, wp.vec3f, device),
             _wpa(idx, wp.int32, device),
             sum_sq,
@@ -717,7 +717,7 @@ class TestSegmentedRmsNormBackward:
         ref = g_out[idx, None] * x * inv_norm_ref[idx, None]
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
-        _launch_segmented_rms_norm_backward(
+        segmented_rms_norm_backward(
             _wpa(g_out, wp.float32, device),
             _wpv(x, wp.vec3f, device),
             _wpa(inv_norm_ref, wp.float32, device),
@@ -749,7 +749,7 @@ class TestSegmentedRmsNormBackward:
 
         grad_x_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_g_out_extra = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_rms_norm_double_backward(
+        segmented_rms_norm_double_backward(
             _wpv(gg_x, wp.vec3f, device),
             _wpv(x, wp.vec3f, device),
             _wpa(g_out, wp.float32, device),
@@ -793,7 +793,7 @@ class TestSegmentedMaxNormBackward:
 
         out = wp.zeros(M, dtype=wp.float32, device=device)
         argmax_idx = wp.zeros(M, dtype=wp.int32, device=device)
-        _launch_segmented_max_norm_forward_precompute(
+        segmented_max_norm_forward_precompute(
             _wpv(x, wp.vec3f, device), _wpa(idx, wp.int32, device), out, argmax_idx
         )
         np.testing.assert_allclose(_np(out), out_ref, rtol=1e-5)
@@ -818,7 +818,7 @@ class TestSegmentedMaxNormBackward:
                 ref[i] = g_out[s] * x[i] / out_ref[s]
 
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
-        _launch_segmented_max_norm_backward(
+        segmented_max_norm_backward(
             _wpa(g_out, wp.float32, device),
             _wpv(x, wp.vec3f, device),
             _wpa(argmax_ref, wp.int32, device),
@@ -848,7 +848,7 @@ class TestSegmentedMaxNormBackward:
 
         grad_x_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_g_out = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_max_norm_double_backward(
+        segmented_max_norm_double_backward(
             _wpv(gg_gx, wp.vec3f, device),
             _wpa(g_out, wp.float32, device),
             _wpv(x, wp.vec3f, device),
@@ -886,7 +886,7 @@ class TestSegmentedMatvecBackward:
 
         grad_v = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_M = wp.zeros(M, dtype=wp.mat33f, device=device)
-        _launch_segmented_matvec_backward(
+        segmented_matvec_backward(
             _wpv(g_out, wp.vec3f, device),
             _wpv(v, wp.vec3f, device),
             _wpm(m, wp.mat33f, device),
@@ -923,7 +923,7 @@ class TestSegmentedMatvecBackward:
         grad_g_out = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_v_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_M_extra = wp.zeros(M, dtype=wp.mat33f, device=device)
-        _launch_segmented_matvec_double_backward(
+        segmented_matvec_double_backward(
             _wpv(gg_gv, wp.vec3f, device),
             _wpm(gg_gM, wp.mat33f, device),
             _wpv(g_out, wp.vec3f, device),
@@ -957,7 +957,7 @@ class TestSegmentDivBackward:
         g_result = rng.standard_normal(N).astype(np.float32)
 
         grad_num = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segment_div_backward(
+        segment_div_backward(
             _wpa(g_result, wp.float32, device),
             _wpa(den, wp.int32, device),
             grad_num,
@@ -972,7 +972,7 @@ class TestSegmentDivBackward:
         den = rng.integers(1, 5, N).astype(np.int32)
 
         grad_g_result = wp.zeros(N, dtype=wp.float32, device=device)
-        _launch_segment_div_double_backward(
+        segment_div_double_backward(
             _wpa(gg_num, wp.float32, device),
             _wpa(den, wp.int32, device),
             grad_g_result,
@@ -998,7 +998,7 @@ class TestSegmentedAxpyBackward:
         grad_y_in = wp.zeros(N, dtype=wp.float32, device=device)
         grad_x = wp.zeros(N, dtype=wp.float32, device=device)
         grad_a = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_axpy_backward(
+        segmented_axpy_backward(
             _wpa(g_out, wp.float32, device),
             _wpa(x, wp.float32, device),
             _wpa(a, wp.float32, device),
@@ -1024,7 +1024,7 @@ class TestSegmentedAxpyBackward:
         grad_y_in = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_x = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_a = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_axpy_backward(
+        segmented_axpy_backward(
             _wpv(g_out, wp.vec3f, device),
             _wpv(x, wp.vec3f, device),
             _wpa(a, wp.float32, device),
@@ -1055,7 +1055,7 @@ class TestSegmentedAxpyBackward:
         grad_g_out = wp.zeros(N, dtype=wp.float32, device=device)
         grad_x_extra = wp.zeros(N, dtype=wp.float32, device=device)
         grad_a_extra = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_axpy_double_backward(
+        segmented_axpy_double_backward(
             _wpa(gg_gy_in, wp.float32, device),
             _wpa(gg_gx, wp.float32, device),
             _wpa(gg_ga, wp.float32, device),
@@ -1088,7 +1088,7 @@ class TestSegmentedAxpyBackward:
         grad_g_out = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_x_extra = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_a_extra = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_axpy_double_backward(
+        segmented_axpy_double_backward(
             _wpv(gg_gy_in, wp.vec3f, device),
             _wpv(gg_gx, wp.vec3f, device),
             _wpa(gg_ga, wp.float32, device),
@@ -1124,7 +1124,7 @@ class TestSegmentedAxpbyBackward:
         grad_y = wp.zeros(N, dtype=wp.float32, device=device)
         grad_a = wp.zeros(M, dtype=wp.float32, device=device)
         grad_b = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_axpby_backward(
+        segmented_axpby_backward(
             _wpa(g_out, wp.float32, device),
             _wpa(a, wp.float32, device),
             _wpa(x, wp.float32, device),
@@ -1160,7 +1160,7 @@ class TestSegmentedAxpbyBackward:
         grad_y = wp.zeros(N, dtype=wp.vec3f, device=device)
         grad_a = wp.zeros(M, dtype=wp.float32, device=device)
         grad_b = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_axpby_backward(
+        segmented_axpby_backward(
             _wpv(g_out, wp.vec3f, device),
             _wpa(a, wp.float32, device),
             _wpv(x, wp.vec3f, device),
@@ -1204,7 +1204,7 @@ class TestSegmentedAxpbyBackward:
         grad_y_extra = wp.zeros(N, dtype=wp.float32, device=device)
         grad_a_extra = wp.zeros(M, dtype=wp.float32, device=device)
         grad_b_extra = wp.zeros(M, dtype=wp.float32, device=device)
-        _launch_segmented_axpby_double_backward(
+        segmented_axpby_double_backward(
             _wpa(gg_gx, wp.float32, device),
             _wpa(gg_gy, wp.float32, device),
             _wpa(gg_ga, wp.float32, device),
@@ -1238,7 +1238,7 @@ class TestEdgeCases:
         g_out = wp.zeros(M, dtype=wp.float32, device=device)
         idx = wp.zeros(0, dtype=wp.int32, device=device)
         grad_x = wp.zeros(0, dtype=wp.float32, device=device)
-        _launch_segmented_sum_backward(g_out, idx, grad_x)
+        segmented_sum_backward(g_out, idx, grad_x)
         wp.synchronize()
 
     def test_empty_dot_backward(self, device):
@@ -1248,7 +1248,7 @@ class TestEdgeCases:
         idx = wp.zeros(0, dtype=wp.int32, device=device)
         grad_x = wp.zeros(0, dtype=wp.float32, device=device)
         grad_y = wp.zeros(0, dtype=wp.float32, device=device)
-        _launch_segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y)
+        segmented_dot_backward(g_out, x, y, idx, grad_x, grad_y)
         wp.synchronize()
 
     def test_empty_rms_norm_backward(self, device):
@@ -1257,7 +1257,7 @@ class TestEdgeCases:
         inv_norm = wp.zeros(M, dtype=wp.float32, device=device)
         idx = wp.zeros(0, dtype=wp.int32, device=device)
         grad_x = wp.zeros(0, dtype=wp.vec3f, device=device)
-        _launch_segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x)
+        segmented_rms_norm_backward(g_out, x, inv_norm, idx, grad_x)
         wp.synchronize()
 
     def test_empty_reduction_zeros_prefilled_output(self, device):
@@ -1270,7 +1270,7 @@ class TestEdgeCases:
         gg_x = wp.zeros(0, dtype=wp.float32, device=device)
         idx = wp.zeros(0, dtype=wp.int32, device=device)
         out = wp.array([5.0, 6.0], dtype=wp.float32, device=device)
-        _launch_segmented_sum_double_backward(gg_x, idx, 2, out)
+        segmented_sum_double_backward(gg_x, idx, 2, out)
         np.testing.assert_array_equal(_np(out), np.zeros(2, dtype=np.float32))
 
     def test_empty_fused_double_backward_zeros_grad_g_out(self, device):
@@ -1283,9 +1283,9 @@ class TestEdgeCases:
         zeros.
         """
         from nvalchemiops.segment_ops_backward import (
-            _launch_segmented_add_double_backward,
-            _launch_segmented_axpy_double_backward,
-            _launch_segmented_matvec_double_backward,
+            segmented_add_double_backward,
+            segmented_axpy_double_backward,
+            segmented_matvec_double_backward,
         )
 
         # add: grad_g_out[i] = gg_x[i] + gg_y[idx[i]]
@@ -1293,7 +1293,7 @@ class TestEdgeCases:
         gg_y = wp.zeros(2, dtype=wp.float32, device=device)
         idx0 = wp.zeros(0, dtype=wp.int32, device=device)
         grad_g_out = wp.array([7.0, 8.0, 9.0], dtype=wp.float32, device=device)
-        _launch_segmented_add_double_backward(gg_x, gg_y, idx0, grad_g_out)
+        segmented_add_double_backward(gg_x, gg_y, idx0, grad_g_out)
         np.testing.assert_array_equal(_np(grad_g_out), np.zeros(3, dtype=np.float32))
 
         # axpy: grad_g_out[i] = gg_gy_in[i] + gg_gx[i]*a[s] + gg_ga[s]*x[i]
@@ -1306,7 +1306,7 @@ class TestEdgeCases:
         grad_g_out = wp.array([1.0, 2.0, 3.0], dtype=wp.float32, device=device)
         grad_x_extra = wp.zeros(0, dtype=wp.float32, device=device)
         grad_a_extra = wp.zeros(2, dtype=wp.float32, device=device)
-        _launch_segmented_axpy_double_backward(
+        segmented_axpy_double_backward(
             gg_gy_in,
             gg_gx,
             gg_ga,
@@ -1334,7 +1334,7 @@ class TestEdgeCases:
         )
         grad_v_extra = wp.zeros(0, dtype=wp.vec3f, device=device)
         grad_M_extra = wp.zeros(2, dtype=wp.mat33f, device=device)
-        _launch_segmented_matvec_double_backward(
+        segmented_matvec_double_backward(
             gg_gv, gg_gM, g_out_v, v, m, idx0, grad_g_out, grad_v_extra, grad_M_extra
         )
         np.testing.assert_array_equal(
@@ -1364,7 +1364,7 @@ class TestHardcoded:
         idx = wp.array(np.array([0, 1, 1], dtype=np.int32), device=device)
         g_out = wp.array(np.array([3.5, -1.25], dtype=np.float32), device=device)
         grad_x = wp.zeros(3, dtype=wp.float32, device=device)
-        _launch_segmented_sum_backward(g_out, idx, grad_x)
+        segmented_sum_backward(g_out, idx, grad_x)
         np.testing.assert_array_equal(
             _np(grad_x), np.array([3.5, -1.25, -1.25], dtype=np.float32)
         )
@@ -1376,7 +1376,7 @@ class TestHardcoded:
         idx = wp.array(np.array([0, 0, 1, 1], dtype=np.int32), device=device)
         gg_x = wp.array(np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32), device=device)
         grad_g_out = wp.zeros(2, dtype=wp.float32, device=device)
-        _launch_segmented_sum_double_backward(gg_x, idx, 2, grad_g_out)
+        segmented_sum_double_backward(gg_x, idx, 2, grad_g_out)
         np.testing.assert_array_equal(
             _np(grad_g_out), np.array([3.0, 7.0], dtype=np.float32)
         )
@@ -1389,9 +1389,9 @@ class TestHardcoded:
 # explicitly; these tests pin the same path through the backward launchers
 # that reuse ``_launch_sum`` internally:
 #
-# * ``_launch_segmented_sum_double_backward`` calls ``_launch_sum`` directly.
-# * ``_launch_segmented_broadcast_backward`` is a thin alias of ``_launch_sum``.
-# * ``_launch_segmented_mean_double_backward`` uses ``_launch_sum`` to build
+# * ``segmented_sum_double_backward`` calls ``_launch_sum`` directly.
+# * ``segmented_broadcast_backward`` is a thin alias of ``_launch_sum``.
+# * ``segmented_mean_double_backward`` uses ``_launch_sum`` to build
 #   per-segment sums then divides by ``counts``.
 #
 # Each test pairs a multiple-of-``_BLOCK_DIM`` size (pure tile path) with a
@@ -1410,7 +1410,7 @@ class TestTilePath:
         gg_x = _wpa(gg_x_np, wp.float32, device)
         idx = _wpa(idx_np, wp.int32, device)
         grad_g_out = wp.array([7.5], dtype=wp.float32, device=device)  # seed non-zero
-        _launch_segmented_sum_double_backward(gg_x, idx, 1, grad_g_out)
+        segmented_sum_double_backward(gg_x, idx, 1, grad_g_out)
         np.testing.assert_allclose(
             _np(grad_g_out), np.array([gg_x_np.sum()], dtype=np.float32), rtol=1e-5
         )
@@ -1423,7 +1423,7 @@ class TestTilePath:
         gg_x = _wpv(gg_x_np, wp.vec3f, device)
         idx = _wpa(idx_np, wp.int32, device)
         grad_g_out = wp.zeros(1, dtype=wp.vec3f, device=device)
-        _launch_segmented_sum_double_backward(gg_x, idx, 1, grad_g_out)
+        segmented_sum_double_backward(gg_x, idx, 1, grad_g_out)
         np.testing.assert_allclose(
             _np(grad_g_out),
             np.array([gg_x_np.sum(axis=0)], dtype=np.float32),
@@ -1438,7 +1438,7 @@ class TestTilePath:
         g_out = _wpa(g_out_np, wp.float32, device)
         idx = _wpa(idx_np, wp.int32, device)
         grad_values = wp.array([-3.2], dtype=wp.float32, device=device)
-        _launch_segmented_broadcast_backward(g_out, idx, 1, grad_values)
+        segmented_broadcast_backward(g_out, idx, 1, grad_values)
         np.testing.assert_allclose(
             _np(grad_values), np.array([g_out_np.sum()], dtype=np.float32), rtol=1e-5
         )
@@ -1453,7 +1453,7 @@ class TestTilePath:
         idx = _wpa(idx_np, wp.int32, device)
         counts = _wpa(counts_np, wp.int32, device)
         grad_g_out = wp.zeros(1, dtype=wp.float32, device=device)
-        _launch_segmented_mean_double_backward(gg_x, counts, idx, grad_g_out)
+        segmented_mean_double_backward(gg_x, counts, idx, grad_g_out)
         # mean → grad_g_out[s] = sum(gg_x) / count[s]
         np.testing.assert_allclose(
             _np(grad_g_out),
