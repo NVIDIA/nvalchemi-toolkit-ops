@@ -229,6 +229,43 @@ def _component_sum(
     }
 
 
+def _assert_full_slab_energy_autodiff_matches_outputs(
+    slab_energy_from_full_api,
+    positions,
+    charges,
+    cell,
+    slab_outputs,
+    *,
+    rtol=1e-9,
+    atol=1e-10,
+):
+    """Validate full energy-only slab contribution derivatives."""
+    _energies, forces, charge_grads, virial = slab_outputs
+
+    grad_positions = jax.grad(
+        lambda pos: slab_energy_from_full_api(pos, charges, cell)
+    )(positions)
+    grad_charges = jax.grad(
+        lambda chg: slab_energy_from_full_api(positions, chg, cell)
+    )(charges)
+
+    eps = jnp.zeros((3, 3), dtype=positions.dtype)
+
+    def strained_energy(eps_in):
+        deformation = jnp.eye(3, dtype=positions.dtype) + eps_in
+        return slab_energy_from_full_api(
+            positions @ deformation.T,
+            charges,
+            cell @ deformation.T,
+        )
+
+    grad_strain = jax.grad(strained_energy)(eps)
+
+    _assert_close(-grad_positions, forces, rtol=rtol, atol=atol)
+    _assert_close(grad_charges, charge_grads, rtol=rtol, atol=atol)
+    _assert_close(-grad_strain, virial[0], rtol=rtol, atol=atol)
+
+
 def _expected_by_name(outputs):
     """Return a name-to-array mapping for full slab reference outputs."""
     return {
@@ -340,6 +377,88 @@ class TestStandaloneSlabCorrection:
         _assert_close(forces, -grad_positions)
         _assert_close(charge_grads, grad_charges)
         _assert_close(virial[0], autograd_virial, rtol=1e-9, atol=1e-10)
+
+    def test_energy_autodiff_matches_explicit_derivative_outputs(self, device):  # noqa: ARG002
+        """Energy-only slab path exposes explicit Warp first derivatives."""
+        positions, charges, cell, pbc = _make_slab_system()
+
+        def slab_energy(pos, chg, cell_in):
+            return compute_slab_correction(pos, chg, cell_in, pbc).sum()
+
+        grad_positions, grad_charges, grad_cell = jax.grad(
+            slab_energy,
+            argnums=(0, 1, 2),
+        )(positions, charges, cell)
+        _, forces, charge_grads, _virial = compute_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+        reference_grad_cell = jax.grad(
+            lambda cell_in: _reference_slab_correction(
+                positions,
+                charges,
+                cell_in,
+                pbc,
+            )[0].sum()
+        )(cell)
+        jit_grad_positions = jax.jit(
+            jax.grad(lambda pos: slab_energy(pos, charges, cell))
+        )(positions)
+
+        _assert_close(-grad_positions, forces, rtol=1e-9, atol=1e-10)
+        _assert_close(grad_charges, charge_grads, rtol=1e-9, atol=1e-10)
+        _assert_close(grad_cell, reference_grad_cell, rtol=1e-9, atol=1e-10)
+        _assert_close(jit_grad_positions, grad_positions, rtol=1e-9, atol=1e-10)
+
+    def test_energy_second_derivative_losses_are_finite(self, device):  # noqa: ARG002
+        """Standalone slab force, charge, and cell losses support nested gradients."""
+        positions, charges, cell, pbc = _make_slab_system()
+
+        def slab_energy(pos, chg, cell_in):
+            return compute_slab_correction(pos, chg, cell_in, pbc).sum()
+
+        def force_loss(pos):
+            grad_positions = jax.grad(
+                lambda pos_in: slab_energy(pos_in, charges, cell)
+            )(pos)
+            return jnp.sum(grad_positions * grad_positions)
+
+        def charge_loss(chg):
+            grad_charges = jax.grad(
+                lambda charges_in: slab_energy(positions, charges_in, cell)
+            )(chg)
+            return jnp.sum(grad_charges * grad_charges)
+
+        def cell_loss(cell_in):
+            grad_cell = jax.grad(
+                lambda cell_arg: slab_energy(positions, charges, cell_arg)
+            )(cell_in)
+            return jnp.sum(grad_cell * grad_cell)
+
+        grad_force_loss = jax.grad(force_loss)(positions)
+        grad_charge_loss = jax.grad(charge_loss)(charges)
+        grad_cell_loss = jax.grad(cell_loss)(cell)
+        direction = jnp.array(
+            [[0.3, -0.2, 0.1], [0.0, 0.4, -0.5], [0.2, 0.1, -0.3]],
+            dtype=positions.dtype,
+        )
+        direction = direction / jnp.linalg.norm(direction)
+        step = jnp.asarray(1e-4, dtype=positions.dtype)
+        force_loss_fd = (
+            force_loss(positions + step * direction)
+            - force_loss(positions - step * direction)
+        ) / (2.0 * step)
+        force_loss_jvp = jnp.sum(grad_force_loss * direction)
+
+        assert bool(jnp.isfinite(grad_force_loss).all())
+        assert bool(jnp.isfinite(grad_charge_loss).all())
+        assert bool(jnp.isfinite(grad_cell_loss).all())
+        _assert_close(force_loss_jvp, force_loss_fd, rtol=1e-4, atol=1e-7)
 
     def test_translation_invariance_non_neutral(self, device):  # noqa: ARG002
         """Non-neutral triclinic slab outputs are translation invariant."""
@@ -875,6 +994,58 @@ class TestJaxEwaldSlabIntegration:
         assert charge_grads.dtype == jnp.float64
         assert virial.dtype == dtype
 
+    def test_full_ewald_energy_slab_autodiff_matches_standalone_outputs(self, device):  # noqa: ARG002
+        """Energy-only Ewald slab contribution differentiates through full API."""
+        positions, charges, cell, pbc = _make_slab_system()
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc,
+        )
+        k_vectors = generate_k_vectors_ewald_summation(cell, EWALD_K_CUTOFF)
+        common_kwargs = {
+            "alpha": EWALD_ALPHA,
+            "k_vectors": k_vectors,
+            "neighbor_matrix": neighbor_matrix,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+        }
+
+        def slab_energy_from_full_api(pos, chg, cell_in):
+            slab_energy = ewald_summation(
+                pos,
+                chg,
+                cell_in,
+                pbc=pbc,
+                slab_correction=True,
+                **common_kwargs,
+            ).sum()
+            base_energy = ewald_summation(
+                pos,
+                chg,
+                cell_in,
+                **common_kwargs,
+            ).sum()
+            return slab_energy - base_energy
+
+        slab_outputs = compute_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+
+        _assert_full_slab_energy_autodiff_matches_outputs(
+            slab_energy_from_full_api,
+            positions,
+            charges,
+            cell,
+            slab_outputs,
+        )
+
 
 class TestJaxPMESlabIntegration:
     """Full JAX PME slab wrapper composition and output order."""
@@ -1048,6 +1219,57 @@ class TestJaxPMESlabIntegration:
         assert forces.dtype == dtype
         assert charge_grads.dtype == jnp.float64
         assert virial.dtype == dtype
+
+    def test_full_pme_energy_slab_autodiff_matches_standalone_outputs(self, device):  # noqa: ARG002
+        """Energy-only PME slab contribution differentiates through full API."""
+        positions, charges, cell, pbc = _make_slab_system()
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc,
+        )
+        common_kwargs = {
+            "alpha": EWALD_ALPHA,
+            "mesh_dimensions": PME_MESH,
+            "neighbor_matrix": neighbor_matrix,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+        }
+
+        def slab_energy_from_full_api(pos, chg, cell_in):
+            slab_energy = particle_mesh_ewald(
+                pos,
+                chg,
+                cell_in,
+                pbc=pbc,
+                slab_correction=True,
+                **common_kwargs,
+            ).sum()
+            base_energy = particle_mesh_ewald(
+                pos,
+                chg,
+                cell_in,
+                **common_kwargs,
+            ).sum()
+            return slab_energy - base_energy
+
+        slab_outputs = compute_slab_correction(
+            positions,
+            charges,
+            cell,
+            pbc,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+
+        _assert_full_slab_energy_autodiff_matches_outputs(
+            slab_energy_from_full_api,
+            positions,
+            charges,
+            cell,
+            slab_outputs,
+        )
 
     def test_full_pme_slab_3d_pbc_noop(self, device):  # noqa: ARG002
         """3D periodic PME slab mode matches standard PME."""

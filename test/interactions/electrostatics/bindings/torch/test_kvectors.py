@@ -29,6 +29,7 @@ import pytest
 import torch
 
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
+    _generate_miller_indices,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
 )
@@ -160,6 +161,57 @@ class TestKVectorsEwald:
 
         assert k_vectors.shape == expected.shape
         assert torch.allclose(k_vectors, expected)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_miller_bounds_match_generated_bounds(self, device):
+        """Explicit Miller bounds produce the same k-vectors as generated bounds."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [1.0, 11.0, 0.0], [0.5, 0.25, 12.0]]],
+            dtype=torch.float64,
+            device=device,
+        )
+        k_cutoff = 6.0
+        bounds = tuple(
+            int(v) for v in _generate_miller_indices(cell, k_cutoff).cpu().tolist()
+        )
+
+        generated = generate_k_vectors_ewald_summation(cell, k_cutoff)
+        explicit = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff,
+            miller_bounds=bounds,
+        )
+
+        assert explicit.shape == generated.shape
+        torch.testing.assert_close(explicit, generated)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_miller_bounds_preserve_cell_gradients(self, device):
+        """Explicit bounds keep the regenerated k-vectors differentiable in cell."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        cell = torch.tensor(
+            [[[10.0, 0.0, 0.0], [1.0, 11.0, 0.0], [0.5, 0.25, 12.0]]],
+            dtype=torch.float64,
+            device=device,
+            requires_grad=True,
+        )
+        k_vectors = generate_k_vectors_ewald_summation(
+            cell,
+            k_cutoff=6.0,
+            miller_bounds=(10, 10, 12),
+        )
+
+        k_vectors.pow(2).sum().backward()
+
+        assert cell.grad is not None
+        assert torch.isfinite(cell.grad).all()
 
 
 ###########################################################################################

@@ -42,6 +42,7 @@ from nvalchemiops.torch.spline import (
     spline_gather_channels,
     spline_gather_gradient,
     spline_gather_vec3,
+    spline_gather_with_force,
     spline_spread,
     spline_spread_channels,
 )
@@ -1925,6 +1926,56 @@ class TestSplineAutogradCoverage:
         assert torch.isfinite(positions.grad).all()
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_spline_gather_with_force_cell_grad_matches_unfused(self, device):
+        """Fused force-output backward preserves the cell gradient."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions = torch.tensor(
+            [[2.0, 2.5, 2.0], [5.0, 4.5, 5.5], [7.0, 2.0, 6.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -0.5, 0.25], dtype=torch.float64, device=device)
+        cell = torch.tensor(
+            [[10.0, 0.2, 0.0], [0.0, 9.0, 0.3], [0.1, 0.0, 11.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        mesh = torch.randn(8, 8, 8, dtype=torch.float64, device=device)
+        weights = torch.tensor(
+            [[0.2, -0.4, 0.7], [1.0, 0.1, -0.3], [-0.6, 0.5, 0.9]],
+            dtype=torch.float64,
+            device=device,
+        )
+
+        cell_fused = cell.clone().requires_grad_(True)
+        _pot, forces_fused = spline_gather_with_force(
+            positions,
+            charges,
+            mesh,
+            cell_fused,
+            spline_order=4,
+        )
+        (weights * forces_fused).sum().backward()
+
+        cell_unfused = cell.clone().requires_grad_(True)
+        forces_unfused = spline_gather_gradient(
+            positions,
+            charges,
+            mesh,
+            cell_unfused,
+            spline_order=4,
+        )
+        (weights * forces_unfused).sum().backward()
+
+        assert cell_fused.grad is not None
+        assert cell_unfused.grad is not None
+        assert torch.isfinite(cell_fused.grad).all()
+        torch.testing.assert_close(cell_fused.grad, cell_unfused.grad)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_batch_spline_gather_vec3_with_autograd(self, device):
         """Test batch spline_gather_vec3 with requires_grad=True (lines 1708-1717)."""
         if device == "cuda" and not torch.cuda.is_available():
@@ -1993,6 +2044,69 @@ class TestSplineAutogradCoverage:
         forces.sum().backward()
         assert positions.grad is not None
         assert torch.isfinite(positions.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batch_spline_gather_with_force_cell_grad_matches_unfused(self, device):
+        """Batched fused force-output backward preserves per-system cell gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions = torch.tensor(
+            [
+                [2.0, 2.5, 2.0],
+                [5.0, 4.5, 5.5],
+                [1.5, 7.0, 3.5],
+                [6.0, 2.0, 6.0],
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor(
+            [1.0, -0.5, 0.25, -0.75], dtype=torch.float64, device=device
+        )
+        cell = torch.tensor(
+            [
+                [[10.0, 0.2, 0.0], [0.0, 9.0, 0.3], [0.1, 0.0, 11.0]],
+                [[9.5, 0.1, 0.2], [0.0, 10.5, 0.0], [0.2, 0.3, 10.0]],
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        mesh = torch.randn(2, 8, 8, 8, dtype=torch.float64, device=device)
+        weights = torch.tensor(
+            [[0.2, -0.4, 0.7], [1.0, 0.1, -0.3], [-0.6, 0.5, 0.9], [0.4, 0.8, -0.2]],
+            dtype=torch.float64,
+            device=device,
+        )
+
+        cell_fused = cell.clone().requires_grad_(True)
+        _pot, forces_fused = spline_gather_with_force(
+            positions,
+            charges,
+            mesh,
+            cell_fused,
+            spline_order=4,
+            batch_idx=batch_idx,
+        )
+        (weights * forces_fused).sum().backward()
+
+        cell_unfused = cell.clone().requires_grad_(True)
+        forces_unfused = spline_gather_gradient(
+            positions,
+            charges,
+            mesh,
+            cell_unfused,
+            spline_order=4,
+            batch_idx=batch_idx,
+        )
+        (weights * forces_unfused).sum().backward()
+
+        assert cell_fused.grad is not None
+        assert cell_unfused.grad is not None
+        assert torch.isfinite(cell_fused.grad).all()
+        torch.testing.assert_close(cell_fused.grad, cell_unfused.grad)
 
 
 class TestSplineMultiChannelCoverage:

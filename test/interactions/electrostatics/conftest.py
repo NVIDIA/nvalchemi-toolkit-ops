@@ -56,7 +56,10 @@ def pytest_collection_modifyitems(config, items):
         if "cuda" in item.name.lower() or "gpu" in item.name.lower():
             item.add_marker(pytest.mark.gpu)
 
-        if "performance" in item.name.lower() or "stress" in item.name.lower():
+        # Do not key `slow` off "stress": stress-loss tests are correctness
+        # canaries, not performance tests, and must run under `-m "not slow"`.
+        # Genuine performance tests should carry an explicit @pytest.mark.slow.
+        if "performance" in item.name.lower():
             item.add_marker(pytest.mark.slow)
 
 

@@ -30,8 +30,9 @@ handles both single-system and batched calculations transparently. PME achieves
 :math:`O(N \\log N)` scaling compared to :math:`O(N^2)` for direct summation, making it efficient
 for large systems.
 
-The output dtype convention follows ewald.py: energies in float64, forces/virial
-match input precision.
+The output dtype convention follows ewald.py: public energy, force, and virial
+outputs preserve input precision while selected internal reductions use float64
+for numerical stability.
 
 API STRUCTURE
 =============
@@ -46,6 +47,11 @@ Helper APIs:
 The batch_idx parameter determines kernel dispatch:
     batch_idx=None → Single-system kernels
     batch_idx provided → Batch kernels (multiple independent systems)
+
+``particle_mesh_ewald`` treats energy autograd as the differentiable training
+contract; its direct-output flags warn and are deprecated. The
+``pme_reciprocal_space`` component intentionally retains direct forces, charge
+gradients, and virials as no-autograd MD/inference escape hatches.
 
 MATHEMATICAL FORMULATION
 ========================
@@ -109,36 +115,37 @@ Corrections:
     E_{\\text{background}} &= \\sum_i \\frac{\\pi}{2\\alpha^2 V} q_i Q_{\\text{total}}
     \\end{aligned}
 
-USAGE EXAMPLES
-==============
+Examples
+--------
 
 Automatic parameter estimation::
 
     >>> from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
-    >>> energies, forces = particle_mesh_ewald(
+    >>> energies = particle_mesh_ewald(
     ...     positions, charges, cell,
-    ...     neighbor_list=nl, neighbor_shifts=shifts,
+    ...     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
     ...     accuracy=1e-6,  # alpha and mesh estimated automatically
     ... )
+    >>> forces = -torch.autograd.grad(energies.sum(), positions, create_graph=True)[0]
 
 Explicit parameters::
 
-    >>> energies, forces = particle_mesh_ewald(
+    >>> energies = particle_mesh_ewald(
     ...     positions, charges, cell,
     ...     alpha=0.3,
     ...     mesh_dimensions=(32, 32, 32),
     ...     spline_order=4,
-    ...     neighbor_list=nl, neighbor_shifts=shifts,
+    ...     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
     ... )
 
 Batched systems::
 
-    >>> energies, forces = particle_mesh_ewald(
+    >>> energies = particle_mesh_ewald(
     ...     positions, charges, cells,  # cells shape (B, 3, 3)
     ...     alpha=torch.tensor([0.3, 0.35]),
     ...     batch_idx=batch_idx,
     ...     mesh_dimensions=(32, 32, 32),
-    ...     neighbor_list=nl, neighbor_shifts=shifts,
+    ...     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
     ... )
 
 Reciprocal-space only (no real-space)::
@@ -147,9 +154,8 @@ Reciprocal-space only (no real-space)::
     ...     positions, charges, cell,
     ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
     ... )
-REFERENCES
-
-==========
+References
+----------
 
 - Essmann et al. (1995). J. Chem. Phys. 103, 8577 (SPME paper)
 - Darden et al. (1993). J. Chem. Phys. 98, 10089 (Original PME)
@@ -157,13 +163,16 @@ REFERENCES
 """
 
 import math
+import warnings
 
 import torch
 import warp as wp
 
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
-    _batch_pme_energy_corrections_with_charge_grad_kernel_overload,
-    _pme_energy_corrections_with_charge_grad_kernel_overload,
+    batch_pme_energy_corrections_with_charge_grad as _batch_pme_energy_corrections_with_charge_grad_warp,
+)
+from nvalchemiops.interactions.electrostatics.pme_kernels import (
+    pme_energy_corrections_with_charge_grad as _pme_energy_corrections_with_charge_grad_warp,
 )
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
     pme_virial_bg_correction as _pme_virial_bg_correction_warp,
@@ -171,15 +180,18 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
     pme_virial_bg_correction_backward as _pme_virial_bg_correction_backward_warp,
 )
+from nvalchemiops.torch._warp_op_helpers import (
+    attach_simple_backward,
+    register_warp_op_chain,
+)
 from nvalchemiops.torch.interactions.electrostatics._util import (
     _build_electrostatic_result,
     _combine_electrostatic_outputs,
+    _direct_output_deprecation_msg,
+    _InjectCachedEvalGrad,
     _InjectChargeGrad,
+    _is_uniform_cotangent,
     _unpack_electrostatic_outputs,
-)
-from nvalchemiops.torch.interactions.electrostatics._warp_op_helpers import (
-    attach_simple_backward,
-    register_warp_op_chain,
 )
 from nvalchemiops.torch.interactions.electrostatics.ewald import (
     ewald_real_space,
@@ -327,8 +339,8 @@ def compute_bspline_moduli_1d(
     Returns ``b[i] = sinc(m_i / N)^spline_order`` for each miller index
     ``m_i`` (with ``sinc(x) = sin(pi*x)/(pi*x)``, ``sinc(0) = 1``). The
     three-axis product ``b_x[i] * b_y[j] * b_z[k]`` is the B-spline
-    structure factor consumed by ``_pme_convolve_kernel`` after a 1e-10
-    clamp + square. Precomputing the LUT lets the convolve kernel
+    structure factor consumed by the factory-backed convolve kernel after a
+    1e-10 clamp + square. Precomputing the LUT lets the convolve kernel
     replace three sinc transcendentals + an order-dependent power loop
     per (i, j, k) thread with three reads + two multiplies.
     """
@@ -338,6 +350,87 @@ def compute_bspline_moduli_1d(
     arg = miller_indices / float(mesh_N)
     s = torch.special.sinc(arg)
     return s**spline_order
+
+
+def pme_green_structure_factor(
+    k_squared: torch.Tensor,
+    mesh_dimensions: tuple[int, int, int],
+    alpha: torch.Tensor,
+    cell: torch.Tensor,
+    spline_order: int = 4,
+    batch_idx: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    r"""Compute the PME Green's function and B-spline structure-factor correction.
+
+    Compatibility entry point retained for the 0.3.1 public API. Returns the
+    volume-normalized Coulomb Green's function and the squared B-spline structure
+    factor used for PME deconvolution:
+
+    .. math::
+
+        G(k) = \frac{2\pi}{V} \frac{\exp(-k^2/(4\alpha^2))}{k^2}, \qquad
+        C^2(k) = \left[\operatorname{sinc}(m_x/N_x)\,\operatorname{sinc}(m_y/N_y)\,
+        \operatorname{sinc}(m_z/N_z)\right]^{2p}
+
+    with :math:`G(0)=0` (tin-foil boundary) and ``p = spline_order``.
+
+    Parameters
+    ----------
+    k_squared : torch.Tensor
+        ``|k|^2`` at each rfft grid point: ``(Nx, Ny, Nz_rfft)`` (single) or
+        ``(B, Nx, Ny, Nz_rfft)`` (batch).
+    mesh_dimensions : tuple[int, int, int]
+        Full mesh ``(Nx, Ny, Nz)`` before rfft.
+    alpha : torch.Tensor
+        Ewald splitting parameter, shape ``(1,)`` or ``(B,)``.
+    cell : torch.Tensor
+        Unit cell(s): ``(3, 3)``, ``(1, 3, 3)``, or ``(B, 3, 3)``.
+    spline_order : int, default=4
+        B-spline interpolation order.
+    batch_idx : torch.Tensor | None, default=None
+        When provided, ``k_squared``/``alpha``/``cell`` are treated as batched.
+
+    Returns
+    -------
+    green_function : torch.Tensor
+        Volume-normalized :math:`G(k)`, same shape as ``k_squared``.
+    structure_factor_sq : torch.Tensor
+        :math:`C^2(k)`, shape ``(Nx, Ny, Nz_rfft)`` (mesh-only, shared across batch).
+    """
+    mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
+    device = k_squared.device
+    input_dtype = k_squared.dtype
+
+    cell3 = cell if cell.dim() == 3 else cell.unsqueeze(0)
+    volume = torch.abs(torch.linalg.det(cell3)).to(input_dtype)
+    alpha_flat = alpha.reshape(-1).to(input_dtype)
+    ksq_safe = torch.where(k_squared < 1e-10, torch.ones_like(k_squared), k_squared)
+    if batch_idx is None:
+        inv_4a2 = 1.0 / (4.0 * alpha_flat[0] * alpha_flat[0])
+        green = (2.0 * torch.pi / volume[0]) * torch.exp(-ksq_safe * inv_4a2) / ksq_safe
+    else:
+        b = k_squared.shape[0]
+        inv_4a2 = (1.0 / (4.0 * alpha_flat * alpha_flat)).view(b, 1, 1, 1)
+        vol_b = volume.view(b, 1, 1, 1)
+        green = (2.0 * torch.pi / vol_b) * torch.exp(-ksq_safe * inv_4a2) / ksq_safe
+    green = torch.where(k_squared < 1e-10, torch.zeros_like(green), green)
+
+    miller_x = torch.fft.fftfreq(
+        mesh_nx, d=1.0 / mesh_nx, device=device, dtype=input_dtype
+    )
+    miller_y = torch.fft.fftfreq(
+        mesh_ny, d=1.0 / mesh_ny, device=device, dtype=input_dtype
+    )
+    miller_z = torch.fft.rfftfreq(
+        mesh_nz, d=1.0 / mesh_nz, device=device, dtype=input_dtype
+    )
+    c = (
+        compute_bspline_moduli_1d(miller_x, mesh_nx, spline_order)[:, None, None]
+        * compute_bspline_moduli_1d(miller_y, mesh_ny, spline_order)[None, :, None]
+        * compute_bspline_moduli_1d(miller_z, mesh_nz, spline_order)[None, None, :]
+    )
+    structure_factor_sq = c.clamp_min(1e-10) ** 2
+    return green, structure_factor_sq
 
 
 def _pme_convolve_forward(
@@ -572,6 +665,182 @@ def _pme_convolve_backward(
     return grad_mesh_fft, grad_alpha, grad_volume, grad_k_squared
 
 
+def _pme_convolve_double_backward(
+    k_squared: torch.Tensor,
+    h_grad_mesh: torch.Tensor,
+    h_grad_alpha: torch.Tensor,
+    h_grad_volume: torch.Tensor,
+    h_grad_ksq: torch.Tensor,
+    mesh_fft: torch.Tensor,
+    grad_convolved: torch.Tensor,
+    moduli_x: torch.Tensor,
+    moduli_y: torch.Tensor,
+    moduli_z: torch.Tensor,
+    alpha: torch.Tensor,
+    volume: torch.Tensor,
+    is_batch: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Second-order node for the fused PME convolve backward.
+
+    The convolve is LINEAR in ``mesh_fft``; every first-backward output is
+    bilinear in ``(mesh_fft, grad_convolved)`` with constant per-k coefficients,
+    so the position-relevant second-order terms are themselves linear. Given the
+    cotangents on the four backward outputs (``h_grad_mesh``, ``h_grad_alpha``,
+    ``h_grad_volume``, ``h_grad_ksq``), returns grads w.r.t. the backward op's
+    five differentiable inputs (``mesh_fft``, ``grad_convolved``, ``k_squared``,
+    ``alpha``, ``volume``) — backward positions ``(0, 1, 2, 6, 7)``.
+
+    The real ``k_squared`` is placed at arg-0 (ahead of the complex
+    ``h_grad_mesh`` cotangent) to mirror the backward op's complex-arg-0
+    torch.compile/inductor workaround.
+
+    ``grad_mesh_fft_out`` (dL/dmesh_fft) and ``grad_grad_convolved``
+    (dL/dgrad_convolved) carry the force-loss second order. The ``k_squared`` /
+    ``alpha`` / ``volume`` second-order grads carry the cell/stress second order
+    (k² and V are functions of the cell; PyTorch maps them → cell outside this
+    op).
+    """
+    from nvalchemiops.interactions.electrostatics.pme_kernels import (
+        batch_pme_convolve_double_backward as _batch_dbwd_launch,
+    )
+    from nvalchemiops.interactions.electrostatics.pme_kernels import (
+        pme_convolve_double_backward as _dbwd_launch,
+    )
+
+    device = wp.device_from_torch(mesh_fft.device)
+    real_dtype = torch.float32 if mesh_fft.dtype == torch.complex64 else torch.float64
+    wp_dtype = wp.float32 if real_dtype == torch.float32 else wp.float64
+    wp_vec2 = _vec2_wp_dtype_for(real_dtype)
+
+    squeeze_output = False
+    if is_batch and k_squared.dim() == 3:
+        k_squared = k_squared.unsqueeze(0)
+    if is_batch and mesh_fft.dim() == 3:
+        mesh_fft = mesh_fft.unsqueeze(0)
+        squeeze_output = True
+    if is_batch and grad_convolved.dim() == 3:
+        grad_convolved = grad_convolved.unsqueeze(0)
+    if is_batch and h_grad_mesh.dim() == 3:
+        h_grad_mesh = h_grad_mesh.unsqueeze(0)
+    if is_batch and h_grad_ksq.dim() == 3:
+        h_grad_ksq = h_grad_ksq.unsqueeze(0)
+
+    def _as(t):
+        if t.dtype != real_dtype:
+            t = t.to(real_dtype)
+        if not t.is_contiguous():
+            t = t.contiguous()
+        return t
+
+    mesh_fft_real = torch.view_as_real(mesh_fft.resolve_conj()).contiguous()
+    grad_conv_real = torch.view_as_real(grad_convolved.resolve_conj()).contiguous()
+    h_grad_mesh_real = torch.view_as_real(h_grad_mesh.resolve_conj()).contiguous()
+
+    grad_mesh_out_real = torch.empty_like(mesh_fft_real)
+    grad_grad_conv_real = torch.empty_like(mesh_fft_real)
+    grad_k_squared_out = torch.zeros_like(_as(k_squared))
+
+    alpha_in = _as(alpha)
+    volume_in = _as(volume)
+    h_a_in = _as(h_grad_alpha)
+    h_v_in = _as(h_grad_volume)
+    if alpha_in.dim() == 0:
+        alpha_in = alpha_in.reshape(1)
+    if volume_in.dim() == 0:
+        volume_in = volume_in.reshape(1)
+    if h_a_in.dim() == 0:
+        h_a_in = h_a_in.reshape(1)
+    if h_v_in.dim() == 0:
+        h_v_in = h_v_in.reshape(1)
+    B = alpha_in.shape[0]
+    grad_alpha_out = torch.zeros(B, dtype=real_dtype, device=mesh_fft.device)
+    grad_volume_out = torch.zeros(B, dtype=real_dtype, device=mesh_fft.device)
+
+    wp_h_grad_mesh = _wp_from_torch(h_grad_mesh_real, dtype=wp_vec2)
+    wp_h_alpha = _wp_from_torch(h_a_in, dtype=wp_dtype)
+    wp_h_volume = _wp_from_torch(h_v_in, dtype=wp_dtype)
+    wp_h_grad_ksq = _wp_from_torch(_as(h_grad_ksq), dtype=wp_dtype)
+    wp_mesh_fft = _wp_from_torch(mesh_fft_real, dtype=wp_vec2)
+    wp_grad_conv = _wp_from_torch(grad_conv_real, dtype=wp_vec2)
+    wp_k_squared = _wp_from_torch(_as(k_squared), dtype=wp_dtype)
+    wp_bx = _wp_from_torch(_as(moduli_x), dtype=wp_dtype)
+    wp_by = _wp_from_torch(_as(moduli_y), dtype=wp_dtype)
+    wp_bz = _wp_from_torch(_as(moduli_z), dtype=wp_dtype)
+    wp_alpha = _wp_from_torch(alpha_in, dtype=wp_dtype)
+    wp_volume = _wp_from_torch(volume_in, dtype=wp_dtype)
+    wp_grad_mesh_out = _wp_from_torch(grad_mesh_out_real, dtype=wp_vec2)
+    wp_grad_grad_conv = _wp_from_torch(grad_grad_conv_real, dtype=wp_vec2)
+    wp_grad_ksq_out = _wp_from_torch(grad_k_squared_out, dtype=wp_dtype)
+    wp_grad_alpha_out = _wp_from_torch(grad_alpha_out, dtype=wp_dtype)
+    wp_grad_volume_out = _wp_from_torch(grad_volume_out, dtype=wp_dtype)
+
+    launch = _batch_dbwd_launch if is_batch else _dbwd_launch
+    with _pme_scoped_warp_stream(mesh_fft.device):
+        launch(
+            wp_h_grad_mesh,
+            wp_h_alpha,
+            wp_h_volume,
+            wp_h_grad_ksq,
+            wp_mesh_fft,
+            wp_grad_conv,
+            wp_k_squared,
+            wp_bx,
+            wp_by,
+            wp_bz,
+            wp_alpha,
+            wp_volume,
+            wp_grad_mesh_out,
+            wp_grad_grad_conv,
+            wp_grad_ksq_out,
+            wp_grad_alpha_out,
+            wp_grad_volume_out,
+            wp_dtype=wp_dtype,
+            device=device,
+        )
+
+    grad_mesh_fft_out = torch.view_as_complex(grad_mesh_out_real)
+    grad_grad_convolved = torch.view_as_complex(grad_grad_conv_real)
+    if squeeze_output:
+        grad_mesh_fft_out = grad_mesh_fft_out.squeeze(0)
+        grad_grad_convolved = grad_grad_convolved.squeeze(0)
+        grad_k_squared_out = grad_k_squared_out.squeeze(0)
+    return (
+        grad_mesh_fft_out,
+        grad_grad_convolved,
+        grad_k_squared_out,
+        grad_alpha_out,
+        grad_volume_out,
+    )
+
+
+def _convolve_double_backward_fake(
+    k_squared,
+    h_grad_mesh,
+    h_grad_alpha,
+    h_grad_volume,
+    h_grad_ksq,
+    mesh_fft,
+    grad_convolved,
+    moduli_x,
+    moduli_y,
+    moduli_z,
+    alpha,
+    volume,
+    is_batch,
+):
+    real_dtype = torch.float32 if mesh_fft.dtype == torch.complex64 else torch.float64
+    B = alpha.shape[0] if alpha.dim() >= 1 else 1
+    # Meta/shape function: only shapes+dtypes matter for tracing, so the values
+    # are placeholders (the real values come from the kernel launch).
+    return (
+        torch.empty_like(mesh_fft),  # grad_mesh_fft (dL/dmesh_fft)
+        torch.empty_like(grad_convolved),  # grad_grad_convolved (dL/dgrad_convolved)
+        torch.zeros_like(k_squared, dtype=real_dtype),  # grad_k_squared (dL/ds)
+        torch.zeros(B, dtype=real_dtype, device=mesh_fft.device),  # grad_alpha
+        torch.zeros(B, dtype=real_dtype, device=mesh_fft.device),  # grad_volume
+    )
+
+
 # Backward signature is ``(mesh_fft, grad_convolved, ...)`` (mesh_fft first,
 # not cotangents-first) to work around an AOT-autograd/inductor complex
 # codegen bug that produces ~1% wrong grads when a complex cotangent is in
@@ -609,6 +878,23 @@ def _convolve_forward_fake(mesh_fft, *_):
     )
 
 
+# Second-order autograd for the convolve. The convolve is LINEAR in mesh_fft and
+# every first-backward output is bilinear in (mesh_fft, grad_convolved) with
+# constant per-k coefficients, so the position-relevant second-order terms
+# (dL/dmesh_fft, dL/dgrad_convolved) are linear — see ``_pme_convolve_double_backward``.
+# A dedicated double-backward kernel handles all four backward-output cotangents
+# (the prior shortcut only forwarded h_grad_mesh through the forward op, which was
+# exact for a pure force loss but dropped the h_alpha/h_volume/h_grad_ksq cross
+# terms). The alpha/volume/k_squared SECOND-order grads carry the cell/stress
+# second order (k² and V are functions of the cell).
+#
+# The double-backward op signature leads with the real ``k_squared`` (arg-0)
+# ahead of the complex ``h_grad_mesh`` cotangent, mirroring the backward op's
+# complex-arg-0 inductor workaround. ``second_order_backward_args`` maps the
+# backward node's (cotangents g, full inputs f) to that ordering; the backward
+# op's inputs are f = (mesh_fft, grad_convolved, k_squared, moduli_x, moduli_y,
+# moduli_z, alpha, volume, is_batch) and its outputs' cotangents are
+# g = (h_grad_mesh, h_grad_alpha, h_grad_volume, h_grad_ksq).
 register_warp_op_chain(
     name="nvalchemiops::pme_fused_convolve",
     forward=_pme_convolve_forward,
@@ -623,20 +909,28 @@ register_warp_op_chain(
     # Non-default call ordering for the backward op (mesh_fft, grad_convolved,
     # then the rest of forward inputs) — see comment block above.
     backward_args=lambda g, f: (f[0], g[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]),
-)
-
-
-# Second-order autograd: convolve is LINEAR in mesh_fft, so the Jacobian of
-# the first-order backward w.r.t. grad_convolved is the same forward op
-# applied to the cotangent. Other partials (∂grad_*/∂{mesh_fft, alpha, volume,
-# k_squared}) need a dedicated double-backward kernel if ever required.
-attach_simple_backward(
-    "nvalchemiops::pme_fused_convolve_backward",
-    torch.ops.nvalchemiops.pme_fused_convolve,
-    diff_input_positions=(1,),  # only grad_convolved (input pos 1)
-    n_forward_inputs=9,
-    propagate_outputs=(0,),  # only h_grad_mesh_fft flows
-    backward_args=lambda g, f: (g[0], f[2], f[3], f[4], f[5], f[6], f[7], f[8]),
+    # Double-backward: grads for the backward op's 5 differentiable inputs
+    # (mesh_fft=0, grad_convolved=1, k_squared=2, alpha=6, volume=7).
+    double_backward=_pme_convolve_double_backward,
+    double_backward_fake=_convolve_double_backward_fake,
+    double_backward_return_arity=5,
+    second_order_diff_positions=(0, 1, 2, 6, 7),
+    n_backward_inputs=9,
+    second_order_backward_args=lambda g, f: (
+        f[2],  # k_squared (real arg-0)
+        g[0],  # h_grad_mesh
+        g[1],  # h_grad_alpha
+        g[2],  # h_grad_volume
+        g[3],  # h_grad_ksq
+        f[0],  # mesh_fft
+        f[1],  # grad_convolved
+        f[3],  # moduli_x
+        f[4],  # moduli_y
+        f[5],  # moduli_z
+        f[6],  # alpha
+        f[7],  # volume
+        f[8],  # is_batch
+    ),
 )
 
 
@@ -652,10 +946,8 @@ _pme_fused_convolve = torch.ops.nvalchemiops.pme_fused_convolve
 ###### Explicit Warp-backed backward chain for energy_corrections ##########################
 ###########################################################################################
 #
-# Forward kernel: ``_pme_energy_corrections_kernel`` (single) /
-#                 ``_batch_pme_energy_corrections_kernel`` (batch).
-# Backward kernel: ``_pme_energy_corrections_backward_kernel`` /
-#                 ``_batch_pme_energy_corrections_backward_kernel``.
+# Forward/backward kernels come from the factory-backed PME corrections
+# component for both single-system and batched launches.
 #
 # Wiring forward+backward via ``register_warp_op_chain`` +
 # ``register_autograd``:
@@ -1119,13 +1411,16 @@ def _energy_corrections_charge_grad_forward_launch(
     wp_corrected = _wp_from_torch(corrected_energies, dtype=wp_dtype)
     wp_charge_grads = _wp_from_torch(charge_gradients, dtype=wp_dtype)
 
-    kernel = _pme_energy_corrections_with_charge_grad_kernel_overload[wp_dtype]
     with _pme_scoped_warp_stream(raw_energies.device):
-        wp.launch(
-            kernel,
-            dim=num_atoms,
-            inputs=[wp_raw, wp_charges, wp_volume, wp_alpha, wp_qtot],
-            outputs=[wp_corrected, wp_charge_grads],
+        _pme_energy_corrections_with_charge_grad_warp(
+            wp_raw,
+            wp_charges,
+            wp_volume,
+            wp_alpha,
+            wp_qtot,
+            wp_corrected,
+            wp_charge_grads,
+            wp_dtype,
             device=device,
         )
     return corrected_energies, charge_gradients
@@ -1214,13 +1509,17 @@ def _batch_energy_corrections_charge_grad_forward_launch(
     wp_corrected = _wp_from_torch(corrected_energies, dtype=wp_dtype)
     wp_charge_grads = _wp_from_torch(charge_gradients, dtype=wp_dtype)
 
-    kernel = _batch_pme_energy_corrections_with_charge_grad_kernel_overload[wp_dtype]
     with _pme_scoped_warp_stream(raw_energies.device):
-        wp.launch(
-            kernel,
-            dim=num_atoms,
-            inputs=[wp_raw, wp_charges, wp_bidx, wp_volumes, wp_alpha, wp_qtots],
-            outputs=[wp_corrected, wp_charge_grads],
+        _batch_pme_energy_corrections_with_charge_grad_warp(
+            wp_raw,
+            wp_charges,
+            wp_bidx,
+            wp_volumes,
+            wp_alpha,
+            wp_qtots,
+            wp_corrected,
+            wp_charge_grads,
+            wp_dtype,
             device=device,
         )
     return corrected_energies, charge_gradients
@@ -1551,8 +1850,8 @@ register_warp_op_chain(
     backward=_virial_bg_correction_backward_launch,
     diff_input_positions=(0, 2, 3, 4),  # charges, cell, alpha, virial_in
     n_forward_inputs=5,
-    forward_fake=lambda charges, batch_idx, cell, alpha, virial_in: (
-        torch.empty_like(virial_in)
+    forward_fake=lambda charges, batch_idx, cell, alpha, virial_in: torch.empty_like(
+        virial_in
     ),
     batch_match=True,
 )
@@ -1716,6 +2015,289 @@ def _compute_pme_reciprocal_virial(
     return virial.to(dtype)
 
 
+def _pme_cell_grad_from_virial(
+    positions: torch.Tensor,
+    dEdR: torch.Tensor,
+    cell: torch.Tensor,
+    virial: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+) -> torch.Tensor:
+    """Convert strain virial plus ``dE/dR`` into partial ``dE/dcell``.
+
+    Direct PME virial is ``W = -dE/dstrain`` for simultaneous deformation of
+    positions and cell. The eval fastpath returns partial gradients for the
+    actual autograd inputs, so solve
+    ``cell.T @ dE/dcell = -W - positions.T @ dE/dR`` per system.
+    """
+    cell_3d = cell if cell.dim() == 3 else cell.unsqueeze(0)
+    num_systems = cell_3d.shape[0]
+    pos_term = torch.zeros(
+        num_systems,
+        3,
+        3,
+        device=positions.device,
+        dtype=torch.float64,
+    )
+    outer = positions.to(torch.float64).unsqueeze(2) * dEdR.to(torch.float64).unsqueeze(
+        1
+    )
+    if batch_idx is None:
+        if outer.numel():
+            pos_term[0] = outer.sum(dim=0)
+    else:
+        pos_term = pos_term.index_add(0, batch_idx.to(torch.long), outer)
+    target = -virial.to(torch.float64) - pos_term
+    return torch.linalg.solve(cell_3d.transpose(-1, -2).to(torch.float64), target).to(
+        cell.dtype
+    )
+
+
+class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
+    """PME reciprocal energy with detached first-derivative eval caches."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        positions,
+        charges,
+        cell,
+        alpha,
+        batch_idx,
+        k_vectors,
+        k_squared,
+        volume,
+        cell_inv_t,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        mesh_dimensions,
+        spline_order,
+        need_pos,
+        need_charge,
+        need_cell,
+    ):
+        """Compute energy and direct first-derivative states."""
+        need_forces = bool(need_pos) or bool(need_cell)
+        need_charges = bool(need_charge)
+        need_virial = bool(need_cell)
+
+        energies, forces, charge_grads, virial = _pme_reciprocal_space_impl(
+            positions.detach(),
+            charges.detach(),
+            cell.detach(),
+            alpha.detach(),
+            mesh_dimensions,
+            spline_order,
+            batch_idx.detach() if batch_idx is not None else None,
+            compute_forces=need_forces,
+            compute_charge_gradients=need_charges,
+            compute_virial=need_virial,
+            k_vectors=k_vectors.detach() if k_vectors is not None else None,
+            k_squared=k_squared.detach() if k_squared is not None else None,
+            volume=volume.detach() if volume is not None else None,
+            cell_inv_t=cell_inv_t.detach() if cell_inv_t is not None else None,
+            moduli_x=moduli_x.detach() if moduli_x is not None else None,
+            moduli_y=moduli_y.detach() if moduli_y is not None else None,
+            moduli_z=moduli_z.detach() if moduli_z is not None else None,
+        )
+
+        cached_dEdR = -forces if need_forces else None
+        cached_dEdq = charge_grads if need_charges else None
+        cached_dEdcell = None
+        if need_virial:
+            cached_dEdcell = _pme_cell_grad_from_virial(
+                positions.detach(),
+                cached_dEdR,
+                cell.detach(),
+                virial,
+                batch_idx,
+            )
+
+        ctx.save_for_backward(
+            positions,
+            charges,
+            cell,
+            alpha,
+            batch_idx,
+            k_vectors,
+            k_squared,
+            volume,
+            cell_inv_t,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+            cached_dEdR,
+            cached_dEdq,
+            cached_dEdcell,
+        )
+        ctx.mesh_dimensions = mesh_dimensions
+        ctx.spline_order = spline_order
+        ctx.need_pos = bool(need_pos)
+        ctx.need_charge = bool(need_charge)
+        ctx.need_cell = bool(need_cell)
+        return energies
+
+    @staticmethod
+    def backward(ctx, grad_energy):
+        """Return cached first gradients or recompute for higher-order fallback."""
+        (
+            positions,
+            charges,
+            cell,
+            alpha,
+            batch_idx,
+            k_vectors,
+            k_squared,
+            volume,
+            cell_inv_t,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+            cached_dEdR,
+            cached_dEdq,
+            cached_dEdcell,
+        ) = ctx.saved_tensors
+
+        if torch.is_grad_enabled() or not _is_uniform_cotangent(grad_energy):
+            with torch.enable_grad():
+                recomputed, _forces, _charge_grads, _virial = (
+                    _pme_reciprocal_space_impl(
+                        positions,
+                        charges,
+                        cell,
+                        alpha,
+                        ctx.mesh_dimensions,
+                        ctx.spline_order,
+                        batch_idx,
+                        compute_forces=False,
+                        compute_charge_gradients=False,
+                        compute_virial=False,
+                        k_vectors=k_vectors,
+                        k_squared=k_squared,
+                        volume=volume,
+                        cell_inv_t=cell_inv_t,
+                        moduli_x=moduli_x,
+                        moduli_y=moduli_y,
+                        moduli_z=moduli_z,
+                    )
+                )
+                diff_inputs = []
+                diff_names = []
+                for name, tensor in (
+                    ("positions", positions),
+                    ("charges", charges),
+                    ("cell", cell),
+                    ("alpha", alpha),
+                ):
+                    if tensor.requires_grad:
+                        diff_inputs.append(tensor)
+                        diff_names.append(name)
+                diff_grads = torch.autograd.grad(
+                    recomputed,
+                    tuple(diff_inputs),
+                    grad_outputs=grad_energy,
+                    allow_unused=True,
+                    create_graph=torch.is_grad_enabled(),
+                )
+                grad_map = dict(zip(diff_names, diff_grads, strict=True))
+                grad_positions = grad_map.get("positions")
+                grad_charges = grad_map.get("charges")
+                grad_cell = grad_map.get("cell")
+                grad_alpha = grad_map.get("alpha")
+            return (
+                grad_positions,
+                grad_charges,
+                grad_cell,
+                grad_alpha,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+
+        grad = grad_energy.reshape(-1)
+        atom_scale = grad[0]
+        if batch_idx is None:
+            system_scale = atom_scale
+        else:
+            system_scale = atom_scale
+
+        grad_positions = cached_dEdR * atom_scale if ctx.need_pos else None
+        grad_charges = cached_dEdq * atom_scale if ctx.need_charge else None
+        grad_cell = cached_dEdcell * system_scale if ctx.need_cell else None
+
+        return (
+            grad_positions,
+            grad_charges,
+            grad_cell,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
+def _pme_reciprocal_cached_first_grad(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    cell: torch.Tensor,
+    alpha: torch.Tensor,
+    mesh_dimensions: tuple[int, int, int],
+    spline_order: int,
+    batch_idx: torch.Tensor | None,
+    k_vectors: torch.Tensor | None,
+    k_squared: torch.Tensor | None,
+    volume: torch.Tensor | None,
+    cell_inv_t: torch.Tensor | None,
+    moduli_x: torch.Tensor | None,
+    moduli_y: torch.Tensor | None,
+    moduli_z: torch.Tensor | None,
+    *,
+    need_pos: bool,
+    need_charge: bool,
+    need_cell: bool,
+) -> torch.Tensor:
+    """Run the private first-order cached PME reciprocal energy path."""
+    return _PMEReciprocalCachedFirstGrad.apply(
+        positions,
+        charges,
+        cell,
+        alpha,
+        batch_idx if batch_idx is not None else None,
+        k_vectors if k_vectors is not None else None,
+        k_squared if k_squared is not None else None,
+        volume if volume is not None else None,
+        cell_inv_t if cell_inv_t is not None else None,
+        moduli_x if moduli_x is not None else None,
+        moduli_y if moduli_y is not None else None,
+        moduli_z if moduli_z is not None else None,
+        mesh_dimensions,
+        spline_order,
+        need_pos,
+        need_charge,
+        need_cell,
+    )
+
+
 def _pme_reciprocal_space_impl(
     positions: torch.Tensor,
     charges: torch.Tensor,
@@ -1735,6 +2317,9 @@ def _pme_reciprocal_space_impl(
     moduli_y: torch.Tensor | None = None,
     moduli_z: torch.Tensor | None = None,
     hybrid_forces: bool = False,
+    cache_forces: bool = False,
+    cache_charge_gradients: bool = False,
+    cache_virial: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
     """Internal implementation of PME reciprocal space calculation.
 
@@ -1781,6 +2366,8 @@ def _pme_reciprocal_space_impl(
     pos_spline = positions.detach() if hybrid_forces else positions
     chg_spline = charges.detach() if hybrid_forces else charges
     cell_spline = cell.detach() if hybrid_forces else cell
+    if hybrid_forces and cell_inv_t is not None:
+        cell_inv_t = cell_inv_t.detach()
 
     # Cell inverse + transpose: callers in MD loops can pass these in via the
     # cell_inv_t= kwarg to skip recomputation (typical NVT case). When provided,
@@ -1814,6 +2401,9 @@ def _pme_reciprocal_space_impl(
             mesh_dimensions=mesh_dimensions,
             reciprocal_cell=reciprocal_cell,
         )
+    if hybrid_forces:
+        k_vectors = k_vectors.detach()
+        k_squared = k_squared.detach()
 
     alpha_gsf = alpha.detach() if hybrid_forces else alpha
 
@@ -1840,6 +2430,8 @@ def _pme_reciprocal_space_impl(
             cell_spline if cell_spline.dim() == 3 else cell_spline.unsqueeze(0)
         )
         volume = torch.abs(torch.linalg.det(cell_for_vol)).to(input_dtype)
+    elif hybrid_forces:
+        volume = volume.detach()
 
     # FFT → fused convolve → inverse FFT. Both torch.fft.rfftn/irfftn and
     # the ``pme_fused_convolve`` custom op are fullgraph-traceable, so
@@ -1850,7 +2442,8 @@ def _pme_reciprocal_space_impl(
     mesh_fft = torch.fft.rfftn(mesh_grid, norm="backward", dim=fft_dims)
     if torch.compiler.is_compiling():
         mesh_fft = mesh_fft.contiguous()
-    mesh_fft_raw = mesh_fft if compute_virial else None
+    need_virial_output = compute_virial or cache_virial
+    mesh_fft_raw = mesh_fft if need_virial_output else None
     convolved_mesh = torch.ops.nvalchemiops.pme_fused_convolve(
         mesh_fft,
         k_squared,
@@ -1910,22 +2503,46 @@ def _pme_reciprocal_space_impl(
             batch_idx,
             volume=volume,
         )
+        if cache_charge_gradients:
+            with torch.no_grad():
+                _, charge_grads = pme_energy_corrections_with_charge_grad(
+                    raw_energies.detach(),
+                    chg_spline.detach(),
+                    cell_spline.detach(),
+                    alpha.detach(),
+                    batch_idx,
+                    volume=volume.detach(),
+                )
 
     # Step 8: Compute virial before forces to allow early release of mesh_fft_raw
     # (virial needs mesh_fft_raw; forces only need convolved_mesh)
     virial = None
-    if compute_virial:
-        virial = _compute_pme_reciprocal_virial(
-            mesh_fft_raw=mesh_fft_raw,
-            convolved_mesh=convolved_mesh,
-            k_vectors=k_vectors,
-            k_squared=k_squared,
-            alpha=alpha,
-            mesh_dimensions=mesh_dimensions,
-            is_batch=is_batch,
-            device=device,
-            dtype=input_dtype,
-        )
+    if need_virial_output:
+        if compute_virial:
+            virial = _compute_pme_reciprocal_virial(
+                mesh_fft_raw=mesh_fft_raw,
+                convolved_mesh=convolved_mesh,
+                k_vectors=k_vectors,
+                k_squared=k_squared,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                is_batch=is_batch,
+                device=device,
+                dtype=input_dtype,
+            )
+        else:
+            with torch.no_grad():
+                virial = _compute_pme_reciprocal_virial(
+                    mesh_fft_raw=mesh_fft_raw.detach(),
+                    convolved_mesh=convolved_mesh.detach(),
+                    k_vectors=k_vectors.detach(),
+                    k_squared=k_squared.detach(),
+                    alpha=alpha.detach(),
+                    mesh_dimensions=mesh_dimensions,
+                    is_batch=is_batch,
+                    device=device,
+                    dtype=input_dtype,
+                )
         del mesh_fft_raw  # Free before force field meshes are allocated
 
         # Background virial correction for non-neutral systems.
@@ -1942,10 +2559,22 @@ def _pme_reciprocal_space_impl(
             )
         )
         virial = torch.ops.nvalchemiops.pme_virial_bg_correction(
-            chg_spline.to(input_dtype),
+            (
+                chg_spline.to(input_dtype)
+                if compute_virial
+                else chg_spline.detach().to(input_dtype)
+            ),
             bg_batch_idx,
-            cell_spline.to(input_dtype),
-            alpha.to(input_dtype),
+            (
+                cell_spline.to(input_dtype)
+                if compute_virial
+                else cell_spline.detach().to(input_dtype)
+            ),
+            (
+                alpha.to(input_dtype)
+                if compute_virial
+                else alpha.detach().to(input_dtype)
+            ),
             virial,
         )
 
@@ -1958,6 +2587,18 @@ def _pme_reciprocal_space_impl(
         # 2× scaling absorbs the 1/2 pair-counting factor baked into the
         # Green's function (G = 2π/(V k²) instead of 4π/(V k²)).
         forces = 2.0 * gathered_force
+    elif cache_forces:
+        with torch.no_grad():
+            _, cached_gathered_force = spline_gather_with_force(
+                positions.detach(),
+                charges.detach(),
+                potential_mesh.detach(),
+                cell.detach(),
+                spline_order=spline_order,
+                batch_idx=batch_idx,
+                cell_inv_t=cell_inv_t.detach(),
+            )
+            forces = 2.0 * cached_gathered_force
 
     if hybrid_forces and charges.requires_grad:
         reciprocal_energies = _InjectChargeGrad.apply(
@@ -2050,13 +2691,16 @@ def pme_reciprocal_space(
     k_squared : torch.Tensor, shape (nx, ny, nz//2+1), optional
         Precomputed :math:`|k|^2` values. Must be provided together with k_vectors.
     compute_forces : bool, default=False
-        Whether to compute explicit reciprocal-space forces.
+        Whether to compute explicit component reciprocal-space forces. This
+        direct output is kept for no-autograd MD/inference use; use energy
+        autograd for differentiable training.
     compute_charge_gradients : bool, default=False
-        Whether to compute analytical charge gradients ∂E/∂q_i. Useful for
-        computing charge Hessians in ML potential training.
+        Whether to compute explicit component charge gradients ∂E/∂q_i. This
+        direct output follows the same no-autograd contract as
+        ``compute_forces``.
     compute_virial : bool, default=False
-        Whether to compute the virial tensor W = -dE/d(epsilon).
-        Stress = virial / volume.
+        Whether to compute the component virial tensor W = -dE/d(epsilon).
+        Stress = -virial / volume.
     hybrid_forces : bool, default=False
         When True, positions and cell are detached from the autograd graph and
         charge gradients are attached to the energy via a straight-through
@@ -2068,25 +2712,23 @@ def pme_reciprocal_space(
     energies : torch.Tensor, shape (N,)
         Per-atom reciprocal-space energy (includes self and background corrections).
     forces : torch.Tensor, shape (N, 3), optional
-        Reciprocal-space forces. Only returned if compute_forces=True.
+        Direct reciprocal-space forces. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
-        Charge gradients ∂E_recip/∂q_i. Only returned if compute_charge_gradients=True.
+        Direct charge gradients ∂E_recip/∂q_i. Only returned if compute_charge_gradients=True.
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
 
     Note
     ----
-    Energies are always float64 for numerical stability during accumulation.
-    Forces and virial match the input dtype (float32 or float64).
+    Internal reductions use float64 where needed for numerical stability.
+    Returned energies, forces, and virials match the input dtype.
 
-    The FFT-heavy reciprocal-space block currently runs through a narrow eager
-    helper on compiled paths because TorchInductor does not yet lower the
-    required complex FFT algebra reliably for PME.
+    ``torch.compile`` is supported by the public wrapper tests, although custom
+    Warp operators and FFTs can still limit compiler fusion for PME workloads.
 
-    Return Patterns
-    ---------------
-    Enabled flags are appended in order: energies, [forces], [charge_gradients], [virial].
-    A single output is returned unwrapped; multiple outputs as a tuple.
+    Enabled output flags are appended in order: energies, [forces],
+    [charge_gradients], [virial]. A single output is returned unwrapped;
+    multiple outputs are returned as a tuple.
 
     Raises
     ------
@@ -2148,6 +2790,49 @@ def pme_reciprocal_space(
             int(torch.ceil(length / mesh_spacing).item()) for length in cell_lengths
         )
 
+    position_grad = bool(positions.requires_grad)
+    charge_grad = bool(charges.requires_grad)
+    cell_grad = bool(cell.requires_grad)
+    output_grad_requested = compute_forces or compute_charge_gradients or compute_virial
+    use_cached_first_grad = (
+        not output_grad_requested
+        and not hybrid_forces
+        and not alpha_tensor.requires_grad
+        and (position_grad or charge_grad or cell_grad)
+    )
+    if use_cached_first_grad:
+        return _pme_reciprocal_cached_first_grad(
+            positions,
+            charges,
+            cell,
+            alpha_tensor,
+            mesh_dimensions,
+            spline_order,
+            batch_idx,
+            k_vectors,
+            k_squared,
+            volume,
+            cell_inv_t,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+            need_pos=position_grad,
+            need_charge=charge_grad,
+            need_cell=cell_grad,
+        )
+
+    # Charge-only detached eval remains useful for alpha-gradient or legacy
+    # fallback cases that cannot use the private first-order wrapper above.
+    need_cached_pos = False
+    need_cached_charge = (
+        charge_grad and not (position_grad or cell_grad) and not hybrid_forces
+    )
+    need_cached_cell = False
+    need_force_cache = need_cached_pos or need_cached_cell
+
+    # Energy is the single differentiable output. The eager graph remains present
+    # for create_graph / non-uniform-cotangent cases; direct derivative caches are
+    # attached below only for uniform first-order eval.
     energies, forces, charge_grads, virial = _pme_reciprocal_space_impl(
         positions,
         charges,
@@ -2167,7 +2852,34 @@ def pme_reciprocal_space(
         moduli_y=moduli_y,
         moduli_z=moduli_z,
         hybrid_forces=hybrid_forces,
+        cache_forces=need_force_cache and not compute_forces,
+        cache_charge_gradients=need_cached_charge and not compute_charge_gradients,
+        cache_virial=need_cached_cell and not compute_virial,
     )
+
+    if need_cached_pos or need_cached_charge or need_cached_cell:
+        cached_dEdR = -forces.detach() if need_cached_pos else None
+        cached_dEdq = charge_grads.detach() if need_cached_charge else None
+        cached_dEdcell = None
+        if need_cached_cell:
+            dEdR_for_cell = -forces.detach()
+            cached_dEdcell = _pme_cell_grad_from_virial(
+                positions.detach(),
+                dEdR_for_cell,
+                cell.detach(),
+                virial.detach(),
+                batch_idx,
+            )
+        energies = _InjectCachedEvalGrad.apply(
+            energies,
+            positions,
+            charges,
+            cell,
+            cached_dEdR,
+            cached_dEdq,
+            cached_dEdcell,
+            batch_idx,
+        )
 
     # Build return tuple based on flags
     match (compute_forces, compute_charge_gradients, compute_virial):
@@ -2318,13 +3030,14 @@ def particle_mesh_ewald(
     mask_value : int, optional
         Value indicating invalid entries in neighbor_matrix. Defaults to N.
     compute_forces : bool, default=False
-        Whether to compute explicit analytical forces.
+        Deprecated direct-output flag. Compute energy and use
+        ``torch.autograd.grad`` for differentiable forces.
     compute_charge_gradients : bool, default=False
-        Whether to compute analytical charge gradients ∂E/∂q_i. Useful for
-        training ML potentials that require second derivatives (charge Hessians).
+        Deprecated direct-output flag. Compute energy and use
+        ``torch.autograd.grad`` for ``dE/dq_i``.
     compute_virial : bool, default=False
-        Whether to compute the virial tensor W = -dE/d(epsilon).
-        Stress = virial / volume.
+        Deprecated direct-output flag for the virial tensor W = -dE/d(epsilon).
+        Stress = -virial / volume.
     accuracy : float, default=1e-6
         Target relative accuracy for automatic parameter estimation (α, mesh dims).
         Only used when alpha or mesh_dimensions is None.
@@ -2350,21 +3063,20 @@ def particle_mesh_ewald(
     energies : torch.Tensor, shape (N,)
         Per-atom contribution to total PME energy. Sum gives total energy.
     forces : torch.Tensor, shape (N, 3), optional
-        Forces on each atom. Only returned if compute_forces=True.
+        Deprecated direct forces. Only returned if compute_forces=True.
     charge_gradients : torch.Tensor, shape (N,), optional
-        Charge gradients ∂E/∂q_i. Only returned if compute_charge_gradients=True.
+        Deprecated direct charge gradients ∂E/∂q_i. Only returned if compute_charge_gradients=True.
     virial : torch.Tensor, shape (1, 3, 3) or (B, 3, 3), optional
         Virial tensor. Only returned if compute_virial=True. Always last in tuple.
 
     Note
     ----
-    Energies are always float64 for numerical stability during accumulation.
-    Forces and virial match the input dtype (float32 or float64).
+    Internal reductions use float64 where needed for numerical stability.
+    Returned energies, forces, and virials match the input dtype.
 
-    Return Patterns
-    ---------------
-    Enabled flags are appended in order: energies, [forces], [charge_gradients], [virial].
-    A single output is returned unwrapped; multiple outputs as a tuple.
+    Enabled output flags are appended in order: energies, [forces],
+    [charge_gradients], [virial]. A single output is returned unwrapped;
+    multiple outputs are returned as a tuple.
 
     Raises
     ------
@@ -2379,42 +3091,39 @@ def particle_mesh_ewald(
 
         >>> energies = particle_mesh_ewald(
         ...     positions, charges, cell,
-        ...     neighbor_list=nl, neighbor_shifts=shifts,
-        ...     neighbor_ptr=nptr, accuracy=1e-6,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
+        ...     accuracy=1e-6,
         ... )
         >>> total_energy = energies.sum()
 
     Explicit parameters for reproducibility::
 
-        >>> energies, forces = particle_mesh_ewald(
+        >>> energies = particle_mesh_ewald(
         ...     positions, charges, cell,
         ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
-        ...     spline_order=4, neighbor_list=nl,
-        ...     neighbor_shifts=shifts, neighbor_ptr=nptr,
-        ...     compute_forces=True,
+        ...     spline_order=4,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
         ... )
+        >>> forces = -torch.autograd.grad(energies.sum(), positions, create_graph=True)[0]
 
     Using mesh spacing for automatic mesh sizing::
 
-        >>> energies, forces = particle_mesh_ewald(
+        >>> energies = particle_mesh_ewald(
         ...     positions, charges, cell,
         ...     alpha=0.3, mesh_spacing=1.0,  # ~1 Å spacing
-        ...     neighbor_list=nl, neighbor_shifts=shifts,
-        ...     neighbor_ptr=nptr, compute_forces=True,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
         ... )
 
     Batched systems (multiple independent structures)::
 
         >>> # positions: concatenated atoms from all systems
         >>> # batch_idx: [0,0,0,0, 1,1,1,1, 2,2,2,2] for 4 atoms × 3 systems
-        >>> energies, forces = particle_mesh_ewald(
+        >>> energies = particle_mesh_ewald(
         ...     positions, charges, cells,  # cells shape (3, 3, 3)
         ...     alpha=torch.tensor([0.3, 0.35, 0.3]),
         ...     batch_idx=batch_idx,
         ...     mesh_dimensions=(32, 32, 32),
-        ...     neighbor_list=nl,
-        ...     neighbor_shifts=shifts, neighbor_ptr=nptr,
-        ...     compute_forces=True,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
         ... )
 
     Precomputed k-vectors for MD loop (fixed cell)::
@@ -2423,25 +3132,22 @@ def particle_mesh_ewald(
         >>> mesh_dims = (32, 32, 32)
         >>> k_vectors, k_squared = generate_k_vectors_pme(cell, mesh_dims)
         >>> for step in range(num_steps):
-        ...     energies, forces = particle_mesh_ewald(
+        ...     energies = particle_mesh_ewald(
         ...         positions, charges, cell,
         ...         alpha=0.3, mesh_dimensions=mesh_dims,
         ...         k_vectors=k_vectors, k_squared=k_squared,
-        ...         neighbor_list=nl, neighbor_shifts=shifts,
-        ...         neighbor_ptr=nptr,
-        ...         compute_forces=True,
+        ...         neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
         ...     )
 
     With charge gradients for ML training::
 
-        >>> energies, forces, charge_grads = particle_mesh_ewald(
+        >>> charges.requires_grad_(True)
+        >>> energies = particle_mesh_ewald(
         ...     positions, charges, cell,
         ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
-        ...     neighbor_list=nl, neighbor_shifts=shifts,
-        ...     neighbor_ptr=nptr,
-        ...     compute_forces=True, compute_charge_gradients=True,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
         ... )
-        >>> # Use charge_grads for training on ∂E/∂q
+        >>> charge_grads = torch.autograd.grad(energies.sum(), charges, create_graph=True)[0]
 
     PME with slab correction::
 
@@ -2449,8 +3155,7 @@ def particle_mesh_ewald(
         >>> energies, forces = particle_mesh_ewald(
         ...     positions, charges, cell,
         ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
-        ...     neighbor_list=nl, neighbor_shifts=shifts,
-        ...     neighbor_ptr=nptr,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
         ...     compute_forces=True,
         ...     pbc=pbc_slab,
         ...     slab_correction=True,
@@ -2462,8 +3167,7 @@ def particle_mesh_ewald(
         >>> energies = particle_mesh_ewald(
         ...     positions, charges, cell,
         ...     alpha=0.3, mesh_dimensions=(32, 32, 32),
-        ...     neighbor_list=nl, neighbor_shifts=shifts,
-        ...     neighbor_ptr=nptr,
+        ...     neighbor_list=nl, neighbor_ptr=nptr, neighbor_shifts=shifts,
         ... )
         >>> total_energy = energies.sum()
         >>> total_energy.backward()
@@ -2497,6 +3201,13 @@ def particle_mesh_ewald(
     estimate_pme_parameters : Automatic parameter estimation
     PMEParameters : Container for PME parameters
     """
+    if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
+        warnings.warn(
+            _direct_output_deprecation_msg("particle_mesh_ewald"),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     num_atoms = positions.shape[0]
 
     # Prepare cell

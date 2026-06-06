@@ -516,6 +516,243 @@ def _slab_correction_energy_forces_charge_grad_kernel(
         _slab_add_virial(system_id, normal, e_slab, virial)
 
 
+@wp.kernel
+def _slab_correction_backward_atoms_kernel(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    pbc: wp.array2d(dtype=wp.bool),
+    cell: wp.array(dtype=Any),
+    mz: wp.array2d(dtype=wp.float64),
+    mz2: wp.array2d(dtype=wp.float64),
+    qtotal: wp.array(dtype=wp.float64),
+    grad_system: wp.array(dtype=wp.float64),
+    grad_positions: wp.array(dtype=Any),
+    grad_charges: wp.array(dtype=wp.float64),
+    grad_normal: wp.array(dtype=wp.vec3d),
+):
+    """Accumulate first-order slab energy gradients for atoms.
+
+    Thread launch
+    -------------
+    One thread per atom. The thread writes the atom's position and charge
+    gradient and atomically accumulates the slab-normal cotangent needed by the
+    cell-gradient kernel.
+
+    Modifies
+    --------
+    ``grad_positions``, ``grad_charges``, and ``grad_normal``.
+    """
+    atom_idx = wp.tid()
+    is_slab, system_id, normal, vol, e_slab, bracket, z_f64, q_f64, mz_val = (
+        _slab_correction_terms(
+            atom_idx, positions, charges, batch_idx, pbc, cell, mz, mz2, qtotal
+        )
+    )
+    if not is_slab:
+        grad_positions[atom_idx] = type(grad_positions[0])(
+            type(grad_positions[0][0])(0.0),
+            type(grad_positions[0][0])(0.0),
+            type(grad_positions[0][0])(0.0),
+        )
+        grad_charges[atom_idx] = wp.float64(0.0)
+        return
+
+    g = grad_system[system_id]
+    qtot = qtotal[system_id]
+    d_e_dz = g * (FOURPI / vol) * q_f64 * (mz_val - qtot * z_f64)
+    grad_pos_f64 = wp.vec3d(
+        d_e_dz * wp.float64(normal[0]),
+        d_e_dz * wp.float64(normal[1]),
+        d_e_dz * wp.float64(normal[2]),
+    )
+    grad_positions[atom_idx] = type(grad_positions[0])(grad_pos_f64)
+    grad_charges[atom_idx] = g * (FOURPI / vol) * bracket
+
+    pos = positions[atom_idx]
+    grad_n = wp.vec3d(
+        d_e_dz * wp.float64(pos[0]),
+        d_e_dz * wp.float64(pos[1]),
+        d_e_dz * wp.float64(pos[2]),
+    )
+    wp.atomic_add(grad_normal, system_id, grad_n)
+
+
+@wp.kernel
+def _slab_correction_backward_cell_kernel(
+    pbc: wp.array2d(dtype=wp.bool),
+    cell: wp.array(dtype=Any),
+    mz: wp.array2d(dtype=wp.float64),
+    mz2: wp.array2d(dtype=wp.float64),
+    qtotal: wp.array(dtype=wp.float64),
+    grad_system: wp.array(dtype=wp.float64),
+    grad_normal: wp.array(dtype=wp.vec3d),
+    grad_cell: wp.array(dtype=Any),
+):
+    """Convert slab normal/volume cotangents into literal cell gradients.
+
+    Thread launch
+    -------------
+    One thread per system.
+
+    Modifies
+    --------
+    ``grad_cell``.
+    """
+    system_id = wp.tid()
+    p0 = pbc[system_id, 0]
+    p1 = pbc[system_id, 1]
+    p2 = pbc[system_id, 2]
+
+    axis_idx = wp.int32(2)
+    is_slab = False
+    if (not p0) and p1 and p2:
+        axis_idx = wp.int32(0)
+        is_slab = True
+    elif p0 and (not p1) and p2:
+        axis_idx = wp.int32(1)
+        is_slab = True
+    elif p0 and p1 and (not p2):
+        axis_idx = wp.int32(2)
+        is_slab = True
+
+    zero_mat = wp.mat33d(
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    )
+    if not is_slab:
+        grad_cell[system_id] = type(grad_cell[0])(zero_mat)
+        return
+
+    cell_b = cell[system_id]
+    h0 = cell_b[0]
+    h1 = cell_b[1]
+    h2 = cell_b[2]
+    periodic_a = h0
+    periodic_b = h1
+    nonperiodic_c = h2
+    if axis_idx == wp.int32(0):
+        periodic_a = h1
+        periodic_b = h2
+        nonperiodic_c = h0
+    elif axis_idx == wp.int32(1):
+        periodic_a = h2
+        periodic_b = h0
+        nonperiodic_c = h1
+
+    normal_raw = wp.cross(periodic_a, periodic_b)
+    area = wp.length(normal_raw)
+    normal = normal_raw / area
+    det_h = wp.determinant(cell_b)
+    det_sign = wp.float64(1.0)
+    if wp.float64(det_h) < wp.float64(0.0):
+        det_sign = wp.float64(-1.0)
+    vol = wp.abs(wp.float64(det_h))
+    c_dot_n = wp.dot(nonperiodic_c, normal)
+    l_f64 = wp.float64(c_dot_n)
+    height_sq = l_f64 * l_f64
+
+    mz_val = mz[system_id, 2]
+    mz2_val = mz2[system_id, 2]
+    if axis_idx == wp.int32(0):
+        mz_val = mz[system_id, 0]
+        mz2_val = mz2[system_id, 0]
+    elif axis_idx == wp.int32(1):
+        mz_val = mz[system_id, 1]
+        mz2_val = mz2[system_id, 1]
+    qtot = qtotal[system_id]
+    g = grad_system[system_id]
+
+    energy_inner = mz_val * mz_val - qtot * mz2_val
+    energy_inner = energy_inner - qtot * qtot * height_sq / wp.float64(12.0)
+    d_e_dv = -g * TWOPI * energy_inner / (vol * vol)
+    d_e_dh = -g * (TWOPI / vol) * qtot * qtot / wp.float64(12.0)
+
+    grad_n = grad_normal[system_id] + wp.vec3d(
+        d_e_dh * wp.float64(2.0) * l_f64 * wp.float64(nonperiodic_c[0]),
+        d_e_dh * wp.float64(2.0) * l_f64 * wp.float64(nonperiodic_c[1]),
+        d_e_dh * wp.float64(2.0) * l_f64 * wp.float64(nonperiodic_c[2]),
+    )
+    grad_c_extra = wp.vec3d(
+        d_e_dh * wp.float64(2.0) * l_f64 * wp.float64(normal[0]),
+        d_e_dh * wp.float64(2.0) * l_f64 * wp.float64(normal[1]),
+        d_e_dh * wp.float64(2.0) * l_f64 * wp.float64(normal[2]),
+    )
+
+    n64 = wp.vec3d(
+        wp.float64(normal[0]),
+        wp.float64(normal[1]),
+        wp.float64(normal[2]),
+    )
+    grad_u = (grad_n - n64 * wp.dot(n64, grad_n)) / wp.float64(area)
+    grad_a = wp.cross(
+        wp.vec3d(
+            wp.float64(periodic_b[0]),
+            wp.float64(periodic_b[1]),
+            wp.float64(periodic_b[2]),
+        ),
+        grad_u,
+    )
+    grad_b = wp.cross(
+        grad_u,
+        wp.vec3d(
+            wp.float64(periodic_a[0]),
+            wp.float64(periodic_a[1]),
+            wp.float64(periodic_a[2]),
+        ),
+    )
+
+    grad_det = d_e_dv * det_sign
+    vol_g0 = grad_det * wp.cross(
+        wp.vec3d(wp.float64(h1[0]), wp.float64(h1[1]), wp.float64(h1[2])),
+        wp.vec3d(wp.float64(h2[0]), wp.float64(h2[1]), wp.float64(h2[2])),
+    )
+    vol_g1 = grad_det * wp.cross(
+        wp.vec3d(wp.float64(h2[0]), wp.float64(h2[1]), wp.float64(h2[2])),
+        wp.vec3d(wp.float64(h0[0]), wp.float64(h0[1]), wp.float64(h0[2])),
+    )
+    vol_g2 = grad_det * wp.cross(
+        wp.vec3d(wp.float64(h0[0]), wp.float64(h0[1]), wp.float64(h0[2])),
+        wp.vec3d(wp.float64(h1[0]), wp.float64(h1[1]), wp.float64(h1[2])),
+    )
+
+    row0 = vol_g0
+    row1 = vol_g1
+    row2 = vol_g2
+    if axis_idx == wp.int32(0):
+        row0 = row0 + grad_c_extra
+        row1 = row1 + grad_a
+        row2 = row2 + grad_b
+    elif axis_idx == wp.int32(1):
+        row0 = row0 + grad_b
+        row1 = row1 + grad_c_extra
+        row2 = row2 + grad_a
+    else:
+        row0 = row0 + grad_a
+        row1 = row1 + grad_b
+        row2 = row2 + grad_c_extra
+
+    grad = wp.mat33d(
+        row0[0],
+        row0[1],
+        row0[2],
+        row1[0],
+        row1[1],
+        row1[2],
+        row2[0],
+        row2[1],
+        row2[2],
+    )
+    grad_cell[system_id] = type(grad_cell[0])(grad)
+
+
 ###########################################################################################
 ########################### Overload Registration #########################################
 ###########################################################################################
@@ -530,6 +767,8 @@ _slab_reduce_moments_kernel_overload = {}
 _slab_correction_energy_kernel_overload = {}
 _slab_correction_energy_forces_kernel_overload = {}
 _slab_correction_energy_forces_charge_grad_kernel_overload = {}
+_slab_correction_backward_atoms_kernel_overload = {}
+_slab_correction_backward_cell_kernel_overload = {}
 
 for t, v, m in zip(_T, _V, _M):
     _slab_reduce_moments_kernel_overload[t] = wp.overload(
@@ -598,6 +837,38 @@ for t, v, m in zip(_T, _V, _M):
             wp.array(dtype=v),  # forces
             wp.array(dtype=wp.float64),  # charge_grads
             wp.array(dtype=m),  # virial
+        ],
+    )
+
+    _slab_correction_backward_atoms_kernel_overload[t] = wp.overload(
+        _slab_correction_backward_atoms_kernel,
+        [
+            wp.array(dtype=v),  # positions
+            wp.array(dtype=t),  # charges
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array2d(dtype=wp.bool),  # pbc
+            wp.array(dtype=m),  # cell
+            wp.array2d(dtype=wp.float64),  # mz
+            wp.array2d(dtype=wp.float64),  # mz2
+            wp.array(dtype=wp.float64),  # qtotal
+            wp.array(dtype=wp.float64),  # grad_system
+            wp.array(dtype=v),  # grad_positions
+            wp.array(dtype=wp.float64),  # grad_charges
+            wp.array(dtype=wp.vec3d),  # grad_normal
+        ],
+    )
+
+    _slab_correction_backward_cell_kernel_overload[t] = wp.overload(
+        _slab_correction_backward_cell_kernel,
+        [
+            wp.array2d(dtype=wp.bool),  # pbc
+            wp.array(dtype=m),  # cell
+            wp.array2d(dtype=wp.float64),  # mz
+            wp.array2d(dtype=wp.float64),  # mz2
+            wp.array(dtype=wp.float64),  # qtotal
+            wp.array(dtype=wp.float64),  # grad_system
+            wp.array(dtype=wp.vec3d),  # grad_normal
+            wp.array(dtype=m),  # grad_cell
         ],
     )
 
@@ -790,5 +1061,96 @@ def slab_correction(
         compute_forces=compute_forces,
         compute_charge_gradients=compute_charge_gradients,
         compute_virial=compute_virial,
+        device=device,
+    )
+
+
+def slab_correction_backward(
+    positions: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    pbc: wp.array,
+    cell: wp.array,
+    mz: wp.array,
+    mz2: wp.array,
+    qtotal: wp.array,
+    grad_system: wp.array,
+    grad_positions: wp.array,
+    grad_charges: wp.array,
+    grad_normal: wp.array,
+    grad_cell: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Launch slab energy backward kernels.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Atomic coordinates.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Atomic charges.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        System index for each atom.
+    pbc : wp.array, shape (B, 3), dtype=wp.bool
+        Per-system periodic boundary conditions.
+    cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        Per-system cell matrices.
+    mz, mz2, qtotal
+        Per-system slab moments from :func:`slab_reduce_moments`.
+    grad_system : wp.array, shape (B,), dtype=wp.float64
+        Per-system cotangent for the total slab energy.
+    grad_positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: Literal ``dE/dR``.
+    grad_charges : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: Literal ``dE/dq``.
+    grad_normal : wp.array, shape (B,), dtype=wp.vec3d
+        Scratch storage, zero-initialized by the caller.
+    grad_cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: Literal ``dE/dcell``.
+    wp_dtype : type
+        Warp scalar type (wp.float32 or wp.float64).
+    device : str, optional
+        Warp device.
+    """
+    num_atoms = charges.shape[0]
+    num_systems = cell.shape[0]
+    if device is None:
+        device = str(charges.device)
+
+    if num_atoms > 0:
+        wp.launch(
+            _slab_correction_backward_atoms_kernel_overload[wp_dtype],
+            dim=num_atoms,
+            inputs=[
+                positions,
+                charges,
+                batch_idx,
+                pbc,
+                cell,
+                mz,
+                mz2,
+                qtotal,
+                grad_system,
+                grad_positions,
+                grad_charges,
+                grad_normal,
+            ],
+            device=device,
+        )
+
+    wp.launch(
+        _slab_correction_backward_cell_kernel_overload[wp_dtype],
+        dim=num_systems,
+        inputs=[
+            pbc,
+            cell,
+            mz,
+            mz2,
+            qtotal,
+            grad_system,
+            grad_normal,
+            grad_cell,
+        ],
         device=device,
     )

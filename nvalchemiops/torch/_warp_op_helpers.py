@@ -38,6 +38,11 @@ from typing import Any
 
 import torch
 
+__all__ = [
+    "attach_simple_backward",
+    "register_warp_op_chain",
+]
+
 # ===========================================================================
 # Grad-shape coercion helpers
 # ===========================================================================
@@ -83,6 +88,7 @@ def _build_setup_ctx_and_backward_chain(
     batch_match: bool = False,
     propagate_outputs: tuple[int, ...] | None = None,
     backward_args: Callable[[tuple, tuple], tuple] | None = None,
+    save_forward_outputs: tuple[int, ...] | None = None,
 ) -> tuple[Callable, Callable]:
     """Build (setup_ctx, backward_chain) for register_autograd.
 
@@ -92,6 +98,16 @@ def _build_setup_ctx_and_backward_chain(
     ``(grad_outputs_c: tuple, full_inputs: tuple) -> tuple`` that returns
     the positional arg list to pass to ``backward_op_callable``. Default
     is ``lambda g, f: g + f`` (cotangents-first).
+
+    ``save_forward_outputs``: if provided, the indices of forward *outputs*
+    (the op's return tuple) to stash in ``setup_ctx`` and **prepend** to the
+    backward op's positional args (before cotangents). Used by the
+    forward-precompute path: the forward op emits detached first-order
+    derivative caches as extra outputs and the backward op consumes them as
+    leading inputs, turning the first backward into a pure scale. Default
+    ``None`` ⇒ behaviour is byte-for-byte identical to the legacy path (no
+    forward outputs threaded), so ops that do not opt in (e.g. PME) are
+    unaffected.
     """
     match_fn = _match_shape_batch if batch_match else _match_shape
     if backward_args is None:
@@ -108,6 +124,16 @@ def _build_setup_ctx_and_backward_chain(
         ctx._warp_non_tensor = tuple(
             (i, x) for i, x in enumerate(inputs) if not isinstance(x, torch.Tensor)
         )
+        if save_forward_outputs is not None:
+            # ``output`` is the forward op's return (a tensor or a tuple). Stash
+            # the requested detached caches to prepend to the backward call. The
+            # caches are already detached by the forward launcher; saving them on
+            # plain attributes (not save_for_backward) keeps them out of the
+            # differentiation graph so double-backward cannot double-count.
+            out_tuple = output if isinstance(output, (tuple, list)) else (output,)
+            ctx._warp_saved_outputs = tuple(
+                out_tuple[i].detach() for i in save_forward_outputs
+            )
 
     def backward_chain(ctx, *grad_outputs):
         if propagate_outputs is not None:
@@ -127,9 +153,10 @@ def _build_setup_ctx_and_backward_chain(
         grad_outputs_c = tuple(
             g.contiguous() if g is not None else None for g in grad_outputs
         )
-        raw_grads = backward_op_callable(
-            *backward_args(grad_outputs_c, tuple(full_inputs))
-        )
+        bwd_args = backward_args(grad_outputs_c, tuple(full_inputs))
+        if save_forward_outputs is not None:
+            bwd_args = tuple(ctx._warp_saved_outputs) + tuple(bwd_args)
+        raw_grads = backward_op_callable(*bwd_args)
         if not isinstance(raw_grads, tuple):
             raw_grads = (raw_grads,)
 
@@ -150,6 +177,7 @@ def attach_simple_backward(
     batch_match: bool = False,
     propagate_outputs: tuple[int, ...] | None = None,
     backward_args: Callable[[tuple, tuple], tuple] | None = None,
+    save_forward_outputs: tuple[int, ...] | None = None,
 ) -> None:
     """Wire ``forward_op_name``'s autograd via ``backward_op_callable``.
 
@@ -180,6 +208,10 @@ def attach_simple_backward(
         ``(grad_outputs_c, full_inputs) -> tuple`` returning the positional
         args to pass to ``backward_op_callable``. Default is
         ``(*grad_outputs, *full_inputs)``.
+    save_forward_outputs : tuple[int, ...] | None
+        Forward *output* indices to stash and **prepend** to the backward call
+        (before cotangents). Default ``None`` ⇒ legacy behaviour. See
+        ``_build_setup_ctx_and_backward_chain``.
     """
     setup_ctx, backward_chain = _build_setup_ctx_and_backward_chain(
         backward_op_callable,
@@ -188,6 +220,7 @@ def attach_simple_backward(
         batch_match=batch_match,
         propagate_outputs=propagate_outputs,
         backward_args=backward_args,
+        save_forward_outputs=save_forward_outputs,
     )
     torch.library.register_autograd(
         forward_op_name,
@@ -374,6 +407,7 @@ def register_warp_op_chain(
     propagate_outputs: tuple[int, ...] | None = None,
     backward_args: Callable[[tuple, tuple], tuple] | None = None,
     second_order_backward_args: Callable[[tuple, tuple], tuple] | None = None,
+    save_forward_outputs: tuple[int, ...] | None = None,
     mutates_args: tuple = (),
 ) -> dict[str, Any]:
     """Register a complete warp-backed op chain in a single call.
@@ -420,6 +454,14 @@ def register_warp_op_chain(
     if forward_schema is None:
         forward_schema = _schema_from_callable(forward, forward_return_arity)
 
+    # register_fake requires the op to already exist; define it first.
+    torch.library.custom_op(
+        name,
+        forward,
+        mutates_args=mutates_args,
+        schema=forward_schema,
+    )
+
     if forward_fake is None:
         forward_fake = _default_forward_fake(forward)
     torch.library.register_fake(name, forward_fake)
@@ -465,6 +507,7 @@ def register_warp_op_chain(
         batch_match=batch_match,
         propagate_outputs=propagate_outputs,
         backward_args=backward_args,
+        save_forward_outputs=save_forward_outputs,
     )
 
     # ---- Double-backward op + register_fake + autograd ------------------
@@ -513,11 +556,3 @@ def register_warp_op_chain(
     )
 
     return out
-
-
-__all__ = [
-    "_match_shape",
-    "_match_shape_batch",
-    "attach_simple_backward",
-    "register_warp_op_chain",
-]

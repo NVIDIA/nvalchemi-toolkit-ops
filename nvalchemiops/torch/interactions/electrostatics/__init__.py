@@ -49,6 +49,7 @@ from nvalchemiops.torch.interactions.electrostatics.pme import (
     particle_mesh_ewald,
     pme_energy_corrections,
     pme_energy_corrections_with_charge_grad,
+    pme_green_structure_factor,
     pme_reciprocal_space,
 )
 from nvalchemiops.torch.interactions.electrostatics.slab import (
@@ -73,6 +74,7 @@ __all__ = [
     "pme_reciprocal_space",
     "pme_energy_corrections",
     "pme_energy_corrections_with_charge_grad",
+    "pme_green_structure_factor",
     "compute_bspline_moduli_1d",
     # K-vectors
     "generate_k_vectors_ewald_summation",

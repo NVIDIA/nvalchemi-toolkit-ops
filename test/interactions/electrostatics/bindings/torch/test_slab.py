@@ -397,6 +397,57 @@ class TestAnalyticalVsAutograd:
         )
 
 
+class TestSlabEnergyDerivativeContract:
+    """Slab energy should support the PME/Ewald energy-derivative contract."""
+
+    def test_energy_gradgradcheck_positions_charges_cell(self, device):
+        """Energy-only slab correction supports second derivatives."""
+        dtype = torch.float64
+
+        positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
+        positions = positions.clone().detach().requires_grad_(True)
+        charges = charges.clone().detach().requires_grad_(True)
+        cell = cell.clone().detach().requires_grad_(True)
+
+        def slab_energy(positions_in, charges_in, cell_in):
+            return compute_slab_correction(
+                positions_in,
+                charges_in,
+                cell_in,
+                pbc,
+            ).sum()
+
+        assert torch.autograd.gradgradcheck(
+            slab_energy,
+            (positions, charges, cell),
+            eps=1e-6,
+            atol=1e-9,
+            rtol=1e-6,
+            nondet_tol=1e-12,
+        )
+
+    def test_qr_force_loss_double_backward(self, device):
+        """q(R) slab forces include the charge-model chain rule in second order."""
+        dtype = torch.float64
+
+        positions, charges_ref, cell, pbc = _make_triclinic_slab_system(dtype, device)
+        positions = positions.clone().detach().requires_grad_(True)
+        cell = cell.clone().detach().requires_grad_(True)
+
+        charges = charges_ref + 0.02 * positions[:, 2]
+        energy = compute_slab_correction(positions, charges, cell, pbc)
+        forces = -torch.autograd.grad(
+            energy.sum(),
+            positions,
+            create_graph=True,
+        )[0]
+        loss = forces.square().sum()
+        grad_positions, grad_cell = torch.autograd.grad(loss, (positions, cell))
+
+        assert torch.isfinite(grad_positions).all()
+        assert torch.isfinite(grad_cell).all()
+
+
 # ==============================================================================
 # 3D periodic = zero correction
 # ==============================================================================
@@ -1440,6 +1491,10 @@ class TestPMESlabIntegration:
             assert isinstance(result, tuple)
         result_tuple = result if isinstance(result, tuple) else (result,)
 
+        def outputs_by_name(outputs):
+            outputs_tuple = outputs if isinstance(outputs, tuple) else (outputs,)
+            return dict(zip(output_names, outputs_tuple, strict=True))
+
         real = ewald_real_space(
             positions,
             charges,
@@ -1448,9 +1503,9 @@ class TestPMESlabIntegration:
             neighbor_list=nl,
             neighbor_ptr=ptr,
             neighbor_shifts=shifts,
-            compute_forces=True,
-            compute_charge_gradients=True,
-            compute_virial=True,
+            compute_forces=compute_forces,
+            compute_charge_gradients=compute_charge_gradients,
+            compute_virial=compute_virial,
         )
         reciprocal = pme_reciprocal_space(
             positions,
@@ -1458,24 +1513,25 @@ class TestPMESlabIntegration:
             cell,
             alpha,
             mesh_dimensions=mesh_dimensions,
-            compute_forces=True,
-            compute_charge_gradients=True,
-            compute_virial=True,
+            compute_forces=compute_forces,
+            compute_charge_gradients=compute_charge_gradients,
+            compute_virial=compute_virial,
         )
         slab = compute_slab_correction(
             positions,
             charges,
             cell,
             pbc,
-            compute_forces=True,
-            compute_charge_gradients=True,
-            compute_virial=True,
+            compute_forces=compute_forces,
+            compute_charge_gradients=compute_charge_gradients,
+            compute_virial=compute_virial,
         )
+        real_by_name = outputs_by_name(real)
+        reciprocal_by_name = outputs_by_name(reciprocal)
+        slab_by_name = outputs_by_name(slab)
         expected_by_name = {
-            "energies": real[0] + reciprocal[0] + slab[0],
-            "forces": real[1] + reciprocal[1] + slab[1],
-            "charge_grads": real[2] + reciprocal[2] + slab[2],
-            "virial": real[3] + reciprocal[3] + slab[3],
+            name: real_by_name[name] + reciprocal_by_name[name] + slab_by_name[name]
+            for name in output_names
         }
 
         assert len(result_tuple) == len(output_names)

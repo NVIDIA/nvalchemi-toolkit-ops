@@ -88,6 +88,9 @@ from nvalchemiops.math.spline import (
     _batch_bspline_gather_gradient_kernel_overload as wp_batch_gather_gradient,
 )
 from nvalchemiops.math.spline import (
+    _batch_bspline_gather_gradient_position_hessian_kernel_overload as wp_batch_gather_gradient_position_hessian,
+)
+from nvalchemiops.math.spline import (
     _batch_bspline_gather_kernel_overload as wp_batch_gather,
 )
 from nvalchemiops.math.spline import (
@@ -95,6 +98,9 @@ from nvalchemiops.math.spline import (
 )
 from nvalchemiops.math.spline import (
     _batch_bspline_spread_channels_kernel_overload as wp_batch_spread_channels,
+)
+from nvalchemiops.math.spline import (
+    _batch_bspline_spread_gradient_weights_kernel_overload as wp_batch_spread_gradient_weights,
 )
 from nvalchemiops.math.spline import (
     _batch_bspline_spread_kernel_overload as wp_batch_spread,
@@ -105,6 +111,9 @@ from nvalchemiops.math.spline import (
 from nvalchemiops.math.spline import (
     _bspline_gather_gradient_kernel_overload as wp_gather_gradient,
 )
+from nvalchemiops.math.spline import (
+    _bspline_gather_gradient_position_hessian_kernel_overload as wp_gather_gradient_position_hessian,
+)
 from nvalchemiops.math.spline import _bspline_gather_kernel_overload as wp_gather
 from nvalchemiops.math.spline import (
     _bspline_gather_vec3_kernel_overload as wp_gather_vec3,
@@ -114,6 +123,9 @@ from nvalchemiops.math.spline import (
 )
 from nvalchemiops.math.spline import (
     _bspline_spread_channels_kernel_overload as wp_spread_channels,
+)
+from nvalchemiops.math.spline import (
+    _bspline_spread_gradient_weights_kernel_overload as wp_spread_gradient_weights,
 )
 from nvalchemiops.math.spline import _bspline_spread_kernel_overload as wp_spread
 from nvalchemiops.math.spline import _bspline_weight_kernel_overload as wp_weight
@@ -188,6 +200,12 @@ _spread_kernels = _make_spline_jax_kernels(wp_spread, 1, ["mesh"])
 _gather_kernels = _make_spline_jax_kernels(wp_gather, 1, ["output"])
 _gather_vec3_kernels = _make_spline_jax_kernels(wp_gather_vec3, 1, ["output"])
 _gather_gradient_kernels = _make_spline_jax_kernels(wp_gather_gradient, 1, ["forces"])
+_spread_gradient_weights_kernels = _make_spline_jax_kernels(
+    wp_spread_gradient_weights, 1, ["mesh"]
+)
+_gather_gradient_position_hessian_kernels = _make_spline_jax_kernels(
+    wp_gather_gradient_position_hessian, 1, ["grad_positions"]
+)
 _spread_channels_kernels = _make_spline_jax_kernels(wp_spread_channels, 1, ["mesh"])
 _gather_channels_kernels = _make_spline_jax_kernels(wp_gather_channels, 1, ["output"])
 
@@ -200,6 +218,12 @@ _batch_gather_vec3_kernels = _make_spline_jax_kernels(
 )
 _batch_gather_gradient_kernels = _make_spline_jax_kernels(
     wp_batch_gather_gradient, 1, ["forces"]
+)
+_batch_spread_gradient_weights_kernels = _make_spline_jax_kernels(
+    wp_batch_spread_gradient_weights, 1, ["mesh"]
+)
+_batch_gather_gradient_position_hessian_kernels = _make_spline_jax_kernels(
+    wp_batch_gather_gradient_position_hessian, 1, ["grad_positions"]
 )
 _batch_spread_channels_kernels = _make_spline_jax_kernels(
     wp_batch_spread_channels, 1, ["mesh"]
@@ -251,7 +275,6 @@ __all__ = [
     "spline_gather",
     "spline_gather_vec3",
     "spline_gather_gradient",
-    "spline_gather_with_force",
     "spline_spread_channels",
     "spline_gather_channels",
     "compute_bspline_deconvolution",
@@ -622,6 +645,7 @@ def spline_gather_gradient(
     cell: jax.Array,
     spline_order: int = 4,
     batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
 ) -> jax.Array:
     """Compute forces by gathering mesh gradients using B-spline derivatives.
 
@@ -678,12 +702,15 @@ def spline_gather_gradient(
     mesh_work = mesh.astype(working_dtype)
     cell_work = cell.astype(working_dtype)
 
-    # Compute cell_inv_t
-    if cell_work.ndim == 2:
-        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
-
-    cell_inv = jnp.linalg.inv(cell_work)
-    cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
+    if cell_inv_t is None:
+        if cell_work.ndim == 2:
+            cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t_work = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t_work = cell_inv_t.astype(working_dtype)
+        if cell_inv_t_work.ndim == 2:
+            cell_inv_t_work = cell_inv_t_work[jnp.newaxis, :, :]
 
     # Allocate forces output (vec3)
     forces = jnp.zeros((num_atoms, 3), dtype=working_dtype)
@@ -693,7 +720,7 @@ def spline_gather_gradient(
         (forces_out,) = _gather_gradient_kernels[working_dtype](
             positions,
             charges_work,
-            cell_inv_t,
+            cell_inv_t_work,
             int(spline_order),
             mesh_work,
             forces,
@@ -708,7 +735,7 @@ def spline_gather_gradient(
             positions,
             charges_work,
             batch_idx_i32,
-            cell_inv_t,
+            cell_inv_t_work,
             int(spline_order),
             mesh_work,
             forces,
@@ -717,7 +744,118 @@ def spline_gather_gradient(
         return forces_out
 
 
-def spline_gather_with_force(
+def _spline_spread_gradient_weights(
+    positions: jax.Array,
+    per_atom_vec: jax.Array,
+    cell: jax.Array,
+    mesh_dims: tuple[int, int, int],
+    spline_order: int = 4,
+    batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
+) -> jax.Array:
+    """Spread per-atom vector weights with B-spline gradient weights."""
+    num_atoms = positions.shape[0]
+    num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
+
+    vec_work = per_atom_vec.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
+    if cell_inv_t is None:
+        if cell_work.ndim == 2:
+            cell_work = cell_work[jnp.newaxis, :, :]
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t_work = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t_work = cell_inv_t.astype(working_dtype)
+        if cell_inv_t_work.ndim == 2:
+            cell_inv_t_work = cell_inv_t_work[jnp.newaxis, :, :]
+
+    if batch_idx is None:
+        mesh = jnp.zeros(mesh_dims, dtype=working_dtype)
+        (mesh_out,) = _spread_gradient_weights_kernels[working_dtype](
+            positions,
+            vec_work,
+            cell_inv_t_work,
+            int(spline_order),
+            mesh,
+            launch_dims=(num_atoms, num_points),
+        )
+        return mesh_out
+
+    batch_idx_i32 = batch_idx.astype(jnp.int32)
+    num_systems = cell_inv_t_work.shape[0]
+    mesh = jnp.zeros((num_systems, *mesh_dims), dtype=working_dtype)
+    (mesh_out,) = _batch_spread_gradient_weights_kernels[working_dtype](
+        positions,
+        vec_work,
+        batch_idx_i32,
+        cell_inv_t_work,
+        int(spline_order),
+        mesh,
+        launch_dims=(num_atoms, num_points),
+    )
+    return mesh_out
+
+
+def _spline_gather_gradient_position_hessian(
+    positions: jax.Array,
+    charges: jax.Array,
+    v_per_atom: jax.Array,
+    cell: jax.Array,
+    mesh: jax.Array,
+    spline_order: int = 4,
+    batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
+) -> jax.Array:
+    """Apply the position-Hessian of ``spline_gather_gradient``."""
+    num_atoms = positions.shape[0]
+    num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
+
+    charges_work = charges.astype(working_dtype)
+    v_work = v_per_atom.astype(working_dtype)
+    mesh_work = mesh.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
+    if cell_inv_t is None:
+        if cell_work.ndim == 2:
+            cell_work = cell_work[jnp.newaxis, :, :]
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t_work = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t_work = cell_inv_t.astype(working_dtype)
+        if cell_inv_t_work.ndim == 2:
+            cell_inv_t_work = cell_inv_t_work[jnp.newaxis, :, :]
+
+    grad_positions = jnp.zeros((num_atoms, 3), dtype=working_dtype)
+    if batch_idx is None:
+        (grad_out,) = _gather_gradient_position_hessian_kernels[working_dtype](
+            positions,
+            charges_work,
+            v_work,
+            cell_inv_t_work,
+            int(spline_order),
+            mesh_work,
+            grad_positions,
+            launch_dims=(num_atoms, num_points),
+        )
+        return grad_out
+
+    batch_idx_i32 = batch_idx.astype(jnp.int32)
+    (grad_out,) = _batch_gather_gradient_position_hessian_kernels[working_dtype](
+        positions,
+        charges_work,
+        v_work,
+        batch_idx_i32,
+        cell_inv_t_work,
+        int(spline_order),
+        mesh_work,
+        grad_positions,
+        launch_dims=(num_atoms, num_points),
+    )
+    return grad_out
+
+
+def _spline_gather_with_force(
     positions: jax.Array,
     charges: jax.Array,
     mesh: jax.Array,

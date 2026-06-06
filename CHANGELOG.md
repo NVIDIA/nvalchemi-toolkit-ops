@@ -2,8 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- Full Torch Ewald/PME APIs now support energy-derived forces, charge
+  gradients, and strain-first virials, including second-order force/stress
+  losses.
+- Torch slab correction now participates in autograd when inputs require
+  gradients.
+- Full JAX Ewald/PME energy-only calls now support first-order gradients for
+  positions, charges, and strain-consistent cell gradients.
+- JAX PME higher-order derivatives now fail explicitly with
+  `NotImplementedError` until a native PME Hessian-vector product is available.
+- Torch Ewald accepts `miller_bounds` for k-vector generation.
+- Torch/JAX PME accept precomputed `cell_inv_t`, `volume`, and B-spline
+  moduli where supported.
+- `compute_bspline_moduli_1d` is exported from the top-level Torch
+  electrostatics namespace for PME precompute workflows.
+
 ### Fixed
 
+- Fixed Torch Ewald gradients for non-uniform per-atom energy cotangents
+  (`torch.autograd.grad(..., grad_outputs=w)`).
 - **MTK NPT/NPH cell propagation**: kernels wrote `V·(P − P_ext)/W`
   (strain-rate units) into `cell_velocity` while consumers read it as
   `ḣ = dh/dt`, costing a factor of cell length in the cell response.
@@ -22,6 +41,10 @@
 
 ### Deprecated
 
+- Direct-output flags on full Torch and JAX Ewald/PME APIs are deprecated for
+  differentiable training: `compute_forces`, `compute_virial`,
+  `compute_charge_gradients`, and `hybrid_forces`. They still work and keep the
+  existing tuple order. Component APIs keep direct outputs for no-autograd use.
 - `cells_inv` argument on `compute_cell_kinetic_energy`,
   `npt_velocity_half_step{,_out}`, `npt_position_update{,_out}`,
   `nph_velocity_half_step{,_out}`, `nph_position_update{,_out}`,

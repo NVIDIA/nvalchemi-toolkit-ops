@@ -632,9 +632,9 @@ def prepare_single_system(
     miller_zs = torch.fft.rfftfreq(
         mz_dim, d=1.0 / mz_dim, device=device_t, dtype=cell_t.dtype
     )
-    moduli_x = _torch_electrostatics.compute_bspline_moduli_1d(miller_xs, mx_dim, 4)
-    moduli_y = _torch_electrostatics.compute_bspline_moduli_1d(miller_ys, my_dim, 4)
-    moduli_z = _torch_electrostatics.compute_bspline_moduli_1d(miller_zs, mz_dim, 4)
+    moduli_x = _torch_electrostatics.pme.compute_bspline_moduli_1d(miller_xs, mx_dim, 4)
+    moduli_y = _torch_electrostatics.pme.compute_bspline_moduli_1d(miller_ys, my_dim, 4)
+    moduli_z = _torch_electrostatics.pme.compute_bspline_moduli_1d(miller_zs, mz_dim, 4)
 
     return {
         "positions": backend_data["positions"],
@@ -739,13 +739,13 @@ def prepare_batch_system(
     miller_zs_b = torch.fft.rfftfreq(
         mz_dim_b, d=1.0 / mz_dim_b, device=device_b, dtype=cell_t_b.dtype
     )
-    moduli_x_b = _torch_electrostatics.compute_bspline_moduli_1d(
+    moduli_x_b = _torch_electrostatics.pme.compute_bspline_moduli_1d(
         miller_xs_b, mx_dim_b, 4
     )
-    moduli_y_b = _torch_electrostatics.compute_bspline_moduli_1d(
+    moduli_y_b = _torch_electrostatics.pme.compute_bspline_moduli_1d(
         miller_ys_b, my_dim_b, 4
     )
-    moduli_z_b = _torch_electrostatics.compute_bspline_moduli_1d(
+    moduli_z_b = _torch_electrostatics.pme.compute_bspline_moduli_1d(
         miller_zs_b, mz_dim_b, 4
     )
 
@@ -2828,17 +2828,15 @@ def main():
                                         )
                                     )
                                 else:
-                                    system_data_cache[cache_key] = (
-                                        prepare_batch_system(
-                                            base_size,
-                                            batch_size,
-                                            device,
-                                            dtype,
-                                            np_data=np_data,
-                                            real_space_cutoff=real_space_cutoff,
-                                            accuracy=accuracy,
-                                            build_neighbors=build_neighbors,
-                                        )
+                                    system_data_cache[cache_key] = prepare_batch_system(
+                                        base_size,
+                                        batch_size,
+                                        device,
+                                        dtype,
+                                        np_data=np_data,
+                                        real_space_cutoff=real_space_cutoff,
+                                        accuracy=accuracy,
+                                        build_neighbors=build_neighbors,
                                     )
                             except Exception as e:
                                 print(f"    Failed to prepare system: {e}")
