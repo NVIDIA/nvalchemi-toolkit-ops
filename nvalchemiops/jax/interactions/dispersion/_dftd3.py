@@ -159,6 +159,11 @@ def _launch_kwargs_for_positions(
     return {"launch_dims": expected, **kwargs}
 
 
+def _restore_nonfinite_to_init(value: jax.Array, init: jax.Array) -> jax.Array:
+    """Replace non-finite JAX FFI in-out slots with their initialized values."""
+    return jnp.where(jnp.isfinite(value), value, init)
+
+
 # --- Pass 0: Cartesian Shift Computation ---
 
 _compute_cartesian_shifts_nm = _make_jax_kernels(
@@ -787,6 +792,9 @@ def _dftd3_nm_impl(
     positions_kernel = positions.astype(kernel_dtype)
     numbers_i32 = numbers.astype(jnp.int32)
     neighbor_matrix_i32 = neighbor_matrix.astype(jnp.int32)
+    has_dense_neighbors = jnp.any(
+        (neighbor_matrix_i32 >= 0) & (neighbor_matrix_i32 < int(fill_value))
+    )
     batch_idx_i32 = batch_idx.astype(jnp.int32)
     covalent_radii_f32 = covalent_radii.astype(jnp.float32)
     r4r2_f32 = r4r2.astype(jnp.float32)
@@ -917,6 +925,12 @@ def _dftd3_nm_impl(
             launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
         )
 
+    dE_dCN = _restore_nonfinite_to_init(dE_dCN, dE_dCN_init)
+    forces = _restore_nonfinite_to_init(forces, forces_init)
+    energy = _restore_nonfinite_to_init(energy, energy_init)
+    if compute_virial:
+        virial = _restore_nonfinite_to_init(virial, virial_init)
+
     # Pass 3: Add CN-dependent force contribution
     # cn_forces_contrib_nm is split into two overloads:
     #   - virial overload: returns (forces, virial) — 2 outputs
@@ -924,16 +938,13 @@ def _dftd3_nm_impl(
     # Inputs (shared): positions, numbers, neighbor_matrix, cartesian_shifts, covalent_radii,
     #                  dE_dCN, k1, fill_value, block_dim, periodic
     # Inputs (virial-only extra): batch_idx
-    # Inputs (in_out): forces [, virial] (pre-allocated, zeroed)
-    # Note: These are NEW forces/virial arrays — they are added to the existing ones after
-    #       the kernel.
-    # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
-    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial.
-    forces_cn_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    # Inputs (in_out): forces [, virial]
+    # Note: The CN kernel adds into the direct-force/virial buffers in place.
+    #       Launching it on a fresh zero output is fragile under JAX FFI because
+    #       the kernel reads force components before writing the accumulated sum.
 
     if compute_virial:
-        virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
-        forces_cn, virial_cn = cn_forces_contrib_kernel_virial(
+        forces, virial = cn_forces_contrib_kernel_virial(
             positions_kernel,
             numbers_i32,
             neighbor_matrix_i32,
@@ -945,17 +956,20 @@ def _dftd3_nm_impl(
             JAX_DFTD3_BLOCK_DIM,
             periodic,
             batch_idx_i32,
-            forces_cn_init,
-            virial_cn_init,
+            forces,
+            virial,
             launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
         )
-        # Add CN force contribution to direct forces
-        forces = forces + forces_cn
-        virial = virial + virial_cn
+        forces = _restore_nonfinite_to_init(forces, forces_init)
+        virial = _restore_nonfinite_to_init(virial, virial_init)
+        forces = jnp.where(has_dense_neighbors, forces, forces_init)
+        virial = jnp.where(has_dense_neighbors, virial, virial_init)
+        energy = jnp.where(has_dense_neighbors, energy, energy_init)
+        coord_num = jnp.where(has_dense_neighbors, coord_num, dE_dCN_init)
         # Return JAX arrays
         return energy, forces, coord_num, virial
     else:
-        (forces_cn,) = cn_forces_contrib_kernel(
+        (forces,) = cn_forces_contrib_kernel(
             positions_kernel,
             numbers_i32,
             neighbor_matrix_i32,
@@ -966,11 +980,13 @@ def _dftd3_nm_impl(
             int(fill_value),
             JAX_DFTD3_BLOCK_DIM,
             periodic,
-            forces_cn_init,
+            forces,
             launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
         )
-        # Add CN force contribution to direct forces
-        forces = forces + forces_cn
+        forces = _restore_nonfinite_to_init(forces, forces_init)
+        forces = jnp.where(has_dense_neighbors, forces, forces_init)
+        energy = jnp.where(has_dense_neighbors, energy, energy_init)
+        coord_num = jnp.where(has_dense_neighbors, coord_num, dE_dCN_init)
         # Return JAX arrays
         return energy, forces, coord_num
 
@@ -1192,6 +1208,12 @@ def _dftd3_nl_impl(
             launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
         )
 
+    dE_dCN = _restore_nonfinite_to_init(dE_dCN, dE_dCN_init)
+    forces = _restore_nonfinite_to_init(forces, forces_init)
+    energy = _restore_nonfinite_to_init(energy, energy_init)
+    if compute_virial:
+        virial = _restore_nonfinite_to_init(virial, virial_init)
+
     # Pass 3: Add CN-dependent force contribution
     # cn_forces_contrib_nl is split into two overloads:
     #   - virial overload: returns (forces, virial) — 2 outputs
@@ -1199,16 +1221,11 @@ def _dftd3_nl_impl(
     # Inputs (shared): positions, numbers, idx_j, neighbor_ptr, cartesian_shifts,
     #                  covalent_radii, dE_dCN, k1, block_dim, periodic
     # Inputs (virial-only extra): batch_idx
-    # Inputs (in_out): forces [, virial] (pre-allocated, zeroed)
-    # Note: These are NEW forces/virial arrays — they are added to the existing ones after
-    #       the kernel.
-    # Note: Pre-allocating zeroed arrays is required because jax_kernel does not zero-initialize
-    #       and the kernel reads from forces[atom_i] and uses atomic_add for virial.
-    forces_cn_init = jnp.zeros((num_atoms, 3), dtype=jnp.float32)
+    # Inputs (in_out): forces [, virial]
+    # Note: The CN kernel adds into the direct-force/virial buffers in place.
 
     if compute_virial:
-        virial_cn_init = jnp.zeros((num_systems, 3, 3), dtype=jnp.float32)
-        forces_cn, virial_cn = cn_forces_contrib_kernel_virial(
+        forces, virial = cn_forces_contrib_kernel_virial(
             positions_kernel,
             numbers_i32,
             idx_j_i32,
@@ -1220,17 +1237,16 @@ def _dftd3_nl_impl(
             JAX_DFTD3_BLOCK_DIM,
             periodic,
             batch_idx_i32,
-            forces_cn_init,
-            virial_cn_init,
+            forces,
+            virial,
             launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
         )
-        # Add CN force contribution to direct forces
-        forces = forces + forces_cn
-        virial = virial + virial_cn
+        forces = _restore_nonfinite_to_init(forces, forces_init)
+        virial = _restore_nonfinite_to_init(virial, virial_init)
         # Return JAX arrays
         return energy, forces, coord_num, virial
     else:
-        (forces_cn,) = cn_forces_contrib_kernel(
+        (forces,) = cn_forces_contrib_kernel(
             positions_kernel,
             numbers_i32,
             idx_j_i32,
@@ -1241,11 +1257,10 @@ def _dftd3_nl_impl(
             float(k1),
             JAX_DFTD3_BLOCK_DIM,
             periodic,
-            forces_cn_init,
+            forces,
             launch_dims=(num_atoms, JAX_DFTD3_BLOCK_DIM),
         )
-        # Add CN force contribution to direct forces
-        forces = forces + forces_cn
+        forces = _restore_nonfinite_to_init(forces, forces_init)
         # Return JAX arrays
         return energy, forces, coord_num
 

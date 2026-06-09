@@ -788,15 +788,18 @@ class TestDFT_D3Dtypes:
         self, h2_system, functional_params, d3_params, device
     ):
         """Test float64 positions preserve small separations far from the origin."""
+        expected_positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.4, 0.2, 0.1]], dtype=jnp.float64
+        )
         positions = jnp.array(
-            [[1.0e8, 0.0, 0.0], [1.0e8 + 1.4, 0.0, 0.0]],
+            [[1.0e8, 0.0, 0.0], [1.0e8 + 1.4, 0.2, 0.1]],
             dtype=jnp.float64,
         )
         numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
         neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
         expected_energy, expected_forces, expected_coord_num = dftd3(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            expected_positions,
             numbers,
             a1=functional_params["a1"],
             a2=functional_params["a2"],
@@ -815,6 +818,8 @@ class TestDFT_D3Dtypes:
         )
 
         assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.all(jnp.isfinite(forces))
+        assert jnp.all(jnp.isfinite(expected_forces))
         assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
 
@@ -824,9 +829,12 @@ class TestDFT_D3Dtypes:
         """Test float64 cells preserve PBC shifts that cancel large coordinates."""
         numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
         neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
+        expected_positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.4, 0.2, 0.1]], dtype=jnp.float64
+        )
 
         expected_energy, expected_forces, expected_coord_num = dftd3(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            expected_positions,
             numbers,
             a1=functional_params["a1"],
             a2=functional_params["a2"],
@@ -836,7 +844,7 @@ class TestDFT_D3Dtypes:
         )
 
         positions = jnp.array(
-            [[0.0, 0.0, 0.0], [1.0e8 + 2.1, 0.0, 0.0]],
+            [[0.0, 0.0, 0.0], [1.0e8 + 2.1, 0.2, 0.1]],
             dtype=jnp.float64,
         )
         cell = jnp.array(
@@ -864,6 +872,8 @@ class TestDFT_D3Dtypes:
         )
 
         assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.all(jnp.isfinite(forces))
+        assert jnp.all(jnp.isfinite(expected_forces))
         assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
 
@@ -874,9 +884,12 @@ class TestDFT_D3Dtypes:
         numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
         neighbor_list = jnp.array([[0, 1], [1, 0]], dtype=jnp.int32)
         neighbor_ptr = jnp.array([0, 1, 2], dtype=jnp.int32)
+        expected_positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.4, 0.2, 0.1]], dtype=jnp.float64
+        )
 
         expected_energy, expected_forces, expected_coord_num = dftd3(
-            jnp.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]], dtype=jnp.float64),
+            expected_positions,
             numbers,
             a1=functional_params["a1"],
             a2=functional_params["a2"],
@@ -887,7 +900,7 @@ class TestDFT_D3Dtypes:
         )
 
         positions = jnp.array(
-            [[0.0, 0.0, 0.0], [1.0e8 + 2.1, 0.0, 0.0]],
+            [[0.0, 0.0, 0.0], [1.0e8 + 2.1, 0.2, 0.1]],
             dtype=jnp.float64,
         )
         cell = jnp.array(
@@ -910,6 +923,8 @@ class TestDFT_D3Dtypes:
         )
 
         assert jnp.allclose(energy, expected_energy, rtol=1e-5, atol=1e-7)
+        assert jnp.all(jnp.isfinite(forces))
+        assert jnp.all(jnp.isfinite(expected_forces))
         assert jnp.allclose(forces, expected_forces, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num, expected_coord_num, rtol=1e-5, atol=1e-7)
 
@@ -917,8 +932,12 @@ class TestDFT_D3Dtypes:
         self, h2_system, functional_params, d3_params, device
     ):
         """Test that float32 and float64 positions produce similar results."""
+        coord = h2_system["coord"].reshape(2, 3).copy()
+        coord[1, 1] = 0.2
+        coord[1, 2] = 0.1
+
         # Run with float32
-        positions_f32 = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float32)
+        positions_f32 = jnp.array(coord, dtype=jnp.float32)
         numbers = jnp.array(h2_system["numbers"], dtype=jnp.int32)
         neighbor_matrix = jnp.array(h2_system["nbmat"], dtype=jnp.int32)
 
@@ -938,7 +957,7 @@ class TestDFT_D3Dtypes:
         )
 
         # Run with float64
-        positions_f64 = jnp.array(h2_system["coord"].reshape(2, 3), dtype=jnp.float64)
+        positions_f64 = jnp.array(coord, dtype=jnp.float64)
         result_f64 = dftd3(
             positions_f64,
             numbers,
@@ -956,6 +975,8 @@ class TestDFT_D3Dtypes:
 
         # Should be very close (float64 may have slightly better precision)
         assert jnp.allclose(energy_f64, energy_f32, rtol=1e-5, atol=1e-7)
+        assert jnp.all(jnp.isfinite(forces_f32))
+        assert jnp.all(jnp.isfinite(forces_f64))
         assert jnp.allclose(forces_f64, forces_f32, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(coord_num_f64, coord_num_f32, rtol=1e-5, atol=1e-7)
 
