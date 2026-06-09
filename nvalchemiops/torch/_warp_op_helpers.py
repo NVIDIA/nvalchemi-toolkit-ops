@@ -1,18 +1,31 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 - 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Boilerplate-reducing helpers for warp-backed ``torch.library.custom_op``s.
 
-Two levels of helper:
+Three helper groups:
 
   * ``register_warp_op_chain(...)`` — the do-everything factory. One call
     per op chain. Builds the forward custom_op + register_fake, the
     backward custom_op + register_fake (optionally), the double-backward
     custom_op + register_fake (optionally), and wires forward→backward
     and backward→double_backward via register_autograd. Each launcher
-    is supplied as a Python function; output shapes are inferred from
-    ``diff_input_positions`` (output i has the shape of forward input
-    ``diff_input_positions[i]``). Override with explicit ``*_fake`` and
-    schema kwargs when defaults aren't right.
+    is supplied as a Python function; by default the forward fake returns
+    ``empty_like`` of the first tensor input, while backward and double-backward
+    fakes use the configured differentiable input positions. Override with
+    explicit ``*_fake`` and schema kwargs when defaults aren't right.
 
   * ``attach_simple_backward(...)`` — wires ONLY register_autograd onto
     an already-registered custom_op. Useful when the custom_op +
@@ -73,6 +86,22 @@ def _match_shape_batch(grad: torch.Tensor, ref: torch.Tensor) -> torch.Tensor | 
     if not ref.requires_grad:
         return None
     return grad.reshape(ref.shape).to(ref.dtype)
+
+
+def _contiguous_preserving_uniform_metadata(
+    grad: torch.Tensor | None,
+) -> torch.Tensor | None:
+    """Keep stride-0 scalar-expanded cotangents visible to backward predicates."""
+    if grad is None:
+        return None
+    if grad.numel() <= 1:
+        return grad
+    if all(
+        size <= 1 or stride == 0
+        for size, stride in zip(grad.shape, grad.stride(), strict=True)
+    ):
+        return grad
+    return grad.contiguous()
 
 
 # ===========================================================================
@@ -151,7 +180,7 @@ def _build_setup_ctx_and_backward_chain(
             full_inputs[idx] = val
 
         grad_outputs_c = tuple(
-            g.contiguous() if g is not None else None for g in grad_outputs
+            _contiguous_preserving_uniform_metadata(g) for g in grad_outputs
         )
         bwd_args = backward_args(grad_outputs_c, tuple(full_inputs))
         if save_forward_outputs is not None:
@@ -339,7 +368,7 @@ def _default_backward_fake(
             inp = forward_inputs[pos]
             if not isinstance(inp, torch.Tensor):
                 raise RuntimeError(
-                    f"diff_input_positions[{out.__len__()}]={pos} points to a "
+                    f"diff_input_positions[{len(out)}]={pos} points to a "
                     f"non-tensor forward input ({type(inp).__name__}); pass an "
                     "explicit ``backward_fake`` for this op."
                 )
@@ -352,7 +381,6 @@ def _default_backward_fake(
 def _default_double_backward_fake(
     second_order_diff_positions: tuple[int, ...],
     n_cotangents_of_backward: int,
-    n_inputs_of_backward: int,
 ) -> Callable:
     """Default double-backward fake: ``empty_like`` of each backward input
     at the corresponding diff position.
@@ -368,7 +396,7 @@ def _default_double_backward_fake(
             inp = backward_inputs[pos]
             if not isinstance(inp, torch.Tensor):
                 raise RuntimeError(
-                    f"second_order_diff_positions[{out.__len__()}]={pos} "
+                    f"second_order_diff_positions[{len(out)}]={pos} "
                     f"points to a non-tensor backward input "
                     f"({type(inp).__name__}); pass explicit "
                     "``double_backward_fake``."
@@ -537,7 +565,6 @@ def register_warp_op_chain(
         double_backward_fake = _default_double_backward_fake(
             second_order_diff_positions,
             n_cotangents_of_backward=backward_return_arity,
-            n_inputs_of_backward=n_backward_inputs,
         )
     torch.library.register_fake(dbwd_name, double_backward_fake)
     dbwd_callable = getattr(

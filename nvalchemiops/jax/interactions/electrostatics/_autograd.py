@@ -25,20 +25,6 @@ import jax.numpy as jnp
 __all__: list[str] = []
 
 
-def _direct_output_deprecation_msg(fn: str) -> str:
-    """Migration message for direct-output flags on full JAX APIs."""
-    return (
-        f"The direct-output flags on {fn} are deprecated for differentiable "
-        f"training. Compute the energy and use JAX autodiff for first-order "
-        f"forces and charge gradients:\n\n"
-        f"    energy = {fn}(positions, charges, cell, ...).sum()\n"
-        f"    forces = -jax.grad(lambda r: {fn}(r, charges, cell, ...).sum())"
-        f"(positions)\n"
-        f"    dE_dq = jax.grad(lambda q: {fn}(positions, q, cell, ...).sum())"
-        f"(charges)\n"
-    )
-
-
 def _cell_3d(cell: jnp.ndarray) -> tuple[jnp.ndarray, bool]:
     """Promote ``cell`` to ``(S, 3, 3)`` and report whether it was 2-D."""
     if cell.ndim == 2:
@@ -111,7 +97,7 @@ def _inject_charge_grad_bwd(
         grad_energy,
         grad_charges,
         jnp.zeros_like(charge_grad),
-        jnp.zeros_like(batch_idx),
+        None,
     )
 
 
@@ -126,13 +112,14 @@ def _cell_grad_from_strain_virial(
     virial: jnp.ndarray,
     grad_system: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Convert a strain virial into a cell VJP consistent with strain tests.
+    """Convert a displacement virial into a cell VJP consistent with strain tests.
 
-    The direct virial kernels report ``W = -dE/dstrain``. A custom VJP must
-    return gradients with respect to the actual function arguments
-    ``positions`` and ``cell``. For the documented strain recipe
-    ``positions_s = positions @ (I + strain)^T`` and
-    ``cell_s = cell @ (I + strain)^T``, choose ``grad_cell`` so that
+    The direct virial kernels report row-vector displacement
+    ``W = -dE/dstrain``. A custom VJP must return gradients with respect to the
+    actual function arguments ``positions`` and ``cell``. For the documented
+    row-vector displacement
+    recipe ``positions_s = positions @ (I + strain)`` and
+    ``cell_s = cell @ (I + strain)``, choose ``grad_cell`` so that
 
     ``positions.T @ grad_positions + cell.T @ grad_cell == -W``.
 

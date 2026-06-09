@@ -13,20 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lazy ``jax_kernel`` wrapper dict.
+"""Lazy dtype-indexed ``jax_kernel`` wrapper mapping.
 
-Mirrors the per-(order, dtype) named-warp-module factory used in
-``nvalchemiops.math.spline`` (see ``_per_order_module`` and
-``_make_bspline_*_kernel``): construction at module-import does no
-``warp.jax_experimental`` work; the FFI wrapper for a given dtype is
-built only on first ``__getitem__`` access, and the underlying warp
-kernel's NVRTC compile defers to first launch.
-
-Replaces an earlier pattern that eagerly built ``jax_kernel`` objects
-for every (kernel, dtype) pair at module import. The eager form ran
-~60 ``jax_kernel(...)`` constructions across this package's import and
-made the JAX electrostatics test suite unstable under coverage
-instrumentation.
+Importing this module does not construct Warp/JAX FFI wrappers. The wrapper for
+a dtype is created on first lookup, and the underlying Warp kernel still compiles
+on first launch.
 """
 
 from __future__ import annotations
@@ -41,8 +32,8 @@ __all__: list[str] = []
 class _LazyJaxKernels:
     """Lazy ``{jnp.float32 | jnp.float64 -> jax_kernel}`` mapping.
 
-    Quacks like the dict that the previous eager ``_make_jax_kernels``
-    returned, so existing call sites (``_jax_X[dtype]``) keep working.
+    Provides the ``_jax_kernel_by_dtype[dtype]`` lookup shape used by the
+    electrostatics wrappers.
     """
 
     _JAX_TO_WP = {jnp.float32: wp.float32, jnp.float64: wp.float64}

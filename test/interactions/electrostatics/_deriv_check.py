@@ -265,8 +265,8 @@ def _deform_inputs(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Apply ``deform = eye + strain`` to positions and cell (scoping recipe).
 
-    ``positions_s = bmm(positions, deform[batch_idx]^T)`` and
-    ``cell_s = bmm(cell, deform^T)``. Single-system uses system 0 for all atoms.
+    ``positions_s = positions @ deform[batch_idx]`` and
+    ``cell_s = cell @ deform``. Single-system uses system 0 for all atoms.
     """
     num_systems = cell.shape[0]
     eye = torch.eye(3, device=positions.device, dtype=positions.dtype).unsqueeze(0)
@@ -279,11 +279,8 @@ def _deform_inputs(
     else:
         atom_sys = batch_idx
 
-    positions_s = torch.bmm(
-        positions.unsqueeze(1),
-        deform[atom_sys].transpose(1, 2),
-    ).squeeze(1)
-    cell_s = torch.bmm(cell, deform.transpose(1, 2))
+    positions_s = torch.einsum("ni,nij->nj", positions, deform[atom_sys])
+    cell_s = torch.einsum("bij,bjk->bik", cell, deform)
     _ = num_systems  # documented shape; silence linters
     return positions_s, cell_s
 
@@ -300,7 +297,8 @@ def fd_strain_virial(
 
     Builds deformed positions/cell from a per-system strain tensor (the scoping
     doc §"Virial and Stress" recipe: ``deform = eye + strain``,
-    ``positions_s = bmm(positions, deform^T)``, ``cell_s = bmm(cell, deform^T)``)
+    ``positions_s = positions @ deform[batch_idx]``,
+    ``cell_s = cell @ deform``)
     and finite-differences the total energy w.r.t. each of the nine strain
     entries per system.
 

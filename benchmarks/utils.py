@@ -465,10 +465,12 @@ class BenchmarkTimer:
                                         )
 
                                     self._torch.cuda.nvtx.range_push(f"timed_iter_{i}")
-                                    start_event.record()
-                                    last_result = func(*args, **kwargs)
-                                    end_event.record()
-                                    self._torch.cuda.nvtx.range_pop()
+                                    try:
+                                        start_event.record()
+                                        last_result = func(*args, **kwargs)
+                                        end_event.record()
+                                    finally:
+                                        self._torch.cuda.nvtx.range_pop()
 
                                     self._torch.cuda.synchronize()
                                     elapsed_time = start_event.elapsed_time(
@@ -486,15 +488,20 @@ class BenchmarkTimer:
                             case "jax":
                                 # nvtx range so nsys can attribute kernels per
                                 # iteration (mirrors torch path).
-                                if self._cudart is not None and hasattr(self, "_nvtx"):
+                                use_nvtx = self._cudart is not None and hasattr(
+                                    self, "_nvtx"
+                                )
+                                if use_nvtx:
                                     self._nvtx.range_push(f"timed_iter_{i}")
-                                start_time = time.perf_counter()
-                                result = func(*args, **kwargs)
-                                # Block until computation is complete
-                                self._jax.block_until_ready(result)
-                                end_time = time.perf_counter()
-                                if self._cudart is not None and hasattr(self, "_nvtx"):
-                                    self._nvtx.range_pop()
+                                try:
+                                    start_time = time.perf_counter()
+                                    result = func(*args, **kwargs)
+                                    # Block until computation is complete
+                                    self._jax.block_until_ready(result)
+                                    end_time = time.perf_counter()
+                                finally:
+                                    if use_nvtx:
+                                        self._nvtx.range_pop()
                                 last_result = result
                                 times.append(
                                     (end_time - start_time) * 1000.0

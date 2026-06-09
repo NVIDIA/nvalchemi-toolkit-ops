@@ -21,8 +21,8 @@ Electrostatics Benchmark
 CLI tool to benchmark electrostatic interaction methods (Ewald summation, Ewald
 with slab correction, PME, PME with slab correction, and DSF) and generate CSV
 files for documentation.
-Results are saved with GPU-specific naming:
-`electrostatics_benchmark_<method>_<backend>_<gpu_sku>.csv`
+Results are saved with GPU- and dtype-specific naming:
+`electrostatics_benchmark_<method>_<backend>_<dtype>_<gpu_sku>.csv`
 
 Supports multiple backends:
 1. torch (Warp kernels): Custom implementation using PyTorch + Warp
@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import importlib
 import sys
 import traceback
@@ -66,6 +67,51 @@ import yaml
 
 from benchmarks.systems import create_crystal_system
 from benchmarks.utils import BackendType, BenchmarkTimer
+
+BENCHMARK_CSV_FIELDNAMES = [
+    "total_atoms",
+    "batch_size",
+    "supercell_size",
+    "mode",
+    "method",
+    "backend",
+    "component",
+    "compute_forces",
+    "compute_virial",
+    "neighbor_format",
+    "dtype",
+    "config_path",
+    "config_sha256",
+    "accuracy",
+    "real_space_cutoff",
+    "cache_mode",
+    "compile_policy",
+    "backend_framework",
+    "median_time_ms",
+    "peak_memory_mb",
+    "compile_ms",
+    "warp_compile_ms",
+    "framework_compile_ms",
+    "framework",
+    "success",
+    "error",
+    "error_type",
+]
+
+
+def benchmark_output_file(
+    output_dir: Path,
+    method: str,
+    backend: str,
+    dtype_str: str,
+    gpu_sku: str,
+) -> Path:
+    """Return the CSV path for one benchmark result group."""
+    return (
+        output_dir
+        / f"electrostatics_benchmark_{method}_{backend}_{dtype_str}_{gpu_sku}.csv"
+    )
+
 
 # -- Torch backend -----------------------------------------------------------
 try:
@@ -107,6 +153,177 @@ except ImportError:
 SLAB_AXIS = 2
 SLAB_VACUUM_FACTOR = 3.0
 SLAB_METHODS = ("ewald_slab", "pme_slab")
+EWALD_METHODS = ("ewald", "ewald_slab")
+DEFAULT_METHODS = ["ewald", "pme"]
+ALL_METHODS = ["ewald", "ewald_slab", "pme", "pme_slab", "dsf"]
+CUSTOM_EWALD_PME_BACKENDS = ("torch", "jax")
+
+
+def _electrostatic_method_family(method: str) -> Literal["ewald", "pme"]:
+    """Return the parameter family used by an electrostatics benchmark method."""
+    if method in EWALD_METHODS:
+        return "ewald"
+    if method in ("pme", "pme_slab"):
+        return "pme"
+    raise ValueError(f"Method {method!r} does not use Ewald/PME parameters")
+
+
+def _system_cache_key(method: str) -> str:
+    """Return the prepared-system cache key for an electrostatics method."""
+    family = _electrostatic_method_family(method)
+    suffix = "_slab" if method in SLAB_METHODS else ""
+    return f"{family}{suffix}"
+
+
+def _neighbor_cutoff_from_params(
+    params: dict, family: Literal["ewald", "pme"]
+) -> float:
+    """Return the real-space neighbor cutoff for a method parameter family."""
+    return float(params[family]["cutoff"])
+
+
+def resolve_methods(
+    cli_method: str | None, config_methods: list[str] | None
+) -> list[str]:
+    """Return the ordered benchmark methods requested by CLI/config."""
+    if cli_method is not None:
+        if cli_method == "both":
+            return list(DEFAULT_METHODS)
+        if cli_method == "all":
+            return list(ALL_METHODS)
+        return [cli_method]
+
+    if not config_methods:
+        return list(DEFAULT_METHODS)
+    return list(config_methods)
+
+
+def get_backends_for_method(cli_backend: str, method: str) -> list[str]:
+    """Return concrete benchmark backends for one method/backend request."""
+    if cli_backend == "both":
+        if method in ("ewald", "pme"):
+            result = ["torch"]
+            if JAX_AVAILABLE:
+                result.append("jax")
+            if TORCHPME_AVAILABLE:
+                result.append("torchpme")
+            return result
+        if method in SLAB_METHODS:
+            result = ["torch"]
+            if JAX_AVAILABLE:
+                result.append("jax")
+            return result
+        if method == "dsf":
+            return ["torch", "torch_dsf"]
+    elif cli_backend == "torch":
+        return ["torch"]
+    elif cli_backend == "jax":
+        if method in ("ewald", "ewald_slab", "pme", "pme_slab"):
+            return ["jax"]
+        return []
+    elif cli_backend == "torchpme":
+        if method in SLAB_METHODS:
+            raise ValueError(f"torchpme does not support slab method {method!r}")
+        if method in ("ewald", "pme"):
+            return ["torchpme"] if TORCHPME_AVAILABLE else []
+        return []
+    elif cli_backend == "torch_dsf":
+        if method == "dsf":
+            return ["torch_dsf"]
+        return []
+    return ["torch"]
+
+
+def compile_policy_for_backend(backend: str, torch_compile: bool = False) -> str:
+    """Return the framework compilation policy label for a backend."""
+    if torch_compile and backend in ("torch", "torchpme", "torch_dsf"):
+        return "torch.compile"
+    if backend == "jax":
+        return "jax.jit"
+    return "eager"
+
+
+def benchmark_result_row(
+    *,
+    system_data: dict,
+    method: str,
+    backend: str,
+    component: str,
+    compute_forces: bool,
+    compute_virial: bool,
+    neighbor_format: str,
+    torch_compile: bool = False,
+    success: bool,
+    median_time_ms: float | None = None,
+    peak_memory_mb: float | None = None,
+    compile_ms: float | None = None,
+    warp_compile_ms: float | None = None,
+    framework_compile_ms: float | None = None,
+    framework: str = "none",
+    error: str = "",
+    error_type: str = "",
+    **extra,
+) -> dict:
+    """Build one stable benchmark CSV row for success or failure."""
+    row = {
+        "total_atoms": system_data["total_atoms"],
+        "batch_size": system_data.get("batch_size", 1),
+        "supercell_size": "",
+        "mode": "",
+        "method": method,
+        "backend": backend,
+        "component": component,
+        "compute_forces": compute_forces,
+        "compute_virial": compute_virial,
+        "neighbor_format": neighbor_format,
+        "dtype": "",
+        "config_path": "",
+        "config_sha256": "",
+        "accuracy": "",
+        "real_space_cutoff": "",
+        "cache_mode": system_data.get("cache_mode", "precomputed"),
+        "compile_policy": compile_policy_for_backend(backend, torch_compile),
+        "backend_framework": backend,
+        "median_time_ms": (
+            float(median_time_ms) if median_time_ms is not None else float("inf")
+        ),
+        "peak_memory_mb": peak_memory_mb,
+        "compile_ms": compile_ms,
+        "warp_compile_ms": warp_compile_ms,
+        "framework_compile_ms": framework_compile_ms,
+        "framework": framework,
+        "success": bool(success),
+        "error": "" if success else str(error),
+        "error_type": "" if success else str(error_type or "Unknown"),
+    }
+    row.update(extra)
+    return row
+
+
+def annotate_result_row(
+    row: dict,
+    *,
+    supercell_size: int,
+    mode: str,
+    dtype: str,
+    config_path: str,
+    config_sha256: str,
+    accuracy: float,
+    real_space_cutoff: float | None,
+) -> dict:
+    """Add run-level metadata to an existing benchmark row."""
+    row.update(
+        {
+            "supercell_size": supercell_size,
+            "mode": mode,
+            "dtype": dtype,
+            "config_path": config_path,
+            "config_sha256": config_sha256,
+            "accuracy": accuracy,
+            "real_space_cutoff": "" if real_space_cutoff is None else real_space_cutoff,
+        }
+    )
+    return row
 
 
 def _get_backend_modules(
@@ -448,8 +665,8 @@ def compute_electrostatics_params(
         ewald_params = electrostatics_mod.estimate_ewald_parameters(
             positions, cell, accuracy=accuracy
         )
-        k_cutoff = ewald_params.reciprocal_space_cutoff.item()
-        cutoff = ewald_params.real_space_cutoff.item()
+        ewald_k_cutoff = ewald_params.reciprocal_space_cutoff.item()
+        ewald_cutoff = ewald_params.real_space_cutoff.item()
 
         pme_params = electrostatics_mod.estimate_pme_parameters(
             positions,
@@ -461,8 +678,8 @@ def compute_electrostatics_params(
         ewald_params = electrostatics_mod.estimate_ewald_parameters(
             positions, cell, batch_idx, accuracy=accuracy
         )
-        k_cutoff = ewald_params.reciprocal_space_cutoff[0].item()
-        cutoff = ewald_params.real_space_cutoff[0].item()
+        ewald_k_cutoff = ewald_params.reciprocal_space_cutoff[0].item()
+        ewald_cutoff = ewald_params.real_space_cutoff[0].item()
 
         pme_params = electrostatics_mod.estimate_pme_parameters(
             positions,
@@ -472,24 +689,52 @@ def compute_electrostatics_params(
             real_space_cutoff=real_space_cutoff,
         )
 
-    alpha = pme_params.alpha
+    pme_alpha = pme_params.alpha
+    pme_cutoff = (
+        float(real_space_cutoff)
+        if real_space_cutoff is not None
+        else (
+            pme_params.real_space_cutoff.item()
+            if batch_idx is None
+            else pme_params.real_space_cutoff[0].item()
+        )
+    )
     mesh_dimensions = pme_params.mesh_dimensions
     mesh_spacing = pme_params.mesh_spacing
 
-    # When the caller pinned ``real_space_cutoff``, use it for the neighbor
-    # cutoff too — otherwise the neighbor matrix and PME alpha would
-    # disagree on what "rc" means.
-    if real_space_cutoff is not None:
-        cutoff = float(real_space_cutoff)
-
+    cell_static = (
+        cell.detach() if hasattr(cell, "detach") else jax.lax.stop_gradient(cell)
+    )
     k_vectors_pme, k_squared_pme = electrostatics_mod.generate_k_vectors_pme(
-        cell, mesh_dimensions
+        cell_static, mesh_dimensions
     )
 
+    ewald_block = {
+        "alpha": ewald_params.alpha,
+        "k_cutoff": ewald_k_cutoff,
+        "cutoff": ewald_cutoff,
+    }
+    pme_block = {
+        "alpha": pme_alpha,
+        "cutoff": pme_cutoff,
+        "mesh_dimensions": mesh_dimensions,
+        "mesh_spacing": mesh_spacing,
+        "k_vectors_pme": k_vectors_pme,
+        "k_squared_pme": k_squared_pme,
+    }
+
     return {
-        "alpha": alpha,
-        "k_cutoff": k_cutoff,
-        "cutoff": cutoff,
+        "ewald": ewald_block,
+        "pme": pme_block,
+        # Backward-compatible aliases used by older helpers. Prefer the
+        # explicit method blocks for new benchmark code.
+        "alpha": pme_alpha,
+        "alpha_ewald": ewald_block["alpha"],
+        "alpha_pme": pme_block["alpha"],
+        "k_cutoff": ewald_k_cutoff,
+        "cutoff": pme_cutoff,
+        "cutoff_ewald": ewald_cutoff,
+        "cutoff_pme": pme_cutoff,
         "mesh_dimensions": mesh_dimensions,
         "mesh_spacing": mesh_spacing,
         "k_vectors_pme": k_vectors_pme,
@@ -545,6 +790,74 @@ def compute_neighbor_list(
         )
 
 
+def _torch_pme_static_metadata(
+    cell: torch.Tensor,
+    mesh_dimensions: tuple[int, int, int],
+    spline_order: int,
+) -> dict:
+    """Return fixed-cell PME metadata tensors for repeated Torch timings."""
+    cell_static = cell.detach()
+    cell_inv_t = torch.linalg.inv(cell_static).transpose(-1, -2).contiguous()
+    volume = torch.abs(torch.linalg.det(cell_static)).reshape(-1).to(cell.dtype)
+
+    mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
+    device = cell.device
+    miller_x = torch.fft.fftfreq(
+        mesh_nx, d=1.0 / mesh_nx, device=device, dtype=cell.dtype
+    )
+    miller_y = torch.fft.fftfreq(
+        mesh_ny, d=1.0 / mesh_ny, device=device, dtype=cell.dtype
+    )
+    miller_z = torch.fft.rfftfreq(
+        mesh_nz, d=1.0 / mesh_nz, device=device, dtype=cell.dtype
+    )
+
+    return {
+        "cell_inv_t": cell_inv_t,
+        "volume": volume,
+        "moduli_x": _torch_electrostatics.compute_bspline_moduli_1d(
+            miller_x, mesh_nx, spline_order
+        ),
+        "moduli_y": _torch_electrostatics.compute_bspline_moduli_1d(
+            miller_y, mesh_ny, spline_order
+        ),
+        "moduli_z": _torch_electrostatics.compute_bspline_moduli_1d(
+            miller_z, mesh_nz, spline_order
+        ),
+    }
+
+
+def _jax_pme_static_metadata(
+    cell: jax.Array,
+    mesh_dimensions: tuple[int, int, int],
+    spline_order: int,
+) -> dict:
+    """Return fixed-cell PME metadata arrays for repeated JAX timings."""
+    cell_static = jax.lax.stop_gradient(cell)
+    cell_inv = jnp.linalg.inv(cell_static)
+    cell_inv_t = cell_inv.T if cell.ndim == 2 else jnp.transpose(cell_inv, (0, 2, 1))
+    volume = jnp.abs(jnp.linalg.det(cell_static)).reshape(-1).astype(cell.dtype)
+
+    mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
+    miller_x = jnp.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx).astype(cell.dtype)
+    miller_y = jnp.fft.fftfreq(mesh_ny, d=1.0 / mesh_ny).astype(cell.dtype)
+    miller_z = jnp.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz).astype(cell.dtype)
+
+    return {
+        "cell_inv_t": cell_inv_t,
+        "volume": volume,
+        "moduli_x": _jax_electrostatics.compute_bspline_moduli_1d(
+            miller_x, mesh_nx, spline_order
+        ),
+        "moduli_y": _jax_electrostatics.compute_bspline_moduli_1d(
+            miller_y, mesh_ny, spline_order
+        ),
+        "moduli_z": _jax_electrostatics.compute_bspline_moduli_1d(
+            miller_z, mesh_nz, spline_order
+        ),
+    }
+
+
 def prepare_single_system(
     supercell_size: int,
     device: str,
@@ -553,6 +866,7 @@ def prepare_single_system(
     real_space_cutoff: float | None = None,
     accuracy: float = 1e-4,
     build_neighbors: bool = True,
+    neighbor_family: Literal["ewald", "pme"] = "pme",
 ) -> dict:
     """Prepare a single system for benchmarking.
 
@@ -573,6 +887,9 @@ def prepare_single_system(
     build_neighbors : bool, default=True
         Build the neighbor matrix. Set to ``False`` to skip when the
         benchmark only exercises the reciprocal half of PME.
+    neighbor_family : {"ewald", "pme"}, default="pme"
+        Which method family's real-space cutoff to use for the prebuilt
+        neighbor matrix.
 
     Returns
     -------
@@ -598,10 +915,12 @@ def prepare_single_system(
     )
 
     if build_neighbors:
+        neighbor_cutoff = _neighbor_cutoff_from_params(params, neighbor_family)
         neighbor_matrix, num_neighbors, neighbor_matrix_shifts = compute_neighbor_list(
-            backend_data, "torch", params["cutoff"]
+            backend_data, "torch", neighbor_cutoff
         )
     else:
+        neighbor_cutoff = _neighbor_cutoff_from_params(params, neighbor_family)
         neighbor_matrix = None
         num_neighbors = None
         neighbor_matrix_shifts = None
@@ -618,33 +937,15 @@ def prepare_single_system(
         mesh_spacing = mesh_spacing.tolist()
 
     cell_t = backend_data["cell"]
-    cell_inv_t = torch.linalg.inv(cell_t).transpose(-1, -2).contiguous()
-    volume = torch.abs(torch.linalg.det(cell_t)).reshape(-1).to(cell_t.dtype)
-
-    mx_dim, my_dim, mz_dim = params["mesh_dimensions"]
-    device_t = cell_t.device
-    miller_xs = torch.fft.fftfreq(
-        mx_dim, d=1.0 / mx_dim, device=device_t, dtype=cell_t.dtype
+    pme_static = _torch_pme_static_metadata(
+        cell_t, params["mesh_dimensions"], spline_order=4
     )
-    miller_ys = torch.fft.fftfreq(
-        my_dim, d=1.0 / my_dim, device=device_t, dtype=cell_t.dtype
-    )
-    miller_zs = torch.fft.rfftfreq(
-        mz_dim, d=1.0 / mz_dim, device=device_t, dtype=cell_t.dtype
-    )
-    moduli_x = _torch_electrostatics.pme.compute_bspline_moduli_1d(miller_xs, mx_dim, 4)
-    moduli_y = _torch_electrostatics.pme.compute_bspline_moduli_1d(miller_ys, my_dim, 4)
-    moduli_z = _torch_electrostatics.pme.compute_bspline_moduli_1d(miller_zs, mz_dim, 4)
 
     return {
         "positions": backend_data["positions"],
         "charges": backend_data["charges"],
         "cell": cell_t,
-        "cell_inv_t": cell_inv_t,
-        "volume": volume,
-        "moduli_x": moduli_x,
-        "moduli_y": moduli_y,
-        "moduli_z": moduli_z,
+        **pme_static,
         "pbc": pbc,
         "pbc_slab": pbc_slab,
         "neighbor_matrix": neighbor_matrix,
@@ -653,8 +954,13 @@ def prepare_single_system(
         "total_atoms": backend_data["total_atoms"],
         "batch_idx": None,
         "alpha": params["alpha"],
+        "alpha_ewald": params["ewald"]["alpha"],
+        "alpha_pme": params["pme"]["alpha"],
         "k_cutoff": params["k_cutoff"],
-        "cutoff": params["cutoff"],
+        "cutoff_ewald": params["ewald"]["cutoff"],
+        "cutoff_pme": params["pme"]["cutoff"],
+        "cutoff": neighbor_cutoff,
+        "neighbor_family": neighbor_family,
         "mesh_dimensions": params["mesh_dimensions"],
         "mesh_spacing": mesh_spacing,
         "spline_order": 4,
@@ -672,11 +978,14 @@ def prepare_batch_system(
     real_space_cutoff: float | None = None,
     accuracy: float = 1e-4,
     build_neighbors: bool = True,
+    neighbor_family: Literal["ewald", "pme"] = "pme",
 ) -> dict:
     """Prepare a batched system for benchmarking.
 
-    Backward-compatible wrapper that uses the new decoupled helpers internally.
-    The return value structure is identical to the original implementation.
+    This is the batched Torch companion to :func:`prepare_single_system`. It
+    computes method-family-specific Ewald/PME parameter blocks, optional
+    prebuilt neighbor data, and fixed-cell PME metadata used by repeated timing
+    calls.
 
     Parameters
     ----------
@@ -689,12 +998,24 @@ def prepare_batch_system(
         Device string for torch tensors.
     dtype : torch.dtype
         Data type for torch tensors.
+    real_space_cutoff : float, optional
+        If provided, pins PME's real-space cutoff and derived alpha. Ewald keeps
+        its own estimator-derived reciprocal cutoff.
+    accuracy : float, default=1e-4
+        Target relative force accuracy for Ewald/PME parameter estimation.
+    build_neighbors : bool, default=True
+        Build neighbor matrices. When false, neighbor-list fields in the return
+        value are ``None`` for reciprocal-only benchmark paths.
+    neighbor_family : {"ewald", "pme"}, default="pme"
+        Which method family's real-space cutoff to use for prebuilt neighbors.
 
     Returns
     -------
     dict
-        System data ready for electrostatics benchmarks, containing positions,
-        charges, cell, pbc, neighbor list data, batch information, and computed parameters.
+        System data ready for electrostatics benchmarks. Contains backend
+        tensors, batch metadata, optional neighbor data, separate Ewald/PME
+        alpha/cutoff entries, PME mesh/k-vector caches, and fixed-cell metadata
+        (`cell_inv_t`, `volume`, `moduli_x`, `moduli_y`, `moduli_z`).
     """
     dtype_str = str(dtype).split(".")[-1]
 
@@ -716,48 +1037,26 @@ def prepare_batch_system(
     pbc_slab[..., SLAB_AXIS] = False
 
     if build_neighbors:
+        neighbor_cutoff = _neighbor_cutoff_from_params(params, neighbor_family)
         neighbor_matrix, num_neighbors, neighbor_matrix_shifts = compute_neighbor_list(
-            backend_data, "torch", params["cutoff"]
+            backend_data, "torch", neighbor_cutoff
         )
     else:
+        neighbor_cutoff = _neighbor_cutoff_from_params(params, neighbor_family)
         neighbor_matrix = None
         num_neighbors = None
         neighbor_matrix_shifts = None
 
     cell_t_b = backend_data["cell"]
-    cell_inv_t_b = torch.linalg.inv(cell_t_b).transpose(-1, -2).contiguous()
-    volume_b = torch.abs(torch.linalg.det(cell_t_b)).reshape(-1).to(cell_t_b.dtype)
-
-    mx_dim_b, my_dim_b, mz_dim_b = params["mesh_dimensions"]
-    device_b = cell_t_b.device
-    miller_xs_b = torch.fft.fftfreq(
-        mx_dim_b, d=1.0 / mx_dim_b, device=device_b, dtype=cell_t_b.dtype
-    )
-    miller_ys_b = torch.fft.fftfreq(
-        my_dim_b, d=1.0 / my_dim_b, device=device_b, dtype=cell_t_b.dtype
-    )
-    miller_zs_b = torch.fft.rfftfreq(
-        mz_dim_b, d=1.0 / mz_dim_b, device=device_b, dtype=cell_t_b.dtype
-    )
-    moduli_x_b = _torch_electrostatics.pme.compute_bspline_moduli_1d(
-        miller_xs_b, mx_dim_b, 4
-    )
-    moduli_y_b = _torch_electrostatics.pme.compute_bspline_moduli_1d(
-        miller_ys_b, my_dim_b, 4
-    )
-    moduli_z_b = _torch_electrostatics.pme.compute_bspline_moduli_1d(
-        miller_zs_b, mz_dim_b, 4
+    pme_static = _torch_pme_static_metadata(
+        cell_t_b, params["mesh_dimensions"], spline_order=4
     )
 
     return {
         "positions": backend_data["positions"],
         "charges": backend_data["charges"],
         "cell": cell_t_b,
-        "cell_inv_t": cell_inv_t_b,
-        "volume": volume_b,
-        "moduli_x": moduli_x_b,
-        "moduli_y": moduli_y_b,
-        "moduli_z": moduli_z_b,
+        **pme_static,
         "pbc": backend_data["pbc"],
         "pbc_slab": pbc_slab,
         "neighbor_matrix": neighbor_matrix,
@@ -767,8 +1066,13 @@ def prepare_batch_system(
         "batch_idx": backend_data["batch_idx"],
         "batch_size": batch_size,
         "alpha": params["alpha"],
+        "alpha_ewald": params["ewald"]["alpha"],
+        "alpha_pme": params["pme"]["alpha"],
         "k_cutoff": params["k_cutoff"],
-        "cutoff": params["cutoff"],
+        "cutoff_ewald": params["ewald"]["cutoff"],
+        "cutoff_pme": params["pme"]["cutoff"],
+        "cutoff": neighbor_cutoff,
+        "neighbor_family": neighbor_family,
         "mesh_dimensions": params["mesh_dimensions"],
         "mesh_spacing": params["mesh_spacing"],
         "spline_order": 4,
@@ -783,6 +1087,7 @@ def prepare_jax_ewald_pme_system(
     real_space_cutoff: float | None = None,
     accuracy: float = 1e-4,
     build_neighbors: bool = True,
+    neighbor_family: Literal["ewald", "pme"] = "pme",
 ) -> dict:
     """Prepare a JAX system dictionary for Ewald and PME benchmarks."""
     backend_data = convert_to_backend(np_data, "jax", dtype_str=dtype_str)
@@ -793,38 +1098,27 @@ def prepare_jax_ewald_pme_system(
         accuracy=accuracy,
     )
     if build_neighbors:
+        neighbor_cutoff = _neighbor_cutoff_from_params(params_data, neighbor_family)
         nl_matrix, nl_num_neighbors, nl_matrix_shifts = compute_neighbor_list(
-            backend_data, "jax", params_data["cutoff"]
+            backend_data, "jax", neighbor_cutoff
         )
     else:
+        neighbor_cutoff = _neighbor_cutoff_from_params(params_data, neighbor_family)
         nl_matrix = None
         nl_num_neighbors = None
         nl_matrix_shifts = None
 
     pbc_slab = backend_data["pbc"].at[..., SLAB_AXIS].set(False)
     cell_j = backend_data["cell"]
-    cell_inv_j = jnp.linalg.inv(cell_j)
-    cell_inv_t_j = (
-        cell_inv_j.T if cell_j.ndim == 2 else jnp.transpose(cell_inv_j, (0, 2, 1))
+    pme_static = _jax_pme_static_metadata(
+        cell_j, params_data["mesh_dimensions"], spline_order=4
     )
-    volume_j = jnp.abs(jnp.linalg.det(cell_j)).reshape(-1).astype(cell_j.dtype)
-    mx_dim, my_dim, mz_dim = params_data["mesh_dimensions"]
-    miller_x = jnp.fft.fftfreq(mx_dim, d=1.0 / mx_dim).astype(cell_j.dtype)
-    miller_y = jnp.fft.fftfreq(my_dim, d=1.0 / my_dim).astype(cell_j.dtype)
-    miller_z = jnp.fft.rfftfreq(mz_dim, d=1.0 / mz_dim).astype(cell_j.dtype)
-    moduli_x = _jax_electrostatics.compute_bspline_moduli_1d(miller_x, mx_dim, 4)
-    moduli_y = _jax_electrostatics.compute_bspline_moduli_1d(miller_y, my_dim, 4)
-    moduli_z = _jax_electrostatics.compute_bspline_moduli_1d(miller_z, mz_dim, 4)
 
     system_data = {
         "positions": backend_data["positions"],
         "charges": backend_data["charges"],
         "cell": cell_j,
-        "cell_inv_t": cell_inv_t_j,
-        "volume": volume_j,
-        "moduli_x": moduli_x,
-        "moduli_y": moduli_y,
-        "moduli_z": moduli_z,
+        **pme_static,
         "pbc": backend_data["pbc"],
         "pbc_slab": pbc_slab,
         "neighbor_matrix": nl_matrix,
@@ -834,8 +1128,13 @@ def prepare_jax_ewald_pme_system(
         "num_atoms_per_system": backend_data["num_atoms_per_system"],
         "batch_idx": backend_data["batch_idx"],
         "alpha": params_data["alpha"],
+        "alpha_ewald": params_data["ewald"]["alpha"],
+        "alpha_pme": params_data["pme"]["alpha"],
         "k_cutoff": params_data["k_cutoff"],
-        "cutoff": params_data["cutoff"],
+        "cutoff_ewald": params_data["ewald"]["cutoff"],
+        "cutoff_pme": params_data["pme"]["cutoff"],
+        "cutoff": neighbor_cutoff,
+        "neighbor_family": neighbor_family,
         "mesh_dimensions": params_data["mesh_dimensions"],
         "mesh_spacing": params_data["mesh_spacing"],
         "spline_order": 4,
@@ -1109,9 +1408,11 @@ def run_nvalchemiops_ewald(
     charges = system_data["charges"]
     cell = system_data["cell"]
     batch_idx = system_data.get("batch_idx")
-    alpha = system_data.get("alpha")
+    alpha = system_data.get("alpha_ewald", system_data.get("alpha"))
     k_cutoff = system_data.get("k_cutoff")
-    k_vectors = _torch_electrostatics.generate_k_vectors_ewald_summation(cell, k_cutoff)
+    k_vectors = _torch_electrostatics.generate_k_vectors_ewald_summation(
+        cell.detach(), k_cutoff
+    )
     pbc_slab = system_data.get("pbc_slab")
 
     neighbor_matrix_data = system_data.get("neighbor_matrix")
@@ -1213,7 +1514,7 @@ def run_nvalchemiops_pme(
     moduli_y = system_data.get("moduli_y")
     moduli_z = system_data.get("moduli_z")
     batch_idx = system_data.get("batch_idx")
-    alpha = system_data.get("alpha")
+    alpha = system_data.get("alpha_pme", system_data.get("alpha"))
     mesh_dimensions = system_data.get("mesh_dimensions")
     spline_order = system_data.get("spline_order")
     k_vectors_pme = system_data.get("k_vectors_pme")
@@ -1372,7 +1673,7 @@ def prepare_jax_ewald(
     charges = system_data["charges"]
     cell = system_data["cell"]
     batch_idx = system_data.get("batch_idx")
-    alpha = system_data.get("alpha")
+    alpha = system_data.get("alpha_ewald", system_data.get("alpha"))
     k_cutoff = system_data.get("k_cutoff")
     num_atoms_per_system = system_data.get("num_atoms_per_system")
     pbc_slab = system_data.get("pbc_slab")
@@ -1429,7 +1730,9 @@ def prepare_jax_ewald(
         @jax.jit
         def _jit_fn(positions, charges, cell, alpha, batch_idx):
             k_vectors = _jax_electrostatics.generate_k_vectors_ewald_summation(
-                cell, _k_cutoff, miller_bounds=_miller_bounds
+                jax.lax.stop_gradient(cell),
+                _k_cutoff,
+                miller_bounds=_miller_bounds,
             )
             return _jax_electrostatics.ewald_reciprocal_space(
                 positions=positions,
@@ -1526,7 +1829,7 @@ def prepare_jax_pme(
     charges = system_data["charges"]
     cell = system_data["cell"]
     batch_idx = system_data.get("batch_idx")
-    alpha = system_data.get("alpha")
+    alpha = system_data.get("alpha_pme", system_data.get("alpha"))
     mesh_dimensions = system_data.get("mesh_dimensions")
     spline_order = system_data.get("spline_order")
     pbc_slab = system_data.get("pbc_slab")
@@ -1766,7 +2069,7 @@ def run_torchpme_ewald(
     positions = system_data["positions"]
     charges = system_data["charges"]
     cell = system_data["cell"]
-    alpha = system_data.get("alpha").item()
+    alpha = system_data.get("alpha_ewald", system_data.get("alpha")).item()
     k_cutoff = system_data.get("k_cutoff")
     dtype = positions.dtype
     device = positions.device
@@ -1829,7 +2132,7 @@ def run_torchpme_pme(
     positions = system_data["positions"]
     charges = system_data["charges"]
     cell = system_data["cell"]
-    alpha = system_data.get("alpha").item()
+    alpha = system_data.get("alpha_pme", system_data.get("alpha")).item()
     mesh_spacing = system_data.get("mesh_spacing")[0][0]
     spline_order = system_data.get("spline_order")
     dtype = positions.dtype
@@ -2126,9 +2429,6 @@ def run_benchmark(
     ``framework_compile_ms`` in the returned dict, isolated from the
     warp NVRTC cost which is paid by a pre-warm raw call beforehand.
     """
-    total_atoms = system_data["total_atoms"]
-    batch_size = system_data.get("batch_size", 1)
-
     effective_virial = compute_virial
 
     try:
@@ -2151,21 +2451,19 @@ def run_benchmark(
                 def bench_fn():
                     return run_torch_dsf(system_data, compute_forces, effective_virial)
             else:
-                return {
-                    "total_atoms": total_atoms,
-                    "batch_size": batch_size,
-                    "method": method,
-                    "backend": backend,
-                    "component": component,
-                    "compute_forces": compute_forces,
-                    "compute_virial": effective_virial,
-                    "neighbor_format": neighbor_format,
-                    "median_time_ms": float("inf"),
-                    "peak_memory_mb": None,
-                    "success": False,
-                    "error": f"Backend '{backend}' not applicable for DSF",
-                    "error_type": "NotApplicable",
-                }
+                return benchmark_result_row(
+                    system_data=system_data,
+                    method=method,
+                    backend=backend,
+                    component=component,
+                    compute_forces=compute_forces,
+                    compute_virial=effective_virial,
+                    neighbor_format=neighbor_format,
+                    torch_compile=torch_compile,
+                    success=False,
+                    error=f"Backend '{backend}' not applicable for DSF",
+                    error_type="NotApplicable",
+                )
         elif backend == "torch":
             if method in ("ewald", "ewald_slab"):
 
@@ -2205,22 +2503,34 @@ def run_benchmark(
                     slab_correction=method == "pme_slab",
                 )
         elif backend == "torchpme":
+            if method in SLAB_METHODS:
+                return benchmark_result_row(
+                    system_data=system_data,
+                    method=method,
+                    backend=backend,
+                    component=component,
+                    compute_forces=compute_forces,
+                    compute_virial=effective_virial,
+                    neighbor_format=neighbor_format,
+                    torch_compile=torch_compile,
+                    success=False,
+                    error=f"torchpme does not support slab method {method!r}",
+                    error_type="NotApplicable",
+                )
             if system_data.get("batch_idx") is not None:
-                return {
-                    "total_atoms": total_atoms,
-                    "batch_size": batch_size,
-                    "method": method,
-                    "backend": backend,
-                    "component": component,
-                    "compute_forces": compute_forces,
-                    "compute_virial": effective_virial,
-                    "neighbor_format": neighbor_format,
-                    "median_time_ms": float("inf"),
-                    "peak_memory_mb": None,
-                    "success": False,
-                    "error": "torchpme does not support native batched evaluation",
-                    "error_type": "NotImplemented",
-                }
+                return benchmark_result_row(
+                    system_data=system_data,
+                    method=method,
+                    backend=backend,
+                    component=component,
+                    compute_forces=compute_forces,
+                    compute_virial=effective_virial,
+                    neighbor_format=neighbor_format,
+                    torch_compile=torch_compile,
+                    success=False,
+                    error="torchpme does not support native batched evaluation",
+                    error_type="NotImplemented",
+                )
 
             if method == "ewald":
 
@@ -2237,21 +2547,19 @@ def run_benchmark(
                         effective_virial,
                     )
         else:
-            return {
-                "total_atoms": total_atoms,
-                "batch_size": batch_size,
-                "method": method,
-                "backend": backend,
-                "component": component,
-                "compute_forces": compute_forces,
-                "compute_virial": effective_virial,
-                "neighbor_format": neighbor_format,
-                "median_time_ms": float("inf"),
-                "peak_memory_mb": None,
-                "success": False,
-                "error": f"Backend '{backend}' not applicable for {method}",
-                "error_type": "NotApplicable",
-            }
+            return benchmark_result_row(
+                system_data=system_data,
+                method=method,
+                backend=backend,
+                component=component,
+                compute_forces=compute_forces,
+                compute_virial=effective_virial,
+                neighbor_format=neighbor_format,
+                torch_compile=torch_compile,
+                success=False,
+                error=f"Backend '{backend}' not applicable for {method}",
+                error_type="NotApplicable",
+            )
 
         # Framework-compile cost (torch.compile or JAX jit) measured by a
         # one-shot wrap + first-call timing AFTER the raw bench_fn has been
@@ -2270,9 +2578,8 @@ def run_benchmark(
                 bench_fn()
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
                 warp_compile_ms = (_time.perf_counter() - _t0) * 1000.0
-                # Use the default torch.compile mode — ``reduce-overhead``
-                # captures CUDA graphs internally and clashes with warp's
-                # stream binding.
+                # Use the default torch.compile mode. CUDA-graph capture modes
+                # clash with warp's stream binding in this benchmark.
                 compiled_fn = torch.compile(bench_fn, fullgraph=True)
                 torch.cuda.synchronize() if torch.cuda.is_available() else None
                 _t0 = _time.perf_counter()
@@ -2284,6 +2591,22 @@ def run_benchmark(
             except Exception as _e:
                 framework = f"torch.compile-FAILED:{type(_e).__name__}"
                 framework_compile_ms = None
+                return benchmark_result_row(
+                    system_data=system_data,
+                    method=method,
+                    backend=backend,
+                    component=component,
+                    compute_forces=compute_forces,
+                    compute_virial=effective_virial,
+                    neighbor_format=neighbor_format,
+                    torch_compile=torch_compile,
+                    success=False,
+                    warp_compile_ms=warp_compile_ms,
+                    framework_compile_ms=framework_compile_ms,
+                    framework=framework,
+                    error=str(_e),
+                    error_type=type(_e).__name__,
+                )
         elif backend == "jax":
             # JAX path is already JIT-ed inside prepare_jax_pme; time the
             # first call separately as a proxy for XLA trace cost.
@@ -2300,6 +2623,22 @@ def run_benchmark(
             except Exception as _e:
                 framework = f"jax.jit-FAILED:{type(_e).__name__}"
                 framework_compile_ms = None
+                return benchmark_result_row(
+                    system_data=system_data,
+                    method=method,
+                    backend=backend,
+                    component=component,
+                    compute_forces=compute_forces,
+                    compute_virial=effective_virial,
+                    neighbor_format=neighbor_format,
+                    torch_compile=torch_compile,
+                    success=False,
+                    warp_compile_ms=warp_compile_ms,
+                    framework_compile_ms=framework_compile_ms,
+                    framework=framework,
+                    error=str(_e),
+                    error_type=type(_e).__name__,
+                )
 
         # Run steady-state benchmark
         timing_results = timer.time_function(bench_fn)
@@ -2307,57 +2646,58 @@ def run_benchmark(
             torch.cuda.empty_cache()
         if not timing_results["success"]:
             print(f"Benchmark failed: {timing_results.get('error', 'Unknown error')}")
-            return {
-                "total_atoms": total_atoms,
-                "batch_size": batch_size,
-                "method": method,
-                "backend": backend,
-                "component": component,
-                "compute_forces": compute_forces,
-                "compute_virial": effective_virial,
-                "neighbor_format": neighbor_format,
-                "median_time_ms": float("inf"),
-                "peak_memory_mb": timing_results.get("peak_memory_mb"),
-                "success": False,
-                "error": timing_results.get("error", "Unknown error"),
-                "error_type": timing_results.get("error_type", "Unknown"),
-            }
+            return benchmark_result_row(
+                system_data=system_data,
+                method=method,
+                backend=backend,
+                component=component,
+                compute_forces=compute_forces,
+                compute_virial=effective_virial,
+                neighbor_format=neighbor_format,
+                torch_compile=torch_compile,
+                success=False,
+                peak_memory_mb=timing_results.get("peak_memory_mb"),
+                compile_ms=timing_results.get("compile_ms"),
+                warp_compile_ms=warp_compile_ms,
+                framework_compile_ms=framework_compile_ms,
+                framework=framework,
+                error=timing_results.get("error", "Unknown error"),
+                error_type=timing_results.get("error_type", "Unknown"),
+            )
 
-        return {
-            "total_atoms": total_atoms,
-            "batch_size": batch_size,
-            "method": method,
-            "backend": backend,
-            "component": component,
-            "compute_forces": compute_forces,
-            "compute_virial": effective_virial,
-            "neighbor_format": neighbor_format,
-            "median_time_ms": float(timing_results["median"]),
-            "peak_memory_mb": timing_results.get("peak_memory_mb"),
-            "compile_ms": timing_results.get("compile_ms"),
-            "warp_compile_ms": warp_compile_ms,
-            "framework_compile_ms": framework_compile_ms,
-            "framework": framework,
-            "success": True,
-        }
+        return benchmark_result_row(
+            system_data=system_data,
+            method=method,
+            backend=backend,
+            component=component,
+            compute_forces=compute_forces,
+            compute_virial=effective_virial,
+            neighbor_format=neighbor_format,
+            torch_compile=torch_compile,
+            success=True,
+            median_time_ms=timing_results["median"],
+            peak_memory_mb=timing_results.get("peak_memory_mb"),
+            compile_ms=timing_results.get("compile_ms"),
+            warp_compile_ms=warp_compile_ms,
+            framework_compile_ms=framework_compile_ms,
+            framework=framework,
+        )
 
     except Exception as e:
         print(f"Benchmark failed: {e}")
-        return {
-            "total_atoms": total_atoms,
-            "batch_size": batch_size,
-            "method": method,
-            "backend": backend,
-            "component": component,
-            "compute_forces": compute_forces,
-            "compute_virial": effective_virial,
-            "neighbor_format": neighbor_format,
-            "median_time_ms": float("inf"),
-            "peak_memory_mb": None,
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__,
-        }
+        return benchmark_result_row(
+            system_data=system_data,
+            method=method,
+            backend=backend,
+            component=component,
+            compute_forces=compute_forces,
+            compute_virial=effective_virial,
+            neighbor_format=neighbor_format,
+            torch_compile=torch_compile,
+            success=False,
+            error=str(e),
+            error_type=type(e).__name__,
+        )
 
 
 # ==============================================================================
@@ -2452,7 +2792,7 @@ def main():
         action="store_true",
         help=(
             "Wrap each torch-backend bench callable in "
-            "``torch.compile(fullgraph=True, mode='reduce-overhead')`` and "
+            "``torch.compile(fullgraph=True)`` and "
             "record the framework-compile cost in a separate CSV column. "
             "The pre-warm pass calls the raw bench_fn once first so warp "
             "NVRTC compile and torch.compile (Dynamo + Inductor) costs "
@@ -2468,6 +2808,8 @@ def main():
 
     # Load config
     config = load_config(args.config)
+    config_path = str(args.config)
+    config_sha256 = hashlib.sha256(args.config.read_bytes()).hexdigest()
 
     # Resolve framework-level backend type
     backend_type = _resolve_backend_type(args.backend)
@@ -2503,8 +2845,17 @@ def main():
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize timer
-    timer = BenchmarkTimer(backend=backend_type, warmup_runs=warmup, timing_runs=timing)
+    # Initialize timers. ``--backend both`` may dispatch Torch-family and JAX
+    # rows in one process, and each timer owns framework-specific sync logic.
+    timers = {}
+    if args.backend != "jax":
+        timers["torch"] = BenchmarkTimer(
+            backend="torch", warmup_runs=warmup, timing_runs=timing
+        )
+    if args.backend == "jax" or (args.backend == "both" and JAX_AVAILABLE):
+        timers["jax"] = BenchmarkTimer(
+            backend="jax", warmup_runs=warmup, timing_runs=timing
+        )
 
     # Initialize Warp (only needed for torch backend)
     if backend_type == "torch" and wp is not None:
@@ -2513,43 +2864,9 @@ def main():
     # Determine what to benchmark. The CLI ``--method`` wins when explicitly
     # passed; otherwise the YAML's ``methods:`` list controls. If neither is
     # set, default to the historical ewald + pme pair.
-    if args.method is not None:
-        if args.method == "both":
-            methods = ["ewald", "pme"]
-        elif args.method == "all":
-            methods = ["ewald", "ewald_slab", "pme", "pme_slab", "dsf"]
-        else:
-            methods = [args.method]
-    else:
-        methods = config.get("methods", ["ewald", "pme"])
-
-    # Build per-method backend list
-    def get_backends_for_method(method: str) -> list[str]:
-        if args.backend == "both":
-            if method in ("ewald", "pme"):
-                result = ["torch"]
-                if TORCHPME_AVAILABLE:
-                    result.append("torchpme")
-                return result
-            elif method in ("ewald_slab", "pme_slab"):
-                return ["torch"]
-            elif method == "dsf":
-                return ["torch", "torch_dsf"]
-        elif args.backend == "torch":
-            return ["torch"]
-        elif args.backend == "jax":
-            if method in ("ewald", "ewald_slab", "pme", "pme_slab"):
-                return ["jax"]
-            return []
-        elif args.backend == "torchpme":
-            if method in ("ewald", "pme"):
-                return ["torchpme"] if TORCHPME_AVAILABLE else []
-            return []
-        elif args.backend == "torch_dsf":
-            if method == "dsf":
-                return ["torch_dsf"]
-            return []
-        return ["torch"]
+    methods = resolve_methods(args.method, config.get("methods"))
+    for method in methods:
+        get_backends_for_method(args.backend, method)
 
     components = config.get("components", ["full"])
     compute_forces = config.get("compute_forces", True)
@@ -2569,8 +2886,10 @@ def main():
     else:
         accuracy = float(params.get("accuracy", 1e-4))
 
-    # Skip neighbor-list construction when only reciprocal space is requested.
-    build_neighbors = set(components) != {"reciprocal"}
+    # Skip neighbor-list construction only for pure reciprocal non-slab runs.
+    should_build_neighbors = set(components) != {"reciprocal"} or any(
+        method in SLAB_METHODS for method in methods
+    )
 
     # DSF-specific parameters (hardcoded defaults)
     dsf_cutoff = 12.0
@@ -2638,69 +2957,73 @@ def main():
                 print(f"\n  ~{expected_atoms:,d} atoms (supercell {size}³)...")
 
                 # Reset memory
-                timer.clear_memory()
+                for timer in timers.values():
+                    timer.clear_memory()
 
-                # Prepare systems (method-specific)
+                # Prepare systems (method/backend-specific)
                 system_data_cache = {}
                 for method in methods:
-                    if method == "dsf":
-                        if "dsf" not in system_data_cache:
+                    backends = get_backends_for_method(args.backend, method)
+                    for backend in backends:
+                        if method == "dsf":
+                            cache_key = ("dsf", "torch")
+                            if cache_key in system_data_cache:
+                                continue
                             try:
-                                system_data_cache["dsf"] = prepare_dsf_single_system(
-                                    size, device, dtype, dsf_cutoff, dsf_alpha
+                                system_data_cache[cache_key] = (
+                                    prepare_dsf_single_system(
+                                        size, device, dtype, dsf_cutoff, dsf_alpha
+                                    )
                                 )
                             except Exception as e:
                                 print(f"    Failed to prepare DSF system: {e}")
                                 traceback.print_exc()
-                                system_data_cache["dsf"] = None
-                    else:
-                        cache_key = (
-                            "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
-                        )
-                        if cache_key not in system_data_cache:
-                            try:
-                                np_data = (
-                                    prepare_slab_system_numpy(size, batch_size=1)
-                                    if method in SLAB_METHODS
-                                    else prepare_system_numpy(size, batch_size=1)
-                                )
-                                if args.backend == "jax":
-                                    system_data_cache[cache_key] = (
-                                        prepare_jax_ewald_pme_system(
-                                            np_data,
-                                            dtype_str,
-                                            real_space_cutoff=real_space_cutoff,
-                                            accuracy=accuracy,
-                                            build_neighbors=build_neighbors,
-                                        )
-                                    )
-                                else:
-                                    system_data_cache[cache_key] = (
-                                        prepare_single_system(
-                                            size,
-                                            device,
-                                            dtype,
-                                            np_data=np_data,
-                                            real_space_cutoff=real_space_cutoff,
-                                            accuracy=accuracy,
-                                            build_neighbors=build_neighbors,
-                                        )
-                                    )
-                            except Exception as e:
-                                print(f"    Failed to prepare system: {e}")
-                                traceback.print_exc()
                                 system_data_cache[cache_key] = None
+                            continue
+
+                        prep_backend = "jax" if backend == "jax" else "torch"
+                        cache_key = (_system_cache_key(method), prep_backend)
+                        if cache_key in system_data_cache:
+                            continue
+                        try:
+                            np_data = (
+                                prepare_slab_system_numpy(size, batch_size=1)
+                                if method in SLAB_METHODS
+                                else prepare_system_numpy(size, batch_size=1)
+                            )
+                            if prep_backend == "jax":
+                                system_data_cache[cache_key] = (
+                                    prepare_jax_ewald_pme_system(
+                                        np_data,
+                                        dtype_str,
+                                        real_space_cutoff=real_space_cutoff,
+                                        accuracy=accuracy,
+                                        build_neighbors=should_build_neighbors,
+                                        neighbor_family=_electrostatic_method_family(
+                                            method
+                                        ),
+                                    )
+                                )
+                            else:
+                                system_data_cache[cache_key] = prepare_single_system(
+                                    size,
+                                    device,
+                                    dtype,
+                                    np_data=np_data,
+                                    real_space_cutoff=real_space_cutoff,
+                                    accuracy=accuracy,
+                                    build_neighbors=should_build_neighbors,
+                                    neighbor_family=_electrostatic_method_family(
+                                        method
+                                    ),
+                                )
+                        except Exception as e:
+                            print(f"    Failed to prepare system: {e}")
+                            traceback.print_exc()
+                            system_data_cache[cache_key] = None
 
                 for method in methods:
-                    backends = get_backends_for_method(method)
-                    cache_key = (
-                        "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
-                    )
-                    system_data = system_data_cache.get(
-                        "dsf" if method == "dsf" else cache_key
-                    )
-                    if system_data is None:
-                        continue
+                    backends = get_backends_for_method(args.backend, method)
 
                     method_components = (
                         ["full"]
@@ -2708,6 +3031,16 @@ def main():
                         else components
                     )
                     for backend in backends:
+                        prep_backend = "jax" if backend == "jax" else "torch"
+                        cache_key = (
+                            ("dsf", "torch")
+                            if method == "dsf"
+                            else (_system_cache_key(method), prep_backend)
+                        )
+                        system_data = system_data_cache.get(cache_key)
+                        if system_data is None:
+                            continue
+                        timer = timers[prep_backend]
                         for component in method_components:
                             if method == "dsf" and backend in ("torch", "torch_dsf"):
                                 nf_arg = args.neighbor_format
@@ -2732,37 +3065,50 @@ def main():
                                         neighbor_format=nf,
                                         torch_compile=args.torch_compile,
                                     )
-                                    result["supercell_size"] = size
-                                    result["mode"] = mode
+                                    annotate_result_row(
+                                        result,
+                                        supercell_size=size,
+                                        mode=mode,
+                                        dtype=dtype_str,
+                                        config_path=config_path,
+                                        config_sha256=config_sha256,
+                                        accuracy=accuracy,
+                                        real_space_cutoff=real_space_cutoff,
+                                    )
                                     all_results.append(result)
                                     nf_tag = f" [{nf}]" if nf != "n/a" else ""
                                     _print_result(
                                         result, method, backend + nf_tag, component
                                     )
-                                except (torch.OutOfMemoryError, RuntimeError) as oom:
-                                    if (
-                                        isinstance(oom, RuntimeError)
-                                        and "out of memory" not in str(oom).lower()
-                                    ):
+                                except RuntimeError as oom:
+                                    if "out of memory" not in str(oom).lower():
                                         raise
-                                    torch.cuda.empty_cache()
+                                    if TORCH_AVAILABLE and torch.cuda.is_available():
+                                        torch.cuda.empty_cache()
                                     nf_tag = f" [{nf}]" if nf != "n/a" else ""
-                                    result = {
-                                        "total_atoms": system_data["total_atoms"],
-                                        "batch_size": system_data.get("batch_size", 1),
-                                        "method": method,
-                                        "backend": backend,
-                                        "component": component,
-                                        "compute_forces": compute_forces,
-                                        "neighbor_format": nf,
-                                        "median_time_ms": float("inf"),
-                                        "peak_memory_mb": None,
-                                        "success": False,
-                                        "error": str(oom).split(".")[0],
-                                        "error_type": type(oom).__name__,
-                                        "supercell_size": size,
-                                        "mode": mode,
-                                    }
+                                    result = benchmark_result_row(
+                                        system_data=system_data,
+                                        method=method,
+                                        backend=backend,
+                                        component=component,
+                                        compute_forces=compute_forces,
+                                        compute_virial=compute_virial,
+                                        neighbor_format=nf,
+                                        torch_compile=args.torch_compile,
+                                        success=False,
+                                        error=str(oom).split(".")[0],
+                                        error_type=type(oom).__name__,
+                                    )
+                                    annotate_result_row(
+                                        result,
+                                        supercell_size=size,
+                                        mode=mode,
+                                        dtype=dtype_str,
+                                        config_path=config_path,
+                                        config_sha256=config_sha256,
+                                        accuracy=accuracy,
+                                        real_space_cutoff=real_space_cutoff,
+                                    )
                                     all_results.append(result)
                                     print(
                                         f"    {method:5s} {backend + nf_tag:16s} "
@@ -2782,15 +3128,20 @@ def main():
                 )
 
                 # Reset memory
-                timer.clear_memory()
+                for timer in timers.values():
+                    timer.clear_memory()
 
-                # Prepare systems (method-specific)
+                # Prepare systems (method/backend-specific)
                 system_data_cache = {}
                 for method in methods:
-                    if method == "dsf":
-                        if "dsf" not in system_data_cache:
+                    backends = get_backends_for_method(args.backend, method)
+                    for backend in backends:
+                        if method == "dsf":
+                            cache_key = ("dsf", "torch")
+                            if cache_key in system_data_cache:
+                                continue
                             try:
-                                system_data_cache["dsf"] = prepare_dsf_batch_system(
+                                system_data_cache[cache_key] = prepare_dsf_batch_system(
                                     base_size,
                                     batch_size,
                                     device,
@@ -2801,58 +3152,57 @@ def main():
                             except Exception as e:
                                 print(f"    Failed to prepare DSF batch: {e}")
                                 traceback.print_exc()
-                                system_data_cache["dsf"] = None
-                    else:
-                        cache_key = (
-                            "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
-                        )
-                        if cache_key not in system_data_cache:
-                            try:
-                                np_data = (
-                                    prepare_slab_system_numpy(
-                                        base_size, batch_size=batch_size
-                                    )
-                                    if method in SLAB_METHODS
-                                    else prepare_system_numpy(
-                                        base_size, batch_size=batch_size
-                                    )
+                                system_data_cache[cache_key] = None
+                            continue
+
+                        prep_backend = "jax" if backend == "jax" else "torch"
+                        cache_key = (_system_cache_key(method), prep_backend)
+                        if cache_key in system_data_cache:
+                            continue
+                        try:
+                            np_data = (
+                                prepare_slab_system_numpy(
+                                    base_size, batch_size=batch_size
                                 )
-                                if args.backend == "jax":
-                                    system_data_cache[cache_key] = (
-                                        prepare_jax_ewald_pme_system(
-                                            np_data,
-                                            dtype_str,
-                                            real_space_cutoff=real_space_cutoff,
-                                            accuracy=accuracy,
-                                            build_neighbors=build_neighbors,
-                                        )
-                                    )
-                                else:
-                                    system_data_cache[cache_key] = prepare_batch_system(
-                                        base_size,
-                                        batch_size,
-                                        device,
-                                        dtype,
-                                        np_data=np_data,
+                                if method in SLAB_METHODS
+                                else prepare_system_numpy(
+                                    base_size, batch_size=batch_size
+                                )
+                            )
+                            if prep_backend == "jax":
+                                system_data_cache[cache_key] = (
+                                    prepare_jax_ewald_pme_system(
+                                        np_data,
+                                        dtype_str,
                                         real_space_cutoff=real_space_cutoff,
                                         accuracy=accuracy,
-                                        build_neighbors=build_neighbors,
+                                        build_neighbors=should_build_neighbors,
+                                        neighbor_family=_electrostatic_method_family(
+                                            method
+                                        ),
                                     )
-                            except Exception as e:
-                                print(f"    Failed to prepare system: {e}")
-                                traceback.print_exc()
-                                system_data_cache[cache_key] = None
+                                )
+                            else:
+                                system_data_cache[cache_key] = prepare_batch_system(
+                                    base_size,
+                                    batch_size,
+                                    device,
+                                    dtype,
+                                    np_data=np_data,
+                                    real_space_cutoff=real_space_cutoff,
+                                    accuracy=accuracy,
+                                    build_neighbors=should_build_neighbors,
+                                    neighbor_family=_electrostatic_method_family(
+                                        method
+                                    ),
+                                )
+                        except Exception as e:
+                            print(f"    Failed to prepare system: {e}")
+                            traceback.print_exc()
+                            system_data_cache[cache_key] = None
 
                 for method in methods:
-                    backends = get_backends_for_method(method)
-                    cache_key = (
-                        "ewald_pme_slab" if method in SLAB_METHODS else "ewald_pme"
-                    )
-                    system_data = system_data_cache.get(
-                        "dsf" if method == "dsf" else cache_key
-                    )
-                    if system_data is None:
-                        continue
+                    backends = get_backends_for_method(args.backend, method)
 
                     method_components = (
                         ["full"]
@@ -2860,6 +3210,16 @@ def main():
                         else components
                     )
                     for backend in backends:
+                        prep_backend = "jax" if backend == "jax" else "torch"
+                        cache_key = (
+                            ("dsf", "torch")
+                            if method == "dsf"
+                            else (_system_cache_key(method), prep_backend)
+                        )
+                        system_data = system_data_cache.get(cache_key)
+                        if system_data is None:
+                            continue
+                        timer = timers[prep_backend]
                         for component in method_components:
                             if method == "dsf" and backend in ("torch", "torch_dsf"):
                                 nf_arg = args.neighbor_format
@@ -2884,37 +3244,50 @@ def main():
                                         neighbor_format=nf,
                                         torch_compile=args.torch_compile,
                                     )
-                                    result["supercell_size"] = base_size
-                                    result["mode"] = mode
+                                    annotate_result_row(
+                                        result,
+                                        supercell_size=base_size,
+                                        mode=mode,
+                                        dtype=dtype_str,
+                                        config_path=config_path,
+                                        config_sha256=config_sha256,
+                                        accuracy=accuracy,
+                                        real_space_cutoff=real_space_cutoff,
+                                    )
                                     all_results.append(result)
                                     nf_tag = f" [{nf}]" if nf != "n/a" else ""
                                     _print_result(
                                         result, method, backend + nf_tag, component
                                     )
-                                except (torch.OutOfMemoryError, RuntimeError) as oom:
-                                    if (
-                                        isinstance(oom, RuntimeError)
-                                        and "out of memory" not in str(oom).lower()
-                                    ):
+                                except RuntimeError as oom:
+                                    if "out of memory" not in str(oom).lower():
                                         raise
-                                    torch.cuda.empty_cache()
+                                    if TORCH_AVAILABLE and torch.cuda.is_available():
+                                        torch.cuda.empty_cache()
                                     nf_tag = f" [{nf}]" if nf != "n/a" else ""
-                                    result = {
-                                        "total_atoms": system_data["total_atoms"],
-                                        "batch_size": system_data.get("batch_size", 1),
-                                        "method": method,
-                                        "backend": backend,
-                                        "component": component,
-                                        "compute_forces": compute_forces,
-                                        "neighbor_format": nf,
-                                        "median_time_ms": float("inf"),
-                                        "peak_memory_mb": None,
-                                        "success": False,
-                                        "error": str(oom).split(".")[0],
-                                        "error_type": type(oom).__name__,
-                                        "supercell_size": base_size,
-                                        "mode": mode,
-                                    }
+                                    result = benchmark_result_row(
+                                        system_data=system_data,
+                                        method=method,
+                                        backend=backend,
+                                        component=component,
+                                        compute_forces=compute_forces,
+                                        compute_virial=compute_virial,
+                                        neighbor_format=nf,
+                                        torch_compile=args.torch_compile,
+                                        success=False,
+                                        error=str(oom).split(".")[0],
+                                        error_type=type(oom).__name__,
+                                    )
+                                    annotate_result_row(
+                                        result,
+                                        supercell_size=base_size,
+                                        mode=mode,
+                                        dtype=dtype_str,
+                                        config_path=config_path,
+                                        config_sha256=config_sha256,
+                                        accuracy=accuracy,
+                                        real_space_cutoff=real_space_cutoff,
+                                    )
                                     all_results.append(result)
                                     print(
                                         f"    {method:5s} {backend + nf_tag:16s} "
@@ -2932,15 +3305,18 @@ def main():
                     if r["method"] == method and r["backend"] == backend
                 ]
                 if method_results:
-                    output_file = (
-                        output_dir
-                        / f"electrostatics_benchmark_{method}_{backend}_{gpu_sku}.csv"
+                    output_file = benchmark_output_file(
+                        output_dir,
+                        method,
+                        backend,
+                        dtype_str,
+                        gpu_sku,
                     )
-                    all_fieldnames = []
+                    all_fieldnames = list(BENCHMARK_CSV_FIELDNAMES)
                     seen = set()
                     for r in method_results:
                         for k in r.keys():
-                            if k not in seen:
+                            if k not in all_fieldnames and k not in seen:
                                 all_fieldnames.append(k)
                                 seen.add(k)
                     with open(output_file, "w", newline="") as f:

@@ -17,7 +17,7 @@
 
 The Warp-owned PME kernels -- the reciprocal-space convolve (fused Green's
 factor + B-spline deconvolution + complex multiply) and the per-atom energy
-corrections -- specialized into the derivative matrix. One source per
+corrections -- are specialized across the derivative matrix. One source per
 ``(wp_dtype, batched, order)`` triple is built by capturing the ``BATCHED`` axis
 as a Python compile-time constant; Warp's codegen dead-eliminates the unused
 single-vs-batch branch.
@@ -25,7 +25,7 @@ single-vs-batch branch.
 Two components are covered:
 
 * ``component="pme_convolve"`` -- the k-space convolve. ``order="forward"`` writes
-  ``convolved = G(k)/B^2(k) * mesh_fft`` (complex x real). ``order="backward"``
+  ``convolved = G(k)/C^2(k) * mesh_fft`` (complex x real). ``order="backward"``
   emits ``grad_mesh_fft``, the scalar ``grad_alpha`` / ``grad_volume`` (atomic
   reduction over k-points), and ``grad_k_squared``. ``order="double_backward"`` is
   the second-derivative node: it emits the position-relevant ``dL/dmesh_fft`` and
@@ -37,17 +37,17 @@ Two components are covered:
   ``"double_backward"`` emit the first / second derivatives w.r.t.
   ``(raw, charges, volume, alpha, total_charge)``.
 
-Each ``order`` family reproduces the corresponding hand-written kernel body in
-``pme_kernels.py`` verbatim (only the single-vs-batch indexing is folded into the
-``BATCHED`` compile-time switch), so the factory outputs are **bit-exact** parity
-oracles vs the hand-written launchers.
+Each ``order`` family is the current Warp kernel body used by the low-level PME
+wrappers. Parity coverage keeps direct factory launches and wrapper launchers
+aligned, while finite-difference tests provide the independent derivative
+oracle.
 
 Factory boundary
 ----------------
 The factory owns Warp-owned work ONLY. The FFT (``torch.fft.rfftn/irfftn``), the
 B-spline spline spread / gather, and the k-vector / grid orchestration stay
-OUTSIDE the factory, on Torch autograd -- exactly as in the hand-written PME
-pipeline. The convolve / corrections kernels here are the only PME pieces that
+OUTSIDE the factory, on Torch autograd -- exactly as in the public PME pipeline.
+The convolve / corrections kernels here are the only PME pieces that
 run on Warp, and they are the only pieces this factory emits.
 
 Scope note: the convolve ``double_backward`` kernel implements both the position
@@ -81,9 +81,6 @@ __all__ = [
     "get_pme_kernel",
     "make_pme_kernel",
 ]
-
-# k^2 guard captured as a Python compile-time constant in the convolve kernels.
-_KSQ_EPS = _K_SQUARED_EPSILON
 
 _COMPONENTS = ("pme_convolve", "pme_corrections")
 _ORDERS = ("forward", "backward", "double_backward")
@@ -195,7 +192,7 @@ def _make_convolve_factor_fn(wp_dtype: type) -> wp.Function:
         alpha_: wp_dtype,
         volume_: wp_dtype,
     ):
-        """Return ``G(k) / B^2(k)`` for one PME mesh frequency.
+        """Return ``G(k) / C^2(k)`` for one PME mesh frequency.
 
         The zero-frequency and small-``k_sq`` guards mirror the hand-written
         kernels. The helper is shared by forward, backward, and double-backward
@@ -204,7 +201,7 @@ def _make_convolve_factor_fn(wp_dtype: type) -> wp.Function:
         zero = wp_dtype(0.0)
         one = wp_dtype(1.0)
         four = wp_dtype(4.0)
-        threshold = wp_dtype(_KSQ_EPS)
+        threshold = wp_dtype(_K_SQUARED_EPSILON)
         clamp_threshold = wp_dtype(1e-10)
         twopi = wp_dtype(TWOPI)
 
@@ -659,7 +656,8 @@ def _make_convolve_kernel(wp_dtype: type, batched: bool, order: str) -> wp.Kerne
         ``dL/dmesh_fft`` and ``dL/dgrad_convolved`` plus the cell/stress
         second-order terms ``grad_k_squared_out`` (per-k) and ``grad_alpha_out``
         / ``grad_volume_out`` (atomic-summed over k). Scalar grad outputs must be
-        zero-initialized by the caller. See module docstring + _md derivation."""
+        zero-initialized by the caller. See the module docstring for the
+        derivative contract and saved-state layout."""
         b, i, j, k = wp.tid()
         if BATCHED:
             sys = b

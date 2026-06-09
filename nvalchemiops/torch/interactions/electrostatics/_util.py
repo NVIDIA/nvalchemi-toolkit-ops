@@ -27,9 +27,12 @@ import torch
 
 __all__ = [
     "_InjectCachedEvalGrad",
+    "_InjectCachedEvalGradWithFallback",
     "_InjectChargeGrad",
     "_build_electrostatic_result",
     "_combine_electrostatic_outputs",
+    "_compiled_direct_output_deprecation_signal",
+    "_detach_setup_tensor",
     "_sum_charge_gradients",
     "_unpack_electrostatic_outputs",
 ]
@@ -42,6 +45,11 @@ def _sum_charge_gradients(
 ) -> torch.Tensor:
     """Sum electrostatic charge gradients eagerly on compiled paths."""
     return real_space_charge_grads + reciprocal_charge_grads
+
+
+def _detach_setup_tensor(tensor: torch.Tensor | None) -> torch.Tensor | None:
+    """Detach optional setup/cache tensors from public autograd outputs."""
+    return None if tensor is None else tensor.detach()
 
 
 def _build_electrostatic_result(
@@ -200,16 +208,41 @@ def _direct_output_deprecation_msg(fn: str) -> str:
         f"compute_charge_gradients / hybrid_forces) on {fn} are deprecated and "
         f"will be removed in a future release. Compute the energy and use "
         f"torch.autograd.grad on the energy instead:\n\n"
-        f"    energy = {fn}(positions, charges, cell, ...).sum()\n"
+        f"    strain = torch.zeros(3, 3, dtype=positions.dtype, device=positions.device,\n"
+        f"                         requires_grad=True)\n"
+        f"    deformation = torch.eye(3, dtype=positions.dtype, device=positions.device) + strain\n"
+        f"    positions_s = positions @ deformation\n"
+        f"    cell_s = cell @ deformation\n"
+        f"    energy = {fn}(positions_s, charges, cell_s, ...).sum()\n"
         f"    # forces      = -dE/dR\n"
-        f"    forces = -torch.autograd.grad(energy, positions, create_graph=True)[0]\n"
-        f"    # virial      = -dE/dstrain  (strain an (S,3,3) tensor; deform pos & cell by I+strain)\n"
-        f"    virial = -torch.autograd.grad(energy, strain)[0]\n"
+        f"    forces = -torch.autograd.grad(energy, positions_s, create_graph=True)[0]\n"
+        f"    # row-vector displacement: positions_s = positions @ (I + strain)\n"
+        f"    # virial = -dE/dstrain; stress = dE/dstrain / volume\n"
+        f"    grad_strain = torch.autograd.grad(energy, strain)[0]\n"
+        f"    virial = -grad_strain\n"
         f"    # charge grad = dE/dq\n"
         f"    dE_dq = torch.autograd.grad(energy, charges)[0]\n"
         f"    # hybrid q(R): keep charges = q(positions) in the graph and\n"
         f"    #             differentiate energy w.r.t. positions for the full\n"
         f"    #             dE/dR (including the dq/dR chain-rule term)."
+    )
+
+
+def _compiled_direct_output_deprecation_signal(fn: str) -> None:
+    """Emit a compile-safe migration signal for deprecated full-API direct outputs."""
+    if torch.compiler.is_compiling():
+        torch._dynamo.graph_break(_direct_output_deprecation_msg(fn))
+
+
+def _component_direct_output_deprecation_msg(fn: str, flags: tuple[str, ...]) -> str:
+    """Migration message for deprecated training-style component outputs."""
+    flag_text = " / ".join(flags)
+    return (
+        f"The component direct-output flag(s) {flag_text} on {fn} are deprecated "
+        f"for differentiable training and will be removed in a future release. "
+        f"Component compute_forces=True remains supported for no-autograd "
+        f"MD/inference loops. For training, compute the energy and use "
+        f"torch.autograd.grad on the energy instead."
     )
 
 
@@ -290,12 +323,56 @@ def _energy_cotangents(
 
 def _is_uniform_cotangent(grad_energy: torch.Tensor) -> bool:
     """Return whether ``grad_energy`` is exactly uniform."""
-    grad = grad_energy.reshape(-1)
-    if grad.numel() <= 1:
+    if _is_sync_free_uniform_cotangent(grad_energy):
         return True
+    grad = grad_energy.reshape(-1)
     if grad.is_cuda:
         return False
     return bool(torch.all(grad == grad[0]).item())
+
+
+def _is_sync_free_uniform_cotangent(grad_energy: torch.Tensor) -> bool:
+    """Return whether ``grad_energy`` is known uniform without reading values."""
+    if grad_energy.numel() <= 1:
+        return True
+    return all(
+        size <= 1 or stride == 0
+        for size, stride in zip(grad_energy.shape, grad_energy.stride(), strict=True)
+    )
+
+
+def _is_per_system_uniform_cotangent(
+    grad_energy: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+    num_systems: int,
+) -> bool:
+    """Return whether an atom-major cotangent is uniform within each system."""
+    if _is_sync_free_uniform_cotangent(grad_energy):
+        return True
+
+    grad = grad_energy.reshape(-1)
+    if grad.numel() == 0:
+        return True
+    if grad.numel() == 1 or grad.numel() == num_systems:
+        return True
+    if grad.is_cuda:
+        return False
+    if batch_idx is None:
+        return bool(torch.all(grad == grad[0]).item())
+    if grad.numel() != batch_idx.numel():
+        return False
+
+    idx = batch_idx.to(device=grad.device, dtype=torch.long)
+    grad64 = grad.to(torch.float64)
+    sys_min = torch.full(
+        (num_systems,), float("inf"), dtype=torch.float64, device=grad.device
+    ).scatter_reduce(0, idx, grad64, reduce="amin", include_self=False)
+    sys_max = torch.full(
+        (num_systems,), float("-inf"), dtype=torch.float64, device=grad.device
+    ).scatter_reduce(0, idx, grad64, reduce="amax", include_self=False)
+    return bool(
+        torch.all(sys_min.index_select(0, idx) == sys_max.index_select(0, idx)).item()
+    )
 
 
 class _InjectCachedEvalGrad(torch.autograd.Function):
@@ -329,7 +406,7 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
             _energy,
             _positions,
             _charges,
-            _cell,
+            cell,
             pos_grad_state,
             charge_grad_state,
             cell_grad_state,
@@ -337,6 +414,7 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
         ) = inputs
         ctx.save_for_backward(pos_grad_state, charge_grad_state, cell_grad_state)
         ctx.batch_idx = batch_idx
+        ctx.num_systems = int(cell.shape[0]) if cell.dim() == 3 else 1
 
     @staticmethod
     def backward(ctx, grad_energy):
@@ -349,12 +427,17 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
         num_atoms = _num_atoms_from_state(
             pos_grad_state, charge_grad_state, ctx.batch_idx
         )
-        num_systems = _num_systems_from_state(
-            grad_energy, cell_grad_state, ctx.batch_idx, num_atoms
-        )
-        grad_system, atom_grad = _energy_cotangents(
-            grad_energy, ctx.batch_idx, num_atoms, num_systems
-        )
+        if grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
+            scale = grad_energy.reshape(-1)[0]
+            atom_grad = scale.expand(num_atoms)
+            grad_system = scale.expand(ctx.num_systems)
+        else:
+            num_systems = _num_systems_from_state(
+                grad_energy, cell_grad_state, ctx.batch_idx, num_atoms
+            )
+            grad_system, atom_grad = _energy_cotangents(
+                grad_energy, ctx.batch_idx, num_atoms, num_systems
+            )
 
         grad_positions = None
         if pos_grad_state is not None:
@@ -371,11 +454,151 @@ class _InjectCachedEvalGrad(torch.autograd.Function):
         return None, grad_positions, grad_charges, grad_cell, None, None, None, None
 
 
+class _InjectCachedEvalGradWithFallback(torch.autograd.Function):
+    """Lazy variant of :class:`_InjectCachedEvalGrad`.
+
+    The forward takes a detached/eval energy plus cached first derivatives. For
+    ordinary uniform first-order losses it uses the caches. For create-graph or
+    non-uniform weighted losses it calls ``fallback_fn(positions, charges, cell)``
+    inside backward and differentiates that true energy graph.
+    """
+
+    @staticmethod
+    def forward(
+        energy,
+        positions,
+        charges,
+        cell,
+        pos_grad_state,
+        charge_grad_state,
+        cell_grad_state,
+        batch_idx,
+        fallback_fn,
+    ):
+        """Return energy unchanged."""
+        return energy
+
+    @staticmethod
+    def setup_context(ctx, inputs, output):
+        """Save inputs, caches, and the fallback callable."""
+        (
+            _energy,
+            positions,
+            charges,
+            cell,
+            pos_grad_state,
+            charge_grad_state,
+            cell_grad_state,
+            batch_idx,
+            fallback_fn,
+        ) = inputs
+        ctx.save_for_backward(
+            positions,
+            charges,
+            cell,
+            pos_grad_state,
+            charge_grad_state,
+            cell_grad_state,
+        )
+        ctx.batch_idx = batch_idx
+        ctx.fallback_fn = fallback_fn
+        ctx.num_systems = int(cell.shape[0]) if cell.dim() == 3 else 1
+
+    @staticmethod
+    def backward(ctx, grad_energy):
+        """Use caches for uniform eval, else lazily recompute the energy graph."""
+        (
+            positions,
+            charges,
+            cell,
+            pos_grad_state,
+            charge_grad_state,
+            cell_grad_state,
+        ) = ctx.saved_tensors
+
+        if torch.is_grad_enabled() or not _is_uniform_cotangent(grad_energy):
+            with torch.enable_grad():
+                recomputed = ctx.fallback_fn(positions, charges, cell)
+                diff_inputs = []
+                diff_names = []
+                for name, tensor in (
+                    ("positions", positions),
+                    ("charges", charges),
+                    ("cell", cell),
+                ):
+                    if tensor.requires_grad:
+                        diff_inputs.append(tensor)
+                        diff_names.append(name)
+                if not diff_inputs:
+                    grad_map = {}
+                else:
+                    diff_grads = torch.autograd.grad(
+                        recomputed,
+                        tuple(diff_inputs),
+                        grad_outputs=grad_energy,
+                        allow_unused=True,
+                        create_graph=torch.is_grad_enabled(),
+                    )
+                    grad_map = dict(zip(diff_names, diff_grads, strict=True))
+            return (
+                None,
+                grad_map.get("positions"),
+                grad_map.get("charges"),
+                grad_map.get("cell"),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+
+        num_atoms = _num_atoms_from_state(
+            pos_grad_state, charge_grad_state, ctx.batch_idx
+        )
+        if grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
+            scale = grad_energy.reshape(-1)[0]
+            atom_grad = scale.expand(num_atoms)
+            grad_system = scale.expand(ctx.num_systems)
+        else:
+            num_systems = _num_systems_from_state(
+                grad_energy, cell_grad_state, ctx.batch_idx, num_atoms
+            )
+            grad_system, atom_grad = _energy_cotangents(
+                grad_energy, ctx.batch_idx, num_atoms, num_systems
+            )
+
+        grad_positions = None
+        if pos_grad_state is not None:
+            grad_positions = pos_grad_state * atom_grad.unsqueeze(-1)
+
+        grad_charges = None
+        if charge_grad_state is not None:
+            grad_charges = charge_grad_state * atom_grad
+
+        grad_cell = None
+        if cell_grad_state is not None:
+            grad_cell = cell_grad_state * grad_system.view(-1, 1, 1)
+
+        return (
+            None,
+            grad_positions,
+            grad_charges,
+            grad_cell,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+
+
 class _InjectChargeGrad(torch.autograd.Function):
     """Backward-compatible 4-argument charge-gradient entry point.
 
-    Per-system energy cotangents keep the historical path; public per-atom cotangents
-    are reduced to per-system means before injection.
+    Uniform/per-system-uniform cotangents keep the historical direct-injection
+    path. Non-uniform per-atom cotangents pass through to the input energy graph
+    so weighted losses differentiate the real per-atom energy expression rather
+    than a post-hoc average of cached total-energy charge gradients.
 
     Parameters
     ----------
@@ -406,11 +629,25 @@ class _InjectChargeGrad(torch.autograd.Function):
         """Scale analytical ``dE/dq`` by the energy cotangent."""
         (charge_grad_state,) = ctx.saved_tensors
         num_atoms = int(charge_grad_state.shape[0])
-        num_systems = _num_systems_from_state(
-            grad_energy, None, ctx.batch_idx, num_atoms
-        )
-        _grad_system, atom_grad = _energy_cotangents(
-            grad_energy, ctx.batch_idx, num_atoms, num_systems
-        )
+
+        if torch.is_grad_enabled():
+            return grad_energy, None, None, None
+
+        if grad_energy.numel() != 0 and _is_sync_free_uniform_cotangent(grad_energy):
+            atom_grad = grad_energy.reshape(-1)[0].expand(num_atoms)
+        else:
+            grad = grad_energy.reshape(-1)
+            if grad.is_cuda and grad.numel() == num_atoms:
+                return grad_energy, None, None, None
+            num_systems = _num_systems_from_state(
+                grad_energy, None, ctx.batch_idx, num_atoms
+            )
+            if not _is_per_system_uniform_cotangent(
+                grad_energy, ctx.batch_idx, num_systems
+            ):
+                return grad_energy, None, None, None
+            _grad_system, atom_grad = _energy_cotangents(
+                grad_energy, ctx.batch_idx, num_atoms, num_systems
+            )
         grad_charges = charge_grad_state * atom_grad
-        return grad_energy, grad_charges, None, None
+        return None, grad_charges, None, None

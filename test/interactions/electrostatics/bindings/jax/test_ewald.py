@@ -32,10 +32,12 @@ Tests cover:
 
 Note: JAX bindings are GPU-only (Warp JAX FFI constraint). Full Ewald and
 energy-only component outputs support custom JAX autodiff rules; direct
-component output flags remain forward/direct escape hatches.
+component forces remain forward/direct escape hatches.
 """
 
 from __future__ import annotations
+
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -737,17 +739,16 @@ class TestEwaldSummationAPI:
             ).sum()
 
         grad_positions = jax.grad(energy_sum)(positions)
-        with pytest.warns(DeprecationWarning):
-            _energies, direct_forces = ewald_summation(
-                positions=positions,
-                charges=charges,
-                cell=cell,
-                alpha=alpha,
-                k_cutoff=k_cutoff,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
-                compute_forces=True,
-            )
+        _energies, direct_forces = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            k_cutoff=k_cutoff,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True,
+        )
 
         assert jnp.allclose(-grad_positions, direct_forces, rtol=1e-5, atol=1e-7)
 
@@ -761,6 +762,47 @@ class TestEwaldSummationAPI:
             _num_neighbors,
             neighbor_matrix_shifts,
         ) = create_dipole_system()
+
+        alpha = 0.3
+        k_cutoff = 8.0
+
+        def energy_sum(chg):
+            return ewald_summation(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=alpha,
+                k_cutoff=k_cutoff,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        grad_charges = jax.grad(energy_sum)(charges)
+        with pytest.warns(DeprecationWarning):
+            _energies, direct_charge_grads = ewald_summation(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                k_cutoff=k_cutoff,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_charge_gradients=True,
+            )
+
+        assert jnp.allclose(grad_charges, direct_charge_grads, rtol=1e-5, atol=1e-7)
+
+    def test_nonneutral_charge_gradients_match_energy_grad(self, device):
+        """Non-neutral background charge gradients match energy autodiff."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        charges = charges.at[1].set(-0.25)
 
         alpha = 0.3
         k_cutoff = 8.0
@@ -808,11 +850,11 @@ class TestEwaldSummationAPI:
         def energy_sum(strain):
             transform = jnp.eye(3, dtype=positions.dtype) + strain
             return ewald_summation(
-                positions=positions @ transform.T,
+                positions=positions @ transform,
                 charges=charges,
-                cell=cell @ transform.T,
+                cell=cell @ transform,
                 alpha=alpha,
-                k_vectors=k_vectors,
+                k_cutoff=8.0,
                 neighbor_matrix=neighbor_matrix,
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
             ).sum()
@@ -871,26 +913,28 @@ class TestEwaldSummationAPI:
         grad_charges = jax.grad(lambda chg: component_energy(positions, chg))(charges)
 
         if component == "real":
-            _energies, direct_forces, direct_charge_grads = ewald_real_space(
-                positions=positions,
-                charges=charges,
-                cell=cell,
-                alpha=alpha,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
-                compute_forces=True,
-                compute_charge_gradients=True,
-            )
+            with pytest.warns(DeprecationWarning):
+                _energies, direct_forces, direct_charge_grads = ewald_real_space(
+                    positions=positions,
+                    charges=charges,
+                    cell=cell,
+                    alpha=alpha,
+                    neighbor_matrix=neighbor_matrix,
+                    neighbor_matrix_shifts=neighbor_matrix_shifts,
+                    compute_forces=True,
+                    compute_charge_gradients=True,
+                )
         else:
-            _energies, direct_forces, direct_charge_grads = ewald_reciprocal_space(
-                positions=positions,
-                charges=charges,
-                cell=cell,
-                k_vectors=k_vectors,
-                alpha=alpha,
-                compute_forces=True,
-                compute_charge_gradients=True,
-            )
+            with pytest.warns(DeprecationWarning):
+                _energies, direct_forces, direct_charge_grads = ewald_reciprocal_space(
+                    positions=positions,
+                    charges=charges,
+                    cell=cell,
+                    k_vectors=k_vectors,
+                    alpha=alpha,
+                    compute_forces=True,
+                    compute_charge_gradients=True,
+                )
 
         assert jnp.allclose(-grad_positions, direct_forces, rtol=1e-5, atol=1e-7)
         assert jnp.allclose(grad_charges, direct_charge_grads, rtol=1e-5, atol=1e-7)
@@ -910,20 +954,20 @@ class TestEwaldSummationAPI:
         k_cutoff = 8.0
 
         def hybrid_energy(chg):
-            with pytest.warns(DeprecationWarning):
-                energy = ewald_summation(
-                    positions=positions,
-                    charges=chg,
-                    cell=cell,
-                    alpha=alpha,
-                    k_cutoff=k_cutoff,
-                    neighbor_matrix=neighbor_matrix,
-                    neighbor_matrix_shifts=neighbor_matrix_shifts,
-                    hybrid_forces=True,
-                )
+            energy = ewald_summation(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=alpha,
+                k_cutoff=k_cutoff,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                hybrid_forces=True,
+            )
             return energy.sum()
 
-        hybrid_grad = jax.grad(hybrid_energy)(charges)
+        with pytest.warns(DeprecationWarning):
+            hybrid_grad = jax.grad(hybrid_energy)(charges)
         with pytest.warns(DeprecationWarning):
             _energies, direct_charge_grads = ewald_summation(
                 positions=positions,
@@ -938,8 +982,8 @@ class TestEwaldSummationAPI:
 
         assert jnp.allclose(hybrid_grad, direct_charge_grads, rtol=1e-5, atol=1e-7)
 
-    def test_force_loss_second_derivative_positions(self, device):
-        """Full-Ewald force-loss gradients differentiate through position gradients."""
+    def test_position_hvp_matches_full_vector_finite_difference(self, device):
+        """Full-Ewald position HVP matches full-vector finite differences."""
         (
             positions,
             charges,
@@ -963,19 +1007,22 @@ class TestEwaldSummationAPI:
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
             ).sum()
 
-        def force_loss(pos):
-            grad_positions = jax.grad(energy_sum)(pos)
-            return jnp.sum(grad_positions * grad_positions)
+        direction = jnp.array(
+            [[1.0, -0.5, 0.25], [-0.25, 0.75, -1.0]], dtype=positions.dtype
+        )
+        eps = 1e-4
 
-        grad_loss = jax.grad(force_loss)(positions)
-        delta = jnp.zeros_like(positions).at[0, 0].set(1e-4)
-        fd = (force_loss(positions + delta) - force_loss(positions - delta)) / 2e-4
+        grad_fn = jax.grad(energy_sum)
+        _, hvp = jax.jvp(grad_fn, (positions,), (direction,))
+        fd = (
+            grad_fn(positions + eps * direction) - grad_fn(positions - eps * direction)
+        ) / (2.0 * eps)
 
-        assert jnp.all(jnp.isfinite(grad_loss))
-        assert jnp.allclose(grad_loss[0, 0], fd, rtol=2e-3, atol=1e-6)
+        assert jnp.all(jnp.isfinite(hvp))
+        assert jnp.allclose(hvp, fd, rtol=2e-3, atol=1e-6)
 
-    def test_charge_loss_second_derivative_charges(self, device):
-        """Full-Ewald charge-loss gradients differentiate through charge gradients."""
+    def test_charge_hvp_matches_full_vector_finite_difference(self, device):
+        """Full-Ewald charge HVP matches full-vector finite differences."""
         (
             positions,
             charges,
@@ -999,16 +1046,54 @@ class TestEwaldSummationAPI:
                 neighbor_matrix_shifts=neighbor_matrix_shifts,
             ).sum()
 
-        def charge_loss(chg):
-            grad_charges = jax.grad(energy_sum)(chg)
-            return jnp.sum(grad_charges * grad_charges)
+        direction = jnp.array([1.0, -0.5], dtype=charges.dtype)
+        eps = 1e-4
 
-        grad_loss = jax.grad(charge_loss)(charges)
-        delta = jnp.zeros_like(charges).at[0].set(1e-4)
-        fd = (charge_loss(charges + delta) - charge_loss(charges - delta)) / 2e-4
+        grad_fn = jax.grad(energy_sum)
+        _, hvp = jax.jvp(grad_fn, (charges,), (direction,))
+        fd = (
+            grad_fn(charges + eps * direction) - grad_fn(charges - eps * direction)
+        ) / (2.0 * eps)
 
-        assert jnp.all(jnp.isfinite(grad_loss))
-        assert jnp.allclose(grad_loss[0], fd, rtol=2e-3, atol=1e-6)
+        assert jnp.all(jnp.isfinite(hvp))
+        assert jnp.allclose(hvp, fd, rtol=2e-3, atol=1e-6)
+
+    def test_nonneutral_charge_hvp_matches_finite_difference(self, device):
+        """Non-neutral background charge HVP matches finite differences."""
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        charges = charges.at[1].set(-0.25)
+
+        alpha = 0.3
+        k_cutoff = 8.0
+        tangent = jnp.array([1.0, 0.5], dtype=charges.dtype)
+        eps = 1e-4
+
+        def energy_sum(chg):
+            return ewald_summation(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=alpha,
+                k_cutoff=k_cutoff,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        grad_fn = jax.grad(energy_sum)
+        _, hvp = jax.jvp(grad_fn, (charges,), (tangent,))
+        fd = (grad_fn(charges + eps * tangent) - grad_fn(charges - eps * tangent)) / (
+            2.0 * eps
+        )
+
+        assert jnp.all(jnp.isfinite(hvp))
+        assert jnp.allclose(hvp, fd, rtol=2e-3, atol=1e-6)
 
     def test_batch_system_energy_only(self, device):
         """Test batched full Ewald summation."""
@@ -1711,17 +1796,16 @@ class TestEwaldJIT:
             ).sum()
 
         grad_positions = jax.jit(jax.grad(energy_sum))(positions)
-        with pytest.warns(DeprecationWarning):
-            _energies, direct_forces = ewald_summation(
-                positions=positions,
-                charges=charges,
-                cell=cell,
-                alpha=alpha,
-                k_vectors=k_vectors,
-                neighbor_matrix=neighbor_matrix,
-                neighbor_matrix_shifts=neighbor_matrix_shifts,
-                compute_forces=True,
-            )
+        _energies, direct_forces = ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            compute_forces=True,
+        )
 
         assert jnp.allclose(-grad_positions, direct_forces, rtol=1e-5, atol=1e-7)
 
@@ -2148,6 +2232,146 @@ class TestEwaldTotalVirial:
 
         # Compare with loose tolerance for FD
         assert jnp.allclose(explicit_virial, fd_virial, atol=1e-2, rtol=1e-2)
+
+
+class TestDirectOutputDeprecation:
+    """Direct-output warnings on the JAX Ewald APIs."""
+
+    def _system(self):
+        (
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            _num_neighbors,
+            neighbor_matrix_shifts,
+        ) = create_dipole_system()
+        return positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts
+
+    def _full_call(self, **flags):
+        positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts = (
+            self._system()
+        )
+        return ewald_summation(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            k_cutoff=8.0,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            **flags,
+        )
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "compute_forces",
+            "compute_virial",
+            "compute_charge_gradients",
+            "hybrid_forces",
+        ],
+    )
+    def test_full_api_flag_warns_once(self, device, flag):
+        """Differentiable-use direct outputs emit one DeprecationWarning."""
+        with pytest.warns(DeprecationWarning) as record:
+            result = self._full_call(**{flag: True})
+
+        dep = [w for w in record if issubclass(w.category, DeprecationWarning)]
+        assert len(dep) == 1
+        messages = "\n".join(str(w.message) for w in dep)
+        assert "JAX autodiff" in messages
+        assert "ewald_summation" in messages
+        assert dep[0].filename.endswith("test_ewald.py")
+        energy = result[0] if isinstance(result, tuple) else result
+        assert jnp.all(jnp.isfinite(energy))
+
+    def test_full_api_no_flag_does_not_warn(self, device):
+        """ewald_summation with no deprecated flag must not warn."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            energy = self._full_call()
+        assert jnp.all(jnp.isfinite(energy))
+
+    def test_legacy_tuple_ordering_unchanged(self, device):
+        """Deprecated full outputs keep their documented tuple ordering."""
+        with pytest.warns(DeprecationWarning):
+            out = self._full_call(
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        assert isinstance(out, tuple) and len(out) == 4
+        energies, forces, charge_grads, virial = out
+        assert energies.shape == (2,)
+        assert forces.shape == (2, 3)
+        assert charge_grads.shape == (2,)
+        assert virial.shape == (1, 3, 3)
+        for value in out:
+            assert jnp.all(jnp.isfinite(value))
+
+    def test_components_compute_forces_do_not_warn(self, device):
+        """Component compute_forces=True remains a no-warning escape hatch."""
+        positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts = (
+            self._system()
+        )
+        alpha = jnp.array([0.3], dtype=positions.dtype)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            ewald_real_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+            )
+            ewald_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                k_vectors=k_vectors,
+                alpha=alpha,
+                compute_forces=True,
+            )
+
+    @pytest.mark.parametrize("flag", ["compute_charge_gradients", "compute_virial"])
+    def test_component_training_style_outputs_warn(self, device, flag):
+        """Component charge/virial direct outputs warn during deprecation."""
+        positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts = (
+            self._system()
+        )
+        alpha = jnp.array([0.3], dtype=positions.dtype)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+        with pytest.warns(DeprecationWarning, match="ewald_real_space"):
+            real = ewald_real_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                **{flag: True},
+            )
+        with pytest.warns(DeprecationWarning, match="ewald_reciprocal_space"):
+            recip = ewald_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                k_vectors=k_vectors,
+                alpha=alpha,
+                **{flag: True},
+            )
+
+        real_energy = real[0] if isinstance(real, tuple) else real
+        recip_energy = recip[0] if isinstance(recip, tuple) else recip
+        assert jnp.all(jnp.isfinite(real_energy))
+        assert jnp.all(jnp.isfinite(recip_energy))
 
 
 class TestEwaldVirialJIT:

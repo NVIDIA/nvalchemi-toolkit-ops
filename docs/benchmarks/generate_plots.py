@@ -25,6 +25,16 @@ class BenchmarkData(NamedTuple):
     peak_memory_mb: np.ndarray
 
 
+class ElectrostaticsCsvFile(NamedTuple):
+    """Parsed electrostatics benchmark CSV metadata."""
+
+    path: Path
+    method: str
+    backend: str
+    dtype: str
+    gpu_sku: str
+
+
 def load_nl_csv(
     filepath: Path,
 ) -> dict[int, BenchmarkData]:
@@ -242,7 +252,7 @@ def plot_throughput(
     caption: str | None = None,
 ) -> None:
     """
-    Plot throughput (atoms/ms) vs system size.
+    Plot throughput (atoms/s) vs system size.
 
     Parameters
     ----------
@@ -260,8 +270,8 @@ def plot_throughput(
     for label, (atoms, times_ms) in series.items():
         if atoms is None or times_ms is None:
             continue
-        # Division with nan propagates nan, which matplotlib will skip
-        throughput = atoms / times_ms
+        # Division with nan propagates nan, which matplotlib will skip.
+        throughput = atoms / times_ms * 1000.0
         throughput_series[label] = (atoms, throughput)
 
     plot_series(
@@ -269,7 +279,7 @@ def plot_throughput(
         output_path,
         title=title,
         x_label="Number of atoms",
-        y_label="Throughput (atoms/ms)",
+        y_label="Throughput (atoms/s)",
         caption=caption,
     )
 
@@ -746,12 +756,21 @@ def load_electrostatics_csv(
 
     # Convert inf to nan so matplotlib will skip those points
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    if "success" in df.columns:
+        df = df[df["success"].astype(str).str.lower() == "true"]
 
     # Filter by method and component if specified
     if method is not None:
         df = df[df["method"] == method]
     if component is not None:
         df = df[df["component"] == component]
+
+    if df.empty:
+        return BenchmarkData(
+            total_atoms=np.array([]),
+            median_time_ms=np.array([]),
+            peak_memory_mb=np.array([]),
+        )
 
     # Filter to only include mode='single' for single systems, mode='batched' for batched
     # This prevents mixing single-system and batched-with-batch_size=1 data
@@ -821,9 +840,11 @@ def load_electrostatics_csv(
         )
 
 
-def _parse_electrostatics_filename(filename: str) -> tuple[str, str, str] | None:
+def _parse_electrostatics_filename(
+    filename: str,
+) -> tuple[str, str, str, str] | None:
     """
-    Parse electrostatics benchmark filename to extract method, backend, and GPU SKU.
+    Parse electrostatics benchmark filename metadata.
 
     Parameters
     ----------
@@ -832,15 +853,16 @@ def _parse_electrostatics_filename(filename: str) -> tuple[str, str, str] | None
 
     Returns
     -------
-    tuple[str, str, str] | None
-        Tuple of (method, backend, gpu_sku) or None if parsing fails.
+    tuple[str, str, str, str] | None
+        Tuple of (method, backend, dtype, gpu_sku) or None if parsing fails.
 
     Notes
     -----
-    Filenames follow the pattern: electrostatics_benchmark_<method>_<backend>_<gpu_sku>.csv
+    Filenames follow the pattern: electrostatics_benchmark_<method>_<backend>_<dtype>_<gpu_sku>.csv
     """
-    known_methods = ["ewald", "pme"]
-    known_backends = ["torchpme", "torch", "jax"]
+    known_methods = ["ewald_slab", "pme_slab", "ewald", "pme", "dsf"]
+    known_backends = ["torch_dsf", "torchpme", "torch", "jax"]
+    known_dtypes = ["float32", "float64"]
 
     prefix = "electrostatics_benchmark_"
     if not filename.startswith(prefix):
@@ -855,10 +877,30 @@ def _parse_electrostatics_filename(filename: str) -> tuple[str, str, str] | None
             # Now try to match backend
             for backend in known_backends:
                 if rest.startswith(backend + "_"):
-                    gpu_sku = rest[len(backend) + 1 :]
-                    return method, backend, gpu_sku
+                    dtype_and_gpu = rest[len(backend) + 1 :]
+                    for dtype in known_dtypes:
+                        if dtype_and_gpu.startswith(dtype + "_"):
+                            gpu_sku = dtype_and_gpu[len(dtype) + 1 :]
+                            return method, backend, dtype, gpu_sku
+                    return method, backend, "", dtype_and_gpu
 
     return None
+
+
+def _electrostatics_label(info: ElectrostaticsCsvFile) -> str:
+    """Return a plot label that preserves backend/dtype distinctions."""
+    if info.dtype:
+        return f"{info.backend} {info.dtype}"
+    return info.backend
+
+
+def _electrostatics_output_tag(info: ElectrostaticsCsvFile) -> str:
+    """Return a filename-safe backend/dtype/GPU tag for one CSV."""
+    parts = [info.backend]
+    if info.dtype:
+        parts.append(info.dtype)
+    parts.append(info.gpu_sku)
+    return "_".join(parts)
 
 
 def generate_electrostatics_plots(results_dir: Path, output_dir: Path) -> None:
@@ -881,8 +923,12 @@ def generate_electrostatics_plots(results_dir: Path, output_dir: Path) -> None:
 
     print(f"\nFound {len(csv_files)} electrostatics CSV files")
 
-    # Group files by method and backend
-    files_by_method: dict[str, dict[str, Path]] = {"ewald": {}, "pme": {}}
+    # Group files by method while preserving multiple files per backend
+    # (for example float32 and float64 outputs).
+    known_methods = ["ewald", "ewald_slab", "pme", "pme_slab", "dsf"]
+    files_by_method: dict[str, list[ElectrostaticsCsvFile]] = {
+        method: [] for method in known_methods
+    }
     gpu_sku = None
 
     for csv_file in csv_files:
@@ -891,18 +937,20 @@ def generate_electrostatics_plots(results_dir: Path, output_dir: Path) -> None:
             print(f"  Warning: Could not parse filename {csv_file.name}")
             continue
 
-        method, backend, gpu_sku = parsed
+        method, backend, dtype, gpu_sku = parsed
         if method in files_by_method:
-            files_by_method[method][backend] = csv_file
+            files_by_method[method].append(
+                ElectrostaticsCsvFile(csv_file, method, backend, dtype, gpu_sku)
+            )
 
     if gpu_sku is None:
         print("  Warning: Could not determine GPU SKU")
         gpu_sku = "unknown"
 
     # Generate plots for each method
-    for method in ["ewald", "pme"]:
-        backend_files = files_by_method.get(method, {})
-        if not backend_files:
+    for method in known_methods:
+        method_files = files_by_method.get(method, [])
+        if not method_files:
             print(f"  No files found for method: {method}")
             continue
 
@@ -910,19 +958,17 @@ def generate_electrostatics_plots(results_dir: Path, output_dir: Path) -> None:
 
         # 1. Backend comparison plots (single systems only)
         _generate_electrostatics_comparison_plots(
-            method, backend_files, gpu_sku, output_dir
+            method, method_files, gpu_sku, output_dir
         )
 
-        # 2. Per-backend plots (single + batched)
-        for backend, csv_file in backend_files.items():
-            _generate_electrostatics_backend_plots(
-                method, backend, csv_file, gpu_sku, output_dir
-            )
+        # 2. Per-file plots (single + batched)
+        for csv_info in method_files:
+            _generate_electrostatics_backend_plots(method, csv_info, output_dir)
 
 
 def _generate_electrostatics_comparison_plots(
     method: str,
-    backend_files: dict[str, Path],
+    csv_files: list[ElectrostaticsCsvFile],
     gpu_sku: str,
     output_dir: Path,
 ) -> None:
@@ -934,9 +980,9 @@ def _generate_electrostatics_comparison_plots(
     comparison_time_series = {}
     comparison_memory_series = {}
 
-    for backend, csv_file in backend_files.items():
+    for csv_info in csv_files:
         # Load data, filter for single systems
-        data = load_electrostatics_csv(csv_file)
+        data = load_electrostatics_csv(csv_info.path)
 
         if isinstance(data, dict):
             # Multiple batch sizes - use only batch_size=1
@@ -949,11 +995,19 @@ def _generate_electrostatics_comparison_plots(
         else:
             single_data = data
 
-        comparison_time_series[backend] = (
+        if single_data.total_atoms.size == 0:
+            continue
+
+        label = _electrostatics_label(csv_info)
+        if label in comparison_time_series:
+            label = f"{label} {csv_info.gpu_sku}"
+        if label in comparison_time_series:
+            label = csv_info.path.stem
+        comparison_time_series[label] = (
             single_data.total_atoms,
             single_data.median_time_ms,
         )
-        comparison_memory_series[backend] = (
+        comparison_memory_series[label] = (
             single_data.total_atoms,
             single_data.peak_memory_mb,
         )
@@ -999,9 +1053,7 @@ def _generate_electrostatics_comparison_plots(
 
 def _generate_electrostatics_backend_plots(
     method: str,
-    backend: str,
-    csv_file: Path,
-    gpu_sku: str,
+    csv_info: ElectrostaticsCsvFile,
     output_dir: Path,
 ) -> None:
     """
@@ -1009,51 +1061,56 @@ def _generate_electrostatics_backend_plots(
 
     Shows single and batched results together.
     """
-    data = load_electrostatics_csv(csv_file)
+    data = load_electrostatics_csv(csv_info.path)
+    backend_label = _electrostatics_label(csv_info)
+    output_tag = _electrostatics_output_tag(csv_info)
 
     if isinstance(data, dict):
         # Multiple batch sizes
         time_series = {}
         memory_series = {}
         for batch_size, d in data.items():
+            if d.total_atoms.size == 0:
+                continue
             label = "single" if batch_size == 1 else f"batch={batch_size}"
             time_series[label] = (d.total_atoms, d.median_time_ms)
             memory_series[label] = (d.total_atoms, d.peak_memory_mb)
     else:
+        if data.total_atoms.size == 0:
+            return
         # Single batch size
         time_series = {"single": (data.total_atoms, data.median_time_ms)}
         memory_series = {"single": (data.total_atoms, data.peak_memory_mb)}
 
+    if not time_series:
+        return
+
     # Time scaling
-    output_path = (
-        output_dir / f"electrostatics_scaling_{method}_{backend}_{gpu_sku}.png"
-    )
+    output_path = output_dir / f"electrostatics_scaling_{method}_{output_tag}.png"
     plot_series(
         time_series,
         output_path,
-        title=f"{method.upper()} Scaling ({backend})",
+        title=f"{method.upper()} Scaling ({backend_label})",
         x_label="Total atoms",
         y_label="Median time (ms)",
     )
     print(f"    Generated: {output_path.name}")
 
     # Throughput
-    output_path = (
-        output_dir / f"electrostatics_throughput_{method}_{backend}_{gpu_sku}.png"
-    )
+    output_path = output_dir / f"electrostatics_throughput_{method}_{output_tag}.png"
     plot_throughput(
         time_series,
         output_path,
-        title=f"{method.upper()} Throughput ({backend})",
+        title=f"{method.upper()} Throughput ({backend_label})",
     )
     print(f"    Generated: {output_path.name}")
 
     # Memory
-    output_path = output_dir / f"electrostatics_memory_{method}_{backend}_{gpu_sku}.png"
+    output_path = output_dir / f"electrostatics_memory_{method}_{output_tag}.png"
     plot_memory(
         memory_series,
         output_path,
-        title=f"{method.upper()} Memory ({backend})",
+        title=f"{method.upper()} Memory ({backend_label})",
     )
     print(f"    Generated: {output_path.name}")
 

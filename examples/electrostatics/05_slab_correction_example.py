@@ -30,6 +30,7 @@ In this example you will learn:
 - How to pass slab periodicity with a boolean ``pbc`` tensor
 - How to compute the standalone slab correction with ``compute_slab_correction``
 - How the standalone correction equals the integrated Ewald energy/force delta
+- How to derive slab forces from energy autograd for training
 - How to compose total Ewald and PME component workflows with slab
 - How triclinic slab cells use the normal to the periodic plane
 
@@ -47,6 +48,9 @@ In this example you will learn:
 
 from __future__ import annotations
 
+import warnings
+
+import numpy as np
 import torch
 
 from nvalchemiops.torch.interactions.electrostatics import (
@@ -71,6 +75,27 @@ if torch.cuda.is_available():
 else:
     device = torch.device("cpu")
     print("Using CPU")
+
+
+def _legacy_direct_output_call(function, *args, **kwargs):
+    """Call a deprecated direct-output path used for explicit migration checks."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            message="The direct-output flags.*",
+        )
+        return function(*args, **kwargs)
+
+
+def _format_array(array: torch.Tensor) -> str:
+    """Format small arrays consistently for gallery text output."""
+    return np.array2string(
+        array.detach().cpu().numpy(),
+        precision=6,
+        suppress_small=False,
+    )
+
 
 # %%
 # Create a Small Slab System
@@ -104,8 +129,8 @@ positions, charges, cell, pbc_slab = create_cscl_slab_system()
 
 print("Slab system:")
 print(f"  Number of atoms: {positions.shape[0]}")
-print(f"  Cell rows:\n{cell[0].cpu().numpy()}")
-print(f"  Slab pbc: {pbc_slab[0].cpu().numpy()}")
+print(f"  Cell rows:\n{_format_array(cell[0])}")
+print(f"  Slab pbc: {_format_array(pbc_slab[0])}")
 print(f"  Total charge: {charges.sum().item():.1f}")
 
 # %%
@@ -133,12 +158,15 @@ print(f"  Number of neighbor entries: {neighbor_list.shape[1]}")
 print(f"  Real-space cutoff: {real_space_cutoff:.1f} Å")
 
 # %%
-# Standard 3D Ewald
-# -----------------
+# Standard 3D Ewald (Legacy Direct-Output Baseline)
+# -------------------------------------------------
 # First compute the uncorrected 3D-periodic Ewald result. This is the quantity
-# that will receive the slab correction.
+# that will receive the slab correction. This section intentionally uses
+# deprecated full-API direct-output flags only to build a compatibility baseline
+# for the checks below.
 
-energies_3d, forces_3d, charge_grads_3d, virial_3d = ewald_summation(
+energies_3d, forces_3d, charge_grads_3d, virial_3d = _legacy_direct_output_call(
+    ewald_summation,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -155,17 +183,19 @@ energies_3d, forces_3d, charge_grads_3d, virial_3d = ewald_summation(
 print("\nStandard 3D Ewald:")
 print(f"  Total energy: {energies_3d.sum().item(): .8f}")
 print(f"  Max force magnitude: {forces_3d.norm(dim=1).max().item(): .8f}")
-print(f"  Charge gradients: {charge_grads_3d.cpu().numpy()}")
+print(f"  Charge gradients: {_format_array(charge_grads_3d)}")
 print(f"  Virial trace: {torch.trace(virial_3d[0]).item(): .8f}")
 
 # %%
-# Ewald with Slab Correction
-# --------------------------
+# Ewald with Slab Correction (Legacy Direct-Output Check)
+# ------------------------------------------------------
 # Set ``slab_correction=True`` and pass the slab periodicity. The output tuple
 # follows the same ordering as ordinary Ewald: energies, forces, charge
-# gradients, and virial when all optional quantities are requested.
+# gradients, and virial when all optional quantities are requested. For training
+# code, copy the energy-autograd section immediately below instead.
 
-energies_slab, forces_slab, charge_grads_slab, virial_slab = ewald_summation(
+energies_slab, forces_slab, charge_grads_slab, virial_slab = _legacy_direct_output_call(
+    ewald_summation,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -185,8 +215,34 @@ print("\nEwald with slab correction:")
 print(f"  Total energy: {energies_slab.sum().item(): .8f}")
 print(f"  Energy delta: {(energies_slab - energies_3d).sum().item(): .8f}")
 print(f"  Max force magnitude: {forces_slab.norm(dim=1).max().item(): .8f}")
-print(f"  Charge gradients: {charge_grads_slab.cpu().numpy()}")
+print(f"  Charge gradients: {_format_array(charge_grads_slab)}")
 print(f"  Virial trace: {torch.trace(virial_slab[0]).item(): .8f}")
+
+# %%
+# Energy-Autograd Slab Forces
+# ---------------------------
+# For differentiable training, call the full API without direct-output flags and
+# derive forces from the returned per-atom energies. The direct-output calls
+# above are legacy compatibility checks.
+
+positions_ag = positions.detach().requires_grad_(True)
+ewald_energy_ag = ewald_summation(
+    positions=positions_ag,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    k_cutoff=k_cutoff,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    pbc=pbc_slab,
+    slab_correction=True,
+)
+ewald_forces_ag = -torch.autograd.grad(ewald_energy_ag.sum(), positions_ag)[0]
+print("\nEwald slab energy-autograd force check:")
+print(
+    f"  Max force delta vs legacy direct: {(ewald_forces_ag - forces_slab).abs().max().item():.2e}"
+)
 
 # %%
 # Standalone Slab Correction
@@ -238,7 +294,7 @@ ewald_component_real_energy, ewald_component_real_forces = ewald_real_space(
     neighbor_shifts=neighbor_shifts,
     compute_forces=True,
 )
-ewald_k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff)
+ewald_k_vectors = generate_k_vectors_ewald_summation(cell.detach(), k_cutoff)
 ewald_component_reciprocal_energy, ewald_component_reciprocal_forces = (
     ewald_reciprocal_space(
         positions=positions,
@@ -277,13 +333,16 @@ print(
 )
 
 # %%
-# PME with Slab Correction
-# ------------------------
+# PME with Slab Correction (Legacy Direct-Output Check)
+# ----------------------------------------------------
 # Full PME accepts the same slab correction arguments as Ewald. The reciprocal
 # PME component itself remains a 3D-periodic reciprocal-space calculation; the
-# slab term is added by the high-level ``particle_mesh_ewald`` wrapper.
+# slab term is added by the high-level ``particle_mesh_ewald`` wrapper. This
+# direct-output tuple is a legacy compatibility check; the following section is
+# the training recipe.
 
-pme_3d_energy, pme_3d_forces = particle_mesh_ewald(
+pme_3d_energy, pme_3d_forces = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -295,7 +354,8 @@ pme_3d_energy, pme_3d_forces = particle_mesh_ewald(
     compute_forces=True,
 )
 
-pme_slab_energy, pme_slab_forces = particle_mesh_ewald(
+pme_slab_energy, pme_slab_forces = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -314,6 +374,31 @@ print(f"  Standard PME energy: {pme_3d_energy.sum().item(): .8f}")
 print(f"  Slab PME energy: {pme_slab_energy.sum().item(): .8f}")
 print(f"  Energy delta: {(pme_slab_energy - pme_3d_energy).sum().item(): .8f}")
 print(f"  Max force magnitude: {pme_slab_forces.norm(dim=1).max().item(): .8f}")
+
+# %%
+# PME Energy-Autograd Slab Forces
+# -------------------------------
+# PME uses the same training recipe: omit direct-output flags and differentiate
+# the energy. This is the path to copy into force-loss training code.
+
+positions_pme_ag = positions.detach().requires_grad_(True)
+pme_energy_ag = particle_mesh_ewald(
+    positions=positions_pme_ag,
+    charges=charges,
+    cell=cell,
+    alpha=alpha,
+    mesh_dimensions=mesh_dimensions,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    pbc=pbc_slab,
+    slab_correction=True,
+)
+pme_forces_ag = -torch.autograd.grad(pme_energy_ag.sum(), positions_pme_ag)[0]
+print("\nPME slab energy-autograd force check:")
+print(
+    f"  Max force delta vs legacy direct: {(pme_forces_ag - pme_slab_forces).abs().max().item():.2e}"
+)
 
 # %%
 # Total PME Component Composition
@@ -382,16 +467,17 @@ triclinic_energy, triclinic_forces = compute_slab_correction(
 )
 
 print("\nTriclinic standalone correction:")
-print(f"  Cell rows:\n{triclinic_cell[0].cpu().numpy()}")
+print(f"  Cell rows:\n{_format_array(triclinic_cell[0])}")
 print(f"  Correction energy: {triclinic_energy.sum().item(): .8f}")
-print(f"  Forces:\n{triclinic_forces.cpu().numpy()}")
+print(f"  Forces:\n{_format_array(triclinic_forces)}")
 
 # %%
 # Summary
 # -------
 # Use ``ewald_summation(..., slab_correction=True, pbc=pbc_slab)`` or
 # ``particle_mesh_ewald(..., slab_correction=True, pbc=pbc_slab)`` when you want
-# the correction included in the total outputs. Use ``compute_slab_correction``
+# the correction included in the total energy. For training derivatives, copy
+# the energy-autograd force sections above. Use ``compute_slab_correction``
 # directly when you need the correction term alone or when composing
 # ``ewald_real_space`` with ``ewald_reciprocal_space`` or
 # ``pme_reciprocal_space``.

@@ -102,6 +102,11 @@ def _release_gpu_memory_between_tests():
     memory exhaustion and slows down every subsequent test.
     """
     yield
+    _release_optional_gpu_memory()
+
+
+def _release_optional_gpu_memory() -> None:
+    """Release best-effort Python and optional Torch CUDA memory between tests."""
     gc.collect()
     try:  # torch is optional — JAX-only test environments don't need it
         import torch

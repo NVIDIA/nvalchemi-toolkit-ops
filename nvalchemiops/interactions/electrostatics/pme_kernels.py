@@ -66,11 +66,13 @@ Green's Function Kernels:
     _pme_green_structure_factor_kernel: Single-system G(k) and C(k)
     _batch_pme_green_structure_factor_kernel: Batched version
 
-Factory-Backed Launchers:
-    pme_convolve: Single-system PME reciprocal convolution
-    batch_pme_convolve: Batched PME reciprocal convolution
+Factory-Backed Correction Launchers:
     pme_energy_corrections: Single-system self + background correction
     batch_pme_energy_corrections: Batched self + background correction
+
+Internal Factory-Backed Convolve Helpers:
+    pme_convolve: Single-system PME reciprocal convolution
+    batch_pme_convolve: Batched PME reciprocal convolution
 
 .. warning
     In contrast to the other electrostatic kernels that offer end-to-end
@@ -81,11 +83,16 @@ Factory-Backed Launchers:
 
     1. Spread charges to mesh: ``spline_spread()``
     2. Forward FFT: ``framework.fft.rfftn(mesh)``
-    3. Compute Green's function: ``pme_green_structure_factor()``
+    3. Legacy helper: ``pme_green_structure_factor()`` returns raw ``G(k)``
+       and ``C^2(k)``
     4. Convolution: ``mesh_fft * green_function / structure_factor_sq``
     5. Inverse FFT: ``framework.fft.irfftn(...)``
     6. Gather potential: ``spline_gather()``
     7. Apply corrections: ``pme_energy_corrections()``
+
+    The Torch/JAX PME paths use internal factory-backed convolve helpers that
+    compute the effective folded multiplier ``G(k) / C^2(k)`` inside the fused
+    convolve kernel.
 
 REFERENCES
 ==========
@@ -103,7 +110,6 @@ import warp as wp
 # Mathematical constants
 PI = math.pi
 TWOPI = 2.0 * PI
-FOURPI = 4.0 * PI
 
 
 ###########################################################################################
@@ -186,7 +192,7 @@ def _pme_green_structure_factor_kernel(
     mesh_nx, mesh_ny, mesh_nz : wp.int32
         Full mesh dimensions (Nz is the full size, not rfft size).
     spline_order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended.
+        B-spline order (1-6). Order 4 (cubic) recommended.
     green_function : wp.array3d, shape (Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
         OUTPUT: Green's function G(k) at each grid point.
     structure_factor_sq : wp.array3d, shape (Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
@@ -217,10 +223,9 @@ def _pme_green_structure_factor_kernel(
     clamp_threshold = type(k_sq)(1e-10)
     twopi = type(k_sq)(TWOPI)
 
-    # Structure factor: sinc(mi_x/Nx) * sinc(mi_y/Ny) * sinc(mi_z/Nz)
-    # We compute sf^2 here and fold it into Green's function below, so that
-    # the FFT pipeline's per-element complex/real "mesh_fft / structure_factor_sq"
-    # step (~18 ms over 10 iters at single_128k) goes away.
+    # Structure factor: sinc(mi_x/Nx) * sinc(mi_y/Ny) * sinc(mi_z/Nz).
+    # This helper returns raw G(k) plus C^2(k). The folded G/C^2 path lives in
+    # the factory-backed fused convolve helpers.
     sinc_x = compute_sinc(mi_x / type(mi_x)(mesh_nx))
     sinc_y = compute_sinc(mi_y / type(mi_y)(mesh_ny))
     sinc_z = compute_sinc(mi_z / type(mi_z)(mesh_nz))
@@ -242,13 +247,13 @@ def _pme_green_structure_factor_kernel(
     sf_sq = sf * sf
     structure_factor_sq[i, j, k] = sf_sq
 
-    # Effective Green's function: G(k) / B^2(k). Folding the deconvolution
-    # into G saves one full-mesh complex/real elementwise op per PME call.
+    # Raw volume-normalized Green's function. External callers that use this
+    # helper apply the B-spline deconvolution with ``structure_factor_sq``.
     if k_sq < threshold:
         green_function[i, j, k] = zero
     else:
         exp_factor = wp_exp_kernel(k_sq, one / (four * alpha_ * alpha_))
-        green_function[i, j, k] = twopi * exp_factor / (volume_ * sf_sq)
+        green_function[i, j, k] = twopi * exp_factor / volume_
 
     if i == 0 and j == 0 and k == 0:
         green_function[i, j, k] = zero
@@ -300,7 +305,7 @@ def _batch_pme_green_structure_factor_kernel(
     mesh_nx, mesh_ny, mesh_nz : wp.int32
         Full mesh dimensions (Nz is the full size, not rfft size).
     spline_order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended.
+        B-spline order (1-6). Order 4 (cubic) recommended.
     green_function : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
         OUTPUT: Per-system Green's function G_s(k) at each grid point.
     structure_factor_sq : wp.array3d, shape (Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
@@ -331,8 +336,8 @@ def _batch_pme_green_structure_factor_kernel(
     clamp_threshold = type(k_sq)(1e-10)
     twopi = type(k_sq)(TWOPI)
 
-    # Structure factor sf^2 folded into the per-system Green's function
-    # below. Written once at batch_idx=0 for external consumers.
+    # Structure factor C^2(k). Written once at batch_idx=0 because it depends
+    # only on mesh dimensions and spline order.
     sinc_x = compute_sinc(mi_x / type(mi_x)(mesh_nx))
     sinc_y = compute_sinc(mi_y / type(mi_y)(mesh_ny))
     sinc_z = compute_sinc(mi_z / type(mi_z)(mesh_nz))
@@ -350,14 +355,12 @@ def _batch_pme_green_structure_factor_kernel(
     if batch_idx == wp.int32(0):
         structure_factor_sq[i, j, k] = sf_sq
 
-    # Effective Green's function: G_s(k) / B^2(k).
+    # Raw volume-normalized Green's function; fused convolve owns folded G/C^2.
     if k_sq < threshold:
         green_function[batch_idx, i, j, k] = zero
     else:
         exp_factor = wp_exp_kernel(k_sq, one / (four * system_alpha * system_alpha))
-        green_function[batch_idx, i, j, k] = (
-            twopi * exp_factor / (system_volume * sf_sq)
-        )
+        green_function[batch_idx, i, j, k] = twopi * exp_factor / system_volume
 
     if i == 0 and j == 0 and k == 0:
         green_function[batch_idx, i, j, k] = zero
@@ -394,11 +397,13 @@ def _pme_virial_bg_reduce_kernel(
 def _pme_virial_bg_apply_kernel(
     total_charges: wp.array(dtype=Any),  # (B,) computed in pass 1
     cell: wp.array3d(dtype=Any),  # (B, 3, 3)
+    volume: wp.array(dtype=Any),  # (B,) caller-supplied or dummy
+    use_supplied_volume: wp.int32,
     alpha: wp.array(dtype=Any),  # (B,) — per-system Ewald splitting
     virial_in: wp.array3d(dtype=Any),  # (B, 3, 3) input
     virial_out: wp.array3d(dtype=Any),  # (B, 3, 3) output = virial_in - E_bg·I
 ):
-    """Pass 2: compute V = |det(cell[s])|, E_bg, subtract from virial diagonal."""
+    """Pass 2: compute E_bg and subtract it from the virial diagonal."""
     s = wp.tid()
 
     q = total_charges[s]
@@ -420,9 +425,12 @@ def _pme_virial_bg_apply_kernel(
         - c01 * (c10 * c22 - c12 * c20)
         + c02 * (c10 * c21 - c11 * c20)
     )
-    volume = wp.abs(det)
+    cell_volume = wp.abs(det)
+    volume_value = cell_volume
+    if use_supplied_volume != 0:
+        volume_value = volume[s]
 
-    e_bg = pi * q * q / (two * a * a * volume)
+    e_bg = pi * q * q / (two * a * a * volume_value)
 
     virial_out[s, 0, 0] = virial_in[s, 0, 0] - e_bg
     virial_out[s, 0, 1] = virial_in[s, 0, 1]
@@ -441,6 +449,8 @@ def _pme_virial_bg_backward_per_system_kernel(
     grad_virial: wp.array3d(dtype=Any),  # (B, 3, 3) cotangent of virial_out
     total_charges: wp.array(dtype=Any),  # (B,) recomputed from charges
     cell: wp.array3d(dtype=Any),  # (B, 3, 3)
+    volume: wp.array(dtype=Any),  # (B,) caller-supplied or dummy
+    use_supplied_volume: wp.int32,
     alpha: wp.array(dtype=Any),  # (B,)
     grad_total_charges: wp.array(dtype=Any),  # (B,) OUT — dL/dQ per system
     grad_alpha: wp.array(dtype=Any),  # (B,) OUT — dL/dα per system
@@ -477,7 +487,10 @@ def _pme_virial_bg_backward_per_system_kernel(
         - c01 * (c10 * c22 - c12 * c20)
         + c02 * (c10 * c21 - c11 * c20)
     )
-    volume = wp.abs(det)
+    cell_volume = wp.abs(det)
+    volume_value = cell_volume
+    if use_supplied_volume != 0:
+        volume_value = volume[s]
     sgn = wp.sign(det)
 
     g_diag_sum = grad_virial[s, 0, 0] + grad_virial[s, 1, 1] + grad_virial[s, 2, 2]
@@ -485,10 +498,10 @@ def _pme_virial_bg_backward_per_system_kernel(
 
     a2 = a * a
     a3 = a2 * a
-    v2 = volume * volume
+    v2 = volume_value * volume_value
 
-    dE_dQ = pi * q / (a2 * volume)
-    dE_dA = -pi * q * q / (a3 * volume)
+    dE_dQ = pi * q / (a2 * volume_value)
+    dE_dA = -pi * q * q / (a3 * volume_value)
     dE_dV = -pi * q * q / (two * a2 * v2)
 
     grad_total_charges[s] = g_E_bg * dE_dQ
@@ -505,15 +518,26 @@ def _pme_virial_bg_backward_per_system_kernel(
     dV_dC22 = sgn * (c00 * c11 - c01 * c10)
 
     gV = g_E_bg * dE_dV
-    grad_cell[s, 0, 0] = gV * dV_dC00
-    grad_cell[s, 0, 1] = gV * dV_dC01
-    grad_cell[s, 0, 2] = gV * dV_dC02
-    grad_cell[s, 1, 0] = gV * dV_dC10
-    grad_cell[s, 1, 1] = gV * dV_dC11
-    grad_cell[s, 1, 2] = gV * dV_dC12
-    grad_cell[s, 2, 0] = gV * dV_dC20
-    grad_cell[s, 2, 1] = gV * dV_dC21
-    grad_cell[s, 2, 2] = gV * dV_dC22
+    if use_supplied_volume != 0:
+        grad_cell[s, 0, 0] = type(q)(0.0)
+        grad_cell[s, 0, 1] = type(q)(0.0)
+        grad_cell[s, 0, 2] = type(q)(0.0)
+        grad_cell[s, 1, 0] = type(q)(0.0)
+        grad_cell[s, 1, 1] = type(q)(0.0)
+        grad_cell[s, 1, 2] = type(q)(0.0)
+        grad_cell[s, 2, 0] = type(q)(0.0)
+        grad_cell[s, 2, 1] = type(q)(0.0)
+        grad_cell[s, 2, 2] = type(q)(0.0)
+    else:
+        grad_cell[s, 0, 0] = gV * dV_dC00
+        grad_cell[s, 0, 1] = gV * dV_dC01
+        grad_cell[s, 0, 2] = gV * dV_dC02
+        grad_cell[s, 1, 0] = gV * dV_dC10
+        grad_cell[s, 1, 1] = gV * dV_dC11
+        grad_cell[s, 1, 2] = gV * dV_dC12
+        grad_cell[s, 2, 0] = gV * dV_dC20
+        grad_cell[s, 2, 1] = gV * dV_dC21
+        grad_cell[s, 2, 2] = gV * dV_dC22
 
 
 @wp.kernel(enable_backward=False)
@@ -534,10 +558,6 @@ def _pme_virial_bg_backward_per_atom_kernel(
 
 # Type lists for creating overloads
 _T = [wp.float32, wp.float64]
-# Complex-as-vec2 type per dtype (rfftn output is complex64 for float32 input,
-# complex128 for float64 input). We pass these to Warp via torch.view_as_real.
-_C = {wp.float32: wp.vec2f, wp.float64: wp.vec2d}
-
 # Single-system kernel overloads
 _pme_green_structure_factor_kernel_overload = {}
 _pme_virial_bg_reduce_kernel_overload = {}
@@ -585,21 +605,6 @@ for t in _T:
             wp.array3d(dtype=t),  # structure_factor_sq
         ],
     )
-
-    # Fused convolution kernel (uses precomputed 1D B-spline moduli).
-
-    # Fused convolve backward (uses precomputed 1D B-spline moduli).
-
-    # Fused convolve DOUBLE-backward (uses precomputed 1D B-spline moduli).
-
-    # Energy corrections kernel overloads
-
-    # Energy corrections backward kernel overloads
-
-    # Energy corrections DOUBLE-backward kernel overloads
-
-    # Energy corrections with charge gradient kernel overloads
-
     _pme_virial_bg_reduce_kernel_overload[t] = wp.overload(
         _pme_virial_bg_reduce_kernel,
         [
@@ -613,6 +618,8 @@ for t in _T:
         [
             wp.array(dtype=t),  # total_charges
             wp.array3d(dtype=t),  # cell
+            wp.array(dtype=t),  # volume
+            wp.int32,  # use_supplied_volume
             wp.array(dtype=t),  # alpha
             wp.array3d(dtype=t),  # virial_in
             wp.array3d(dtype=t),  # virial_out
@@ -624,6 +631,8 @@ for t in _T:
             wp.array3d(dtype=t),  # grad_virial
             wp.array(dtype=t),  # total_charges
             wp.array3d(dtype=t),  # cell
+            wp.array(dtype=t),  # volume
+            wp.int32,  # use_supplied_volume
             wp.array(dtype=t),  # alpha
             wp.array(dtype=t),  # grad_total_charges
             wp.array(dtype=t),  # grad_alpha
@@ -696,14 +705,16 @@ def pme_green_structure_factor(
 
     Note: FFT Operations Offloaded to Framework
     -------------------------------------------
-    This kernel computes the Green's function multipliers for PME.
+    This helper computes raw Green's function multipliers and B-spline
+    deconvolution factors for PME. The internal factory-backed convolve helper
+    computes the effective folded multiplier ``G(k) / C^2(k)`` internally.
     The complete PME reciprocal-space workflow requires FFT operations
     that are not available in Warp and must be performed by the calling
     framework. The typical workflow is:
 
     1. Spread charges to mesh: spline_spread()
     2. Forward FFT: framework.fft.rfftn(mesh)      <-- Framework-specific
-    3. Compute Green's function: pme_green_structure_factor()
+    3. Compute Green's function and structure factor: pme_green_structure_factor()
     4. Convolution: mesh_fft * green_function / structure_factor_sq
     5. Inverse FFT: framework.fft.irfftn(...)     <-- Framework-specific
     6. Gather potential: spline_gather()
@@ -726,7 +737,7 @@ def pme_green_structure_factor(
     mesh_nx, mesh_ny, mesh_nz : int
         Full mesh dimensions (Nz is the full size, not rfft size).
     spline_order : int
-        B-spline order (1-4). Order 4 (cubic) recommended.
+        B-spline order (1-6). Order 4 (cubic) recommended.
     green_function : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
         OUTPUT: Green's function G(k) at each grid point.
     structure_factor_sq : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
@@ -802,7 +813,7 @@ def batch_pme_green_structure_factor(
     mesh_nx, mesh_ny, mesh_nz : int
         Full mesh dimensions (Nz is the full size, not rfft size).
     spline_order : int
-        B-spline order (1-4). Order 4 (cubic) recommended.
+        B-spline order (1-6). Order 4 (cubic) recommended.
     green_function : wp.array, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
         OUTPUT: Per-system Green's function G_s(k) at each grid point.
     structure_factor_sq : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32 or wp.float64
@@ -857,7 +868,7 @@ def pme_convolve(
     Single-system. ``moduli_x/y/z`` are precomputed 1D B-spline modulus LUTs
     (``sinc(m/N)^spline_order`` per miller index, one per axis); the kernel
     reads three values + multiplies + squares them per (i, j, k) thread,
-    replacing the inline sinc-and-power computation used pre-P-C.
+    replacing repeated inline sinc-and-power work in each convolve launch.
 
     Parameters
     ----------
@@ -1575,6 +1586,8 @@ def pme_virial_bg_correction(
     charges: wp.array,
     batch_idx: wp.array,
     cell: wp.array,
+    volume: wp.array,
+    use_supplied_volume: bool,
     alpha: wp.array,
     total_charges: wp.array,
     virial_in: wp.array,
@@ -1595,6 +1608,7 @@ def pme_virial_bg_correction(
       charges       (N,)
       batch_idx     (N,) int32
       cell          (B, 3, 3)
+      volume        (B,) — caller-supplied volume or dummy
       alpha         (B,)
       total_charges (B,)  — zero-initialized by caller; written in pass 1
       virial_in     (B, 3, 3)
@@ -1611,7 +1625,15 @@ def pme_virial_bg_correction(
     wp.launch(
         _pme_virial_bg_apply_kernel_overload[wp_dtype],
         dim=num_systems,
-        inputs=[total_charges, cell, alpha, virial_in, virial_out],
+        inputs=[
+            total_charges,
+            cell,
+            volume,
+            int(use_supplied_volume),
+            alpha,
+            virial_in,
+            virial_out,
+        ],
         device=device,
     )
 
@@ -1621,6 +1643,8 @@ def pme_virial_bg_correction_backward(
     charges: wp.array,
     batch_idx: wp.array,
     cell: wp.array,
+    volume: wp.array,
+    use_supplied_volume: bool,
     alpha: wp.array,
     total_charges: wp.array,
     grad_total_charges: wp.array,
@@ -1657,6 +1681,8 @@ def pme_virial_bg_correction_backward(
             grad_virial,
             total_charges,
             cell,
+            volume,
+            int(use_supplied_volume),
             alpha,
             grad_total_charges,
             grad_alpha,
@@ -1683,12 +1709,6 @@ __all__ = [
     # Warp launchers
     "pme_green_structure_factor",
     "batch_pme_green_structure_factor",
-    "pme_convolve",
-    "batch_pme_convolve",
-    "pme_convolve_backward",
-    "batch_pme_convolve_backward",
-    "pme_convolve_double_backward",
-    "batch_pme_convolve_double_backward",
     "pme_energy_corrections",
     "batch_pme_energy_corrections",
     "pme_energy_corrections_backward",

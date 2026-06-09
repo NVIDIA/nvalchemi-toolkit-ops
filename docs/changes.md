@@ -9,19 +9,21 @@
 - Full PyTorch Ewald/PME APIs support energy-derived forces, charge
   gradients, and strain-first virials for differentiable training, including
   second-order force/stress losses.
-- Full JAX Ewald/PME energy-only APIs support first-order gradients for
-  positions, charges, and strain-first virials. JAX PME higher-order
-  derivatives are explicitly unsupported and raise `NotImplementedError` until
-  a native PME Hessian-vector product is available.
+- Full JAX Ewald/PME energy-only APIs support gradients for positions, charges,
+  and strain-first virials. JAX PME reciprocal position and charge losses use
+  the native PME mesh Hessian-vector product path.
 - Direct-output flags on full Ewald/PME APIs remain functional but are
-  deprecated for differentiable training. Component APIs keep direct outputs for
-  no-autograd MD/inference use.
+  deprecated for differentiable training. Component `compute_forces=True`
+  remains available for no-autograd MD/inference use; component charge-gradient,
+  virial, and hybrid direct outputs warn as legacy training-style outputs.
 - Slab corrections participate in energy-derived full-API gradients while the
   standalone explicit-output slab kernels remain available for forward direct
   outputs.
-- `compute_bspline_moduli_1d` is exported from the top-level PyTorch
-  electrostatics namespace for PME precompute workflows, matching the existing
-  JAX export.
+- Electrostatics gradients are defined only for positions, charges, and cell.
+  Setup values such as alpha are constants, and cell-derived reciprocal caches
+  are static metadata assumed to correspond to the current cell.
+- `compute_bspline_moduli_1d` is exported from the top-level PyTorch and JAX
+  electrostatics namespaces for PME precompute workflows.
 
 ### Neighbors subpackage layout
 

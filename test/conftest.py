@@ -35,6 +35,7 @@ tests unless they truly need to affect every pytest invocation.
 """
 
 import gc
+import hashlib
 import os
 import sys
 import tempfile
@@ -61,9 +62,10 @@ _FRAMEWORK_SORT_RANK: dict[FrameworkName | None, int] = {
     "torch": 2,
 }
 
+_WORKTREE_CACHE_TOKEN = hashlib.sha256(os.getcwd().encode("utf-8")).hexdigest()[:12]
 _WARP_CACHE_DEFAULT = os.path.join(
     os.environ.get("TMPDIR", tempfile.gettempdir()),
-    "warp_test_cache",
+    f"warp_test_cache_{os.path.basename(os.getcwd())}_{_WORKTREE_CACHE_TOKEN}_{os.getpid()}",
 )
 os.environ.setdefault("WARP_CACHE_PATH", _WARP_CACHE_DEFAULT)
 os.makedirs(os.environ["WARP_CACHE_PATH"], exist_ok=True)

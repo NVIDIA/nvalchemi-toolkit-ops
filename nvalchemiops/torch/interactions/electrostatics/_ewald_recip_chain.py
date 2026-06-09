@@ -75,6 +75,9 @@ from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
+from nvalchemiops.torch.interactions.electrostatics._util import (
+    _is_per_system_uniform_cotangent,
+)
 from nvalchemiops.torch.types import (
     get_wp_dtype,
     get_wp_mat_dtype,
@@ -84,7 +87,12 @@ from nvalchemiops.torch.types import (
 __all__ = [
     "ewald_recip_energy_single",
     "ewald_recip_energy_batch",
+    "register_ewald_recip_ops",
 ]
+
+_RECIP_SINGLE: dict[str, object] | None = None
+_RECIP_BATCH: dict[str, object] | None = None
+_EWALD_RECIP_OPS_REGISTERED = False
 
 
 def _wp(tensor: torch.Tensor, dtype):
@@ -149,19 +157,11 @@ def _cotangent_per_system_uniform(grad_energy_atom, batch_idx, num_systems):
     uniform within a system (e.g. ``energy.sum()``). A non-uniform per-atom cotangent
     (a per-atom-energy-weighted loss) needs the weighted recompute below.
     """
-    g = grad_energy_atom.reshape(-1)
-    if g.numel() <= 1:
-        return True
-    if g.is_cuda:
-        return False
-    if batch_idx is None:
-        return bool(torch.all(g == g[0]).item())
-    g64 = g.to(torch.float64)
-    bi = batch_idx.to(torch.long)
-    sys_max = torch.full(
-        (num_systems,), float("-inf"), dtype=torch.float64, device=g.device
-    ).scatter_reduce(0, bi, g64, reduce="amax", include_self=False)
-    return bool(torch.all(g64 == sys_max.index_select(0, bi)).item())
+    return _is_per_system_uniform_cotangent(
+        grad_energy_atom,
+        batch_idx,
+        num_systems,
+    )
 
 
 def _recip_ksum_energy_torch(
@@ -548,7 +548,7 @@ def _backward_impl(
         with torch.inference_mode(False), torch.enable_grad():
 
             def _leaf(t, requires_grad):
-                out = torch.empty_like(t, dtype=torch.float64).copy_(t)
+                out = torch.empty_like(t, dtype=torch.float64).copy_(t).detach()
                 return out.requires_grad_(requires_grad)
 
             p_leaf = _leaf(positions, True)
@@ -1160,51 +1160,68 @@ def _recip_double_backward_fake(
     )
 
 
-_recip_single = register_warp_op_chain(
-    name="nvalchemiops::ewald_recip_energy_single",
-    forward=_recip_forward_single,
-    backward=_recip_backward_single,
-    double_backward=_recip_double_backward_single,
-    forward_fake=_recip_forward_fake,
-    backward_fake=_recip_backward_fake,
-    double_backward_fake=_recip_double_backward_fake,
-    forward_return_arity=4,
-    propagate_outputs=(0,),
-    save_forward_outputs=(1, 2, 3),
-    diff_input_positions=(0, 1, 3, 4),
-    n_forward_inputs=9,
-    backward_return_arity=4,
-    second_order_diff_positions=(3, 4, 5, 7, 8),
-    n_backward_inputs=13,
-    double_backward_return_arity=5,
-)
+def register_ewald_recip_ops() -> None:
+    """Register the Ewald reciprocal-space Torch custom-op chain once."""
+    global _EWALD_RECIP_OPS_REGISTERED, _RECIP_BATCH, _RECIP_SINGLE
+    if _EWALD_RECIP_OPS_REGISTERED:
+        return
 
-ewald_recip_energy_single = _recip_single["forward"]
+    _RECIP_SINGLE = register_warp_op_chain(
+        name="nvalchemiops::ewald_recip_energy_single",
+        forward=_recip_forward_single,
+        backward=_recip_backward_single,
+        double_backward=_recip_double_backward_single,
+        forward_fake=_recip_forward_fake,
+        backward_fake=_recip_backward_fake,
+        double_backward_fake=_recip_double_backward_fake,
+        forward_return_arity=4,
+        propagate_outputs=(0,),
+        save_forward_outputs=(1, 2, 3),
+        diff_input_positions=(0, 1, 3, 4),
+        n_forward_inputs=9,
+        backward_return_arity=4,
+        second_order_diff_positions=(3, 4, 5, 7, 8),
+        n_backward_inputs=13,
+        double_backward_return_arity=5,
+    )
+
+    # Batched forward inputs (12): 0 positions, 1 charges, 2 cell, 3 k_vectors,
+    #   4 volume, 5 alpha, 6 batch_idx, 7 atom_start, 8 atom_end, 9 need_pos,
+    #   10 need_charge, 11 need_cell.
+    _RECIP_BATCH = register_warp_op_chain(
+        name="nvalchemiops::ewald_recip_energy_batch",
+        forward=_recip_forward_batch,
+        backward=_recip_backward_batch,
+        double_backward=_recip_double_backward_batch,
+        forward_fake=_recip_forward_fake,
+        backward_fake=_recip_backward_fake,
+        double_backward_fake=_recip_double_backward_fake,
+        forward_return_arity=4,
+        propagate_outputs=(0,),
+        save_forward_outputs=(1, 2, 3),
+        diff_input_positions=(0, 1, 3, 4),
+        n_forward_inputs=12,
+        backward_return_arity=4,
+        second_order_diff_positions=(3, 4, 5, 7, 8),
+        n_backward_inputs=16,
+        double_backward_return_arity=5,
+        batch_match=True,
+    )
+
+    _EWALD_RECIP_OPS_REGISTERED = True
 
 
-# Batched forward inputs (12): 0 positions, 1 charges, 2 cell, 3 k_vectors,
-#   4 volume, 5 alpha, 6 batch_idx, 7 atom_start, 8 atom_end, 9 need_pos, 10 need_charge,
-#   11 need_cell. Forward outputs are energy plus detached position/charge/cellgrad
-#   caches.
+def ewald_recip_energy_single(*args, **kwargs):
+    """Call the registered single-system Ewald reciprocal-space energy op."""
+    register_ewald_recip_ops()
+    if _RECIP_SINGLE is None:
+        raise RuntimeError("Ewald reciprocal single-system op registration failed")
+    return _RECIP_SINGLE["forward"](*args, **kwargs)
 
-_recip_batch = register_warp_op_chain(
-    name="nvalchemiops::ewald_recip_energy_batch",
-    forward=_recip_forward_batch,
-    backward=_recip_backward_batch,
-    double_backward=_recip_double_backward_batch,
-    forward_fake=_recip_forward_fake,
-    backward_fake=_recip_backward_fake,
-    double_backward_fake=_recip_double_backward_fake,
-    forward_return_arity=4,
-    propagate_outputs=(0,),
-    save_forward_outputs=(1, 2, 3),
-    diff_input_positions=(0, 1, 3, 4),
-    n_forward_inputs=12,
-    backward_return_arity=4,
-    second_order_diff_positions=(3, 4, 5, 7, 8),
-    n_backward_inputs=16,
-    double_backward_return_arity=5,
-    batch_match=True,
-)
 
-ewald_recip_energy_batch = _recip_batch["forward"]
+def ewald_recip_energy_batch(*args, **kwargs):
+    """Call the registered batched Ewald reciprocal-space energy op."""
+    register_ewald_recip_ops()
+    if _RECIP_BATCH is None:
+        raise RuntimeError("Ewald reciprocal batched op registration failed")
+    return _RECIP_BATCH["forward"](*args, **kwargs)

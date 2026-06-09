@@ -478,10 +478,8 @@ def test_cell_literal_strain_loss_double_backward_fd(device, dtype_t):
     def energy_of_strain(strain):
         eye = torch.eye(3, dtype=dtype_t, device=torch_device).unsqueeze(0)
         deform = eye + strain
-        pos_def = torch.bmm(
-            pos0.unsqueeze(1), deform[atom_sys].transpose(1, 2)
-        ).squeeze(1)
-        cell_def = torch.bmm(cell0, deform.transpose(1, 2))
+        pos_def = torch.einsum("ni,nij->nj", pos0, deform[atom_sys])
+        cell_def = torch.einsum("bij,bjk->bik", cell0, deform)
         return ewald_real_space(
             positions=pos_def,
             charges=chg,

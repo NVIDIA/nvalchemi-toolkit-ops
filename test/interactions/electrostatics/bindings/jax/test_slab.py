@@ -254,9 +254,9 @@ def _assert_full_slab_energy_autodiff_matches_outputs(
     def strained_energy(eps_in):
         deformation = jnp.eye(3, dtype=positions.dtype) + eps_in
         return slab_energy_from_full_api(
-            positions @ deformation.T,
+            positions @ deformation,
             charges,
-            cell @ deformation.T,
+            cell @ deformation,
         )
 
     grad_strain = jax.grad(strained_energy)(eps)
@@ -358,9 +358,9 @@ class TestStandaloneSlabCorrection:
         def strained_reference_energy(eps_in):
             deformation = jnp.eye(3, dtype=positions.dtype) + eps_in
             return reference_energy(
-                positions @ deformation.T,
+                positions @ deformation,
                 charges,
-                cell @ deformation.T,
+                cell @ deformation,
             )
 
         autograd_virial = -jax.grad(strained_reference_energy)(eps)
@@ -440,15 +440,54 @@ class TestStandaloneSlabCorrection:
             )(cell_in)
             return jnp.sum(grad_cell * grad_cell)
 
-        grad_force_loss = jax.grad(force_loss)(positions)
-        grad_charge_loss = jax.grad(charge_loss)(charges)
-        grad_cell_loss = jax.grad(cell_loss)(cell)
-        direction = jnp.array(
+        h_positions = jnp.array(
             [[0.3, -0.2, 0.1], [0.0, 0.4, -0.5], [0.2, 0.1, -0.3]],
             dtype=positions.dtype,
         )
-        direction = direction / jnp.linalg.norm(direction)
+        h_charges = jnp.array([0.2, -0.1, 0.3], dtype=charges.dtype)
+        h_cell = jnp.array(
+            [[[0.02, -0.01, 0.03], [0.01, 0.02, -0.02], [0.0, 0.01, 0.02]]],
+            dtype=cell.dtype,
+        )
+
+        def first_derivatives(pos, chg, cell_in):
+            return jax.grad(slab_energy, argnums=(0, 1, 2))(pos, chg, cell_in)
+
+        _, hvp = jax.jvp(
+            first_derivatives,
+            (positions, charges, cell),
+            (h_positions, h_charges, h_cell),
+        )
         step = jnp.asarray(1e-4, dtype=positions.dtype)
+        plus = first_derivatives(
+            positions + step * h_positions,
+            charges + step * h_charges,
+            cell + step * h_cell,
+        )
+        minus = first_derivatives(
+            positions - step * h_positions,
+            charges - step * h_charges,
+            cell - step * h_cell,
+        )
+        fd_hvp = tuple((p - m) / (2.0 * step) for p, m in zip(plus, minus))
+        for actual, expected in zip(hvp, fd_hvp, strict=True):
+            _assert_close(actual, expected, rtol=1e-5, atol=1e-7)
+
+        jit_hvp = jax.jit(
+            lambda pos, chg, cell_in, hpos, hchg, hcell: jax.jvp(
+                first_derivatives,
+                (pos, chg, cell_in),
+                (hpos, hchg, hcell),
+            )[1]
+        )(positions, charges, cell, h_positions, h_charges, h_cell)
+        for actual, expected in zip(jit_hvp, hvp, strict=True):
+            _assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+
+        grad_force_loss = jax.grad(force_loss)(positions)
+        grad_charge_loss = jax.grad(charge_loss)(charges)
+        grad_cell_loss = jax.grad(cell_loss)(cell)
+        direction = h_positions
+        direction = direction / jnp.linalg.norm(direction)
         force_loss_fd = (
             force_loss(positions + step * direction)
             - force_loss(positions - step * direction)
@@ -1003,10 +1042,9 @@ class TestJaxEwaldSlabIntegration:
             cell,
             pbc,
         )
-        k_vectors = generate_k_vectors_ewald_summation(cell, EWALD_K_CUTOFF)
         common_kwargs = {
             "alpha": EWALD_ALPHA,
-            "k_vectors": k_vectors,
+            "k_cutoff": EWALD_K_CUTOFF,
             "neighbor_matrix": neighbor_matrix,
             "neighbor_matrix_shifts": neighbor_matrix_shifts,
         }
@@ -1270,6 +1308,46 @@ class TestJaxPMESlabIntegration:
             cell,
             slab_outputs,
         )
+
+    def test_full_pme_slab_jit_smoke(self, device):  # noqa: ARG002
+        """Energy-only full PME slab composition works under jax.jit."""
+        positions, charges, cell, pbc = _make_slab_system()
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions,
+            REAL_SPACE_CUTOFF,
+            cell,
+            pbc,
+        )
+
+        def full_pme_slab(pos, chg, cell_in, nm, nms):
+            return particle_mesh_ewald(
+                pos,
+                chg,
+                cell_in,
+                alpha=EWALD_ALPHA,
+                mesh_dimensions=PME_MESH,
+                neighbor_matrix=nm,
+                neighbor_matrix_shifts=nms,
+                pbc=pbc,
+                slab_correction=True,
+            )
+
+        eager = full_pme_slab(
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+        )
+        jitted = jax.jit(full_pme_slab)(
+            positions,
+            charges,
+            cell,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+        )
+
+        _assert_close(jitted, eager, rtol=1e-9, atol=1e-10)
 
     def test_full_pme_slab_3d_pbc_noop(self, device):  # noqa: ARG002
         """3D periodic PME slab mode matches standard PME."""

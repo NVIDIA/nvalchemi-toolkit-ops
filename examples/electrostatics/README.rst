@@ -19,6 +19,12 @@ These examples show how to:
 
 The full Torch Ewald/PME APIs support first- and second-order energy-derived
 training workflows. The full JAX Ewald/PME APIs support first-order
-energy-derived gradients for positions, charges, and strain-consistent cell
-gradients; JAX PME higher-order derivatives raise ``NotImplementedError`` until
-a native PME Hessian-vector product is available.
+energy-derived gradients for positions, charges, and row-vector displacement
+virials. Higher-order JAX support is limited to tested position and charge
+scalar losses; PME cell/stress/strain higher-order derivatives are unsupported.
+Electrostatics does not expose public Hessian or Jacobian APIs.
+
+Point-charge Ewald/PME examples use ``float64`` for accuracy-sensitive
+reciprocal-space calculations and gradient checks. The APIs also support
+``float32`` when throughput is the priority; keep all floating inputs and
+precomputed metadata in a call on a consistent dtype.

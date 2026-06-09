@@ -26,7 +26,12 @@ from nvalchemiops.torch.types import get_wp_dtype
 __all__ = [
     "ewald_energy_corrections",
     "ewald_energy_corrections_batch",
+    "register_ewald_corrections_ops",
 ]
+
+_CORRECTIONS_SINGLE: dict[str, object] | None = None
+_CORRECTIONS_BATCH: dict[str, object] | None = None
+_EWALD_CORRECTIONS_OPS_REGISTERED = False
 
 
 def _wp_from_torch(tensor: torch.Tensor, dtype):
@@ -167,20 +172,6 @@ def _energy_corrections_double_backward_launch(
     return grad_grad_E, grad_raw, grad_charges, grad_volume, grad_alpha, grad_qtot
 
 
-_corrections_single = register_warp_op_chain(
-    name="nvalchemiops::ewald_energy_corrections",
-    forward=_energy_corrections_forward_launch,
-    backward=_energy_corrections_backward_launch,
-    double_backward=_energy_corrections_double_backward_launch,
-    diff_input_positions=(0, 1, 2, 3, 4),
-    n_forward_inputs=5,
-    second_order_diff_positions=(0, 1, 2, 3, 4, 5),
-    n_backward_inputs=6,
-)
-
-ewald_energy_corrections = _corrections_single["forward"]
-
-
 def _batch_energy_corrections_forward_launch(
     raw_energies: torch.Tensor,
     charges: torch.Tensor,
@@ -311,16 +302,49 @@ def _batch_energy_corrections_double_backward_launch(
     return grad_grad_E, grad_raw, grad_charges, grad_volumes, grad_alpha, grad_qtots
 
 
-_corrections_batch = register_warp_op_chain(
-    name="nvalchemiops::ewald_energy_corrections_batch",
-    forward=_batch_energy_corrections_forward_launch,
-    backward=_batch_energy_corrections_backward_launch,
-    double_backward=_batch_energy_corrections_double_backward_launch,
-    diff_input_positions=(0, 1, 3, 4, 5),
-    n_forward_inputs=6,
-    second_order_diff_positions=(0, 1, 2, 4, 5, 6),
-    n_backward_inputs=7,
-    batch_match=True,
-)
+def register_ewald_corrections_ops() -> None:
+    """Register the Ewald correction Torch custom-op chains once."""
+    global _CORRECTIONS_BATCH, _CORRECTIONS_SINGLE, _EWALD_CORRECTIONS_OPS_REGISTERED
+    if _EWALD_CORRECTIONS_OPS_REGISTERED:
+        return
 
-ewald_energy_corrections_batch = _corrections_batch["forward"]
+    _CORRECTIONS_SINGLE = register_warp_op_chain(
+        name="nvalchemiops::ewald_energy_corrections",
+        forward=_energy_corrections_forward_launch,
+        backward=_energy_corrections_backward_launch,
+        double_backward=_energy_corrections_double_backward_launch,
+        diff_input_positions=(0, 1, 2, 3, 4),
+        n_forward_inputs=5,
+        second_order_diff_positions=(0, 1, 2, 3, 4, 5),
+        n_backward_inputs=6,
+    )
+
+    _CORRECTIONS_BATCH = register_warp_op_chain(
+        name="nvalchemiops::ewald_energy_corrections_batch",
+        forward=_batch_energy_corrections_forward_launch,
+        backward=_batch_energy_corrections_backward_launch,
+        double_backward=_batch_energy_corrections_double_backward_launch,
+        diff_input_positions=(0, 1, 3, 4, 5),
+        n_forward_inputs=6,
+        second_order_diff_positions=(0, 1, 2, 4, 5, 6),
+        n_backward_inputs=7,
+        batch_match=True,
+    )
+
+    _EWALD_CORRECTIONS_OPS_REGISTERED = True
+
+
+def ewald_energy_corrections(*args, **kwargs):
+    """Call the registered single-system Ewald correction op."""
+    register_ewald_corrections_ops()
+    if _CORRECTIONS_SINGLE is None:
+        raise RuntimeError("Ewald correction single-system op registration failed")
+    return _CORRECTIONS_SINGLE["forward"](*args, **kwargs)
+
+
+def ewald_energy_corrections_batch(*args, **kwargs):
+    """Call the registered batched Ewald correction op."""
+    register_ewald_corrections_ops()
+    if _CORRECTIONS_BATCH is None:
+        raise RuntimeError("Ewald correction batched op registration failed")
+    return _CORRECTIONS_BATCH["forward"](*args, **kwargs)

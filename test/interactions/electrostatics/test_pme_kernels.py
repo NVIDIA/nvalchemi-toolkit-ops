@@ -43,9 +43,11 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
     batch_pme_energy_corrections,
     batch_pme_energy_corrections_with_charge_grad,
     batch_pme_green_structure_factor,
+    pme_convolve,
     pme_energy_corrections,
     pme_energy_corrections_with_charge_grad,
     pme_green_structure_factor,
+    pme_virial_bg_correction,
 )
 
 # Mathematical constants
@@ -72,6 +74,14 @@ def make_scalar_array(value: float, device: str, wp_dtype: type) -> wp.array:
 def get_rtol(wp_dtype: type) -> float:
     """Get relative tolerance based on dtype."""
     return 1e-5 if wp_dtype == wp.float64 else 1e-4
+
+
+def _sinc_np(x: np.ndarray) -> np.ndarray:
+    """Return sin(pi*x)/(pi*x), with the removable singularity set to one."""
+    out = np.ones_like(x)
+    mask = np.abs(x) > 1.0e-12
+    out[mask] = np.sin(np.pi * x[mask]) / (np.pi * x[mask])
+    return out
 
 
 ###########################################################################################
@@ -177,27 +187,35 @@ class TestPMEGreenStructureFactor:
         assert green_np[0, 0, 0] == 0.0, "G(k=0) should be zero"
 
     def test_green_function_formula(self, device, wp_dtype):
-        """Test Green's function follows G(k) = 2π/V * exp(-k²/(4α²)) / k²."""
+        """Public Green helper returns raw G(k), not folded G(k) / C²(k)."""
         mesh_nx, mesh_ny, mesh_nz = 4, 4, 4
         nz_rfft = mesh_nz // 2 + 1
         alpha_val = 0.5
         volume_val = 100.0
+        spline_order = 4
         np_dtype = get_np_dtype(wp_dtype)
 
-        # Create simple k² values
         k_sq_np = np.ones((mesh_nx, mesh_ny, nz_rfft), dtype=np_dtype) * 4.0  # k² = 4
         k_sq_np[0, 0, 0] = 0.0  # k=0
 
         k_squared = wp.array(k_sq_np, dtype=wp_dtype, device=device)
-        # Miller indices all zero (so structure factor = 1)
+        miller_x_np = np.fft.fftfreq(mesh_nx).astype(np_dtype) * mesh_nx
+        miller_y_np = np.fft.fftfreq(mesh_ny).astype(np_dtype) * mesh_ny
+        miller_z_np = np.fft.rfftfreq(mesh_nz).astype(np_dtype) * mesh_nz
         miller_x = wp.array(
-            np.zeros(mesh_nx, dtype=np_dtype), dtype=wp_dtype, device=device
+            miller_x_np,
+            dtype=wp_dtype,
+            device=device,
         )
         miller_y = wp.array(
-            np.zeros(mesh_ny, dtype=np_dtype), dtype=wp_dtype, device=device
+            miller_y_np,
+            dtype=wp_dtype,
+            device=device,
         )
         miller_z = wp.array(
-            np.zeros(nz_rfft, dtype=np_dtype), dtype=wp_dtype, device=device
+            miller_z_np,
+            dtype=wp_dtype,
+            device=device,
         )
         alpha = make_scalar_array(alpha_val, device, wp_dtype)
         volume = make_scalar_array(volume_val, device, wp_dtype)
@@ -219,7 +237,7 @@ class TestPMEGreenStructureFactor:
             mesh_nx=mesh_nx,
             mesh_ny=mesh_ny,
             mesh_nz=mesh_nz,
-            spline_order=4,
+            spline_order=spline_order,
             green_function=green_function,
             structure_factor_sq=structure_factor_sq,
             wp_dtype=wp_dtype,
@@ -227,15 +245,71 @@ class TestPMEGreenStructureFactor:
         )
 
         green_np = green_function.numpy()
+        sf_np = structure_factor_sq.numpy()
 
         # Expected: G(k) = 2π/V * exp(-k²/(4α²)) / k²
         k_sq = 4.0
         expected = TWOPI * np.exp(-k_sq / (4.0 * alpha_val**2)) / (k_sq * volume_val)
 
-        # Check a non-zero k point
+        idx = (1, 1, 0)
         rtol = get_rtol(wp_dtype)
-        assert np.isclose(green_np[1, 0, 0], expected, rtol=rtol), (
-            f"Green's function mismatch: got {green_np[1, 0, 0]}, expected {expected}"
+        assert not np.isclose(sf_np[idx], 1.0, rtol=rtol)
+        assert np.isclose(green_np[idx], expected, rtol=rtol), (
+            f"Green's function mismatch: got {green_np[idx]}, expected {expected}"
+        )
+        assert not np.isclose(green_np[idx], expected / sf_np[idx], rtol=rtol)
+
+    def test_convolve_uses_folded_green(self, device, wp_dtype):
+        """Fused convolve applies G(k) / C²(k) while public Green stays raw."""
+        mesh_nx, mesh_ny, mesh_nz = 4, 4, 4
+        nz_rfft = mesh_nz // 2 + 1
+        alpha_val = 0.5
+        volume_val = 100.0
+        spline_order = 4
+        idx = (1, 1, 0)
+        np_dtype = get_np_dtype(wp_dtype)
+        vec_dtype = wp.vec2d if wp_dtype == wp.float64 else wp.vec2f
+
+        k_sq_np = np.ones((mesh_nx, mesh_ny, nz_rfft), dtype=np_dtype) * 4.0
+        k_sq_np[0, 0, 0] = 0.0
+        miller_x_np = np.fft.fftfreq(mesh_nx).astype(np_dtype) * mesh_nx
+        miller_y_np = np.fft.fftfreq(mesh_ny).astype(np_dtype) * mesh_ny
+        miller_z_np = np.fft.rfftfreq(mesh_nz).astype(np_dtype) * mesh_nz
+
+        moduli_x_np = _sinc_np(miller_x_np / mesh_nx).astype(np_dtype) ** spline_order
+        moduli_y_np = _sinc_np(miller_y_np / mesh_ny).astype(np_dtype) ** spline_order
+        moduli_z_np = _sinc_np(miller_z_np / mesh_nz).astype(np_dtype) ** spline_order
+        sf_sq = (moduli_x_np[idx[0]] * moduli_y_np[idx[1]] * moduli_z_np[idx[2]]) ** 2
+        assert not np.isclose(sf_sq, 1.0)
+
+        mesh_fft_np = np.zeros((mesh_nx, mesh_ny, nz_rfft, 2), dtype=np_dtype)
+        mesh_fft_np[idx + (0,)] = np_dtype(3.0)
+        mesh_fft_np[idx + (1,)] = np_dtype(-2.0)
+        convolved_np = np.zeros_like(mesh_fft_np)
+
+        convolved = wp.array(convolved_np, dtype=vec_dtype, device=device)
+        pme_convolve(
+            wp.array(mesh_fft_np, dtype=vec_dtype, device=device),
+            wp.array(k_sq_np, dtype=wp_dtype, device=device),
+            wp.array(moduli_x_np, dtype=wp_dtype, device=device),
+            wp.array(moduli_y_np, dtype=wp_dtype, device=device),
+            wp.array(moduli_z_np, dtype=wp_dtype, device=device),
+            make_scalar_array(alpha_val, device, wp_dtype),
+            make_scalar_array(volume_val, device, wp_dtype),
+            convolved,
+            wp_dtype=wp_dtype,
+            device=device,
+        )
+
+        raw_green = TWOPI * np.exp(-4.0 / (4.0 * alpha_val**2)) / (4.0 * volume_val)
+        expected_factor = raw_green / sf_sq
+        got = convolved.numpy()[idx]
+        rtol = get_rtol(wp_dtype)
+        np.testing.assert_allclose(
+            got,
+            mesh_fft_np[idx] * expected_factor,
+            rtol=rtol,
+            atol=1e-12,
         )
 
     def test_structure_factor_positive(self, device, wp_dtype):
@@ -990,6 +1064,122 @@ class TestBatchPMEEnergyCorrectionsWithChargeGrad:
         rtol = get_rtol(wp_dtype)
         np.testing.assert_allclose(
             corrected_only.numpy(), corrected_grad.numpy(), rtol=rtol
+        )
+
+
+class TestPMEVirialBackgroundCorrection:
+    """Test non-neutral PME virial background correction kernels."""
+
+    def test_virial_background_subtracts_diagonal_energy(self, device, wp_dtype):
+        """Virial background subtracts E_bg from each diagonal entry."""
+        np_dtype = get_np_dtype(wp_dtype)
+        charges_np = np.array([1.0, 2.0, -0.5], dtype=np_dtype)
+        batch_idx_np = np.zeros(charges_np.shape[0], dtype=np.int32)
+        cell_np = np.array(
+            [[[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]]],
+            dtype=np_dtype,
+        )
+        alpha_val = np_dtype(0.4)
+
+        charges = wp.array(charges_np, dtype=wp_dtype, device=device)
+        batch_idx = wp.array(batch_idx_np, dtype=wp.int32, device=device)
+        cell = wp.array(cell_np, dtype=wp_dtype, device=device)
+        volume = wp.array(
+            np.array([np.abs(np.linalg.det(cell_np[0]))], dtype=np_dtype),
+            dtype=wp_dtype,
+            device=device,
+        )
+        alpha = wp.array(
+            np.array([alpha_val], dtype=np_dtype), dtype=wp_dtype, device=device
+        )
+        total_charges = wp.zeros(1, dtype=wp_dtype, device=device)
+        virial_in = wp.zeros((1, 3, 3), dtype=wp_dtype, device=device)
+        virial_out = wp.zeros((1, 3, 3), dtype=wp_dtype, device=device)
+
+        pme_virial_bg_correction(
+            charges=charges,
+            batch_idx=batch_idx,
+            cell=cell,
+            volume=volume,
+            use_supplied_volume=False,
+            alpha=alpha,
+            total_charges=total_charges,
+            virial_in=virial_in,
+            virial_out=virial_out,
+            wp_dtype=wp_dtype,
+            device=device,
+        )
+
+        total_charge = float(charges_np.sum())
+        volume = float(np.linalg.det(cell_np[0]))
+        expected_bg = (
+            math.pi
+            * total_charge
+            * total_charge
+            / (2.0 * float(alpha_val) * float(alpha_val) * volume)
+        )
+        expected = -expected_bg * np.eye(3, dtype=np_dtype)
+
+        np.testing.assert_allclose(
+            virial_out.numpy()[0],
+            expected,
+            rtol=get_rtol(wp_dtype),
+            atol=10.0 * get_rtol(wp_dtype),
+        )
+
+    def test_virial_background_uses_supplied_volume(self, device, wp_dtype):
+        """Virial background can use caller-owned static PME volume."""
+        np_dtype = get_np_dtype(wp_dtype)
+        charges_np = np.array([1.0, 2.0, -0.5], dtype=np_dtype)
+        batch_idx_np = np.zeros(charges_np.shape[0], dtype=np.int32)
+        cell_np = np.array(
+            [[[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 4.0]]],
+            dtype=np_dtype,
+        )
+        supplied_volume = np_dtype(12.0)
+        alpha_val = np_dtype(0.4)
+
+        charges = wp.array(charges_np, dtype=wp_dtype, device=device)
+        batch_idx = wp.array(batch_idx_np, dtype=wp.int32, device=device)
+        cell = wp.array(cell_np, dtype=wp_dtype, device=device)
+        volume = wp.array(
+            np.array([supplied_volume], dtype=np_dtype), dtype=wp_dtype, device=device
+        )
+        alpha = wp.array(
+            np.array([alpha_val], dtype=np_dtype), dtype=wp_dtype, device=device
+        )
+        total_charges = wp.zeros(1, dtype=wp_dtype, device=device)
+        virial_in = wp.zeros((1, 3, 3), dtype=wp_dtype, device=device)
+        virial_out = wp.zeros((1, 3, 3), dtype=wp_dtype, device=device)
+
+        pme_virial_bg_correction(
+            charges=charges,
+            batch_idx=batch_idx,
+            cell=cell,
+            volume=volume,
+            use_supplied_volume=True,
+            alpha=alpha,
+            total_charges=total_charges,
+            virial_in=virial_in,
+            virial_out=virial_out,
+            wp_dtype=wp_dtype,
+            device=device,
+        )
+
+        total_charge = float(charges_np.sum())
+        expected_bg = (
+            math.pi
+            * total_charge
+            * total_charge
+            / (2.0 * float(alpha_val) * float(alpha_val) * float(supplied_volume))
+        )
+        expected = -expected_bg * np.eye(3, dtype=np_dtype)
+
+        np.testing.assert_allclose(
+            virial_out.numpy()[0],
+            expected,
+            rtol=get_rtol(wp_dtype),
+            atol=10.0 * get_rtol(wp_dtype),
         )
 
 

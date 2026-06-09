@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the electrostatics kernel factory (F1, C1).
+"""Tests for shared electrostatics factory validation and sentinels.
 
 Two guarantees are checked:
 
@@ -39,10 +39,7 @@ import warp as wp
 
 from nvalchemiops.interactions.electrostatics._factory_common import (
     _DerivState,
-    alloc_ewald_real_sentinels,
     get_backward_scale_kernel,
-    get_ewald_real_kernel,
-    make_ewald_real_kernel,
 )
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     batch_ewald_real_space_energy,
@@ -52,6 +49,9 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
 )
 from nvalchemiops.interactions.electrostatics.ewald_real_factory import (
     _ewald_real_module_name,
+    alloc_ewald_real_sentinels,
+    get_ewald_real_kernel,
+    make_ewald_real_kernel,
 )
 
 # Reuse the warp-array prep helpers from the kernel test module so the factory is
@@ -414,6 +414,113 @@ class TestFactoryEnergyParity:
         assert np.array_equal(out.numpy(), ref.numpy())
 
 
+class TestFactoryCudaSentinels:
+    """CUDA canaries for inactive factory slots backed by zero-size sentinels."""
+
+    @staticmethod
+    def _cuda_device() -> str:
+        if not wp.is_cuda_available():
+            pytest.skip("CUDA not available")
+        return "cuda:0"
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
+    def test_matrix_energy_ignores_csr_and_derivative_sentinels(
+        self,
+        two_atom_matrix_system,
+        dtype,
+    ):
+        """Matrix energy specialization does not touch inactive CSR/output slots."""
+        device = self._cuda_device()
+        inputs = prepare_matrix_inputs(two_atom_matrix_system, device, dtype=dtype)
+        alpha = make_alpha_array(_ALPHA, device, dtype=dtype)
+        sentinels = alloc_ewald_real_sentinels(dtype, device)
+        n = two_atom_matrix_system["num_atoms"]
+
+        out = wp.zeros(n, dtype=wp.float64, device=device)
+        kernel = get_ewald_real_kernel(
+            dtype,
+            batched=False,
+            neighbor_input="matrix",
+            deriv_state=_DerivState.E,
+        )
+        wp.launch(
+            kernel,
+            dim=n,
+            inputs=[
+                inputs["positions"],
+                inputs["charges"],
+                inputs["cell"],
+                sentinels["batch_id"],
+                sentinels["idx_j"],
+                sentinels["neighbor_ptr"],
+                sentinels["unit_shifts"],
+                inputs["neighbor_matrix"],
+                inputs["neighbor_shifts"],
+                wp.int32(two_atom_matrix_system["fill_value"]),
+                alpha,
+                out,
+                sentinels["atomic_forces"],
+                sentinels["charge_gradients"],
+                sentinels["virial"],
+            ],
+            device=device,
+        )
+        wp.synchronize()
+        assert np.isfinite(out.numpy()).all()
+
+    @pytest.mark.gpu
+    @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
+    def test_csr_force_charge_ignores_matrix_and_virial_sentinels(
+        self,
+        two_atom_system,
+        dtype,
+    ):
+        """CSR E/F/dQ specialization does not touch inactive matrix/virial slots."""
+        device = self._cuda_device()
+        inputs = prepare_csr_inputs(two_atom_system, device, dtype=dtype)
+        alpha = make_alpha_array(_ALPHA, device, dtype=dtype)
+        sentinels = alloc_ewald_real_sentinels(dtype, device)
+        n = two_atom_system["num_atoms"]
+
+        out = wp.zeros(n, dtype=wp.float64, device=device)
+        forces = wp.zeros(n, dtype=_VEC[dtype], device=device)
+        charge_grads = wp.zeros(n, dtype=wp.float64, device=device)
+        kernel = get_ewald_real_kernel(
+            dtype,
+            batched=False,
+            neighbor_input="list",
+            deriv_state=_DerivState.E_F_dQ,
+            cell_grad=False,
+        )
+        wp.launch(
+            kernel,
+            dim=n,
+            inputs=[
+                inputs["positions"],
+                inputs["charges"],
+                inputs["cell"],
+                sentinels["batch_id"],
+                inputs["idx_j"],
+                inputs["neighbor_ptr"],
+                inputs["unit_shifts"],
+                sentinels["neighbor_matrix"],
+                sentinels["unit_shifts_matrix"],
+                wp.int32(_MASK),
+                alpha,
+                out,
+                forces,
+                charge_grads,
+                sentinels["virial"],
+            ],
+            device=device,
+        )
+        wp.synchronize()
+        assert np.isfinite(out.numpy()).all()
+        assert np.isfinite(forces.numpy()).all()
+        assert np.isfinite(charge_grads.numpy()).all()
+
+
 # ==============================================================================
 # Cache + axis validation
 # ==============================================================================
@@ -430,8 +537,8 @@ class TestFactoryCacheAndValidation:
             get_ewald_real_kernel(wp.float16)
 
     def test_derivative_axes_now_supported(self):
-        # K1 lifted the Phase-0 guards: E_F / E_F_dQ and the backward /
-        # double_backward orders now build real kernels.
+        # Force-bearing derivative states support the first- and second-order
+        # factory kernels.
         assert make_ewald_real_kernel(wp.float64, deriv_state=_DerivState.E_F)
         assert make_ewald_real_kernel(
             wp.float64, deriv_state=_DerivState.E_F, order="backward"
@@ -454,12 +561,14 @@ class TestFactoryCacheAndValidation:
                 wp.float64, cell_grad=True, deriv_state=_DerivState.E
             )
 
-    def test_derivative_order_with_energy_only_raises_value_error(self):
-        # backward / double_backward need something to differentiate.
-        with pytest.raises(ValueError):
-            make_ewald_real_kernel(
-                wp.float64, order="backward", deriv_state=_DerivState.E
-            )
+    @pytest.mark.parametrize("deriv_state", [_DerivState.E, _DerivState.E_dQ])
+    @pytest.mark.parametrize("order", ["backward", "double_backward"])
+    def test_derivative_order_without_force_terms_raises_value_error(
+        self, deriv_state, order
+    ):
+        # backward / double_backward need force-bearing factory roots.
+        with pytest.raises(ValueError, match="E_F, E_F_dQ"):
+            make_ewald_real_kernel(wp.float64, order=order, deriv_state=deriv_state)
 
     def test_unsupported_component_raises(self):
         with pytest.raises(NotImplementedError):

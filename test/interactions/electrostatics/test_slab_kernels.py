@@ -38,6 +38,9 @@ import warp as wp
 
 from nvalchemiops.interactions.electrostatics.slab_kernels import (
     slab_correction,
+    slab_correction_backward,
+    slab_correction_double_backward,
+    slab_precompute_geometry,
     slab_reduce_moments,
 )
 
@@ -127,7 +130,7 @@ def _make_warp_arrays(system, wp_dtype, device="cpu"):
     pbc_np = _axis_to_pbc(axis)[None, :]  # (1, 3)
     pbc = wp.array(pbc_np, dtype=wp.bool, device=device)
 
-    # Cell as (1,) array of mat33 — kernel computes volume / lengths internally
+    # Cell as (1,) array of mat33; kernel computes volume / lengths internally.
     cell_arr = wp.array(
         cell_np[None, :, :].astype(np_dtype), dtype=mat_dtype, device=device
     )
@@ -137,6 +140,10 @@ def _make_warp_arrays(system, wp_dtype, device="cpu"):
     mz = wp.zeros((1, 3), dtype=wp.float64, device=device)
     mz2 = wp.zeros((1, 3), dtype=wp.float64, device=device)
     qtotal = wp.zeros(1, dtype=wp.float64, device=device)
+    slab_axis = wp.zeros(1, dtype=wp.int32, device=device)
+    slab_normal = wp.zeros(1, dtype=wp.vec3d, device=device)
+    slab_volume = wp.zeros(1, dtype=wp.float64, device=device)
+    slab_height_sq = wp.zeros(1, dtype=wp.float64, device=device)
 
     # Output arrays
     energy_in = wp.zeros(N, dtype=wp.float64, device=device)
@@ -155,6 +162,10 @@ def _make_warp_arrays(system, wp_dtype, device="cpu"):
         "mz": mz,
         "mz2": mz2,
         "qtotal": qtotal,
+        "slab_axis": slab_axis,
+        "slab_normal": slab_normal,
+        "slab_volume": slab_volume,
+        "slab_height_sq": slab_height_sq,
         "energy_in": energy_in,
         "energy_out": energy_out,
         "forces": forces,
@@ -183,6 +194,15 @@ def _run_kernels(
         qtotal=w["qtotal"],
         wp_dtype=w["wp_dtype"],
     )
+    slab_precompute_geometry(
+        pbc=w["pbc"],
+        cell=w["cell"],
+        slab_axis=w["slab_axis"],
+        slab_normal=w["slab_normal"],
+        slab_volume=w["slab_volume"],
+        slab_height_sq=w["slab_height_sq"],
+        wp_dtype=w["wp_dtype"],
+    )
     slab_correction(
         positions=w["positions"],
         charges=w["charges"],
@@ -192,6 +212,10 @@ def _run_kernels(
         mz=w["mz"],
         mz2=w["mz2"],
         qtotal=w["qtotal"],
+        slab_axis=w["slab_axis"],
+        slab_normal=w["slab_normal"],
+        slab_volume=w["slab_volume"],
+        slab_height_sq=w["slab_height_sq"],
         energy_in=w["energy_in"],
         energy_out=w["energy_out"],
         forces=w["forces"],
@@ -275,8 +299,6 @@ class TestMomentReduction:
         expected_mz2 = np.sum(q * z**2)
         expected_q = np.sum(q)
 
-        # mz is now (B, 3): mz[s, axis] is the slab-axis dipole.
-        # mz2 is (B, 3): mz2[s, axis] is the projected second moment.
         rtol = 1e-5 if wp_dtype == wp.float32 else 1e-12
         np.testing.assert_allclose(w["mz"].numpy()[0, axis], expected_mz, rtol=rtol)
         np.testing.assert_allclose(w["mz2"].numpy()[0, axis], expected_mz2, rtol=rtol)
@@ -306,7 +328,6 @@ class TestMomentReduction:
         np.testing.assert_allclose(w["mz"].numpy()[0], 0.0, atol=1e-15)
         np.testing.assert_allclose(w["mz2"].numpy()[0], 0.0, atol=1e-15)
         np.testing.assert_allclose(w["qtotal"].numpy()[0], 0.0, atol=1e-15)
-        # mz, mz2 are now (B, 3) — full row should be zero for 3D pbc.
 
 
 # ==============================================================================
@@ -392,6 +413,87 @@ class TestSlabOutputFlags:
         )
         np.testing.assert_allclose(w["charge_grads"].numpy(), expected_cg, rtol=1e-12)
         np.testing.assert_allclose(w["virial"].numpy(), 0.0, atol=1e-15)
+
+    def test_charge_grads_do_not_mutate_disabled_forces(self, slab_system_z, device):
+        """Charge-gradient mode does not write force output when forces are disabled."""
+        w = _make_warp_arrays(slab_system_z, wp.float64, device)
+        sentinel = np.full((slab_system_z["positions"].shape[0], 3), 5.0)
+        w["forces"] = wp.array(sentinel, dtype=wp.vec3d, device=device)
+
+        _run_kernels(
+            w,
+            compute_forces=False,
+            compute_charge_gradients=True,
+            compute_virial=False,
+        )
+
+        expected_e, _, expected_cg, _ = analytical_slab_correction(
+            slab_system_z["positions"],
+            slab_system_z["charges"],
+            slab_system_z["cell"],
+            slab_system_z["axis"],
+        )
+
+        np.testing.assert_allclose(w["energy_out"].numpy(), expected_e, rtol=1e-12)
+        np.testing.assert_allclose(w["charge_grads"].numpy(), expected_cg, rtol=1e-12)
+        np.testing.assert_allclose(w["forces"].numpy(), sentinel, atol=0.0)
+        np.testing.assert_allclose(w["virial"].numpy(), 0.0, atol=1e-15)
+
+    def test_virial_does_not_mutate_disabled_forces(self, slab_system_z, device):
+        """Virial mode does not write force output when forces are disabled."""
+        w = _make_warp_arrays(slab_system_z, wp.float64, device)
+        sentinel = np.full((slab_system_z["positions"].shape[0], 3), 5.0)
+        w["forces"] = wp.array(sentinel, dtype=wp.vec3d, device=device)
+
+        _run_kernels(
+            w,
+            compute_forces=False,
+            compute_charge_gradients=False,
+            compute_virial=True,
+        )
+
+        expected_e, _, _, expected_v = analytical_slab_correction(
+            slab_system_z["positions"],
+            slab_system_z["charges"],
+            slab_system_z["cell"],
+            slab_system_z["axis"],
+        )
+
+        np.testing.assert_allclose(w["energy_out"].numpy(), expected_e, rtol=1e-12)
+        np.testing.assert_allclose(
+            w["virial"].numpy()[0], expected_v.sum(axis=0), rtol=1e-12, atol=1e-15
+        )
+        np.testing.assert_allclose(w["forces"].numpy(), sentinel, atol=0.0)
+        np.testing.assert_allclose(w["charge_grads"].numpy(), 0.0, atol=1e-15)
+
+    def test_charge_grads_and_virial_do_not_mutate_disabled_forces(
+        self, slab_system_z, device
+    ):
+        """Charge-gradient plus virial mode does not write force output."""
+        w = _make_warp_arrays(slab_system_z, wp.float64, device)
+        sentinel = np.full((slab_system_z["positions"].shape[0], 3), 5.0)
+        w["forces"] = wp.array(sentinel, dtype=wp.vec3d, device=device)
+
+        _run_kernels(
+            w,
+            compute_forces=False,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+
+        expected_e, _, expected_cg, expected_v = analytical_slab_correction(
+            slab_system_z["positions"],
+            slab_system_z["charges"],
+            slab_system_z["cell"],
+            slab_system_z["axis"],
+        )
+
+        np.testing.assert_allclose(w["energy_out"].numpy(), expected_e, rtol=1e-12)
+        np.testing.assert_allclose(w["charge_grads"].numpy(), expected_cg, rtol=1e-12)
+        np.testing.assert_allclose(
+            w["virial"].numpy()[0], expected_v.sum(axis=0), rtol=1e-12, atol=1e-15
+        )
+        np.testing.assert_allclose(w["forces"].numpy(), sentinel, atol=0.0)
 
 
 # ==============================================================================
@@ -562,6 +664,10 @@ class TestMixedAxisBatch:
         wp_mz = wp.zeros((3, 3), dtype=wp.float64, device=device)
         wp_mz2 = wp.zeros((3, 3), dtype=wp.float64, device=device)
         wp_qtotal = wp.zeros(3, dtype=wp.float64, device=device)
+        wp_slab_axis = wp.zeros(3, dtype=wp.int32, device=device)
+        wp_slab_normal = wp.zeros(3, dtype=wp.vec3d, device=device)
+        wp_slab_volume = wp.zeros(3, dtype=wp.float64, device=device)
+        wp_slab_height_sq = wp.zeros(3, dtype=wp.float64, device=device)
         wp_energy_in = wp.zeros(total_atoms, dtype=wp.float64, device=device)
         wp_energy_out = wp.zeros(total_atoms, dtype=wp.float64, device=device)
         wp_forces = wp.zeros(total_atoms, dtype=wp.vec3d, device=device)
@@ -579,6 +685,15 @@ class TestMixedAxisBatch:
             wp_qtotal,
             wp_dtype,
         )
+        slab_precompute_geometry(
+            wp_pbc,
+            wp_cell,
+            wp_slab_axis,
+            wp_slab_normal,
+            wp_slab_volume,
+            wp_slab_height_sq,
+            wp_dtype,
+        )
         slab_correction(
             wp_positions,
             wp_charges,
@@ -588,6 +703,10 @@ class TestMixedAxisBatch:
             wp_mz,
             wp_mz2,
             wp_qtotal,
+            wp_slab_axis,
+            wp_slab_normal,
+            wp_slab_volume,
+            wp_slab_height_sq,
             wp_energy_in,
             wp_energy_out,
             wp_forces,
@@ -641,3 +760,383 @@ class TestMixedAxisBatch:
         np.testing.assert_allclose(mz2_out[2], 0.0, rtol=0, atol=0)
         # Fully periodic system total charge is skipped by slab reduction.
         np.testing.assert_allclose(qtotal_out[2], 0.0, rtol=0, atol=0)
+
+
+# ==============================================================================
+# Analytic slab HVP kernels
+# ==============================================================================
+
+
+def _types_for_wp_dtype(wp_dtype):
+    """Return matching NumPy, vector, and matrix dtypes for a Warp scalar dtype."""
+    if wp_dtype == wp.float32:
+        return np.float32, wp.vec3f, wp.mat33f
+    return np.float64, wp.vec3d, wp.mat33d
+
+
+def _run_backward_np(
+    positions,
+    charges,
+    cell,
+    batch_idx,
+    pbc,
+    grad_system,
+    wp_dtype,
+    device,
+):
+    """Run first-order slab backward and return NumPy outputs."""
+    np_dtype, vec_dtype, mat_dtype = _types_for_wp_dtype(wp_dtype)
+    num_atoms = charges.shape[0]
+    num_systems = cell.shape[0]
+    wp_positions = wp.array(positions.astype(np_dtype), dtype=vec_dtype, device=device)
+    wp_charges = wp.array(charges.astype(np_dtype), dtype=wp_dtype, device=device)
+    wp_batch_idx = wp.array(batch_idx.astype(np.int32), dtype=wp.int32, device=device)
+    wp_pbc = wp.array(pbc.astype(np.bool_), dtype=wp.bool, device=device)
+    wp_cell = wp.array(cell.astype(np_dtype), dtype=mat_dtype, device=device)
+    wp_mz = wp.zeros((num_systems, 3), dtype=wp.float64, device=device)
+    wp_mz2 = wp.zeros((num_systems, 3), dtype=wp.float64, device=device)
+    wp_qtotal = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_slab_axis = wp.zeros(num_systems, dtype=wp.int32, device=device)
+    wp_slab_normal = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
+    wp_slab_volume = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_slab_height_sq = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_grad_system = wp.array(
+        grad_system.astype(np.float64), dtype=wp.float64, device=device
+    )
+    wp_grad_positions = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+    wp_grad_charges = wp.zeros(num_atoms, dtype=wp.float64, device=device)
+    wp_grad_normal = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
+    wp_grad_cell = wp.zeros(num_systems, dtype=mat_dtype, device=device)
+
+    slab_reduce_moments(
+        wp_positions,
+        wp_charges,
+        wp_batch_idx,
+        wp_pbc,
+        wp_cell,
+        wp_mz,
+        wp_mz2,
+        wp_qtotal,
+        wp_dtype,
+    )
+    slab_precompute_geometry(
+        wp_pbc,
+        wp_cell,
+        wp_slab_axis,
+        wp_slab_normal,
+        wp_slab_volume,
+        wp_slab_height_sq,
+        wp_dtype,
+    )
+    slab_correction_backward(
+        wp_positions,
+        wp_charges,
+        wp_batch_idx,
+        wp_pbc,
+        wp_cell,
+        wp_mz,
+        wp_mz2,
+        wp_qtotal,
+        wp_slab_axis,
+        wp_slab_normal,
+        wp_slab_volume,
+        wp_slab_height_sq,
+        wp_grad_system,
+        wp_grad_positions,
+        wp_grad_charges,
+        wp_grad_normal,
+        wp_grad_cell,
+        wp_dtype,
+    )
+    wp.synchronize()
+    return (
+        wp_grad_positions.numpy(),
+        wp_grad_charges.numpy(),
+        wp_grad_cell.numpy(),
+        wp_mz.numpy(),
+        wp_mz2.numpy(),
+        wp_qtotal.numpy(),
+    )
+
+
+def _run_double_backward_np(
+    positions,
+    charges,
+    cell,
+    h_positions,
+    h_charges,
+    h_cell,
+    batch_idx,
+    pbc,
+    grad_system,
+    wp_dtype,
+    device,
+):
+    """Run analytic slab HVP kernels and return NumPy outputs plus moment tangents."""
+    np_dtype, vec_dtype, mat_dtype = _types_for_wp_dtype(wp_dtype)
+    num_atoms = charges.shape[0]
+    num_systems = cell.shape[0]
+    wp_positions = wp.array(positions.astype(np_dtype), dtype=vec_dtype, device=device)
+    wp_charges = wp.array(charges.astype(np_dtype), dtype=wp_dtype, device=device)
+    wp_h_positions = wp.array(
+        h_positions.astype(np_dtype), dtype=vec_dtype, device=device
+    )
+    wp_h_charges = wp.array(
+        h_charges.astype(np.float64), dtype=wp.float64, device=device
+    )
+    wp_h_cell = wp.array(h_cell.astype(np_dtype), dtype=mat_dtype, device=device)
+    wp_batch_idx = wp.array(batch_idx.astype(np.int32), dtype=wp.int32, device=device)
+    wp_pbc = wp.array(pbc.astype(np.bool_), dtype=wp.bool, device=device)
+    wp_cell = wp.array(cell.astype(np_dtype), dtype=mat_dtype, device=device)
+    wp_mz = wp.zeros((num_systems, 3), dtype=wp.float64, device=device)
+    wp_mz2 = wp.zeros((num_systems, 3), dtype=wp.float64, device=device)
+    wp_qtotal = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_slab_axis = wp.zeros(num_systems, dtype=wp.int32, device=device)
+    wp_slab_normal = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
+    wp_slab_volume = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_slab_height_sq = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_grad_system = wp.array(
+        grad_system.astype(np.float64), dtype=wp.float64, device=device
+    )
+    wp_dmz = wp.zeros((num_systems, 3), dtype=wp.float64, device=device)
+    wp_dmz2 = wp.zeros((num_systems, 3), dtype=wp.float64, device=device)
+    wp_dqtotal = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_dnormal = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
+    wp_dvolume = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_dheight_sq = wp.zeros(num_systems, dtype=wp.float64, device=device)
+    wp_grad_normal = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
+    wp_h_grad_normal = wp.zeros(num_systems, dtype=wp.vec3d, device=device)
+    wp_grad_positions = wp.zeros(num_atoms, dtype=vec_dtype, device=device)
+    wp_grad_charges = wp.zeros(num_atoms, dtype=wp.float64, device=device)
+    wp_grad_cell = wp.zeros(num_systems, dtype=mat_dtype, device=device)
+
+    slab_reduce_moments(
+        wp_positions,
+        wp_charges,
+        wp_batch_idx,
+        wp_pbc,
+        wp_cell,
+        wp_mz,
+        wp_mz2,
+        wp_qtotal,
+        wp_dtype,
+    )
+    slab_precompute_geometry(
+        wp_pbc,
+        wp_cell,
+        wp_slab_axis,
+        wp_slab_normal,
+        wp_slab_volume,
+        wp_slab_height_sq,
+        wp_dtype,
+    )
+    slab_correction_double_backward(
+        wp_positions,
+        wp_charges,
+        wp_h_positions,
+        wp_h_charges,
+        wp_h_cell,
+        wp_batch_idx,
+        wp_pbc,
+        wp_cell,
+        wp_mz,
+        wp_mz2,
+        wp_qtotal,
+        wp_slab_axis,
+        wp_slab_normal,
+        wp_slab_volume,
+        wp_slab_height_sq,
+        wp_grad_system,
+        wp_dmz,
+        wp_dmz2,
+        wp_dqtotal,
+        wp_dnormal,
+        wp_dvolume,
+        wp_dheight_sq,
+        wp_grad_normal,
+        wp_h_grad_normal,
+        wp_grad_positions,
+        wp_grad_charges,
+        wp_grad_cell,
+        wp_dtype,
+    )
+    wp.synchronize()
+    return (
+        wp_grad_positions.numpy(),
+        wp_grad_charges.numpy(),
+        wp_grad_cell.numpy(),
+        wp_dmz.numpy(),
+        wp_dmz2.numpy(),
+        wp_dqtotal.numpy(),
+    )
+
+
+def _make_hvp_case(axis):
+    """Build a small slab HVP case with nonzero position, charge, and cell terms."""
+    positions = np.array(
+        [[0.3, 1.2, 2.1], [2.0, 0.7, 4.5], [1.3, 2.2, 0.9]],
+        dtype=np.float64,
+    )
+    charges = np.array([0.7, -1.2, 0.4], dtype=np.float64)
+    cells = np.array(
+        [
+            [[24.0, 0.3, 0.5], [0.7, 8.0, 0.1], [0.2, 0.5, 7.0]],
+            [[8.0, 0.5, 0.1], [0.4, 26.0, 0.2], [1.0, 0.3, 7.5]],
+            [[8.0, 0.1, 0.2], [1.0, 7.0, 0.4], [0.3, 0.2, 21.0]],
+        ],
+        dtype=np.float64,
+    )
+    h_positions = np.array(
+        [[0.2, -0.1, 0.3], [-0.4, 0.5, -0.2], [0.1, 0.2, -0.3]],
+        dtype=np.float64,
+    )
+    h_charges = np.array([0.3, -0.2, 0.5], dtype=np.float64)
+    h_cell = np.array(
+        [
+            [0.03, -0.02, 0.01],
+            [-0.01, 0.04, -0.03],
+            [0.02, 0.01, -0.02],
+        ],
+        dtype=np.float64,
+    )
+    return (
+        positions,
+        charges,
+        cells[axis][None, :, :],
+        h_positions,
+        h_charges,
+        h_cell[None, :, :],
+        np.zeros(positions.shape[0], dtype=np.int32),
+        _axis_to_pbc(axis)[None, :],
+        np.array([1.25], dtype=np.float64),
+    )
+
+
+class TestAnalyticSlabHvp:
+    """Analytic slab HVP kernels match finite differences of first backward."""
+
+    @pytest.mark.parametrize("wp_dtype", [wp.float32, wp.float64])
+    @pytest.mark.parametrize("axis", [0, 1, 2])
+    def test_hvp_matches_backward_finite_difference(self, axis, wp_dtype, device):
+        """Position, charge, cell, and moment HVP terms match finite difference."""
+        (
+            positions,
+            charges,
+            cell,
+            h_positions,
+            h_charges,
+            h_cell,
+            batch_idx,
+            pbc,
+            grad_system,
+        ) = _make_hvp_case(axis)
+        eps = 5.0e-3 if wp_dtype == wp.float32 else 1.0e-6
+
+        actual = _run_double_backward_np(
+            positions,
+            charges,
+            cell,
+            h_positions,
+            h_charges,
+            h_cell,
+            batch_idx,
+            pbc,
+            grad_system,
+            wp_dtype,
+            device,
+        )
+        plus = _run_backward_np(
+            positions + eps * h_positions,
+            charges + eps * h_charges,
+            cell + eps * h_cell,
+            batch_idx,
+            pbc,
+            grad_system,
+            wp_dtype,
+            device,
+        )
+        minus = _run_backward_np(
+            positions - eps * h_positions,
+            charges - eps * h_charges,
+            cell - eps * h_cell,
+            batch_idx,
+            pbc,
+            grad_system,
+            wp_dtype,
+            device,
+        )
+        expected = tuple((p - m) / (2.0 * eps) for p, m in zip(plus, minus))
+
+        rtol = 8.0e-3 if wp_dtype == wp.float32 else 3.0e-7
+        atol = 8.0e-5 if wp_dtype == wp.float32 else 3.0e-9
+        for actual_part, expected_part in zip(actual, expected, strict=True):
+            np.testing.assert_allclose(
+                actual_part,
+                expected_part,
+                rtol=rtol,
+                atol=atol,
+            )
+
+    def test_batched_hvp_skips_3d_pbc_system(self, device):
+        """Batched HVP handles mixed slab axes and leaves 3D rows at zero."""
+        case0 = _make_hvp_case(2)
+        case1 = _make_hvp_case(1)
+        positions = np.concatenate([case0[0], case1[0] + 0.4], axis=0)
+        charges = np.concatenate([case0[1], case1[1]], axis=0)
+        cell = np.concatenate([case0[2], case1[2], case0[2] * 0.8], axis=0)
+        h_positions = np.concatenate([case0[3], -case1[3]], axis=0)
+        h_charges = np.concatenate([case0[4], -case1[4]], axis=0)
+        h_cell = np.concatenate([case0[5], case1[5], case0[5]], axis=0)
+        batch_idx = np.array([0, 0, 0, 1, 1, 1], dtype=np.int32)
+        pbc = np.array(
+            [[True, True, False], [True, False, True], [True, True, True]],
+            dtype=np.bool_,
+        )
+        grad_system = np.array([0.7, -1.1, 2.0], dtype=np.float64)
+
+        actual = _run_double_backward_np(
+            positions,
+            charges,
+            cell,
+            h_positions,
+            h_charges,
+            h_cell,
+            batch_idx,
+            pbc,
+            grad_system,
+            wp.float64,
+            device,
+        )
+        eps = 1.0e-6
+        plus = _run_backward_np(
+            positions + eps * h_positions,
+            charges + eps * h_charges,
+            cell + eps * h_cell,
+            batch_idx,
+            pbc,
+            grad_system,
+            wp.float64,
+            device,
+        )
+        minus = _run_backward_np(
+            positions - eps * h_positions,
+            charges - eps * h_charges,
+            cell - eps * h_cell,
+            batch_idx,
+            pbc,
+            grad_system,
+            wp.float64,
+            device,
+        )
+        expected = tuple((p - m) / (2.0 * eps) for p, m in zip(plus, minus))
+        for actual_part, expected_part in zip(actual, expected, strict=True):
+            np.testing.assert_allclose(
+                actual_part,
+                expected_part,
+                rtol=3.0e-7,
+                atol=3.0e-9,
+            )
+        np.testing.assert_allclose(actual[2][2], 0.0, rtol=0, atol=0)
+        np.testing.assert_allclose(actual[3][2], 0.0, rtol=0, atol=0)
+        np.testing.assert_allclose(actual[4][2], 0.0, rtol=0, atol=0)
+        np.testing.assert_allclose(actual[5][2], 0.0, rtol=0, atol=0)

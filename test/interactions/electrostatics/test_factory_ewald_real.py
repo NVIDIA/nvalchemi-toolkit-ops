@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""K1 parity + derivative tests for the ``ewald_real`` factory kernels.
+"""Parity and derivative tests for the ``ewald_real`` factory kernels.
 
 Three guarantees:
 
@@ -27,8 +27,7 @@ Three guarantees:
    energy (float64), against the F3-certified baselines.
 3. **Double-backward finite-diff** -- the ``order="double_backward"`` outputs
    (position Hessian . v_pos, charge cross terms, ``grad_grad_energy``) are compared
-   to a central-difference of the backward-kernel outputs (no autograd graph in K1,
-   per the brief).
+   to a central-difference of the backward-kernel outputs.
 """
 
 from __future__ import annotations
@@ -38,11 +37,7 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.interactions.electrostatics._factory_common import (
-    _DerivState,
-    alloc_ewald_real_sentinels,
-    get_ewald_real_kernel,
-)
+from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     REAL_SPACE_TILED_BLOCK_DIM,
     batch_ewald_real_space_energy_forces,
@@ -53,6 +48,10 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     ewald_real_space_energy_forces_charge_grad,
     ewald_real_space_energy_forces_charge_grad_matrix,
     ewald_real_space_energy_forces_matrix,
+)
+from nvalchemiops.interactions.electrostatics.ewald_real_factory import (
+    alloc_ewald_real_sentinels,
+    get_ewald_real_kernel,
 )
 from test.interactions.electrostatics._deriv_check import (
     fd_charge_grad,
@@ -802,8 +801,8 @@ class TestBackwardFiniteDiff:
         def energy_of_strain(strain_np):
             strain = torch.tensor(strain_np)
             deform = torch.eye(3, dtype=torch.float64) + strain[0]
-            pos_s = (pos0 @ deform.T).numpy()
-            cell_s = (cell0 @ deform.transpose(-1, -2)).numpy()
+            pos_s = (pos0 @ deform).numpy()
+            cell_s = (cell0 @ deform).numpy()
             return _factory_energy_total(
                 sysd,
                 pos_s,
@@ -1106,8 +1105,9 @@ class TestF3HarnessBackwardParity:
         )
         force = torch.as_tensor(-gpos, dtype=torch.float64)
         max_abs, max_rel = max_abs_rel(force, fd)
-        print(f"[F3 ewald-real forces:{device}] max_abs={max_abs:.3e}")
-        assert max_abs < 1e-6, f"force max_abs={max_abs:.3e}"
+        assert max_abs < 1e-6, (
+            f"force max_abs={max_abs:.3e} max_rel={max_rel:.3e} device={device}"
+        )
 
     def test_charge_grad_fd(self, device):
         system = self._system(device)
@@ -1119,8 +1119,9 @@ class TestF3HarnessBackwardParity:
         )
         cg = torch.as_tensor(gq, dtype=torch.float64)
         max_abs, max_rel = max_abs_rel(cg, fd)
-        print(f"[F3 ewald-real dE/dq:{device}] max_abs={max_abs:.3e}")
-        assert max_abs < 1e-10, f"charge-grad max_abs={max_abs:.3e}"
+        assert max_abs < 1e-10, (
+            f"charge-grad max_abs={max_abs:.3e} max_rel={max_rel:.3e} device={device}"
+        )
 
     def test_strain_virial_fd(self, device):
         system = self._system(device)
@@ -1135,8 +1136,9 @@ class TestF3HarnessBackwardParity:
         )
         W = torch.as_tensor(gvir, dtype=torch.float64)
         max_abs, max_rel = max_abs_rel(W, fd_W)
-        print(f"[F3 ewald-real virial:{device}] max_abs={max_abs:.3e}")
-        assert max_abs < 1e-6, f"virial max_abs={max_abs:.3e}"
+        assert max_abs < 1e-6, (
+            f"virial max_abs={max_abs:.3e} max_rel={max_rel:.3e} device={device}"
+        )
 
 
 # ==============================================================================

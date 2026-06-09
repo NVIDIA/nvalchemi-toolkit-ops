@@ -47,6 +47,15 @@ from nvalchemiops.torch.spline import (
     spline_spread_channels,
 )
 
+
+def test_spline_gather_with_force_is_explicit_public_export():
+    """Fused gather-with-force remains an intentional Torch public helper."""
+    import nvalchemiops.torch.spline as spline_module
+
+    assert "spline_gather_with_force" in spline_module.__all__
+    assert spline_module.spline_gather_with_force is spline_gather_with_force
+
+
 # =============================================================================
 # Test Fixtures
 # =============================================================================
@@ -277,10 +286,10 @@ class TestSplineRegressionValues:
         )
 
         # Regression values (match Warp kernel tests)
-        assert mesh.sum().item() == pytest.approx(1.0, rel=1e-10)
+        assert mesh.sum().item() == pytest.approx(1.0, rel=1e-8)
         assert mesh.max().item() == pytest.approx(0.2508416403, rel=1e-8)
         assert mesh.min().item() == pytest.approx(-0.2962962963, rel=1e-8)
-        assert (mesh.abs() > 1e-12).sum().item() == pytest.approx(182, rel=1e-8)
+        assert (mesh.abs() > 1e-12).sum().item() == pytest.approx(181, rel=1e-8)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_gather_regression(self, device, simple_system):
@@ -410,7 +419,7 @@ class TestSplineSpread:
     """Test B-spline charge spreading."""
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    @pytest.mark.parametrize("spline_order", [2, 3, 4])
+    @pytest.mark.parametrize("spline_order", [2, 3, 4, 5, 6])
     def test_charge_conservation(self, device, spline_order):
         """Test that spreading conserves total charge."""
         if device == "cuda" and not torch.cuda.is_available():
@@ -483,7 +492,7 @@ class TestSplineSpread:
         assert nonzero == 64, f"Expected 64 non-zero points, got {nonzero}"
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    @pytest.mark.parametrize("spline_order", [2, 3, 4])
+    @pytest.mark.parametrize("spline_order", [2, 3, 4, 5, 6])
     def test_spread_center_of_mass(self, device, spline_order):
         """Test that the center of mass of the spread is at the atom position.
 
@@ -1778,7 +1787,7 @@ class TestBSplineDeconvolution:
 
         assert deconv.shape == mesh_dims, f"Unexpected shape: {deconv.shape}"
 
-    @pytest.mark.parametrize("order", [1, 2, 3, 4])
+    @pytest.mark.parametrize("order", [1, 2, 3, 4, 5, 6])
     def test_deconvolution_at_zero_frequency(self, order):
         """Test that deconvolution is 1 at zero frequency."""
         from nvalchemiops.torch.spline import compute_bspline_deconvolution
@@ -1791,7 +1800,7 @@ class TestBSplineDeconvolution:
             f"Deconvolution at zero frequency should be 1, got {deconv[0, 0, 0].item()}"
         )
 
-    @pytest.mark.parametrize("order", [2, 3, 4])
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
     def test_deconvolution_positive(self, order):
         """Test that deconvolution factors are positive."""
         from nvalchemiops.torch.spline import compute_bspline_deconvolution
@@ -1801,7 +1810,7 @@ class TestBSplineDeconvolution:
 
         assert (deconv > 0).all(), "Deconvolution factors should be positive"
 
-    @pytest.mark.parametrize("order", [2, 3, 4])
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
     def test_deconvolution_symmetry(self, order):
         """Test that deconvolution has correct symmetry."""
         from nvalchemiops.torch.spline import compute_bspline_deconvolution

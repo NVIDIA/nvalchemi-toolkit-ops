@@ -22,6 +22,7 @@ import pytest
 torch = pytest.importorskip("torch")
 _util = pytest.importorskip("nvalchemiops.torch.interactions.electrostatics._util")
 _InjectChargeGrad = _util._InjectChargeGrad
+_is_uniform_cotangent = _util._is_uniform_cotangent
 
 DT = torch.float64
 
@@ -66,8 +67,8 @@ def test_charge_grad_batched_bit_identical():
 
 
 def test_charge_grad_single_system_per_atom_cotangent_uses_mean():
-    """Public per-atom energy cotangents reduce to one system scalar."""
-    energy = torch.arange(3, dtype=DT)
+    """Non-uniform per-atom cotangents pass through to the energy graph."""
+    energy = torch.arange(3, dtype=DT, requires_grad=True)
     charges = torch.tensor([1.0, -1.0, 0.5], dtype=DT, requires_grad=True)
     charge_grad = torch.tensor([0.2, -0.3, 0.1], dtype=DT)
 
@@ -75,13 +76,13 @@ def test_charge_grad_single_system_per_atom_cotangent_uses_mean():
     grad_energy = torch.tensor([2.0, 4.0, 9.0], dtype=DT)
     out.backward(grad_energy)
 
-    expected = charge_grad * grad_energy.mean()
-    assert torch.equal(charges.grad, expected)
+    assert charges.grad is None
+    assert torch.equal(energy.grad, grad_energy)
 
 
 def test_charge_grad_batched_per_atom_cotangent_uses_system_mean():
-    """Batched public per-atom cotangents reduce per system before injection."""
-    energy = torch.arange(4, dtype=DT)
+    """Batched non-uniform per-atom cotangents use the energy graph."""
+    energy = torch.arange(4, dtype=DT, requires_grad=True)
     charges = torch.tensor([1.0, -1.0, 0.5, 2.0], dtype=DT, requires_grad=True)
     charge_grad = torch.tensor([0.2, -0.3, 0.1, 0.4], dtype=DT)
     batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32)
@@ -90,6 +91,63 @@ def test_charge_grad_batched_per_atom_cotangent_uses_system_mean():
     grad_energy = torch.tensor([2.0, 4.0, 5.0, 7.0], dtype=DT)
     out.backward(grad_energy)
 
-    atom_grad = torch.tensor([3.0, 3.0, 6.0, 6.0], dtype=DT)
-    expected = charge_grad * atom_grad
-    assert torch.equal(charges.grad, expected)
+    assert charges.grad is None
+    assert torch.equal(energy.grad, grad_energy)
+
+
+def _available_devices():
+    """Devices available for cotangent predicate tests."""
+    devices = ["cpu"]
+    if torch.cuda.is_available():
+        devices.append("cuda")
+    return devices
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_uniform_cotangent_accepts_expanded_scalar(device):
+    """A ``sum``-style expanded scalar cotangent is uniform without a sync."""
+    grad = torch.ones((), dtype=DT, device=device).expand(6)
+
+    assert _is_uniform_cotangent(grad)
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_uniform_cotangent_keeps_cuda_contiguous_constants_conservative(device):
+    """Contiguous CUDA constants require value inspection, so stay on fallback."""
+    grad = torch.ones(6, dtype=DT, device=device)
+
+    expected = device == "cpu"
+    assert _is_uniform_cotangent(grad) is expected
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_ewald_uniform_predicates_accept_expanded_scalar(device):
+    """Ewald real/reciprocal chains consume CUDA ``sum`` cotangents."""
+    real_chain = pytest.importorskip(
+        "nvalchemiops.torch.interactions.electrostatics._ewald_real_chain"
+    )
+    recip_chain = pytest.importorskip(
+        "nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain"
+    )
+    grad = torch.ones((), dtype=DT, device=device).expand(4)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+    assert real_chain._cotangent_per_system_uniform(grad, batch_idx, 2)
+    assert recip_chain._cotangent_per_system_uniform(grad, batch_idx, 2)
+
+
+@pytest.mark.parametrize("device", _available_devices())
+def test_ewald_uniform_predicates_keep_cuda_per_system_constants_conservative(device):
+    """Non-expanded CUDA constants stay exact by using the weighted fallback."""
+    real_chain = pytest.importorskip(
+        "nvalchemiops.torch.interactions.electrostatics._ewald_real_chain"
+    )
+    recip_chain = pytest.importorskip(
+        "nvalchemiops.torch.interactions.electrostatics._ewald_recip_chain"
+    )
+    grad = torch.tensor([2.0, 2.0, 3.0, 3.0], dtype=DT, device=device)
+    batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+    expected = device == "cpu"
+    assert real_chain._cotangent_per_system_uniform(grad, batch_idx, 2) is expected
+    assert recip_chain._cotangent_per_system_uniform(grad, batch_idx, 2) is expected

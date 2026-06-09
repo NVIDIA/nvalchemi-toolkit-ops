@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""K3 tests for PME reciprocal completion.
+"""Tests for PME reciprocal factory kernels.
 
 Covers:
 
@@ -24,17 +24,18 @@ Covers:
    and the cell/stress terms (``dL/dalpha`` / ``dL/dvolume`` /
    ``dL/dk_squared``), asserted FD-correct and genuinely nonzero.
 
-4. **Stress-path second backward** -- end-to-end through the public PME reciprocal
+2. **Stress-path second backward** -- end-to-end through the public PME reciprocal
    energy: ``d2E/dV2`` (volume fed as a leaf) matches a scalar finite difference,
    and the full ``d2E/dcell2`` second backward runs and is finite + nonzero
    (confirming the k_squared/volume -> cell propagation is live).
 
-2. **Factory parity** -- the public ``pme_convolve`` / ``pme_corrections``
-   launchers are bit-exact (``np.array_equal``) for direct factory kernels and
-   public launcher wrappers, for ``wp.float32`` + ``wp.float64`` x single/batch
-   (forward + backward).
+3. **Launcher parity** -- direct factory kernel launches and the public
+   ``pme_convolve`` / ``pme_corrections`` wrapper launchers produce identical
+   outputs for ``wp.float32`` + ``wp.float64`` x single/batch (forward +
+   backward). These are wrapper-wiring checks; the finite-difference sections are
+   the independent derivative oracle.
 
-3. **Position-grad path + force loss** -- through the public
+4. **Position-grad path + force loss** -- through the public
    ``pme_reciprocal_space`` autograd path: ``-grad(E.sum(), positions)`` matches
    an F3-style finite difference (~1e-9, f64), and a force-loss ``.backward()``
    runs without the "no autograd formula registered" error (exercising the
@@ -90,7 +91,7 @@ def _convolve_mesh_system(rng, *, nx=4, ny=5, nzr=3, batch=None, dtype=wp.float6
 
 
 def _run_convolve_backward(sysd, *, batch, dtype, device):
-    """Run the hand-written convolve backward; return numpy outputs."""
+    """Run the public convolve backward wrapper; return numpy outputs."""
     vec2 = _VEC2[dtype]
     grad_mesh = np.zeros_like(sysd["m"])
     nsys = sysd["alpha"].shape[0]
@@ -339,7 +340,7 @@ def _run_convolve_forward(sysd, *, batch, dtype, device):
 
 
 # ==============================================================================
-# 3. Factory parity (bit-exact vs hand-written launchers)
+# 3. Launcher parity (direct factory call vs public wrapper)
 # ==============================================================================
 #
 # Single-system factory convolve kernels use the same 3d mesh rank as the public
@@ -679,7 +680,7 @@ class TestFactoryCorrectionsParity:
 
 
 # ==============================================================================
-# 4. Factory double-backward parity (bit-exact vs hand-written launchers)
+# 4. Factory double-backward parity (factory direct call vs public wrapper)
 # ==============================================================================
 
 
@@ -751,8 +752,8 @@ class TestFactoryDoubleBackwardParity:
         gm_got = wp_gm_out.numpy()
         ggc_got = wp_ggc.numpy()
         gksq_got = wp_gksq_out.numpy()
-        # Elementwise outputs (incl. per-k dL/dk_squared) are bit-exact between
-        # the factory and the hand-written launcher.
+        # Elementwise outputs (incl. per-k dL/dk_squared) match between the
+        # factory direct call and the public wrapper.
         assert np.array_equal(gm_got, gm_ref)
         assert np.array_equal(ggc_got, ggc_ref)
         assert np.array_equal(gksq_got, gksq_ref)
@@ -880,7 +881,7 @@ class TestFactoryDoubleBackwardParity:
             device=device,
         )
         wp.synchronize()
-        # Per-atom grads bit-exact; scalar atomic reductions to round-off.
+        # Per-atom grads match exactly; scalar atomic reductions to round-off.
         assert np.array_equal(wp_gge2.numpy(), wp_gge.numpy())
         assert np.array_equal(wp_graw2.numpy(), wp_graw.numpy())
         assert np.array_equal(wp_gchg2.numpy(), wp_gchg.numpy())
@@ -961,7 +962,6 @@ class TestPositionGradPath:
                     pm[i, d] -= eps
                     fd[i, d] = -(energy(pp) - energy(pm)) / (2 * eps)
         max_abs = float((force - fd).abs().max())
-        print(f"[PME recip force vs FD:{device}] max_abs={max_abs:.3e}")
         assert max_abs < 1e-6, f"force FD max_abs={max_abs:.3e}"
 
     def test_force_loss_double_backward(self, device):
@@ -997,9 +997,6 @@ class TestPositionGradPath:
                 pm.requires_grad_(True)
                 fd2[i, d] = (loss_fn(pp) - loss_fn(pm)) / (2 * eps)
         max_abs = float((g2 - fd2).abs().max())
-        print(
-            f"[PME recip force-loss 2nd-bwd vs nested FD:{device}] max_abs={max_abs:.3e}"
-        )
         assert max_abs < 1e-6, f"force-loss 2nd-bwd FD max_abs={max_abs:.3e}"
 
 
@@ -1016,7 +1013,7 @@ class TestStressPathDoubleBackward:
     The cell flows into the convolve via ``k_squared`` (``generate_k_vectors_pme``)
     and ``volume`` (``det(cell)``), so a second backward w.r.t. the cell launches
     the convolve double-backward's cell/stress outputs (``dL/dk_squared`` per-k,
-    ``dL/dvolume`` atomic-summed). These were the deferred (zeroed) outputs K3 left;
+    ``dL/dvolume`` atomic-summed). These were previously deferred outputs;
     a nonzero, FD-correct result confirms nothing is silently zeroed on the stress
     path. The per-k math itself is pinned by ``TestConvolveDoubleBackwardFD``.
     """
@@ -1059,10 +1056,6 @@ class TestStressPathDoubleBackward:
         eps = 1e-4
         fd = (dEdV(v0 + eps) - dEdV(v0 - eps)) / (2 * eps)
         max_abs = abs(float(d2[0]) - fd)
-        print(
-            f"[PME recip d2E/dV2 vs FD:{device}] analytic={float(d2[0]):.6e} "
-            f"fd={fd:.6e} max_abs={max_abs:.3e}"
-        )
         assert max_abs < 1e-7, f"d2E/dV2 FD max_abs={max_abs:.3e}"
 
     def test_full_cell_second_backward_nonzero(self, device):
@@ -1098,4 +1091,3 @@ class TestStressPathDoubleBackward:
         assert torch.isfinite(g2).all()
         max_abs = float(g2.abs().max())
         assert max_abs > 1e-6, "cell second-order is silently zero"
-        print(f"[PME recip d2E/dcell2 nonzero:{device}] max_abs={max_abs:.3e}")

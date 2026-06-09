@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""K2 parity + derivative tests for the ``ewald_recip`` factory kernels.
+"""Parity and derivative tests for the ``ewald_recip`` factory kernels.
 
-Five guarantees (mirroring K1, adapted to the multi-stage reciprocal sum):
+Five guarantees (adapted to the multi-stage reciprocal sum):
 
 1. **Forward parity** -- the factory atom-major ``compute`` E / F / dE/dq outputs
    are bit-exact (``np.array_equal``) vs the relevant hand-written launchers, for
@@ -26,7 +26,7 @@ Five guarantees (mirroring K1, adapted to the multi-stage reciprocal sum):
 2. **Backward scaling** -- ``order="backward"`` with ``grad_E = 1`` reproduces the
    forward first-derivatives (``grad_R = -F``, ``grad_q = phi``); ``backward(grad_E)
    == grad_E * backward(1)`` per system. The backward virial bakes ``grad_energy`` in
-   (``ge * W``); a ``ge != 1`` check pins the scaling (matches K1).
+   (``ge * W``); a ``ge != 1`` check pins the scaling.
 3. **Finite-diff** -- the backward outputs vs central-difference forces / charge-grad
    of the factory k-sum-only energy, and the backward virial vs strain-first FD
    virial (k-sum only, background excluded).
@@ -911,9 +911,17 @@ class TestZeroKGuards:
         real_sf = wp.zeros((nsys, 0), dtype=wp.float64, device=device)
         imag_sf = wp.zeros((nsys, 0), dtype=wp.float64, device=device)
         grad_energy = wp.empty((0,), dtype=wp.float64, device=device)
-        energies = wp.zeros(n, dtype=wp.float64, device=device)
-        forces = wp.zeros(n, dtype=_VEC[dtype], device=device)
-        charge_grads = wp.zeros(n, dtype=wp.float64, device=device)
+        energies = wp.from_numpy(
+            np.full(n, 3.0, dtype=np.float64), dtype=wp.float64, device=device
+        )
+        forces = wp.from_numpy(
+            np.full((n, 3), 7.0, dtype=np.float64),
+            dtype=_VEC[dtype],
+            device=device,
+        )
+        charge_grads = wp.from_numpy(
+            np.full(n, 11.0, dtype=np.float64), dtype=wp.float64, device=device
+        )
 
         wp.launch(
             bundle.compute,
@@ -964,8 +972,14 @@ class TestZeroKGuards:
             np.ones(nsys, dtype=np.float64), dtype=wp.float64, device=device
         )
         zero_sk = wp.zeros((nsys, 0), dtype=wp.float64, device=device)
-        grad_pos = wp.zeros(n, dtype=_VEC[dtype], device=device)
-        grad_q = wp.zeros(n, dtype=wp.float64, device=device)
+        grad_pos = wp.from_numpy(
+            np.full((n, 3), 7.0, dtype=np.float64),
+            dtype=_VEC[dtype],
+            device=device,
+        )
+        grad_q = wp.from_numpy(
+            np.full(n, 11.0, dtype=np.float64), dtype=wp.float64, device=device
+        )
         alpha = _alpha_array(nsys, device, dtype)
         volume = wp.from_numpy(
             np.full(nsys, 8.0**3, dtype=np.float64),
@@ -1138,7 +1152,8 @@ class TestBackwardScaling:
     @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
     @pytest.mark.parametrize("batched", _BATCHED, ids=_BATCH_IDS)
     def test_backward_virial_scales(self, device, dtype, batched):
-        # The backward virial bakes grad_energy in (output ge * W), matching K1.
+        # The backward virial bakes grad_energy in (output ge * W), matching the
+        # real-space scaling contract.
         # ge=1 must equal the forward W; ge!=1 must scale W per system -- a ge=1-only
         # check cannot distinguish W from ge*W, so test ge != 1 explicitly.
         sysd = _batch_system() if batched else _single_system()
@@ -1645,8 +1660,9 @@ class TestF3HarnessBackwardParity:
         gpos, _ = self._backward_csum(system, k_idx, device, deriv=_DerivState.E_F)
         force = torch.as_tensor(-gpos, dtype=torch.float64)  # backward grad_R = dE/dR
         max_abs, max_rel = max_abs_rel(force, fd)
-        print(f"[F3 ewald-recip forces:{device}] max_abs={max_abs:.3e}")
-        assert max_abs < 1e-6, f"force max_abs={max_abs:.3e}"
+        assert max_abs < 1e-6, (
+            f"force max_abs={max_abs:.3e} max_rel={max_rel:.3e} device={device}"
+        )
 
     def test_charge_grad_fd(self, device):
         system, k_idx, energy_fn = self._setup(device)
@@ -1654,8 +1670,9 @@ class TestF3HarnessBackwardParity:
         _, gq = self._backward_csum(system, k_idx, device, deriv=_DerivState.E_F_dQ)
         cg = torch.as_tensor(gq, dtype=torch.float64)
         max_abs, max_rel = max_abs_rel(cg, fd)
-        print(f"[F3 ewald-recip charge-grad:{device}] max_abs={max_abs:.3e}")
-        assert max_abs < 1e-7, f"charge-grad max_abs={max_abs:.3e}"
+        assert max_abs < 1e-7, (
+            f"charge-grad max_abs={max_abs:.3e} max_rel={max_rel:.3e} device={device}"
+        )
 
     def test_virial_fd(self, device):
         system, k_idx, energy_fn = self._setup(device)
@@ -1689,8 +1706,9 @@ class TestF3HarnessBackwardParity:
         max_abs, max_rel = max_abs_rel(
             torch.as_tensor(W[0], dtype=torch.float64), fd[0]
         )
-        print(f"[F3 ewald-recip virial:{device}] max_abs={max_abs:.3e}")
-        assert max_abs < 1e-5, f"virial max_abs={max_abs:.3e}"
+        assert max_abs < 1e-5, (
+            f"virial max_abs={max_abs:.3e} max_rel={max_rel:.3e} device={device}"
+        )
 
 
 # ==============================================================================

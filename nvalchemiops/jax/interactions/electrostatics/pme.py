@@ -41,6 +41,7 @@ nvalchemiops.jax.spline : B-spline interpolation
 from __future__ import annotations
 
 import functools
+import math
 import warnings
 
 import jax
@@ -57,8 +58,6 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
     _pme_virial_bg_reduce_kernel_overload,
 )
 from nvalchemiops.jax.interactions.electrostatics._autograd import (
-    _cell_grad_from_strain_virial,
-    _direct_output_deprecation_msg,
     _inject_charge_grad,
 )
 from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
@@ -67,6 +66,9 @@ from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _build_electrostatic_result,
+    _component_direct_output_deprecation_msg,
+    _direct_output_deprecation_msg,
+    _normalize_dtype,
     _prepare_cell,
 )
 from nvalchemiops.jax.interactions.electrostatics.ewald import (
@@ -88,8 +90,11 @@ from nvalchemiops.jax.interactions.electrostatics.slab import (
     compute_slab_correction as _compute_slab_correction,
 )
 from nvalchemiops.jax.spline import (
+    _spline_gather_gradient_position_hessian,
     _spline_gather_with_force,
+    _spline_spread_gradient_weights,
     spline_gather,
+    spline_gather_gradient,
     spline_spread,
 )
 
@@ -97,10 +102,8 @@ __all__ = [
     "particle_mesh_ewald",
     "pme_reciprocal_space",
     "pme_green_structure_factor",
-    "pme_fused_convolve",
     "pme_energy_corrections",
     "pme_energy_corrections_with_charge_grad",
-    "pme_virial_bg_correction",
     "compute_bspline_moduli_1d",
 ]
 
@@ -114,27 +117,6 @@ __all__ = [
 # ``jax_kernel`` for single-launch ops; use ``jax_callable`` only when
 # fusing multiple wp.launch calls into one FFI thunk
 # (see :func:`_make_jax_pme_virial_bg_fused`).
-
-
-def _normalize_dtype(dtype):
-    """Normalize dtype for kernel dictionary lookup.
-
-    Parameters
-    ----------
-    dtype : dtype-like
-        Input dtype from a JAX array.
-
-    Returns
-    -------
-    jnp.float32 or jnp.float64
-        Normalized JAX dtype for kernel lookup.
-    """
-    if dtype == jnp.float32 or str(dtype) == "float32":
-        return jnp.float32
-    elif dtype == jnp.float64 or str(dtype) == "float64":
-        return jnp.float64
-    else:
-        raise ValueError(f"Unsupported dtype: {dtype}")
 
 
 def _jax_pme_factory_component(
@@ -470,6 +452,8 @@ def pme_green_structure_factor(
     - G(k=0) is set to zero to avoid singularity
     - The volume normalization in G(k) eliminates later divisions
     - Structure factor is mesh-dependent only, so shared across batch
+    - This compatibility helper returns raw ``G(k)``. The fused convolve path
+      folds deconvolution internally as ``G(k) / C^2(k)``.
     """
     mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
     input_dtype = _normalize_dtype(k_squared.dtype)
@@ -565,6 +549,7 @@ def pme_virial_bg_correction(
     alpha: jax.Array,
     virial: jax.Array,
     batch_idx: jax.Array | None = None,
+    volume: jax.Array | None = None,
 ) -> jax.Array:
     """Apply non-neutral background virial correction in a single Warp launch.
 
@@ -587,6 +572,9 @@ def pme_virial_bg_correction(
         Virial tensor to correct in place (functional return).
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index per atom. If None, every atom maps to system 0.
+    volume : jax.Array | None, optional
+        Precomputed per-system cell volume. Treated as static metadata when
+        supplied.
 
     Returns
     -------
@@ -617,6 +605,22 @@ def pme_virial_bg_correction(
         virial_w = virial_w[jnp.newaxis, :, :]
 
     total_charges = jnp.zeros(num_systems, dtype=input_dtype)
+    if volume is not None:
+        total_charges = total_charges.at[bidx].add(charges.astype(input_dtype))
+        volume_w = volume.astype(input_dtype)
+        if volume_w.ndim == 0:
+            volume_w = volume_w.reshape(1)
+        if volume_w.shape[0] == 1 and num_systems > 1:
+            volume_w = jnp.broadcast_to(volume_w, (num_systems,))
+        bg_energy = (
+            jnp.pi
+            * total_charges
+            * total_charges
+            / (2.0 * alpha_w * alpha_w * volume_w)
+        )
+        eye = jnp.eye(3, dtype=input_dtype)
+        diag_delta = bg_energy[:, None, None] * eye[jnp.newaxis, :, :]
+        return virial_w - diag_delta
 
     # Fused two-pass via jax_callable: a single XLA FFI thunk that runs both
     # the scatter-add reduce (pass 1) and the per-system E_bg apply (pass 2).
@@ -641,6 +645,7 @@ def pme_energy_corrections(
     cell: jax.Array,
     alpha: jax.Array,
     batch_idx: jax.Array | None = None,
+    volume: jax.Array | None = None,
 ) -> jax.Array:
     """Apply self-energy and background corrections to PME energies.
 
@@ -669,7 +674,12 @@ def pme_energy_corrections(
         - Single-system: shape (1,) or scalar
         - Batch: shape (B,)
     batch_idx : jax.Array | None, default=None
-        System index for each atom. If provided, uses batch kernels.
+        System index for each atom. If provided, uses batch kernels. Atoms must
+        be grouped by system: ``batch_idx`` must be contiguous, nondecreasing,
+        and use system IDs ``0..B-1``.
+    volume : jax.Array | None, optional
+        Precomputed per-system cell volume. Treated as static setup metadata
+        when supplied.
 
     Returns
     -------
@@ -696,7 +706,12 @@ def pme_energy_corrections(
         # Ensure cell is correct shape
         if cell.ndim == 2:
             cell = cell[jnp.newaxis, :, :]
-        volume = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        if volume is None:
+            volume = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        else:
+            volume = volume.astype(input_dtype)
+            if volume.ndim == 0:
+                volume = volume.reshape(1)
         total_charge = charges.sum().reshape(1).astype(input_dtype)
 
         # Allocate output
@@ -724,7 +739,14 @@ def pme_energy_corrections(
 
         if cell.ndim == 2:
             cell = cell[jnp.newaxis, :, :]
-        volumes = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        if volume is None:
+            volumes = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        else:
+            volumes = volume.astype(input_dtype)
+            if volumes.ndim == 0:
+                volumes = volumes.reshape(1)
+            if volumes.shape[0] == 1 and num_systems > 1:
+                volumes = jnp.broadcast_to(volumes, (num_systems,))
 
         # Compute total charge per system
         total_charges = jnp.zeros(num_systems, dtype=input_dtype)
@@ -755,6 +777,7 @@ def pme_energy_corrections_with_charge_grad(
     cell: jax.Array,
     alpha: jax.Array,
     batch_idx: jax.Array | None = None,
+    volume: jax.Array | None = None,
 ) -> tuple[jax.Array, jax.Array]:
     """Apply energy corrections and compute charge gradients.
 
@@ -775,7 +798,12 @@ def pme_energy_corrections_with_charge_grad(
         - Single-system: shape (1,) or scalar
         - Batch: shape (B,)
     batch_idx : jax.Array | None, default=None
-        System index for each atom. If provided, uses batch kernels.
+        System index for each atom. If provided, uses batch kernels. Atoms must
+        be grouped by system: ``batch_idx`` must be contiguous, nondecreasing,
+        and use system IDs ``0..B-1``.
+    volume : jax.Array | None, optional
+        Precomputed per-system cell volume. Treated as static setup metadata
+        when supplied.
 
     Returns
     -------
@@ -804,7 +832,12 @@ def pme_energy_corrections_with_charge_grad(
         # Ensure cell is correct shape
         if cell.ndim == 2:
             cell = cell[jnp.newaxis, :, :]
-        volume = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        if volume is None:
+            volume = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        else:
+            volume = volume.astype(input_dtype)
+            if volume.ndim == 0:
+                volume = volume.reshape(1)
         total_charge = charges.sum().reshape(1).astype(input_dtype)
 
         # Allocate outputs
@@ -832,7 +865,14 @@ def pme_energy_corrections_with_charge_grad(
 
         if cell.ndim == 2:
             cell = cell[jnp.newaxis, :, :]
-        volumes = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        if volume is None:
+            volumes = jnp.abs(jnp.linalg.det(cell)).astype(input_dtype)
+        else:
+            volumes = volume.astype(input_dtype)
+            if volumes.ndim == 0:
+                volumes = volumes.reshape(1)
+            if volumes.shape[0] == 1 and num_systems > 1:
+                volumes = jnp.broadcast_to(volumes, (num_systems,))
 
         # Compute total charge per system
         total_charges = jnp.zeros(num_systems, dtype=input_dtype)
@@ -1003,15 +1043,15 @@ def _pme_reciprocal_space_impl(
     batch_idx: jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_squared: jax.Array | None = None,
+    compute_forces: bool = False,
+    compute_charge_gradients: bool = False,
+    compute_virial: bool = False,
+    hybrid_forces: bool = False,
     volume: jax.Array | None = None,
     cell_inv_t: jax.Array | None = None,
     moduli_x: jax.Array | None = None,
     moduli_y: jax.Array | None = None,
     moduli_z: jax.Array | None = None,
-    compute_forces: bool = False,
-    compute_charge_gradients: bool = False,
-    compute_virial: bool = False,
-    hybrid_forces: bool = False,
 ) -> (
     jax.Array
     | tuple[jax.Array, jax.Array]
@@ -1052,7 +1092,9 @@ def _pme_reciprocal_space_impl(
     spline_order : int, default=4
         B-spline interpolation order (4 = cubic).
     batch_idx : jax.Array | None, default=None
-        System index for each atom.
+        System index for each atom. When provided, atoms must be grouped by
+        system: ``batch_idx`` must be contiguous, nondecreasing, and use system
+        IDs ``0..B-1``.
     k_vectors : jax.Array, optional
         Precomputed k-vectors from generate_k_vectors_pme.
     k_squared : jax.Array, optional
@@ -1062,7 +1104,8 @@ def _pme_reciprocal_space_impl(
     compute_charge_gradients : bool, default=False
         If True, compute charge gradients dE/dq.
     compute_virial : bool, default=False
-        If True, compute the virial tensor W = -dE/d(epsilon).
+        If True, compute the virial tensor ``W = -dE/d(displacement)`` for the
+        row-vector displacement recipe.
         Stress = -virial / volume.
     hybrid_forces : bool, default=False
         If True, detach ``positions``/``charges``/``cell`` from the autograd
@@ -1088,14 +1131,16 @@ def _pme_reciprocal_space_impl(
     - FFT/convolution and spline operations all respect the input dtype
     - Automatically determines mesh_dimensions if not provided
     - Virial is computed in k-space and uses the same dtype as k_squared
-    - Energy-derived first-order gradients are supported. Higher-order PME
-      reciprocal derivatives raise NotImplementedError until a native PME
-      Hessian-vector product is available.
+    - Energy-derived gradients are supported for positions, charges, and
+      strain-first virials. Reverse-mode higher-order reciprocal position and
+      charge losses use the private PME mesh HVP path.
     """
     num_atoms = positions.shape[0]
     input_dtype = _normalize_dtype(positions.dtype)
     is_batch = batch_idx is not None
     fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
+    reciprocal_metadata_is_supplied = k_vectors is not None and k_squared is not None
+    volume_is_supplied = volume is not None
 
     # hybrid_forces: forward-only spline/FFT chain. We sever ∂/∂{positions,
     # cell} (and the spline/FFT path through charges) via lax.stop_gradient,
@@ -1171,6 +1216,7 @@ def _pme_reciprocal_space_impl(
         cell_inv_t = cell_inv_t.astype(input_dtype)
         if cell_inv_t.ndim == 2:
             cell_inv_t = cell_inv_t[jnp.newaxis, :, :]
+        cell_inv_t = jax.lax.stop_gradient(cell_inv_t)
         cell_inv = jnp.transpose(cell_inv_t, (0, 2, 1))
 
     # Step 1: Spread charges to mesh
@@ -1197,7 +1243,7 @@ def _pme_reciprocal_space_impl(
             mesh_dimensions,
             reciprocal_cell=reciprocal_cell,
         )
-    if hybrid_forces:
+    if hybrid_forces or reciprocal_metadata_is_supplied:
         k_vectors = jax.lax.stop_gradient(k_vectors)
         k_squared = jax.lax.stop_gradient(k_squared)
 
@@ -1213,6 +1259,10 @@ def _pme_reciprocal_space_impl(
         moduli_x = compute_bspline_moduli_1d(miller_x, mesh_nx, spline_order)
         moduli_y = compute_bspline_moduli_1d(miller_y, mesh_ny, spline_order)
         moduli_z = compute_bspline_moduli_1d(miller_z, mesh_nz, spline_order)
+    else:
+        moduli_x = jax.lax.stop_gradient(moduli_x)
+        moduli_y = jax.lax.stop_gradient(moduli_y)
+        moduli_z = jax.lax.stop_gradient(moduli_z)
     # Caller-supplied volume= short-circuits the linalg.det.
     if volume is None:
         volume = jnp.abs(jnp.linalg.det(cell_3d)).astype(input_dtype)
@@ -1220,7 +1270,7 @@ def _pme_reciprocal_space_impl(
         volume = volume.astype(input_dtype)
         if volume.ndim == 0:
             volume = volume.reshape(1)
-    if hybrid_forces:
+    if hybrid_forces or volume_is_supplied:
         volume = jax.lax.stop_gradient(volume)
 
     complex_dtype = jnp.complex64 if input_dtype == jnp.float32 else jnp.complex128
@@ -1264,6 +1314,7 @@ def _pme_reciprocal_space_impl(
             alpha=alpha,
             virial=virial,
             batch_idx=batch_idx,
+            volume=volume,
         )
 
     # Step 6: Inverse FFT to get potential mesh
@@ -1300,10 +1351,12 @@ def _pme_reciprocal_space_impl(
     # Step 7: Apply corrections
     if need_charge_gradients:
         energies, charge_grads = pme_energy_corrections_with_charge_grad(
-            raw_energies, charges, cell, alpha, batch_idx
+            raw_energies, charges, cell, alpha, batch_idx, volume=volume
         )
     else:
-        energies = pme_energy_corrections(raw_energies, charges, cell, alpha, batch_idx)
+        energies = pme_energy_corrections(
+            raw_energies, charges, cell, alpha, batch_idx, volume=volume
+        )
         charge_grads = None
 
     # Step 8: Forces from the fused gather above. The 2× scaling absorbs the
@@ -1360,9 +1413,25 @@ def _require_explicit_mesh_dimensions_in_tracing(
     batch_idx: jax.Array | None = None,
 ) -> None:
     """Reject auto PME mesh sizing under JAX tracing with a clear message."""
+    is_traced = (
+        _is_traced_array(cell) or _is_traced_array(alpha) or _is_traced_array(batch_idx)
+    )
+    if is_traced and alpha is None and mesh_dimensions is None:
+        raise ValueError(
+            "JAX PME requires explicit alpha and explicit mesh_dimensions inside "
+            "jax.jit or other JAX transformations. Compute PME parameters outside "
+            "the transformed function and pass alpha and mesh_dimensions=(nx, ny, nz) "
+            "explicitly."
+        )
+    if is_traced and alpha is None:
+        raise ValueError(
+            "JAX PME requires explicit alpha inside jax.jit or other JAX "
+            "transformations. Compute PME parameters outside the transformed "
+            "function and pass alpha explicitly."
+        )
     if mesh_dimensions is not None:
         return
-    if _is_traced_array(cell) or _is_traced_array(alpha) or _is_traced_array(batch_idx):
+    if is_traced:
         raise ValueError(
             "JAX PME requires explicit mesh_dimensions inside jax.jit or other "
             "JAX transformations. Compute mesh_spacing/accuracy-based mesh sizing "
@@ -1384,6 +1453,380 @@ def _is_symbolic_zero(tangent) -> bool:
         tangent is None
         or isinstance(tangent, jax_ad.Zero)
         or tangent.__class__.__name__ == "SymbolicZero"
+    )
+
+
+def _bspline_weight_reference(u: jax.Array, order: int) -> jax.Array:
+    """Pure-JAX cardinal B-spline basis for custom-JVP reference tangents."""
+    dtype = u.dtype
+    if order == 1:
+        return jnp.where((u >= 0.0) & (u < 1.0), 1.0, 0.0).astype(dtype)
+
+    result = jnp.zeros_like(u)
+    for j in range(order + 1):
+        coeff = (-1.0 if j % 2 else 1.0) * float(math.comb(order, j))
+        result = result + jnp.asarray(coeff, dtype=dtype) * jnp.maximum(
+            u - jnp.asarray(float(j), dtype=dtype), 0.0
+        ) ** (order - 1)
+    return result / jnp.asarray(float(math.factorial(order - 1)), dtype=dtype)
+
+
+def _reference_cell_inv_t(
+    cell: jax.Array,
+    cell_inv_t: jax.Array | None,
+    dtype,
+) -> jax.Array:
+    """Return cell inverse-transpose using supplied static metadata if present."""
+    if cell_inv_t is None:
+        cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
+        return jnp.transpose(jnp.linalg.inv(cell_3d.astype(dtype)), (0, 2, 1))
+
+    cell_inv_t = jax.lax.stop_gradient(cell_inv_t).astype(dtype)
+    if cell_inv_t.ndim == 2:
+        cell_inv_t = cell_inv_t[jnp.newaxis, :, :]
+    return cell_inv_t
+
+
+def _reference_atom_systems(
+    positions: jax.Array,
+    batch_idx: jax.Array | None,
+) -> jax.Array:
+    """Return an int32 system id per atom."""
+    if batch_idx is None:
+        return jnp.zeros((positions.shape[0],), dtype=jnp.int32)
+    return batch_idx.astype(jnp.int32)
+
+
+def _spline_spread_reference(
+    positions: jax.Array,
+    values: jax.Array,
+    cell_inv_t: jax.Array,
+    mesh_dimensions: tuple[int, int, int],
+    spline_order: int,
+    batch_idx: jax.Array | None,
+    num_systems: int,
+) -> jax.Array:
+    """Pure-JAX charge spread with the production B-spline stencil."""
+    dtype = _normalize_dtype(positions.dtype)
+    nx, ny, nz = mesh_dimensions
+    atom_system = _reference_atom_systems(positions, batch_idx)
+    dims = jnp.asarray(mesh_dimensions, dtype=dtype)
+    frac = jnp.einsum(
+        "nij,nj->ni",
+        cell_inv_t[atom_system].astype(dtype),
+        positions.astype(dtype),
+    )
+    mesh_coords = frac * dims
+    base = jnp.floor(mesh_coords).astype(jnp.int32)
+    theta = mesh_coords - base.astype(dtype)
+
+    mesh_shape = (nx, ny, nz) if batch_idx is None else (num_systems, nx, ny, nz)
+    mesh = jnp.zeros(mesh_shape, dtype=dtype)
+    half_n_minus_1 = jnp.asarray(0.5 * float(spline_order - 2), dtype=dtype)
+    half_order = jnp.asarray(0.5 * float(spline_order), dtype=dtype)
+    starts = jnp.floor(theta - half_n_minus_1).astype(jnp.int32)
+
+    for ox in range(spline_order):
+        off_x = starts[:, 0] + ox
+        gx = jnp.mod(base[:, 0] + off_x, nx)
+        wx = _bspline_weight_reference(
+            half_order + theta[:, 0] - off_x.astype(dtype), spline_order
+        )
+        for oy in range(spline_order):
+            off_y = starts[:, 1] + oy
+            gy = jnp.mod(base[:, 1] + off_y, ny)
+            wy = _bspline_weight_reference(
+                half_order + theta[:, 1] - off_y.astype(dtype), spline_order
+            )
+            for oz in range(spline_order):
+                off_z = starts[:, 2] + oz
+                gz = jnp.mod(base[:, 2] + off_z, nz)
+                wz = _bspline_weight_reference(
+                    half_order + theta[:, 2] - off_z.astype(dtype), spline_order
+                )
+                contrib = values.astype(dtype) * wx * wy * wz
+                if batch_idx is None:
+                    mesh = mesh.at[gx, gy, gz].add(contrib)
+                else:
+                    mesh = mesh.at[atom_system, gx, gy, gz].add(contrib)
+    return mesh
+
+
+def _spline_gather_reference(
+    positions: jax.Array,
+    mesh: jax.Array,
+    cell_inv_t: jax.Array,
+    spline_order: int,
+    batch_idx: jax.Array | None,
+) -> jax.Array:
+    """Pure-JAX mesh gather with the production B-spline stencil."""
+    dtype = _normalize_dtype(positions.dtype)
+    nx, ny, nz = mesh.shape[-3:]
+    atom_system = _reference_atom_systems(positions, batch_idx)
+    dims = jnp.asarray((nx, ny, nz), dtype=dtype)
+    frac = jnp.einsum(
+        "nij,nj->ni",
+        cell_inv_t[atom_system].astype(dtype),
+        positions.astype(dtype),
+    )
+    mesh_coords = frac * dims
+    base = jnp.floor(mesh_coords).astype(jnp.int32)
+    theta = mesh_coords - base.astype(dtype)
+
+    output = jnp.zeros((positions.shape[0],), dtype=dtype)
+    half_n_minus_1 = jnp.asarray(0.5 * float(spline_order - 2), dtype=dtype)
+    half_order = jnp.asarray(0.5 * float(spline_order), dtype=dtype)
+    starts = jnp.floor(theta - half_n_minus_1).astype(jnp.int32)
+
+    for ox in range(spline_order):
+        off_x = starts[:, 0] + ox
+        gx = jnp.mod(base[:, 0] + off_x, nx)
+        wx = _bspline_weight_reference(
+            half_order + theta[:, 0] - off_x.astype(dtype), spline_order
+        )
+        for oy in range(spline_order):
+            off_y = starts[:, 1] + oy
+            gy = jnp.mod(base[:, 1] + off_y, ny)
+            wy = _bspline_weight_reference(
+                half_order + theta[:, 1] - off_y.astype(dtype), spline_order
+            )
+            for oz in range(spline_order):
+                off_z = starts[:, 2] + oz
+                gz = jnp.mod(base[:, 2] + off_z, nz)
+                wz = _bspline_weight_reference(
+                    half_order + theta[:, 2] - off_z.astype(dtype), spline_order
+                )
+                if batch_idx is None:
+                    mesh_values = mesh[gx, gy, gz]
+                else:
+                    mesh_values = mesh[atom_system, gx, gy, gz]
+                output = output + mesh_values.astype(dtype) * wx * wy * wz
+    return output
+
+
+def _pme_energy_corrections_reference(
+    raw_energies: jax.Array,
+    charges: jax.Array,
+    alpha: jax.Array,
+    volume: jax.Array,
+    batch_idx: jax.Array | None,
+    num_systems: int,
+) -> jax.Array:
+    """Pure-JAX PME self/background correction for reference tangents."""
+    dtype = _normalize_dtype(raw_energies.dtype)
+    charges = charges.astype(jnp.float64)
+    raw = raw_energies.astype(jnp.float64)
+    alpha_arr = _pme_alpha_array(alpha, jnp.float64, num_systems)
+    volume = volume.astype(jnp.float64)
+    if volume.ndim == 0:
+        volume = volume.reshape(1)
+    if volume.shape[0] == 1 and num_systems > 1:
+        volume = jnp.broadcast_to(volume, (num_systems,))
+
+    atom_system = _reference_atom_systems(raw_energies, batch_idx)
+    total_charges = _system_sum_from_atoms(charges, batch_idx, num_systems)
+    alpha_atom = alpha_arr[atom_system]
+    volume_atom = volume[atom_system]
+    total_atom = total_charges[atom_system]
+
+    self_energy = alpha_atom * charges * charges / jnp.sqrt(jnp.pi)
+    background = (
+        jnp.pi * charges * total_atom / (2.0 * alpha_atom * alpha_atom * volume_atom)
+    )
+    return (raw * charges - self_energy - background).astype(dtype)
+
+
+def _pme_convolve_reference(
+    mesh_fft: jax.Array,
+    k_squared: jax.Array,
+    moduli_x: jax.Array,
+    moduli_y: jax.Array,
+    moduli_z: jax.Array,
+    alpha: jax.Array,
+    volume: jax.Array,
+    is_batch: bool,
+) -> jax.Array:
+    """Pure-JAX equivalent of the fused PME convolve multiplier."""
+    real_dtype = jnp.float32 if mesh_fft.dtype == jnp.complex64 else jnp.float64
+    alpha = _pme_alpha_array(alpha, real_dtype, volume.shape[0])
+    volume = volume.astype(real_dtype)
+    if volume.ndim == 0:
+        volume = volume.reshape(1)
+
+    k_sq = k_squared.astype(real_dtype)
+    if is_batch and k_sq.ndim == 3:
+        k_sq = k_sq[jnp.newaxis, ...]
+    safe_k_sq = jnp.where(k_sq > 1e-10, k_sq, 1.0)
+    if is_batch:
+        alpha_view = alpha.reshape(-1, 1, 1, 1)
+        volume_view = volume.reshape(-1, 1, 1, 1)
+    else:
+        alpha_view = alpha.reshape(-1)[0]
+        volume_view = volume.reshape(-1)[0]
+
+    green = (
+        2.0
+        * jnp.pi
+        * jnp.exp(-safe_k_sq / (4.0 * alpha_view * alpha_view))
+        / (volume_view * safe_k_sq)
+    )
+    green = jnp.where(k_sq > 1e-10, green, 0.0)
+    sf = (
+        moduli_x.astype(real_dtype)[:, None, None]
+        * moduli_y.astype(real_dtype)[None, :, None]
+        * moduli_z.astype(real_dtype)[None, None, :]
+    )
+    sf_sq = jnp.maximum(sf * sf, jnp.asarray(1e-10, dtype=real_dtype))
+    return mesh_fft * (green / sf_sq).astype(mesh_fft.dtype)
+
+
+def _pme_reciprocal_energy_reference(
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: jax.Array,
+    mesh_dimensions: tuple[int, int, int] | None,
+    mesh_spacing: float | None,
+    spline_order: int,
+    batch_idx: jax.Array | None,
+    k_vectors: jax.Array | None,
+    k_squared: jax.Array | None,
+    volume: jax.Array | None,
+    cell_inv_t: jax.Array | None,
+    moduli_x: jax.Array | None,
+    moduli_y: jax.Array | None,
+    moduli_z: jax.Array | None,
+) -> jax.Array:
+    """Pure-JAX PME reciprocal per-atom energy for weighted-loss tangents."""
+    dtype = _normalize_dtype(positions.dtype)
+    cell_3d = cell.astype(dtype)
+    if cell_3d.ndim == 2:
+        cell_3d = cell_3d[jnp.newaxis, :, :]
+    num_systems = cell_3d.shape[0]
+    is_batch = batch_idx is not None
+    if mesh_dimensions is None:
+        if mesh_spacing is None:
+            mesh_dimensions = estimate_pme_mesh_dimensions(cell, alpha, accuracy=1e-6)
+        else:
+            mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+
+    cell_inv_t_ref = _reference_cell_inv_t(cell, cell_inv_t, dtype)
+    cell_inv_ref = jnp.transpose(cell_inv_t_ref, (0, 2, 1))
+
+    mesh_grid = _spline_spread_reference(
+        positions,
+        charges,
+        cell_inv_t_ref,
+        mesh_dimensions,
+        spline_order,
+        batch_idx,
+        num_systems,
+    )
+    fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
+    complex_dtype = jnp.complex64 if dtype == jnp.float32 else jnp.complex128
+    mesh_fft = jnp.fft.rfftn(mesh_grid, axes=fft_dims, norm="backward").astype(
+        complex_dtype
+    )
+
+    if k_vectors is None or k_squared is None:
+        reciprocal_cell = (2.0 * jnp.pi) * cell_inv_ref
+        _k_vectors, k_squared = generate_k_vectors_pme(
+            cell,
+            mesh_dimensions,
+            reciprocal_cell=reciprocal_cell,
+        )
+    else:
+        k_squared = jax.lax.stop_gradient(k_squared)
+
+    nx, ny, nz = mesh_dimensions
+    if moduli_x is None or moduli_y is None or moduli_z is None:
+        miller_x = jnp.fft.fftfreq(nx, d=1.0 / nx).astype(dtype)
+        miller_y = jnp.fft.fftfreq(ny, d=1.0 / ny).astype(dtype)
+        miller_z = jnp.fft.rfftfreq(nz, d=1.0 / nz).astype(dtype)
+        moduli_x = compute_bspline_moduli_1d(miller_x, nx, spline_order)
+        moduli_y = compute_bspline_moduli_1d(miller_y, ny, spline_order)
+        moduli_z = compute_bspline_moduli_1d(miller_z, nz, spline_order)
+    else:
+        moduli_x = jax.lax.stop_gradient(moduli_x)
+        moduli_y = jax.lax.stop_gradient(moduli_y)
+        moduli_z = jax.lax.stop_gradient(moduli_z)
+
+    if volume is None:
+        volume_ref = jnp.abs(jnp.linalg.det(cell_3d)).astype(dtype)
+    else:
+        volume_ref = jax.lax.stop_gradient(volume).astype(dtype)
+        if volume_ref.ndim == 0:
+            volume_ref = volume_ref.reshape(1)
+        if volume_ref.shape[0] == 1 and num_systems > 1:
+            volume_ref = jnp.broadcast_to(volume_ref, (num_systems,))
+
+    convolved = _pme_convolve_reference(
+        mesh_fft,
+        k_squared,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+        alpha,
+        volume_ref,
+        is_batch,
+    )
+    potential_mesh = jnp.fft.irfftn(
+        convolved, s=mesh_dimensions, axes=fft_dims, norm="forward"
+    ).astype(dtype)
+    raw_energies = _spline_gather_reference(
+        positions,
+        potential_mesh,
+        cell_inv_t_ref,
+        spline_order,
+        batch_idx,
+    )
+    return _pme_energy_corrections_reference(
+        raw_energies,
+        charges,
+        alpha,
+        volume_ref,
+        batch_idx,
+        num_systems,
+    )
+
+
+@jax.custom_jvp
+def _unsupported_pme_cell_hvp_gradient(grad_cell: jax.Array) -> jax.Array:
+    """Identity wrapper that rejects cell/stress higher-order PME derivatives."""
+    return grad_cell
+
+
+@_unsupported_pme_cell_hvp_gradient.defjvp
+def _unsupported_pme_cell_hvp_gradient_jvp(
+    primals: tuple[jax.Array],
+    tangents: tuple[jax.Array],
+) -> tuple[jax.Array, jax.Array]:
+    """Reject JVPs through the first-order PME cell-gradient adapter."""
+    del tangents
+    (grad_cell,) = primals
+    raise NotImplementedError(
+        "JAX PME stress/cell/strain HVPs are unsupported. Differentiate "
+        "position or charge losses, or use first-order cell/strain gradients only."
+    )
+
+
+@jax.custom_jvp
+def _unsupported_pme_cell_hvp_primal(cell: jax.Array) -> jax.Array:
+    """Identity wrapper that marks PME cell JVP state as first-order only."""
+    return cell
+
+
+@_unsupported_pme_cell_hvp_primal.defjvp
+def _unsupported_pme_cell_hvp_primal_jvp(
+    primals: tuple[jax.Array],
+    tangents: tuple[jax.Array],
+) -> tuple[jax.Array, jax.Array]:
+    """Reject JVPs through a PME cell-gradient computation."""
+    del tangents
+    (cell,) = primals
+    raise NotImplementedError(
+        "JAX PME stress/cell/strain HVPs are unsupported. Differentiate "
+        "position or charge losses, or use first-order cell/strain gradients only."
     )
 
 
@@ -1446,6 +1889,364 @@ def _cell_tangent_system_values(
     return values.sum(axis=(1, 2))
 
 
+def _per_atom_cell_inv_t_matvec(
+    cell_inv_t: jax.Array,
+    vectors: jax.Array,
+    batch_idx: jax.Array | None,
+) -> jax.Array:
+    """Apply the per-system ``cell_inv_t`` matrix to per-atom vectors."""
+    if batch_idx is None:
+        return jnp.einsum("ij,nj->ni", cell_inv_t[0], vectors)
+    return jnp.einsum(
+        "nij,nj->ni",
+        cell_inv_t[batch_idx.astype(jnp.int32)],
+        vectors,
+    )
+
+
+def _pme_alpha_array(
+    alpha: jax.Array,
+    dtype,
+    num_systems: int,
+) -> jax.Array:
+    """Return PME alpha as a length-``num_systems`` array."""
+    alpha_arr = alpha.astype(dtype)
+    if alpha_arr.ndim == 0:
+        alpha_arr = alpha_arr.reshape(1)
+    if alpha_arr.shape[0] == 1 and num_systems > 1:
+        alpha_arr = jnp.broadcast_to(alpha_arr, (num_systems,))
+    return alpha_arr
+
+
+def _pme_charge_background_hvp(
+    h_charges: jax.Array,
+    alpha: jax.Array,
+    volume: jax.Array,
+    batch_idx: jax.Array | None,
+    num_systems: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Return per-atom ``alpha`` and background charge-Hessian coefficient."""
+    d_qtotal = _system_sum_from_atoms(h_charges, batch_idx, num_systems)
+    if batch_idx is None:
+        alpha_atom = alpha[0]
+        bg_coeff = jnp.full_like(
+            h_charges, jnp.pi / (alpha_atom * alpha_atom * volume[0])
+        )
+        dqtotal_atom = jnp.full_like(h_charges, d_qtotal[0])
+        return alpha_atom, bg_coeff * dqtotal_atom
+
+    batch_i32 = batch_idx.astype(jnp.int32)
+    bg_coeff = jnp.pi / (alpha * alpha * volume)
+    return alpha[batch_i32], bg_coeff[batch_i32] * d_qtotal[batch_i32]
+
+
+def _pme_reciprocal_hvp_state(
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: jax.Array,
+    mesh_dimensions: tuple[int, int, int] | None,
+    mesh_spacing: float | None,
+    spline_order: int,
+    batch_idx: jax.Array | None,
+    k_vectors: jax.Array | None,
+    k_squared: jax.Array | None,
+    volume: jax.Array | None,
+    cell_inv_t: jax.Array | None,
+    moduli_x: jax.Array | None,
+    moduli_y: jax.Array | None,
+    moduli_z: jax.Array | None,
+) -> tuple[jax.Array, ...]:
+    """Build reusable PME reciprocal state for fixed-cell HVP evaluation."""
+    if mesh_dimensions is None:
+        if mesh_spacing is None:
+            raise ValueError("mesh_dimensions must be resolved before PME HVP")
+        mesh_dimensions = mesh_spacing_to_dimensions(cell, mesh_spacing)
+
+    dtype = _normalize_dtype(positions.dtype)
+    positions_cast = positions.astype(dtype)
+    charges_cast = charges.astype(dtype)
+    cell_cast = cell.astype(dtype)
+    cell_3d = cell_cast if cell_cast.ndim == 3 else cell_cast[jnp.newaxis, :, :]
+    num_systems = cell_3d.shape[0]
+    is_batch = batch_idx is not None
+    fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
+
+    if cell_inv_t is None:
+        cell_inv = jnp.linalg.inv(cell_3d)
+        cell_inv_t_work = jnp.transpose(cell_inv, (0, 2, 1)).astype(dtype)
+    else:
+        cell_inv_t_work = cell_inv_t.astype(dtype)
+        if cell_inv_t_work.ndim == 2:
+            cell_inv_t_work = cell_inv_t_work[jnp.newaxis, :, :]
+        cell_inv = jnp.transpose(cell_inv_t_work, (0, 2, 1))
+
+    if volume is None:
+        volume_work = jnp.abs(jnp.linalg.det(cell_3d)).astype(dtype)
+    else:
+        volume_work = volume.astype(dtype)
+        if volume_work.ndim == 0:
+            volume_work = volume_work.reshape(1)
+    alpha_work = _pme_alpha_array(alpha, dtype, num_systems)
+
+    mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
+    if k_squared is None:
+        if k_vectors is not None:
+            k_vectors_work = k_vectors.astype(dtype)
+            k_squared_work = jnp.sum(k_vectors_work * k_vectors_work, axis=-1)
+        else:
+            reciprocal_cell = (2.0 * jnp.pi) * cell_inv
+            _k_vectors, k_squared_work = generate_k_vectors_pme(
+                cell_cast,
+                mesh_dimensions,
+                reciprocal_cell=reciprocal_cell,
+            )
+    else:
+        k_squared_work = k_squared.astype(dtype)
+
+    if moduli_x is None or moduli_y is None or moduli_z is None:
+        miller_x = jnp.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx).astype(dtype)
+        miller_y = jnp.fft.fftfreq(mesh_ny, d=1.0 / mesh_ny).astype(dtype)
+        miller_z = jnp.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz).astype(dtype)
+        moduli_x_work = compute_bspline_moduli_1d(miller_x, mesh_nx, spline_order)
+        moduli_y_work = compute_bspline_moduli_1d(miller_y, mesh_ny, spline_order)
+        moduli_z_work = compute_bspline_moduli_1d(miller_z, mesh_nz, spline_order)
+    else:
+        moduli_x_work = moduli_x.astype(dtype)
+        moduli_y_work = moduli_y.astype(dtype)
+        moduli_z_work = moduli_z.astype(dtype)
+
+    mesh_grid = spline_spread(
+        positions_cast,
+        charges_cast,
+        cell_cast,
+        mesh_dims=mesh_dimensions,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t_work,
+    )
+    complex_dtype = jnp.complex64 if dtype == jnp.float32 else jnp.complex128
+    mesh_fft = jnp.fft.rfftn(mesh_grid, axes=fft_dims, norm="backward").astype(
+        complex_dtype
+    )
+    convolved_mesh = pme_fused_convolve(
+        mesh_fft,
+        k_squared_work,
+        moduli_x_work,
+        moduli_y_work,
+        moduli_z_work,
+        alpha_work,
+        volume_work,
+        is_batch,
+    )
+    potential_mesh = jnp.fft.irfftn(
+        convolved_mesh,
+        s=mesh_dimensions,
+        axes=fft_dims,
+        norm="forward",
+    )
+    return (
+        positions_cast,
+        charges_cast,
+        cell_cast,
+        alpha_work,
+        batch_idx,
+        cell_inv_t_work,
+        volume_work,
+        k_squared_work,
+        moduli_x_work,
+        moduli_y_work,
+        moduli_z_work,
+        potential_mesh,
+    )
+
+
+def _pme_reciprocal_energy_hvp_from_state(
+    v_positions: jax.Array,
+    v_charges: jax.Array,
+    positions_cast: jax.Array,
+    charges_cast: jax.Array,
+    cell_cast: jax.Array,
+    alpha_work: jax.Array,
+    batch_idx: jax.Array | None,
+    cell_inv_t_work: jax.Array,
+    volume_work: jax.Array,
+    k_squared_work: jax.Array,
+    moduli_x_work: jax.Array,
+    moduli_y_work: jax.Array,
+    moduli_z_work: jax.Array,
+    potential_mesh: jax.Array,
+    spline_order: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Evaluate the linear PME reciprocal HVP from saved mesh state."""
+    dtype = _normalize_dtype(positions_cast.dtype)
+    is_batch = batch_idx is not None
+    mesh_dimensions = (
+        tuple(potential_mesh.shape[1:]) if is_batch else tuple(potential_mesh.shape)
+    )
+    fft_dims = (1, 2, 3) if is_batch else (0, 1, 2)
+    v_positions_cast = v_positions.astype(dtype)
+    v_charges_cast = v_charges.astype(dtype)
+    complex_dtype = jnp.complex64 if dtype == jnp.float32 else jnp.complex128
+    cell_3d = cell_cast if cell_cast.ndim == 3 else cell_cast[jnp.newaxis, :, :]
+    num_systems = cell_3d.shape[0]
+
+    v_frac = _per_atom_cell_inv_t_matvec(
+        cell_inv_t_work,
+        v_positions_cast,
+        batch_idx,
+    )
+    dmesh_charge = spline_spread(
+        positions_cast,
+        v_charges_cast,
+        cell_cast,
+        mesh_dims=mesh_dimensions,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t_work,
+    )
+    dmesh_position = _spline_spread_gradient_weights(
+        positions_cast,
+        charges_cast[:, jnp.newaxis] * v_frac,
+        cell_cast,
+        mesh_dimensions,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t_work,
+    )
+    dmesh = dmesh_charge + dmesh_position
+    dmesh_fft = jnp.fft.rfftn(dmesh, axes=fft_dims, norm="backward").astype(
+        complex_dtype
+    )
+    dconvolved_mesh = pme_fused_convolve(
+        dmesh_fft,
+        k_squared_work,
+        moduli_x_work,
+        moduli_y_work,
+        moduli_z_work,
+        alpha_work,
+        volume_work,
+        is_batch,
+    )
+    dpotential_mesh = jnp.fft.irfftn(
+        dconvolved_mesh,
+        s=mesh_dimensions,
+        axes=fft_dims,
+        norm="forward",
+    )
+
+    grad_raw_cart = spline_gather_gradient(
+        positions_cast,
+        -jnp.ones_like(charges_cast),
+        potential_mesh,
+        cell_cast,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t_work,
+    )
+    dforce_mesh = spline_gather_gradient(
+        positions_cast,
+        charges_cast,
+        dpotential_mesh,
+        cell_cast,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t_work,
+    )
+    dforce_position = _spline_gather_gradient_position_hessian(
+        positions_cast,
+        charges_cast,
+        v_frac,
+        cell_cast,
+        potential_mesh,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t_work,
+    )
+    hvp_positions = (
+        2.0 * v_charges_cast[:, jnp.newaxis] * grad_raw_cart
+        - 2.0 * dforce_mesh
+        - 2.0 * dforce_position
+    )
+
+    draw_mesh = spline_gather(
+        positions_cast,
+        dpotential_mesh,
+        cell_cast,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t_work,
+    )
+    draw_position = (grad_raw_cart * v_positions_cast).sum(axis=1)
+    alpha_atom, background_hvp = _pme_charge_background_hvp(
+        v_charges_cast,
+        alpha_work,
+        volume_work,
+        batch_idx,
+        num_systems,
+    )
+    hvp_charges = (
+        2.0 * (draw_mesh + draw_position)
+        - 2.0 * alpha_atom / jnp.sqrt(jnp.pi) * v_charges_cast
+        - background_hvp
+    )
+    return (
+        hvp_positions.astype(positions_cast.dtype),
+        hvp_charges.astype(charges_cast.dtype),
+    )
+
+
+def _pme_reciprocal_energy_hvp_raw(
+    v_positions: jax.Array,
+    v_charges: jax.Array,
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: jax.Array,
+    mesh_dimensions: tuple[int, int, int] | None,
+    mesh_spacing: float | None,
+    spline_order: int,
+    batch_idx: jax.Array | None,
+    k_vectors: jax.Array | None,
+    k_squared: jax.Array | None,
+    volume: jax.Array | None,
+    cell_inv_t: jax.Array | None,
+    moduli_x: jax.Array | None,
+    moduli_y: jax.Array | None,
+    moduli_z: jax.Array | None,
+) -> tuple[jax.Array, jax.Array]:
+    """Evaluate fixed-cell PME reciprocal HVPs for positions and charges."""
+    if positions.shape[0] == 0:
+        dtype = _normalize_dtype(positions.dtype)
+        return (
+            jnp.zeros_like(positions, dtype=dtype),
+            jnp.zeros_like(charges, dtype=dtype),
+        )
+    state = _pme_reciprocal_hvp_state(
+        positions,
+        charges,
+        cell,
+        alpha,
+        mesh_dimensions,
+        mesh_spacing,
+        spline_order,
+        batch_idx,
+        k_vectors,
+        k_squared,
+        volume,
+        cell_inv_t,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+    )
+    return _pme_reciprocal_energy_hvp_from_state(
+        v_positions,
+        v_charges,
+        *state,
+        spline_order,
+    )
+
+
 def _pme_reciprocal_energy_derivative_values(
     positions: jax.Array,
     charges: jax.Array,
@@ -1488,7 +2289,7 @@ def _pme_reciprocal_energy_derivative_values(
     return -forces, charge_grads
 
 
-@functools.partial(jax.custom_jvp, nondiff_argnums=(4, 5, 6))
+@functools.partial(jax.custom_vjp, nondiff_argnums=(4, 5, 6))
 def _pme_reciprocal_energy_derivatives(
     positions: jax.Array,
     charges: jax.Array,
@@ -1509,9 +2310,9 @@ def _pme_reciprocal_energy_derivatives(
     """PME reciprocal ``(dE/dR, dE/dq)`` first-derivative values.
 
     Primal returns the PME *mesh* first derivatives (so forces/charge gradients are
-    bit-identical to the direct-output path). The custom JVP below raises
-    ``NotImplementedError`` for higher-order PME derivatives rather than silently
-    treating the stopped first derivatives as constants.
+    bit-identical to the direct-output path). The custom VJP below supplies the
+    private PME-native HVP needed for reverse-mode higher-order
+    position/charge losses.
     """
     dpos, charge_grads = _pme_reciprocal_energy_derivative_values(
         positions,
@@ -1533,33 +2334,105 @@ def _pme_reciprocal_energy_derivatives(
     return jax.lax.stop_gradient(dpos), jax.lax.stop_gradient(charge_grads)
 
 
-def _pme_reciprocal_energy_derivatives_jvp(
+def _pme_reciprocal_energy_derivatives_fwd(
+    positions: jax.Array,
+    charges: jax.Array,
+    cell: jax.Array,
+    alpha: jax.Array,
     mesh_dimensions: tuple[int, int, int] | None,
     mesh_spacing: float | None,
     spline_order: int,
-    primals: tuple[jax.Array | None, ...],
-    tangents: tuple[jax.Array | None, ...],
-) -> tuple[tuple[jax.Array, jax.Array], tuple[jax.Array, jax.Array]]:
-    """JVP of the PME reciprocal first derivatives.
+    batch_idx: jax.Array | None,
+    k_vectors: jax.Array | None,
+    k_squared: jax.Array | None,
+    volume: jax.Array | None,
+    cell_inv_t: jax.Array | None,
+    moduli_x: jax.Array | None,
+    moduli_y: jax.Array | None,
+    moduli_z: jax.Array | None,
+) -> tuple[tuple[jax.Array, jax.Array], tuple[jax.Array, ...]]:
+    """Forward rule for PME reciprocal first derivatives."""
+    primal_out = _pme_reciprocal_energy_derivatives(
+        positions,
+        charges,
+        cell,
+        alpha,
+        mesh_dimensions,
+        mesh_spacing,
+        spline_order,
+        batch_idx,
+        k_vectors,
+        k_squared,
+        volume,
+        cell_inv_t,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+    )
+    state = _pme_reciprocal_hvp_state(
+        positions,
+        charges,
+        cell,
+        alpha,
+        mesh_dimensions,
+        mesh_spacing,
+        spline_order,
+        batch_idx,
+        k_vectors,
+        k_squared,
+        volume,
+        cell_inv_t,
+        moduli_x,
+        moduli_y,
+        moduli_z,
+    )
+    return primal_out, state
 
-    The tangent must use the PME-native mesh HVP. Exact-Ewald reciprocal HVP is
-    intentionally not a fallback for PME because it changes both semantics and
-    asymptotic work.
-    """
-    del primals, tangents, mesh_spacing, spline_order
 
-    if mesh_dimensions is None:
-        raise ValueError("mesh_dimensions must be resolved before PME HVP")
-    raise NotImplementedError(
-        "JAX PME reciprocal double-backward requires the PME-native HVP. "
-        "The exact-Ewald reciprocal fallback has been removed to avoid "
-        "silently benchmarking or training a different algorithm."
+def _pme_reciprocal_energy_derivatives_bwd(
+    mesh_dimensions: tuple[int, int, int] | None,
+    mesh_spacing: float | None,
+    spline_order: int,
+    residuals: tuple[jax.Array, ...],
+    ct_out: tuple[jax.Array, jax.Array],
+) -> tuple[jax.Array | None, ...]:
+    """Backward rule for PME reciprocal first derivatives."""
+    del mesh_dimensions, mesh_spacing
+    positions_cast, charges_cast, *_rest = residuals
+    ct_positions, ct_charges = ct_out
+    grad_positions, grad_charges = _pme_reciprocal_energy_hvp_from_state(
+        _tangent_or_zeros(
+            ct_positions,
+            positions_cast,
+            dtype=positions_cast.dtype,
+        ),
+        _tangent_or_zeros(
+            ct_charges,
+            charges_cast,
+            dtype=charges_cast.dtype,
+        ),
+        *residuals,
+        spline_order,
+    )
+    return (
+        grad_positions,
+        grad_charges,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
 
 
-_pme_reciprocal_energy_derivatives.defjvp(
-    _pme_reciprocal_energy_derivatives_jvp,
-    symbolic_zeros=True,
+_pme_reciprocal_energy_derivatives.defvjp(
+    _pme_reciprocal_energy_derivatives_fwd,
+    _pme_reciprocal_energy_derivatives_bwd,
 )
 
 
@@ -1643,6 +2516,17 @@ def _pme_reciprocal_energy_jvp_rule(
         _t_moduli_z,
     ) = tangents
 
+    del (
+        _t_alpha,
+        _t_batch_idx,
+        _t_k_vectors,
+        _t_k_squared,
+        _t_volume,
+        _t_cell_inv_t,
+        _t_moduli_x,
+        _t_moduli_y,
+        _t_moduli_z,
+    )
     primal_out = _pme_reciprocal_energy_jvp(
         positions,
         charges,
@@ -1661,76 +2545,47 @@ def _pme_reciprocal_energy_jvp_rule(
         moduli_z,
     )
 
-    need_virial = not _is_symbolic_zero(t_cell)
-    # Source the first derivatives from the custom_jvp-wrapped derivative fn so a
-    # SECOND differentiation dispatches to the PME-mesh derivative JVP instead of
-    # seeing a stop_gradient'd constant (which silently zeroed the 2nd derivative).
-    # dpos/dq are numerically identical to the previous inline path -> forces,
-    # charge-gradients and the cell/virial tangent below are all unchanged.
-    dpos, dq = _pme_reciprocal_energy_derivatives(
-        positions,
-        charges,
-        jax.lax.stop_gradient(cell),
-        jax.lax.stop_gradient(alpha),
-        mesh_dimensions,
-        mesh_spacing,
-        spline_order,
-        _stop_optional(batch_idx),
-        _stop_optional(k_vectors),
-        _stop_optional(k_squared),
-        _stop_optional(volume),
-        _stop_optional(cell_inv_t),
-        _stop_optional(moduli_x),
-        _stop_optional(moduli_y),
-        _stop_optional(moduli_z),
-    )
-    if need_virial:
-        _energy, _forces, _charge_grads, virial = _pme_reciprocal_space_impl(
-            positions=jax.lax.stop_gradient(positions),
-            charges=jax.lax.stop_gradient(charges),
-            cell=jax.lax.stop_gradient(cell),
-            alpha=jax.lax.stop_gradient(alpha),
-            mesh_dimensions=mesh_dimensions,
-            mesh_spacing=mesh_spacing,
-            spline_order=spline_order,
-            batch_idx=_stop_optional(batch_idx),
-            k_vectors=_stop_optional(k_vectors),
-            k_squared=_stop_optional(k_squared),
-            volume=_stop_optional(volume),
-            cell_inv_t=_stop_optional(cell_inv_t),
-            moduli_x=_stop_optional(moduli_x),
-            moduli_y=_stop_optional(moduli_y),
-            moduli_z=_stop_optional(moduli_z),
-            compute_forces=True,
-            compute_charge_gradients=True,
-            compute_virial=True,
-            hybrid_forces=False,
-        )
-
     tpos = _tangent_or_zeros(t_positions, positions, dtype=positions.dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
-    atom_tangent = (dpos.astype(jnp.float64) * tpos.astype(jnp.float64)).sum(axis=1)
-    atom_tangent = atom_tangent + dq.astype(jnp.float64) * tq
-
-    cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, :, :]
-    num_atoms = positions.shape[0]
-    num_systems = cell_3d.shape[0]
-    system_tangent = _system_sum_from_atoms(atom_tangent, batch_idx, num_systems)
-    if need_virial:
-        grad_cell = _cell_grad_from_strain_virial(
-            positions=positions,
-            cell=cell,
-            batch_idx=batch_idx,
-            grad_positions=dpos,
-            virial=jax.lax.stop_gradient(virial),
-            grad_system=jnp.ones((num_systems,), dtype=jnp.float64),
-        )
-        system_tangent = system_tangent + _cell_tangent_system_values(
-            jax.lax.stop_gradient(grad_cell),
-            t_cell,
-        )
-
-    tangent_out = _distribute_system_values(system_tangent, batch_idx, num_atoms)
+    tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
+    charges_ref = charges.astype(jnp.float64)
+    tq_ref = tq.astype(jnp.float64)
+    # Keep the energy tangent in pure JAX. The primal still uses the Warp PME
+    # mesh path above, but JAX cannot safely transpose the current Warp spline
+    # FFI boundary for PME cell/strain HVPs. Position and charge tangents are
+    # therefore evaluated through a pure-JAX PME reference, while nonzero cell
+    # tangents are tagged below so higher-order cell/strain requests reject
+    # explicitly instead of silently dropping terms or falling back to Ewald.
+    reference_cell = (
+        _unsupported_pme_cell_hvp_primal(cell)
+        if not _is_symbolic_zero(t_cell)
+        else cell
+    )
+    _reference_out, tangent_out = jax.jvp(
+        lambda p, q, c: _pme_reciprocal_energy_reference(
+            p,
+            q,
+            c,
+            alpha,
+            mesh_dimensions,
+            mesh_spacing,
+            spline_order,
+            batch_idx,
+            k_vectors,
+            k_squared,
+            volume,
+            cell_inv_t,
+            moduli_x,
+            moduli_y,
+            moduli_z,
+        ),
+        (positions, charges_ref, reference_cell),
+        (tpos, tq_ref, tcell),
+    )
+    if not _is_symbolic_zero(t_cell):
+        # First-order cell gradients are allowed, but differentiating those
+        # gradients again requires a native transposable PME cell HVP.
+        tangent_out = _unsupported_pme_cell_hvp_gradient(tangent_out)
     return primal_out, tangent_out.astype(primal_out.dtype)
 
 
@@ -1751,15 +2606,16 @@ def pme_reciprocal_space(
     batch_idx: jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_squared: jax.Array | None = None,
-    volume: jax.Array | None = None,
-    cell_inv_t: jax.Array | None = None,
-    moduli_x: jax.Array | None = None,
-    moduli_y: jax.Array | None = None,
-    moduli_z: jax.Array | None = None,
     compute_forces: bool = False,
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     hybrid_forces: bool = False,
+    *,
+    cell_inv_t: jax.Array | None = None,
+    volume: jax.Array | None = None,
+    moduli_x: jax.Array | None = None,
+    moduli_y: jax.Array | None = None,
+    moduli_z: jax.Array | None = None,
 ) -> (
     jax.Array
     | tuple[jax.Array, jax.Array]
@@ -1769,8 +2625,10 @@ def pme_reciprocal_space(
     """Compute PME reciprocal-space contribution.
 
     Energy-only calls use a custom JVP so JAX does not attempt to
-    differentiate the Warp spline/FFT FFI path. Deprecated direct-output calls
-    still return the explicit forward outputs.
+    differentiate the Warp spline/FFT FFI path. ``compute_forces=True`` remains
+    a forward/direct escape hatch for no-autograd MD/inference loops; charge
+    gradients, virial, and hybrid direct outputs are deprecated training-style
+    outputs and warn.
 
     Parameters
     ----------
@@ -1790,28 +2648,44 @@ def pme_reciprocal_space(
     spline_order : int, default=4
         B-spline interpolation order.
     batch_idx : jax.Array or None, default=None
-        System index for each atom.
+        System index for each atom. When provided, atoms must be grouped by
+        system: ``batch_idx`` must be contiguous, nondecreasing, and use system
+        IDs ``0..B-1``.
     k_vectors, k_squared : jax.Array or None
-        Optional precomputed reciprocal grid values.
-    volume, cell_inv_t, moduli_x, moduli_y, moduli_z : jax.Array or None
-        Optional precomputed PME intermediates.
+        Optional precomputed reciprocal grid values. These are setup constants
+        for the JAX custom-JVP path; tangents through them are ignored. When
+        supplied while differentiating with respect to ``cell``, they are
+        assumed to correspond to the current ``cell``.
     compute_forces, compute_charge_gradients, compute_virial : bool
-        Deprecated direct-output flags.
+        Direct-output flags. ``compute_forces=True`` remains supported for
+        no-autograd MD/inference use; charge-gradient and virial direct outputs
+        are deprecated for differentiable training.
     hybrid_forces : bool, default=False
         Deprecated charge-gradient injection mode for compatibility.
+    cell_inv_t, volume, moduli_x, moduli_y, moduli_z : jax.Array or None
+        Optional precomputed PME intermediates. These are setup constants for
+        JAX and are not differentiable inputs. Cell-derived metadata such as
+        ``cell_inv_t`` and ``volume`` is accepted while differentiating with
+        respect to ``cell`` and is assumed to correspond to the current
+        ``cell``.
 
     Returns
     -------
     jax.Array or tuple[jax.Array, ...]
-        Per-atom reciprocal energies, plus deprecated direct outputs when
+        Per-atom reciprocal energies, plus direct outputs when
         requested.
 
     Notes
     -----
-    When ``cell``, ``alpha``, or batch metadata are traced by ``jax.jit`` or
-    other JAX transformations, pass explicit ``mesh_dimensions``.
-    ``mesh_spacing`` and accuracy-based mesh sizing depend on concrete mesh
+    When ``cell`` or batch metadata are traced by ``jax.jit`` or other JAX
+    transformations, pass explicit ``mesh_dimensions``. If ``alpha`` would
+    otherwise be estimated, precompute and pass it explicitly as well.
+    ``mesh_spacing`` and accuracy-based parameter estimation depend on concrete
     setup values.
+
+    JAX PME higher-order support is limited to tested position and charge
+    losses. Stress/cell/strain HVPs, alpha HVPs, and precomputed-metadata HVPs
+    are unsupported until explicitly implemented and tested.
     """
     _require_explicit_mesh_dimensions_in_tracing(
         mesh_dimensions=mesh_dimensions,
@@ -1819,6 +2693,24 @@ def pme_reciprocal_space(
         alpha=alpha,
         batch_idx=batch_idx,
     )
+    component_deprecated_flags = tuple(
+        name
+        for name, enabled in (
+            ("compute_charge_gradients", compute_charge_gradients),
+            ("compute_virial", compute_virial),
+            ("hybrid_forces", hybrid_forces),
+        )
+        if enabled
+    )
+    if component_deprecated_flags:
+        warnings.warn(
+            _component_direct_output_deprecation_msg(
+                "pme_reciprocal_space", component_deprecated_flags
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
         return _pme_reciprocal_space_impl(
             positions=positions,
@@ -1933,6 +2825,8 @@ def _particle_mesh_ewald_impl(
         System index for each atom (0 to B-1). Determines execution mode:
         - None: Single-system optimized kernels
         - Provided: Batched kernels for multiple independent systems
+        When provided, atoms must be grouped by system: ``batch_idx`` must be
+        contiguous, nondecreasing, and use system IDs ``0..B-1``.
     k_vectors : jax.Array, optional
         Precomputed k-vectors from generate_k_vectors_pme. Providing this
         along with k_squared skips k-vector generation.
@@ -1955,7 +2849,8 @@ def _particle_mesh_ewald_impl(
     compute_charge_gradients : bool, default=False
         If True, compute per-atom charge gradients dE/dq.
     compute_virial : bool, default=False
-        If True, compute the virial tensor W = -dE/d(epsilon).
+        If True, compute the virial tensor ``W = -dE/d(displacement)`` for the
+        row-vector displacement recipe.
         Stress = -virial / volume.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
@@ -1985,13 +2880,14 @@ def _particle_mesh_ewald_impl(
         requested accuracy.
 
     Energy-derived first-order gradients are supported. Higher-order PME
-    derivatives raise NotImplementedError until a native PME Hessian-vector
-    product is available.
+    reverse-mode higher-order position and charge losses use the private PME
+    mesh HVP path.
 
-    When ``cell``, ``alpha``, or batch metadata are traced by ``jax.jit`` or
-    other JAX transformations, pass explicit ``mesh_dimensions``.
-    ``mesh_spacing`` and accuracy-based mesh sizing depend on concrete mesh
-    setup values.
+    When ``cell`` or batch metadata are traced by ``jax.jit`` or other JAX
+    transformations, pass explicit ``mesh_dimensions``. When ``alpha`` would be
+    estimated from traced inputs, precompute it outside the transformation and
+    pass it explicitly. ``mesh_spacing`` and accuracy-based mesh sizing depend
+    on concrete setup values.
 
     Examples
     --------
@@ -2083,45 +2979,51 @@ def _particle_mesh_ewald_impl(
         if cell_inv_t is not None:
             cell_inv_t = jax.lax.stop_gradient(cell_inv_t)
 
-    # Compute real-space contribution
-    rs = ewald_real_space(
-        positions=positions,
-        charges=charges,
-        cell=cell,
-        alpha=alpha,
-        neighbor_list=neighbor_list,
-        neighbor_ptr=neighbor_ptr,
-        neighbor_shifts=neighbor_shifts,
-        neighbor_matrix=neighbor_matrix,
-        neighbor_matrix_shifts=neighbor_matrix_shifts,
-        mask_value=mask_value,
-        batch_idx=batch_idx,
-        compute_forces=compute_forces,
-        compute_charge_gradients=need_charge_gradients,
-        compute_virial=compute_virial,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"The component direct-output flag\(s\).*",
+            category=DeprecationWarning,
+        )
+        # Compute real-space contribution
+        rs = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            mask_value=mask_value,
+            batch_idx=batch_idx,
+            compute_forces=compute_forces,
+            compute_charge_gradients=need_charge_gradients,
+            compute_virial=compute_virial,
+        )
 
-    # Compute reciprocal-space contribution
-    rec = pme_reciprocal_space(
-        positions=positions,
-        charges=charges,
-        cell=cell,
-        alpha=alpha,
-        mesh_dimensions=mesh_dimensions,
-        spline_order=spline_order,
-        batch_idx=batch_idx,
-        compute_forces=compute_forces,
-        compute_charge_gradients=need_charge_gradients,
-        compute_virial=compute_virial,
-        k_vectors=k_vectors,
-        k_squared=k_squared,
-        hybrid_forces=False,
-        volume=volume,
-        cell_inv_t=cell_inv_t,
-        moduli_x=moduli_x,
-        moduli_y=moduli_y,
-        moduli_z=moduli_z,
-    )
+        # Compute reciprocal-space contribution
+        rec = pme_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            mesh_dimensions=mesh_dimensions,
+            spline_order=spline_order,
+            batch_idx=batch_idx,
+            compute_forces=compute_forces,
+            compute_charge_gradients=need_charge_gradients,
+            compute_virial=compute_virial,
+            k_vectors=k_vectors,
+            k_squared=k_squared,
+            hybrid_forces=False,
+            volume=volume,
+            cell_inv_t=cell_inv_t,
+            moduli_x=moduli_x,
+            moduli_y=moduli_y,
+            moduli_z=moduli_z,
+        )
 
     slab = None
     if slab_correction:
@@ -2263,8 +3165,9 @@ def particle_mesh_ewald(
     hybrid_forces: bool = False,
     pbc: jax.Array | None = None,
     slab_correction: bool = False,
-    volume: jax.Array | None = None,
+    *,
     cell_inv_t: jax.Array | None = None,
+    volume: jax.Array | None = None,
     moduli_x: jax.Array | None = None,
     moduli_y: jax.Array | None = None,
     moduli_z: jax.Array | None = None,
@@ -2293,7 +3196,9 @@ def particle_mesh_ewald(
     spline_order : int, default=4
         B-spline interpolation order.
     batch_idx : jax.Array or None, default=None
-        System index for each atom.
+        System index for each atom. When provided, atoms must be grouped by
+        system: ``batch_idx`` must be contiguous, nondecreasing, and use system
+        IDs ``0..B-1``.
     k_vectors, k_squared : jax.Array or None
         Precomputed PME reciprocal grid values.
     neighbor_list, neighbor_ptr, neighbor_shifts : jax.Array or None
@@ -2303,7 +3208,8 @@ def particle_mesh_ewald(
     mask_value : int or None, default=None
         Sentinel value for invalid neighbor-matrix entries.
     compute_forces, compute_charge_gradients, compute_virial : bool
-        Deprecated direct-output flags. Prefer energy autodiff for training.
+        Deprecated direct-output flags. Compute energy and use JAX autodiff for
+        differentiable forces, charge gradients, and strain virials.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
     hybrid_forces : bool, default=False
@@ -2313,7 +3219,9 @@ def particle_mesh_ewald(
     slab_correction : bool, default=False
         If True, add the Yeh-Berkowitz/Ballenegger slab correction.
     volume, cell_inv_t, moduli_x, moduli_y, moduli_z : jax.Array or None
-        Optional precomputed PME intermediates.
+        Optional precomputed PME intermediates. Cell-derived values supplied
+        while differentiating with respect to ``cell`` are treated as static
+        metadata that corresponds to the current ``cell``.
 
     Returns
     -------
@@ -2325,14 +3233,17 @@ def particle_mesh_ewald(
     When ``cell``, ``alpha``, or batch metadata are traced by ``jax.jit`` or
     other JAX transformations, pass explicit ``mesh_dimensions``.
     ``mesh_spacing`` and accuracy-based mesh sizing depend on concrete mesh
-    setup values.
+    setup values. If ``alpha`` would otherwise be estimated from traced inputs,
+    precompute it outside the transformation and pass it explicitly.
     """
-    if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
+    if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
         warnings.warn(
             _direct_output_deprecation_msg("particle_mesh_ewald"),
             DeprecationWarning,
             stacklevel=2,
         )
+
+    if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
         return _particle_mesh_ewald_impl(
             positions=positions,
             charges=charges,
@@ -2378,9 +3289,8 @@ def particle_mesh_ewald(
         mask_value = positions.shape[0]
 
     # Energy-only path: call the impl directly so the full energy is the sum of
-    # real-space and reciprocal terms. First derivatives use the component custom
-    # JVPs; differentiating PME reciprocal derivatives again raises explicitly
-    # until a native PME HVP is available.
+    # real-space and reciprocal terms. Component custom derivative rules provide
+    # energy gradients and reverse-mode position/charge higher-order losses.
     return _particle_mesh_ewald_impl(
         positions=positions,
         charges=charges,

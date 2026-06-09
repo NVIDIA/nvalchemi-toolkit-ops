@@ -154,8 +154,9 @@ def test_fd_jacobian_matches_autograd_pure_torch(device):
     (ad,) = torch.autograd.grad(energy(x_ad), x_ad)
 
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[fd-primitive] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
-    assert torch.allclose(fd, ad, rtol=1e-6, atol=1e-8)
+    assert torch.allclose(fd, ad, rtol=1e-6, atol=1e-8), (
+        f"FD primitive vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +191,6 @@ def test_ewald_fd_forces_match_autograd(device):
     ad = autograd_forces(energy_fn, positions, charges, cell)
 
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[ewald-forces:{device.type}] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
     assert torch.allclose(fd, ad, rtol=FORCE_RTOL, atol=FORCE_ATOL), (
         f"Ewald FD forces vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
     )
@@ -228,7 +228,6 @@ def test_pme_fd_forces_match_autograd(device):
     ad = autograd_forces(energy_fn, positions, charges, cell)
 
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[pme-forces:{device.type}] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
     assert torch.allclose(fd, ad, rtol=FORCE_RTOL, atol=FORCE_ATOL), (
         f"PME FD forces vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
     )
@@ -269,7 +268,6 @@ def test_pme_fd_charge_grad_matches_autograd(device):
     ad = autograd_charge_grad(energy_fn, positions, charges, cell)
 
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[pme-dE/dq:{device.type}] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
     assert torch.allclose(fd, ad, rtol=CHARGE_RTOL, atol=CHARGE_ATOL), (
         f"PME FD dE/dq vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
     )
@@ -314,7 +312,6 @@ def test_pme_fd_strain_virial_matches_autograd(device):
     ad = autograd_strain_virial(energy_fn, positions, charges, cell, batch_idx=None)
 
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[pme-virial:{device.type}] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
     assert torch.allclose(fd, ad, rtol=VIRIAL_RTOL, atol=VIRIAL_ATOL), (
         f"PME FD strain-virial vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
     )
@@ -356,7 +353,6 @@ def test_ewald_fd_strain_virial_matches_autograd(device):
     ad = autograd_strain_virial(energy_fn, positions, charges, cell, batch_idx=None)
 
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[ewald-virial:{device.type}] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
     assert torch.allclose(fd, ad, rtol=VIRIAL_RTOL, atol=VIRIAL_ATOL), (
         f"Ewald FD strain-virial vs autograd: max_abs={max_abs:.3e} "
         f"max_rel={max_rel:.3e}"
@@ -411,7 +407,6 @@ def test_fd_charge_grad_matches_autograd(device):
     ad = autograd_charge_grad(energy_fn, positions, charges, cell)
 
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[ewald-dE/dq:{device.type}] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
     assert torch.allclose(fd, ad, rtol=CHARGE_RTOL, atol=CHARGE_ATOL), (
         f"Ewald FD dE/dq vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
     )
@@ -564,13 +559,7 @@ def test_tape_vs_explicit_forces_charge_grad(device):
         ),
     ]
 
-    report = assert_tape_vs_explicit(points)
-    for name, stats in report.items():
-        print(
-            f"[tape-vs-explicit:{device.type}:{name}] "
-            f"max_abs={stats['max_abs']:.3e} max_rel={stats['max_rel']:.3e} "
-            f"matched={stats['matched']}"
-        )
+    assert_tape_vs_explicit(points)
 
 
 # ---------------------------------------------------------------------------
@@ -605,5 +594,6 @@ def test_fixed_charge_system_ewald_forces(device):
     fd = fd_forces(energy_fn, sysd.positions, sysd.charges, sysd.cell)
     ad = autograd_forces(energy_fn, sysd.positions, sysd.charges, sysd.cell)
     max_abs, max_rel = max_abs_rel(fd, ad)
-    print(f"[cscl-forces:{device.type}] max_abs={max_abs:.3e} max_rel={max_rel:.3e}")
-    assert torch.allclose(fd, ad, rtol=FORCE_RTOL, atol=FORCE_ATOL)
+    assert torch.allclose(fd, ad, rtol=FORCE_RTOL, atol=FORCE_ATOL), (
+        f"CsCl FD forces vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+    )

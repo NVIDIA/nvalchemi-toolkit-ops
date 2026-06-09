@@ -30,6 +30,8 @@ SUPPORTED ORDERS
 - Order 2: Linear
 - Order 3: Quadratic
 - Order 4: Cubic (recommended for PME)
+- Order 5: Quartic
+- Order 6: Quintic
 
 OPERATIONS
 ==========
@@ -85,7 +87,8 @@ def bspline_weight(u: Any, order: wp.int32) -> Any:
     u : float (Any)
         Parameter in [0, order). Type-generic (float32 or float64).
     order : wp.int32
-        Spline order (1=constant, 2=linear, 3=quadratic, 4=cubic).
+        Spline order (1=constant, 2=linear, 3=quadratic, 4=cubic,
+        5=quartic, 6=quintic).
 
     Returns
     -------
@@ -418,8 +421,8 @@ def bspline_derivative(u: Any, order: wp.int32) -> Any:
 def bspline_second_derivative(u: Any, order: wp.int32) -> Any:
     """Compute B-spline second derivative ``d²M_n(u)/du²``.
 
-    Mirrors the order-2/3/4 coverage of ``bspline_derivative`` (orders 1 and
-    5+ return zero — same convention as the first-derivative function).
+    Mirrors the order-2 through order-6 coverage of ``bspline_derivative`` (order
+    1 returns zero, matching the first-derivative convention).
     Used by the position-Hessian backward of ``_bspline_gather_gradient_kernel``.
     """
     zero = type(u)(0.0)
@@ -906,7 +909,7 @@ def _bspline_spread_kernel(
     cell_inv_t : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix for fractional coordinate conversion.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array3d, shape (nx, ny, nz), dtype=wp.float32 or wp.float64
         OUTPUT: 3D mesh to accumulate values into. Must be zero-initialized.
 
@@ -915,13 +918,10 @@ def _bspline_spread_kernel(
     - Uses atomic adds for thread-safe accumulation to shared grid points.
     - Grid indices are wrapped using periodic boundary conditions.
     - Threads with 1e-8 weight skip the atomic add for efficiency.
-    - Layout is per-(atom, stencil-point) rather than per-atom. A
-      per-atom + register accumulation variant regressed by 9.4x at
-      single_128k: serializing the 64 atomic_adds within a thread loses more
-      from reduced occupancy than it gains from eliminated launch overhead.
-      The per-order specialized kernels (see ``_PER_ORDER_*`` below) take a
-      different approach: full unroll of the order^3 stencil per atom, used
-      for orders 2-6.
+    - Layout is per-(atom, stencil-point) rather than per-atom to keep broad
+      parallelism across the stencil. The per-order specialized kernels
+      (see ``_PER_ORDER_*`` below) take a different approach: full unroll of
+      the order^3 stencil per atom, used for orders 2-6.
     """
     atom_idx, point_idx = wp.tid()
 
@@ -971,7 +971,7 @@ def _bspline_gather_kernel(
     cell_inv_t : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix for fractional coordinate conversion.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array3d, shape (nx, ny, nz), dtype=wp.float32 or wp.float64
         3D mesh containing values to interpolate (e.g., electrostatic potential).
     output : wp.array, shape (N,), dtype=wp.float32 or wp.float64
@@ -982,12 +982,10 @@ def _bspline_gather_kernel(
     - Uses atomic adds since multiple threads contribute to each atom's output.
     - Grid indices are wrapped using periodic boundary conditions.
     - Threads with 1e-8 weight skip the atomic add for efficiency.
-    - A per-atom register-accumulation variant regressed by 9.2x at
-      single_128k: the atomic-elimination win on ``output[atom_idx]`` was
-      overwhelmed by uncoalesced mesh reads (threads in a warp now hit
-      different atoms' scattered stencils instead of the same atom's
-      contiguous patch). Atom sorting + tighter codegen could close that
-      gap but is out of scope here.
+    - The per-(atom, stencil-point) layout keeps neighboring threads on the
+      same atom stencil. Per-atom register accumulation avoids atom-output
+      atomics, but changes mesh-read locality and should be benchmarked before
+      replacing this generic launcher.
     """
     atom_idx, point_idx = wp.tid()
 
@@ -1039,7 +1037,7 @@ def _bspline_gather_vec3_kernel(
     cell_inv_t : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix for fractional coordinate conversion.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array3d, shape (nx, ny, nz), dtype=wp.vec3f or wp.vec3d
         3D mesh containing vector values to interpolate.
     output : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
@@ -1548,8 +1546,9 @@ def _make_bspline_spread_kernel(
                     gz = wrap_grid_index(
                         base_grid[2] + offset_start_z + k, mesh_dims[2]
                     )
-                    contrib = value * (wij * wz[k])
-                    wp.atomic_add(mesh, gx, gy, gz, contrib)
+                    weight = wij * wz[k]
+                    if weight > type(value)(1e-8):
+                        wp.atomic_add(mesh, gx, gy, gz, value * weight)
 
     return kernel
 
@@ -1612,8 +1611,9 @@ def _make_batch_bspline_spread_kernel(
                     gz = wrap_grid_index(
                         base_grid[2] + offset_start_z + k, mesh_dims[2]
                     )
-                    contrib = value * (wij * wz[k])
-                    wp.atomic_add(mesh, sys_idx, gx, gy, gz, contrib)
+                    weight = wij * wz[k]
+                    if weight > type(value)(1e-8):
+                        wp.atomic_add(mesh, sys_idx, gx, gy, gz, value * weight)
 
     return kernel
 
@@ -1684,7 +1684,7 @@ def _bspline_gather_gradient_kernel(
     cell_inv_t : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix for fractional coordinate conversion.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array3d, shape (nx, ny, nz), dtype=wp.float32 or wp.float64
         3D mesh containing potential values (e.g., electrostatic potential φ).
     forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
@@ -1946,7 +1946,7 @@ def _batch_bspline_spread_kernel(
     cell_inv_t : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
         OUTPUT: 4D mesh (batch × spatial) to accumulate values. Must be zero-initialized.
 
@@ -2009,7 +2009,7 @@ def _batch_bspline_gather_kernel(
     cell_inv_t : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
         4D mesh (batch × spatial) containing values to interpolate.
     output : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
@@ -2077,7 +2077,7 @@ def _batch_bspline_gather_vec3_kernel(
     cell_inv_t : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.vec3f or wp.vec3d
         4D mesh (batch × spatial) containing vector values.
     output : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
@@ -2150,7 +2150,7 @@ def _batch_bspline_gather_gradient_kernel(
     cell_inv_t : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
         4D mesh (batch × spatial) containing potential values.
     forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
@@ -2234,7 +2234,7 @@ def _bspline_spread_channels_kernel(
     cell_inv_t : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix for fractional coordinate conversion.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (C, nx, ny, nz), dtype=wp.float32 or wp.float64
         OUTPUT: 4D mesh (channels × spatial) to accumulate values. Must be zero-initialized.
 
@@ -2297,7 +2297,7 @@ def _bspline_gather_channels_kernel(
     cell_inv_t : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix for fractional coordinate conversion.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     mesh : wp.array4d, shape (C, nx, ny, nz), dtype=wp.float32 or wp.float64
         4D mesh (channels × spatial) containing values to interpolate.
     output : wp.array2d, shape (N, C), dtype=wp.float32 or wp.float64
@@ -2366,7 +2366,7 @@ def _batch_bspline_spread_channels_kernel(
     cell_inv_t : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     num_channels : wp.int32
         Number of channels (C).
     mesh : wp.array4d, shape (B*C, nx, ny, nz), dtype=wp.float32 or wp.float64
@@ -2437,7 +2437,7 @@ def _batch_bspline_gather_channels_kernel(
     cell_inv_t : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : wp.int32
-        B-spline order (1-4). Order 4 (cubic) recommended for PME.
+        B-spline order (1-6). Order 4 (cubic) recommended for PME.
     num_channels : wp.int32
         Number of channels (C).
     mesh : wp.array4d, shape (B*C, nx, ny, nz), dtype=wp.float32 or wp.float64
@@ -2777,7 +2777,7 @@ def spline_spread(
     cell_inv_t : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (nx, ny, nz), dtype=wp.float32 or wp.float64
         OUTPUT: Mesh to accumulate values. Must be zero-initialized.
     wp_dtype : type
@@ -2818,7 +2818,7 @@ def spline_gather(
     cell_inv_t : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (nx, ny, nz), dtype=wp.float32 or wp.float64
         Mesh to interpolate from.
     output : wp.array, shape (N,), dtype=wp.float32 or wp.float64
@@ -2864,7 +2864,7 @@ def spline_gather_vec3(
     cell_inv_t : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (nx, ny, nz), dtype=wp.vec3f or wp.vec3d
         Vector-valued mesh to interpolate from.
     output : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
@@ -2910,7 +2910,7 @@ def spline_gather_gradient(
     cell_inv_t : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
         Transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (nx, ny, nz), dtype=wp.float32 or wp.float64
         Potential mesh.
     forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
@@ -3006,8 +3006,8 @@ def spline_gather_with_force(
     num_atoms = positions.shape[0]
 
     # Per-order specialized kernel is available for orders 2-6 and uses
-    # register accumulation + compile-time unrolling for a large speedup
-    # over the generic runtime-order kernel (~9x at single_8k order=6).
+    # register accumulation + compile-time unrolling instead of the generic
+    # runtime-order stencil loop.
     per_order = _PER_ORDER_GATHER_WITH_FORCE_KERNELS[wp_dtype].get(order)
     if per_order is not None:
         wp.launch(
@@ -3054,7 +3054,7 @@ def batch_spline_spread(
     cell_inv_t : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
         OUTPUT: Batched mesh to accumulate values. Must be zero-initialized.
     wp_dtype : type
@@ -3098,7 +3098,7 @@ def batch_spline_gather(
     cell_inv_t : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
         Batched mesh to interpolate from.
     output : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
@@ -3147,7 +3147,7 @@ def batch_spline_gather_vec3(
     cell_inv_t : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (B, nx, ny, nz), dtype=wp.vec3f or wp.vec3d
         Batched vector mesh to interpolate from.
     output : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
@@ -3196,7 +3196,7 @@ def batch_spline_gather_gradient(
     cell_inv_t : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
         Per-system transpose of inverse cell matrix.
     order : int
-        B-spline order (1-4).
+        B-spline order (1-6).
     mesh : wp.array, shape (B, nx, ny, nz), dtype=wp.float32 or wp.float64
         Batched potential mesh.
     forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
@@ -3291,45 +3291,6 @@ __all__ = [
     "compute_fractional_coords",
     "bspline_grid_offset",
     "wrap_grid_index",
-    # Warp kernels (single-system, scalar)
-    "_bspline_weight_kernel",
-    "_bspline_spread_kernel",
-    "_bspline_gather_kernel",
-    "_bspline_gather_vec3_kernel",
-    "_bspline_gather_gradient_kernel",
-    "_bspline_spread_gradient_weights_kernel",
-    "_bspline_gather_gradient_position_hessian_kernel",
-    # Warp kernels (batch, scalar)
-    "_batch_bspline_spread_kernel",
-    "_batch_bspline_gather_kernel",
-    "_batch_bspline_gather_vec3_kernel",
-    "_batch_bspline_gather_gradient_kernel",
-    "_batch_bspline_spread_gradient_weights_kernel",
-    "_batch_bspline_gather_gradient_position_hessian_kernel",
-    # Warp kernels (single-system, multi-channel)
-    "_bspline_spread_channels_kernel",
-    "_bspline_gather_channels_kernel",
-    # Warp kernels (batch, multi-channel)
-    "_batch_bspline_spread_channels_kernel",
-    "_batch_bspline_gather_channels_kernel",
-    # Kernel overloads
-    "_bspline_weight_kernel_overload",
-    "_bspline_spread_kernel_overload",
-    "_bspline_gather_kernel_overload",
-    "_bspline_gather_vec3_kernel_overload",
-    "_bspline_gather_gradient_kernel_overload",
-    "_bspline_spread_gradient_weights_kernel_overload",
-    "_bspline_gather_gradient_position_hessian_kernel_overload",
-    "_batch_bspline_spread_kernel_overload",
-    "_batch_bspline_gather_kernel_overload",
-    "_batch_bspline_gather_vec3_kernel_overload",
-    "_batch_bspline_gather_gradient_kernel_overload",
-    "_batch_bspline_spread_gradient_weights_kernel_overload",
-    "_batch_bspline_gather_gradient_position_hessian_kernel_overload",
-    "_bspline_spread_channels_kernel_overload",
-    "_bspline_gather_channels_kernel_overload",
-    "_batch_bspline_spread_channels_kernel_overload",
-    "_batch_bspline_gather_channels_kernel_overload",
     # Warp launchers
     "bspline_weight_launcher",
     "spline_spread",

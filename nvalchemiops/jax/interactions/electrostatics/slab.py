@@ -25,14 +25,26 @@ from jax.interpreters import ad as jax_ad
 from nvalchemiops.interactions.electrostatics.slab_kernels import (
     _slab_correction_backward_atoms_kernel_overload,
     _slab_correction_backward_cell_kernel_overload,
+    _slab_correction_double_backward_atoms_kernel_overload,
+    _slab_correction_double_backward_cell_kernel_overload,
+    _slab_correction_energy_charge_grad_kernel_overload,
+    _slab_correction_energy_charge_grad_virial_kernel_overload,
     _slab_correction_energy_forces_charge_grad_kernel_overload,
+    _slab_correction_energy_forces_charge_grad_virial_kernel_overload,
     _slab_correction_energy_forces_kernel_overload,
+    _slab_correction_energy_forces_virial_kernel_overload,
     _slab_correction_energy_kernel_overload,
+    _slab_correction_energy_virial_kernel_overload,
+    _slab_directional_geometry_kernel_overload,
+    _slab_directional_moments_kernel_overload,
+    _slab_precompute_geometry_kernel_overload,
     _slab_reduce_moments_kernel_overload,
+)
+from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
+    _make_jax_kernels,
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _build_electrostatic_result,
-    _make_jax_kernels,
     _normalize_dtype,
     _prepare_cell,
 )
@@ -46,6 +58,12 @@ _jax_slab_reduce_moments = _make_jax_kernels(
     ["mz", "mz2", "qtotal"],
 )
 
+_jax_slab_precompute_geometry = _make_jax_kernels(
+    _slab_precompute_geometry_kernel_overload,
+    4,
+    ["slab_axis", "slab_normal", "slab_volume", "slab_height_sq"],
+)
+
 _jax_slab_correction_energy = _make_jax_kernels(
     _slab_correction_energy_kernel_overload,
     1,
@@ -54,14 +72,44 @@ _jax_slab_correction_energy = _make_jax_kernels(
 
 _jax_slab_correction_energy_forces = _make_jax_kernels(
     _slab_correction_energy_forces_kernel_overload,
+    2,
+    ["energy_out", "forces"],
+)
+
+_jax_slab_correction_energy_forces_virial = _make_jax_kernels(
+    _slab_correction_energy_forces_virial_kernel_overload,
     3,
     ["energy_out", "forces", "virial"],
 )
 
 _jax_slab_correction_energy_forces_charge_grad = _make_jax_kernels(
     _slab_correction_energy_forces_charge_grad_kernel_overload,
+    3,
+    ["energy_out", "forces", "charge_grads"],
+)
+
+_jax_slab_correction_energy_forces_charge_grad_virial = _make_jax_kernels(
+    _slab_correction_energy_forces_charge_grad_virial_kernel_overload,
     4,
     ["energy_out", "forces", "charge_grads", "virial"],
+)
+
+_jax_slab_correction_energy_charge_grad = _make_jax_kernels(
+    _slab_correction_energy_charge_grad_kernel_overload,
+    2,
+    ["energy_out", "charge_grads"],
+)
+
+_jax_slab_correction_energy_charge_grad_virial = _make_jax_kernels(
+    _slab_correction_energy_charge_grad_virial_kernel_overload,
+    3,
+    ["energy_out", "charge_grads", "virial"],
+)
+
+_jax_slab_correction_energy_virial = _make_jax_kernels(
+    _slab_correction_energy_virial_kernel_overload,
+    2,
+    ["energy_out", "virial"],
 )
 
 _jax_slab_correction_backward_atoms = _make_jax_kernels(
@@ -72,6 +120,30 @@ _jax_slab_correction_backward_atoms = _make_jax_kernels(
 
 _jax_slab_correction_backward_cell = _make_jax_kernels(
     _slab_correction_backward_cell_kernel_overload,
+    1,
+    ["grad_cell"],
+)
+
+_jax_slab_directional_geometry = _make_jax_kernels(
+    _slab_directional_geometry_kernel_overload,
+    3,
+    ["dnormal", "dvolume", "dheight_sq"],
+)
+
+_jax_slab_directional_moments = _make_jax_kernels(
+    _slab_directional_moments_kernel_overload,
+    3,
+    ["dmz", "dmz2", "dqtotal"],
+)
+
+_jax_slab_correction_double_backward_atoms = _make_jax_kernels(
+    _slab_correction_double_backward_atoms_kernel_overload,
+    4,
+    ["grad_positions", "grad_charges", "grad_normal", "h_grad_normal"],
+)
+
+_jax_slab_correction_double_backward_cell = _make_jax_kernels(
+    _slab_correction_double_backward_cell_kernel_overload,
     1,
     ["grad_cell"],
 )
@@ -198,6 +270,28 @@ def _tangent_or_zeros(tangent, primal: jax.Array, dtype=None) -> jax.Array:
     return tangent.astype(out_dtype)
 
 
+def _precompute_slab_geometry(
+    pbc: jax.Array,
+    cell: jax.Array,
+    dtype,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Return slab-axis geometry arrays consumed by atom-major kernels."""
+    num_systems = cell.shape[0]
+    slab_axis = jnp.zeros((num_systems,), dtype=jnp.int32)
+    slab_normal = jnp.zeros((num_systems, 3), dtype=jnp.float64)
+    slab_volume = jnp.zeros((num_systems,), dtype=jnp.float64)
+    slab_height_sq = jnp.zeros((num_systems,), dtype=jnp.float64)
+    return _jax_slab_precompute_geometry[dtype](
+        pbc,
+        cell,
+        slab_axis,
+        slab_normal,
+        slab_volume,
+        slab_height_sq,
+        launch_dims=(num_systems,),
+    )
+
+
 def _system_sum_from_atoms(
     values: jax.Array,
     batch_idx: jax.Array | None,
@@ -281,6 +375,11 @@ def _slab_correction_energy_kernel_value(
         qtotal,
         launch_dims=(num_atoms,),
     )
+    slab_axis, slab_normal, slab_volume, slab_height_sq = _precompute_slab_geometry(
+        pbc_cast,
+        cell_cast,
+        dtype,
+    )
 
     energy_in = jnp.zeros(num_atoms, dtype=jnp.float64)
     energy_out = jnp.zeros(num_atoms, dtype=jnp.float64)
@@ -288,8 +387,10 @@ def _slab_correction_energy_kernel_value(
         positions_cast,
         charges_cast,
         batch_idx_i32,
-        pbc_cast,
-        cell_cast,
+        slab_axis,
+        slab_normal,
+        slab_volume,
+        slab_height_sq,
         mz,
         mz2,
         qtotal,
@@ -339,6 +440,11 @@ def _slab_energy_derivative_values(
         qtotal,
         launch_dims=(num_atoms,),
     )
+    slab_axis, slab_normal, slab_volume, slab_height_sq = _precompute_slab_geometry(
+        pbc_cast,
+        cell_cast,
+        dtype,
+    )
 
     grad_system = jnp.ones((num_systems,), dtype=jnp.float64)
     grad_normal = jnp.zeros((num_systems, 3), dtype=jnp.float64)
@@ -348,8 +454,10 @@ def _slab_energy_derivative_values(
         positions_cast,
         charges_cast,
         batch_idx_i32,
-        pbc_cast,
-        cell_cast,
+        slab_axis,
+        slab_normal,
+        slab_volume,
+        slab_height_sq,
         mz,
         mz2,
         qtotal,
@@ -435,25 +543,126 @@ def _slab_energy_hvp_raw(
     pbc: jax.Array,
     batch_idx: jax.Array | None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Evaluate slab Hessian-vector products from explicit derivative kernels."""
+    """Evaluate slab Hessian-vector products from analytic Warp kernels."""
     dtype = _normalize_dtype(positions.dtype)
-    eps = jnp.asarray(1.0e-5 if dtype == jnp.float64 else 1.0e-3, dtype=dtype)
-    plus = _slab_energy_derivative_values(
-        positions + eps * v_positions.astype(dtype),
-        charges + eps * v_charges.astype(charges.dtype),
-        cell + eps * v_cell.astype(cell.dtype),
-        pbc,
-        batch_idx,
+    positions_cast = positions.astype(dtype)
+    charges_cast = charges.astype(dtype)
+    cell_cast, num_systems = _prepare_cell(cell.astype(dtype))
+    h_positions = v_positions.astype(dtype)
+    h_charges = v_charges.astype(jnp.float64)
+    h_cell, _ = _prepare_cell(v_cell.astype(dtype))
+    pbc_cast = _prepare_pbc_for_slab(pbc, num_systems)
+    num_atoms = positions_cast.shape[0]
+    grad_positions = jnp.zeros((num_atoms, 3), dtype=dtype)
+    grad_charges = jnp.zeros((num_atoms,), dtype=jnp.float64)
+    grad_cell = jnp.zeros((num_systems, 3, 3), dtype=dtype)
+    if num_atoms == 0:
+        return grad_positions, grad_charges, grad_cell
+
+    if batch_idx is None:
+        batch_idx_i32 = jnp.zeros(num_atoms, dtype=jnp.int32)
+    else:
+        batch_idx_i32 = batch_idx.astype(jnp.int32)
+
+    mz = jnp.zeros((num_systems, 3), dtype=jnp.float64)
+    mz2 = jnp.zeros((num_systems, 3), dtype=jnp.float64)
+    qtotal = jnp.zeros(num_systems, dtype=jnp.float64)
+    mz, mz2, qtotal = _jax_slab_reduce_moments[dtype](
+        positions_cast,
+        charges_cast,
+        batch_idx_i32,
+        pbc_cast,
+        cell_cast,
+        mz,
+        mz2,
+        qtotal,
+        launch_dims=(num_atoms,),
     )
-    minus = _slab_energy_derivative_values(
-        positions - eps * v_positions.astype(dtype),
-        charges - eps * v_charges.astype(charges.dtype),
-        cell - eps * v_cell.astype(cell.dtype),
-        pbc,
-        batch_idx,
+    slab_axis, slab_normal, slab_volume, slab_height_sq = _precompute_slab_geometry(
+        pbc_cast,
+        cell_cast,
+        dtype,
     )
-    scale = jnp.asarray(1.0, dtype=jnp.float64) / (2.0 * eps.astype(jnp.float64))
-    return tuple((p - m) * scale for p, m in zip(plus, minus))
+
+    dmz = jnp.zeros_like(mz)
+    dmz2 = jnp.zeros_like(mz2)
+    dqtotal = jnp.zeros_like(qtotal)
+    dnormal = jnp.zeros((num_systems, 3), dtype=jnp.float64)
+    dvolume = jnp.zeros((num_systems,), dtype=jnp.float64)
+    dheight_sq = jnp.zeros_like(dvolume)
+    grad_normal = jnp.zeros_like(dnormal)
+    h_grad_normal = jnp.zeros_like(dnormal)
+    grad_system = jnp.ones((num_systems,), dtype=jnp.float64)
+
+    dnormal, dvolume, dheight_sq = _jax_slab_directional_geometry[dtype](
+        pbc_cast,
+        cell_cast,
+        h_cell,
+        dnormal,
+        dvolume,
+        dheight_sq,
+        launch_dims=(num_systems,),
+    )
+
+    dmz, dmz2, dqtotal = _jax_slab_directional_moments[dtype](
+        positions_cast,
+        charges_cast,
+        h_positions,
+        h_charges,
+        batch_idx_i32,
+        slab_axis,
+        slab_normal,
+        dnormal,
+        dmz,
+        dmz2,
+        dqtotal,
+        launch_dims=(num_atoms,),
+    )
+    grad_positions, grad_charges, grad_normal, h_grad_normal = (
+        _jax_slab_correction_double_backward_atoms[dtype](
+            positions_cast,
+            charges_cast,
+            h_positions,
+            h_charges,
+            batch_idx_i32,
+            slab_axis,
+            slab_normal,
+            slab_volume,
+            slab_height_sq,
+            mz,
+            mz2,
+            qtotal,
+            dmz,
+            dmz2,
+            dqtotal,
+            dnormal,
+            dvolume,
+            dheight_sq,
+            grad_system,
+            grad_positions,
+            grad_charges,
+            grad_normal,
+            h_grad_normal,
+            launch_dims=(num_atoms,),
+        )
+    )
+    (grad_cell,) = _jax_slab_correction_double_backward_cell[dtype](
+        pbc_cast,
+        cell_cast,
+        h_cell,
+        mz,
+        mz2,
+        qtotal,
+        dmz,
+        dmz2,
+        dqtotal,
+        grad_system,
+        grad_normal,
+        h_grad_normal,
+        grad_cell,
+        launch_dims=(num_systems,),
+    )
+    return grad_positions, grad_charges, grad_cell
 
 
 def _slab_energy_hvp(
@@ -540,23 +749,14 @@ def _slab_correction_energy_jvp_rule(
     t_positions, t_charges, t_cell, _t_pbc, _t_batch_idx = tangents
 
     primal_out = _slab_correction_energy_jvp(positions, charges, cell, pbc, batch_idx)
-    dpos, dq, dcell = _slab_energy_derivatives(positions, charges, cell, pbc, batch_idx)
     dtype = _normalize_dtype(positions.dtype)
     tpos = _tangent_or_zeros(t_positions, positions, dtype=dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
-
-    atom_tangent = (dpos.astype(jnp.float64) * tpos.astype(jnp.float64)).sum(axis=1)
-    atom_tangent = atom_tangent + dq.astype(jnp.float64) * tq.astype(jnp.float64)
-    cell_tangent = (dcell.astype(jnp.float64) * tcell.astype(jnp.float64)).sum(
-        axis=(1, 2)
-    )
-    cell_3d, num_systems = _prepare_cell(cell)
-    del cell_3d
-    system_tangent = _system_sum_from_atoms(atom_tangent, batch_idx, num_systems)
-    system_tangent = system_tangent + cell_tangent
-    tangent_out = _distribute_system_values(
-        system_tangent, batch_idx, positions.shape[0]
+    _reference_out, tangent_out = jax.jvp(
+        lambda p, q, c: _slab_correction_energy_reference(p, q, c, pbc, batch_idx),
+        (positions, charges.astype(jnp.float64), cell),
+        (tpos, tq.astype(jnp.float64), tcell),
     )
     return primal_out, tangent_out.astype(primal_out.dtype)
 
@@ -611,6 +811,8 @@ def compute_slab_correction(
         for single-system calls.
     batch_idx : jax.Array, shape (N,), dtype=int32, optional
         System index for each atom. Defaults to all zeros for a single system.
+        When provided, atoms must be grouped by system: ``batch_idx`` must be
+        contiguous, nondecreasing, and use system IDs ``0..B-1``.
     compute_forces : bool, default=False
         If True, return per-atom slab forces.
     compute_charge_gradients : bool, default=False
@@ -675,27 +877,33 @@ def compute_slab_correction(
         qtotal,
         launch_dims=(num_atoms,),
     )
+    slab_axis, slab_normal, slab_volume, slab_height_sq = _precompute_slab_geometry(
+        pbc_cast,
+        cell_cast,
+        dtype,
+    )
 
     energy_in = jnp.zeros(num_atoms, dtype=jnp.float64)
     energy_out = jnp.zeros(num_atoms, dtype=jnp.float64)
 
-    if compute_charge_gradients:
+    if compute_charge_gradients and compute_forces and compute_virial:
         forces = jnp.zeros((num_atoms, 3), dtype=dtype)
         charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
         virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
         energy_out, forces, charge_grads, virial = (
-            _jax_slab_correction_energy_forces_charge_grad[dtype](
+            _jax_slab_correction_energy_forces_charge_grad_virial[dtype](
                 positions_cast,
                 charges_cast,
                 batch_idx_i32,
-                pbc_cast,
-                cell_cast,
+                slab_axis,
+                slab_normal,
+                slab_volume,
+                slab_height_sq,
                 mz,
                 mz2,
                 qtotal,
                 energy_in,
                 energy_out,
-                int(compute_virial),
                 forces,
                 charge_grads,
                 virial,
@@ -712,21 +920,114 @@ def compute_slab_correction(
             compute_virial,
         )
 
-    if compute_forces or compute_virial:
+    if compute_charge_gradients and compute_forces:
         forces = jnp.zeros((num_atoms, 3), dtype=dtype)
+        charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
+        energy_out, forces, charge_grads = (
+            _jax_slab_correction_energy_forces_charge_grad[dtype](
+                positions_cast,
+                charges_cast,
+                batch_idx_i32,
+                slab_axis,
+                slab_normal,
+                slab_volume,
+                slab_height_sq,
+                mz,
+                mz2,
+                qtotal,
+                energy_in,
+                energy_out,
+                forces,
+                charge_grads,
+                launch_dims=(num_atoms,),
+            )
+        )
+        return _build_electrostatic_result(
+            energy_out,
+            forces,
+            charge_grads,
+            None,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
+
+    if compute_charge_gradients and compute_virial:
+        charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
         virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
-        energy_out, forces, virial = _jax_slab_correction_energy_forces[dtype](
+        energy_out, charge_grads, virial = (
+            _jax_slab_correction_energy_charge_grad_virial[dtype](
+                positions_cast,
+                charges_cast,
+                batch_idx_i32,
+                slab_axis,
+                slab_normal,
+                slab_volume,
+                slab_height_sq,
+                mz,
+                mz2,
+                qtotal,
+                energy_in,
+                energy_out,
+                charge_grads,
+                virial,
+                launch_dims=(num_atoms,),
+            )
+        )
+        return _build_electrostatic_result(
+            energy_out,
+            None,
+            charge_grads,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
+
+    if compute_charge_gradients:
+        charge_grads = jnp.zeros(num_atoms, dtype=jnp.float64)
+        energy_out, charge_grads = _jax_slab_correction_energy_charge_grad[dtype](
             positions_cast,
             charges_cast,
             batch_idx_i32,
-            pbc_cast,
-            cell_cast,
+            slab_axis,
+            slab_normal,
+            slab_volume,
+            slab_height_sq,
             mz,
             mz2,
             qtotal,
             energy_in,
             energy_out,
-            int(compute_virial),
+            charge_grads,
+            launch_dims=(num_atoms,),
+        )
+        return _build_electrostatic_result(
+            energy_out,
+            None,
+            charge_grads,
+            None,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
+
+    if compute_forces and compute_virial:
+        forces = jnp.zeros((num_atoms, 3), dtype=dtype)
+        virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
+        energy_out, forces, virial = _jax_slab_correction_energy_forces_virial[dtype](
+            positions_cast,
+            charges_cast,
+            batch_idx_i32,
+            slab_axis,
+            slab_normal,
+            slab_volume,
+            slab_height_sq,
+            mz,
+            mz2,
+            qtotal,
+            energy_in,
+            energy_out,
             forces,
             virial,
             launch_dims=(num_atoms,),
@@ -734,6 +1035,62 @@ def compute_slab_correction(
         return _build_electrostatic_result(
             energy_out,
             forces,
+            None,
+            virial,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
+
+    if compute_forces:
+        forces = jnp.zeros((num_atoms, 3), dtype=dtype)
+        energy_out, forces = _jax_slab_correction_energy_forces[dtype](
+            positions_cast,
+            charges_cast,
+            batch_idx_i32,
+            slab_axis,
+            slab_normal,
+            slab_volume,
+            slab_height_sq,
+            mz,
+            mz2,
+            qtotal,
+            energy_in,
+            energy_out,
+            forces,
+            launch_dims=(num_atoms,),
+        )
+        return _build_electrostatic_result(
+            energy_out,
+            forces,
+            None,
+            None,
+            compute_forces,
+            compute_charge_gradients,
+            compute_virial,
+        )
+
+    if compute_virial:
+        virial = jnp.zeros((num_systems, 3, 3), dtype=dtype)
+        energy_out, virial = _jax_slab_correction_energy_virial[dtype](
+            positions_cast,
+            charges_cast,
+            batch_idx_i32,
+            slab_axis,
+            slab_normal,
+            slab_volume,
+            slab_height_sq,
+            mz,
+            mz2,
+            qtotal,
+            energy_in,
+            energy_out,
+            virial,
+            launch_dims=(num_atoms,),
+        )
+        return _build_electrostatic_result(
+            energy_out,
+            None,
             None,
             virial,
             compute_forces,

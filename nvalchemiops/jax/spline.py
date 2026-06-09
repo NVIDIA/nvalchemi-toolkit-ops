@@ -28,6 +28,8 @@ SUPPORTED ORDERS
 - Order 2: Linear
 - Order 3: Quadratic
 - Order 4: Cubic (recommended for PME)
+- Order 5: Quartic
+- Order 6: Quintic
 
 OPERATIONS
 ==========
@@ -72,6 +74,8 @@ REFERENCES
 - Essmann et al. (1995). J. Chem. Phys. 103, 8577 (PME B-splines)
 """
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import warp as wp
@@ -79,7 +83,9 @@ from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.math.spline import (
     _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,
+    _PER_ORDER_BATCH_SPREAD_KERNELS,
     _PER_ORDER_GATHER_WITH_FORCE_KERNELS,
+    _PER_ORDER_SPREAD_KERNELS,
 )
 from nvalchemiops.math.spline import (
     _batch_bspline_gather_channels_kernel_overload as wp_batch_gather_channels,
@@ -139,8 +145,8 @@ def _make_spline_jax_kernels(
     wp_overload_dict: dict,
     num_outputs: int,
     in_out_argnames: list[str],
-) -> dict:
-    """Create dtype-dispatched JAX kernel wrappers from Warp overloads.
+) -> _LazySplineJaxKernels:
+    """Create lazy dtype-dispatched JAX kernel wrappers from Warp overloads.
 
     Parameters
     ----------
@@ -153,19 +159,109 @@ def _make_spline_jax_kernels(
 
     Returns
     -------
-    dict
-        Dictionary mapping jnp.float32/jnp.float64 to jax_kernel instances.
+    _LazySplineJaxKernels
+        Mapping from ``jnp.float32`` / ``jnp.float64`` to lazily-created
+        ``jax_kernel`` wrappers.
     """
+    return _LazySplineJaxKernels(wp_overload_dict, num_outputs, in_out_argnames)
+
+
+class _LazySplineJaxKernels:
+    """Lazy ``{jnp.float32 | jnp.float64 -> jax_kernel}`` mapping."""
+
     _JAX_TO_WP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
-    return {
-        jax_dtype: jax_kernel(
-            wp_overload_dict[wp_dtype],
-            num_outputs=num_outputs,
-            in_out_argnames=in_out_argnames,
-            enable_backward=False,
-        )
-        for jax_dtype, wp_dtype in _JAX_TO_WP.items()
-    }
+
+    def __init__(
+        self,
+        wp_overload_dict: dict,
+        num_outputs: int,
+        in_out_argnames: list[str],
+    ) -> None:
+        self._wp_overload_dict = wp_overload_dict
+        self._num_outputs = num_outputs
+        self._in_out_argnames = in_out_argnames
+        self._cache: dict = {}
+
+    def __getitem__(self, jax_dtype):
+        if jax_dtype not in self._cache:
+            wp_dtype = self._JAX_TO_WP[jax_dtype]
+            self._cache[jax_dtype] = jax_kernel(
+                self._wp_overload_dict[wp_dtype],
+                num_outputs=self._num_outputs,
+                in_out_argnames=self._in_out_argnames,
+                enable_backward=False,
+            )
+        return self._cache[jax_dtype]
+
+    def __contains__(self, jax_dtype) -> bool:
+        return jax_dtype in self._JAX_TO_WP
+
+
+class _LazySplineOrderKernels:
+    """Lazy ``{spline_order -> jax_kernel}`` mapping for one JAX dtype."""
+
+    def __init__(
+        self,
+        wp_overload_by_order: dict,
+        num_outputs: int,
+        in_out_argnames: list[str],
+    ) -> None:
+        self._wp_overload_by_order = wp_overload_by_order
+        self._num_outputs = num_outputs
+        self._in_out_argnames = in_out_argnames
+        self._cache: dict = {}
+
+    def get(self, spline_order: int, default=None):
+        """Return the lazy wrapper for ``spline_order`` if available."""
+        if spline_order not in self._wp_overload_by_order:
+            return default
+        if spline_order not in self._cache:
+            self._cache[spline_order] = jax_kernel(
+                self._wp_overload_by_order[spline_order],
+                num_outputs=self._num_outputs,
+                in_out_argnames=self._in_out_argnames,
+                enable_backward=False,
+            )
+        return self._cache[spline_order]
+
+    def __getitem__(self, spline_order: int):
+        result = self.get(spline_order)
+        if result is None:
+            raise KeyError(spline_order)
+        return result
+
+    def __contains__(self, spline_order: int) -> bool:
+        return spline_order in self._wp_overload_by_order
+
+
+class _LazySplinePerOrderJaxKernels:
+    """Lazy ``{jax_dtype -> {spline_order -> jax_kernel}}`` mapping."""
+
+    _JAX_TO_WP = _LazySplineJaxKernels._JAX_TO_WP
+
+    def __init__(
+        self,
+        wp_overload_dict: dict,
+        num_outputs: int,
+        in_out_argnames: list[str],
+    ) -> None:
+        self._wp_overload_dict = wp_overload_dict
+        self._num_outputs = num_outputs
+        self._in_out_argnames = in_out_argnames
+        self._cache: dict = {}
+
+    def __getitem__(self, jax_dtype) -> _LazySplineOrderKernels:
+        if jax_dtype not in self._cache:
+            wp_dtype = self._JAX_TO_WP[jax_dtype]
+            self._cache[jax_dtype] = _LazySplineOrderKernels(
+                self._wp_overload_dict[wp_dtype],
+                self._num_outputs,
+                self._in_out_argnames,
+            )
+        return self._cache[jax_dtype]
+
+    def __contains__(self, jax_dtype) -> bool:
+        return jax_dtype in self._JAX_TO_WP
 
 
 def _normalize_dtype(dtype):
@@ -241,33 +337,29 @@ _gather_with_force_kernels = _make_spline_jax_kernels(
     wp_gather_with_force, 2, ["output", "forces"]
 )
 
-_JAX_TO_WP_DTYPE = {jnp.float32: wp.float32, jnp.float64: wp.float64}
+_PER_ORDER_GATHER_WITH_FORCE_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_GATHER_WITH_FORCE_KERNELS,
+    2,
+    ["output", "forces"],
+)
 
-_PER_ORDER_GATHER_WITH_FORCE_JAX_KERNELS = {
-    jax_dtype: {
-        order: jax_kernel(
-            _PER_ORDER_GATHER_WITH_FORCE_KERNELS[wp_dtype][order],
-            num_outputs=2,
-            in_out_argnames=["output", "forces"],
-            enable_backward=False,
-        )
-        for order in _PER_ORDER_GATHER_WITH_FORCE_KERNELS[wp_dtype]
-    }
-    for jax_dtype, wp_dtype in _JAX_TO_WP_DTYPE.items()
-}
+_PER_ORDER_BATCH_GATHER_WITH_FORCE_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,
+    2,
+    ["output", "forces"],
+)
 
-_PER_ORDER_BATCH_GATHER_WITH_FORCE_JAX_KERNELS = {
-    jax_dtype: {
-        order: jax_kernel(
-            _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS[wp_dtype][order],
-            num_outputs=2,
-            in_out_argnames=["output", "forces"],
-            enable_backward=False,
-        )
-        for order in _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS[wp_dtype]
-    }
-    for jax_dtype, wp_dtype in _JAX_TO_WP_DTYPE.items()
-}
+_PER_ORDER_SPREAD_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_SPREAD_KERNELS,
+    1,
+    ["mesh"],
+)
+
+_PER_ORDER_BATCH_SPREAD_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_BATCH_SPREAD_KERNELS,
+    1,
+    ["mesh"],
+)
 
 __all__ = [
     "bspline_weight",
@@ -295,7 +387,7 @@ def bspline_weight(u: jax.Array, order: int) -> jax.Array:
     u : jax.Array
         Input values. dtype=float32 or float64.
     order : int
-        Spline order (1-4).
+        Spline order (1-6).
 
     Returns
     -------
@@ -358,7 +450,7 @@ def spline_spread(
     mesh_dims : tuple[int, int, int]
         Mesh dimensions (nx, ny, nz).
     spline_order : int, optional
-        B-spline order (1-4, where 4=cubic). Default: 4
+        B-spline order (1-6, where 4=cubic). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -418,14 +510,24 @@ def spline_spread(
     if batch_idx is None:
         # Single-system kernel
         mesh = jnp.zeros((mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype)
-        (mesh_out,) = _spread_kernels[working_dtype](
-            positions,
-            values_work,
-            cell_inv_t,
-            int(spline_order),
-            mesh,
-            launch_dims=(num_atoms, num_points),
-        )
+        per_order = _PER_ORDER_SPREAD_JAX_KERNELS[working_dtype].get(spline_order)
+        if per_order is not None:
+            (mesh_out,) = per_order(
+                positions,
+                values_work,
+                cell_inv_t,
+                mesh,
+                launch_dims=num_atoms,
+            )
+        else:
+            (mesh_out,) = _spread_kernels[working_dtype](
+                positions,
+                values_work,
+                cell_inv_t,
+                int(spline_order),
+                mesh,
+                launch_dims=(num_atoms, num_points),
+            )
         return mesh_out
     else:
         # Batched kernel
@@ -433,15 +535,26 @@ def spline_spread(
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
         mesh = jnp.zeros((num_systems, mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype)
-        (mesh_out,) = _batch_spread_kernels[working_dtype](
-            positions,
-            values_work,
-            batch_idx_i32,
-            cell_inv_t,
-            int(spline_order),
-            mesh,
-            launch_dims=(num_atoms, num_points),
-        )
+        per_order = _PER_ORDER_BATCH_SPREAD_JAX_KERNELS[working_dtype].get(spline_order)
+        if per_order is not None:
+            (mesh_out,) = per_order(
+                positions,
+                values_work,
+                batch_idx_i32,
+                cell_inv_t,
+                mesh,
+                launch_dims=num_atoms,
+            )
+        else:
+            (mesh_out,) = _batch_spread_kernels[working_dtype](
+                positions,
+                values_work,
+                batch_idx_i32,
+                cell_inv_t,
+                int(spline_order),
+                mesh,
+                launch_dims=(num_atoms, num_points),
+            )
         return mesh_out
 
 
@@ -473,7 +586,7 @@ def spline_gather(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -570,7 +683,7 @@ def spline_gather_vec3(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -672,7 +785,7 @@ def spline_gather_gradient(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -977,6 +1090,7 @@ def _spline_gather_with_force(
         cell_work,
         spline_order=spline_order,
         batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t,
     )
     forces_out = spline_gather_gradient(
         positions,
@@ -985,6 +1099,7 @@ def _spline_gather_with_force(
         cell_work,
         spline_order=spline_order,
         batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t,
     )
     return output_out, forces_out
 
@@ -1014,7 +1129,7 @@ def spline_spread_channels(
     mesh_dims : tuple[int, int, int]
         Mesh dimensions (nx, ny, nz).
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -1115,7 +1230,7 @@ def spline_gather_channels(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None

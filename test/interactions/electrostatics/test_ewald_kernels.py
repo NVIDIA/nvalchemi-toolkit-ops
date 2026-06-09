@@ -1065,6 +1065,99 @@ class TestWpEwaldReciprocalSpaceStructureFactors:
         # total_charge stores Q_total / V, so should be 0
         assert tc_val == pytest.approx(0.0, abs=1e-10)
 
+    @pytest.mark.parametrize("zero_k", [False, True])
+    def test_single_k_total_charge(self, device, simple_kvector_system, zero_k):
+        """A one-k-vector launch still computes Q_total / V."""
+        sys = simple_kvector_system
+        dtype = wp.float64
+        vec_dtype = wp.vec3d
+        mat_dtype = wp.mat33d
+        charges_np = np.array([1.5, -0.25], dtype=np.float64)
+        k_vectors_np = sys["k_vectors"][:1].copy()
+        if zero_k:
+            k_vectors_np[0] = 0.0
+
+        positions = wp.from_numpy(sys["positions"], dtype=vec_dtype, device=device)
+        charges = wp.from_numpy(charges_np, dtype=dtype, device=device)
+        k_vectors = wp.from_numpy(k_vectors_np, dtype=vec_dtype, device=device)
+        cell = wp.from_numpy(sys["cell"], dtype=mat_dtype, device=device)
+        alpha_arr = make_alpha_array(0.5, device, dtype)
+        total_charge = wp.zeros(1, dtype=wp.float64, device=device)
+        cos_k_dot_r = wp.zeros((1, sys["num_atoms"]), dtype=wp.float64, device=device)
+        sin_k_dot_r = wp.zeros((1, sys["num_atoms"]), dtype=wp.float64, device=device)
+        real_sf = wp.zeros(1, dtype=wp.float64, device=device)
+        imag_sf = wp.zeros(1, dtype=wp.float64, device=device)
+
+        ewald_reciprocal_space_fill_structure_factors(
+            positions=positions,
+            charges=charges,
+            k_vectors=k_vectors,
+            cell=cell,
+            alpha=alpha_arr,
+            total_charge=total_charge,
+            cos_k_dot_r=cos_k_dot_r,
+            sin_k_dot_r=sin_k_dot_r,
+            real_structure_factors=real_sf,
+            imag_structure_factors=imag_sf,
+            wp_dtype=dtype,
+            device=device,
+        )
+
+        expected = charges_np.sum() / sys["volume"]
+        assert total_charge.numpy()[0] == pytest.approx(expected, rel=1e-12)
+
+    @pytest.mark.parametrize("zero_k", [False, True])
+    def test_single_k_cellgrad_total_charge(
+        self, device, simple_kvector_system, zero_k
+    ):
+        """The cell-gradient fill variant also computes Q_total / V for K=1."""
+        from nvalchemiops.interactions.electrostatics.ewald_kernels import (
+            _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
+        )
+
+        sys = simple_kvector_system
+        dtype = wp.float64
+        vec_dtype = wp.vec3d
+        mat_dtype = wp.mat33d
+        charges_np = np.array([1.5, -0.25], dtype=np.float64)
+        k_vectors_np = sys["k_vectors"][:1].copy()
+        if zero_k:
+            k_vectors_np[0] = 0.0
+
+        positions = wp.from_numpy(sys["positions"], dtype=vec_dtype, device=device)
+        charges = wp.from_numpy(charges_np, dtype=dtype, device=device)
+        k_vectors = wp.from_numpy(k_vectors_np, dtype=vec_dtype, device=device)
+        cell = wp.from_numpy(sys["cell"], dtype=mat_dtype, device=device)
+        alpha_arr = make_alpha_array(0.5, device, dtype)
+        total_charge = wp.zeros(1, dtype=wp.float64, device=device)
+        cos_k_dot_r = wp.zeros((1, sys["num_atoms"]), dtype=wp.float64, device=device)
+        sin_k_dot_r = wp.zeros((1, sys["num_atoms"]), dtype=wp.float64, device=device)
+        real_sf = wp.zeros(1, dtype=wp.float64, device=device)
+        imag_sf = wp.zeros(1, dtype=wp.float64, device=device)
+        cellgrad_cache = wp.zeros((1, 8), dtype=wp.float64, device=device)
+
+        wp.launch(
+            _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
+            dim=1,
+            inputs=[
+                positions,
+                charges,
+                k_vectors,
+                cell,
+                alpha_arr,
+                total_charge,
+                cos_k_dot_r,
+                sin_k_dot_r,
+                real_sf,
+                imag_sf,
+                cellgrad_cache,
+            ],
+            device=device,
+        )
+
+        expected = charges_np.sum() / sys["volume"]
+        assert total_charge.numpy()[0] == pytest.approx(expected, rel=1e-12)
+
 
 # ==============================================================================
 # Test Class: Reciprocal Space Energy Computation
@@ -2087,6 +2180,65 @@ class TestWpBatchEwaldReciprocalSpaceStructureFactors:
         assert not np.isnan(sin_k_dot_r.numpy()).any()
         assert not np.isnan(real_sf.numpy()).any()
         assert not np.isnan(imag_sf.numpy()).any()
+
+    @pytest.mark.parametrize("zero_k", [False, True])
+    def test_batch_single_k_total_charges(self, device, batch_kvector_system, zero_k):
+        """Batched one-k-vector launches compute Q_total / V for every system."""
+        sys = batch_kvector_system
+        dtype = wp.float64
+        vec_dtype = wp.vec3d
+        mat_dtype = wp.mat33d
+        charges_np = np.array([1.0, 0.5, -0.25, 1.25], dtype=np.float64)
+        k_vectors_np = sys["k_vectors"][:, :1, :].copy()
+        if zero_k:
+            k_vectors_np[:, 0, :] = 0.0
+
+        positions = wp.from_numpy(sys["positions"], dtype=vec_dtype, device=device)
+        charges = wp.from_numpy(charges_np, dtype=dtype, device=device)
+        k_vectors = wp.from_numpy(k_vectors_np, dtype=vec_dtype, device=device)
+        cell = wp.from_numpy(sys["cell"], dtype=mat_dtype, device=device)
+        alpha_arr = wp.from_numpy(
+            np.array([0.5, 0.5], dtype=np.float64), dtype=dtype, device=device
+        )
+        atom_start = wp.from_numpy(sys["atom_start"], dtype=wp.int32, device=device)
+        atom_end = wp.from_numpy(sys["atom_end"], dtype=wp.int32, device=device)
+        total_charges = wp.zeros(sys["num_systems"], dtype=wp.float64, device=device)
+        cos_k_dot_r = wp.zeros((1, sys["num_atoms"]), dtype=wp.float64, device=device)
+        sin_k_dot_r = wp.zeros((1, sys["num_atoms"]), dtype=wp.float64, device=device)
+        real_sf = wp.zeros((sys["num_systems"], 1), dtype=wp.float64, device=device)
+        imag_sf = wp.zeros((sys["num_systems"], 1), dtype=wp.float64, device=device)
+
+        batch_ewald_reciprocal_space_fill_structure_factors(
+            positions=positions,
+            charges=charges,
+            k_vectors=k_vectors,
+            cell=cell,
+            alpha=alpha_arr,
+            atom_start=atom_start,
+            atom_end=atom_end,
+            total_charges=total_charges,
+            cos_k_dot_r=cos_k_dot_r,
+            sin_k_dot_r=sin_k_dot_r,
+            real_structure_factors=real_sf,
+            imag_structure_factors=imag_sf,
+            num_k=1,
+            num_systems=sys["num_systems"],
+            max_blocks_per_system=1,
+            wp_dtype=dtype,
+            device=device,
+        )
+
+        expected = (
+            np.array(
+                [
+                    charges_np[sys["atom_start"][0] : sys["atom_end"][0]].sum(),
+                    charges_np[sys["atom_start"][1] : sys["atom_end"][1]].sum(),
+                ],
+                dtype=np.float64,
+            )
+            / sys["volume"]
+        )
+        np.testing.assert_allclose(total_charges.numpy(), expected, rtol=1e-12)
 
 
 # ==============================================================================

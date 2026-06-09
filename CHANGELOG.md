@@ -10,14 +10,21 @@
 - Torch slab correction now participates in autograd when inputs require
   gradients.
 - Full JAX Ewald/PME energy-only calls now support first-order gradients for
-  positions, charges, and strain-consistent cell gradients.
-- JAX PME higher-order derivatives now fail explicitly with
-  `NotImplementedError` until a native PME Hessian-vector product is available.
+  positions, charges, and row-vector displacement virials.
+- JAX PME reciprocal higher-order support is limited to tested position and
+  charge scalar losses. PME cell/stress/strain higher-order derivatives remain
+  unsupported.
 - Torch Ewald accepts `miller_bounds` for k-vector generation.
 - Torch/JAX PME accept precomputed `cell_inv_t`, `volume`, and B-spline
   moduli where supported.
-- `compute_bspline_moduli_1d` is exported from the top-level Torch
-  electrostatics namespace for PME precompute workflows.
+- `compute_bspline_moduli_1d` is exported from the top-level Torch and JAX
+  electrostatics namespaces for PME precompute workflows.
+- Electrostatics autograd now documents `positions`, `charges`, and `cell` as
+  the only gradient targets. Setup values such as `alpha` are constants, and
+  cell-derived reciprocal caches are static metadata assumed to correspond to
+  the current cell.
+- Higher-order electrostatics support is exposed through framework autograd on
+  scalar losses; no public Hessian or Jacobian tensor/function APIs were added.
 
 ### Fixed
 
@@ -44,7 +51,9 @@
 - Direct-output flags on full Torch and JAX Ewald/PME APIs are deprecated for
   differentiable training: `compute_forces`, `compute_virial`,
   `compute_charge_gradients`, and `hybrid_forces`. They still work and keep the
-  existing tuple order. Component APIs keep direct outputs for no-autograd use.
+  existing tuple order. Component `compute_forces=True` remains available for
+  no-autograd MD/inference use; component charge-gradient, virial, and hybrid
+  direct outputs warn as legacy training-style outputs.
 - `cells_inv` argument on `compute_cell_kinetic_energy`,
   `npt_velocity_half_step{,_out}`, `npt_position_update{,_out}`,
   `nph_velocity_half_step{,_out}`, `nph_position_update{,_out}`,

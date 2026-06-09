@@ -417,6 +417,47 @@ class TestEstimatePMEParameters:
         assert isinstance(params.mesh_spacing, jax.Array)
         assert params.mesh_spacing.shape == (2, 3)
 
+    def test_batch_uses_shared_median_system_cutoff_and_alpha(self):
+        """Batched PME uses one cutoff/alpha from median batch properties."""
+        positions = jax.random.normal(
+            jax.random.PRNGKey(0),
+            (120, 3),
+            dtype=jnp.float64,
+        )
+        cells = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float64) * 10.0,
+                jnp.eye(3, dtype=jnp.float64) * 20.0,
+                jnp.eye(3, dtype=jnp.float64) * 30.0,
+            ]
+        )
+        batch_idx = jnp.array([0] * 20 + [1] * 40 + [2] * 60, dtype=jnp.int32)
+
+        accuracy = 1e-6
+        params = estimate_pme_parameters(
+            positions,
+            cells,
+            batch_idx=batch_idx,
+            accuracy=accuracy,
+        )
+
+        n_repr = 40.0
+        v_repr = 20.0**3
+        eta = (v_repr**2 / n_repr) ** (1.0 / 6.0) / math.sqrt(2.0 * math.pi)
+        expected_cutoff = math.sqrt(-2.0 * math.log(accuracy)) * eta
+        expected_alpha = 1.0 / (math.sqrt(2.0) * eta)
+
+        assert jnp.allclose(params.real_space_cutoff, params.real_space_cutoff[0])
+        assert jnp.allclose(params.alpha, params.alpha[0])
+        assert jnp.allclose(
+            params.real_space_cutoff,
+            jnp.full_like(params.real_space_cutoff, expected_cutoff),
+        )
+        assert jnp.allclose(
+            params.alpha,
+            jnp.full_like(params.alpha, expected_alpha),
+        )
+
     def test_mesh_dimensions_are_power_of_two(self):
         """Test that mesh dimensions are powers of 2."""
         positions = jax.random.normal(jax.random.PRNGKey(0), (100, 3))

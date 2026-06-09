@@ -30,6 +30,7 @@ In this example you will learn:
 - How to pass slab periodicity with a boolean ``pbc`` array
 - How to compute the standalone slab correction with ``compute_slab_correction``
 - How the standalone correction equals the integrated Ewald energy/force delta
+- How to derive slab forces from energy autograd for training
 - How to compose total Ewald and PME component workflows with slab
 - How triclinic slab cells use the normal to the periodic plane
 - How to use ``jax.jit`` with a full neighbor list + PME slab pipeline
@@ -50,6 +51,9 @@ In this example you will learn:
 from __future__ import annotations
 
 import sys
+import warnings
+
+import numpy as np
 
 try:
     import jax
@@ -78,6 +82,27 @@ except Exception as exc:
         f"JAX/Warp backend unavailable ({exc}). This example requires a CUDA-backed runtime."
     )
     sys.exit(0)
+
+
+def _legacy_direct_output_call(function, *args, **kwargs):
+    """Call a deprecated direct-output path used for explicit migration checks."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            message="The direct-output flags.*",
+        )
+        return function(*args, **kwargs)
+
+
+def _format_array(array: jax.Array) -> str:
+    """Format small arrays consistently for gallery text output."""
+    return np.array2string(
+        np.asarray(jax.device_get(array)),
+        precision=6,
+        suppress_small=False,
+    )
+
 
 # %%
 # Check Device
@@ -118,8 +143,8 @@ positions, charges, cell, pbc_slab = create_cscl_slab_system()
 
 print("Slab system:")
 print(f"  Number of atoms: {positions.shape[0]}")
-print(f"  Cell rows:\n{jax.device_get(cell[0])}")
-print(f"  Slab pbc: {jax.device_get(pbc_slab[0])}")
+print(f"  Cell rows:\n{_format_array(cell[0])}")
+print(f"  Slab pbc: {_format_array(pbc_slab[0])}")
 print(f"  Total charge: {float(charges.sum()):.1f}")
 
 # %%
@@ -147,12 +172,15 @@ print(f"  Number of neighbor entries: {neighbor_list.shape[1]}")
 print(f"  Real-space cutoff: {real_space_cutoff:.1f} Å")
 
 # %%
-# Standard 3D Ewald
-# -----------------
+# Standard 3D Ewald (Legacy Direct-Output Baseline)
+# -------------------------------------------------
 # First compute the uncorrected 3D-periodic Ewald result. This is the quantity
-# that will receive the slab correction.
+# that will receive the slab correction. This section intentionally uses
+# deprecated full-API direct-output flags only to build a compatibility baseline
+# for the checks below.
 
-energies_3d, forces_3d, charge_grads_3d, virial_3d = ewald_summation(
+energies_3d, forces_3d, charge_grads_3d, virial_3d = _legacy_direct_output_call(
+    ewald_summation,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -169,17 +197,19 @@ energies_3d, forces_3d, charge_grads_3d, virial_3d = ewald_summation(
 print("\nStandard 3D Ewald:")
 print(f"  Total energy: {float(energies_3d.sum()): .8f}")
 print(f"  Max force magnitude: {float(jnp.linalg.norm(forces_3d, axis=1).max()): .8f}")
-print(f"  Charge gradients: {jax.device_get(charge_grads_3d)}")
+print(f"  Charge gradients: {_format_array(charge_grads_3d)}")
 print(f"  Virial trace: {float(jnp.trace(virial_3d[0])): .8f}")
 
 # %%
-# Ewald with Slab Correction
-# --------------------------
+# Ewald with Slab Correction (Legacy Direct-Output Check)
+# ------------------------------------------------------
 # Set ``slab_correction=True`` and pass the slab periodicity. The output tuple
 # follows the same ordering as ordinary Ewald: energies, forces, charge
-# gradients, and virial when all optional quantities are requested.
+# gradients, and virial when all optional quantities are requested. For training
+# code, copy the energy-autograd section immediately below instead.
 
-energies_slab, forces_slab, charge_grads_slab, virial_slab = ewald_summation(
+energies_slab, forces_slab, charge_grads_slab, virial_slab = _legacy_direct_output_call(
+    ewald_summation,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -201,8 +231,40 @@ print(f"  Energy delta: {float((energies_slab - energies_3d).sum()): .8f}")
 print(
     f"  Max force magnitude: {float(jnp.linalg.norm(forces_slab, axis=1).max()): .8f}"
 )
-print(f"  Charge gradients: {jax.device_get(charge_grads_slab)}")
+print(f"  Charge gradients: {_format_array(charge_grads_slab)}")
 print(f"  Virial trace: {float(jnp.trace(virial_slab[0])): .8f}")
+
+# %%
+# Energy-Autograd Slab Forces
+# ---------------------------
+# For differentiable training, call the full API without direct-output flags and
+# derive forces from the returned per-atom energies. The direct-output calls
+# above are legacy compatibility checks.
+
+
+def ewald_slab_total_energy(pos: jax.Array) -> jax.Array:
+    """Return total slab-corrected Ewald energy for force autograd."""
+    return jnp.sum(
+        ewald_summation(
+            positions=pos,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            k_cutoff=k_cutoff,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            pbc=pbc_slab,
+            slab_correction=True,
+        )
+    )
+
+
+ewald_forces_ag = -jax.grad(ewald_slab_total_energy)(positions)
+print("\nEwald slab energy-autograd force check:")
+print(
+    f"  Max force delta vs legacy direct: {float(jnp.max(jnp.abs(ewald_forces_ag - forces_slab))):.2e}"
+)
 
 # %%
 # Standalone Slab Correction
@@ -252,7 +314,9 @@ ewald_component_real_energy, ewald_component_real_forces = ewald_real_space(
     neighbor_shifts=neighbor_shifts,
     compute_forces=True,
 )
-ewald_k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff)
+ewald_k_vectors = generate_k_vectors_ewald_summation(
+    jax.lax.stop_gradient(cell), k_cutoff
+)
 ewald_component_reciprocal_energy, ewald_component_reciprocal_forces = (
     ewald_reciprocal_space(
         positions=positions,
@@ -291,13 +355,16 @@ print(
 )
 
 # %%
-# PME with Slab Correction
-# ------------------------
+# PME with Slab Correction (Legacy Direct-Output Check)
+# ----------------------------------------------------
 # Full PME accepts the same slab correction arguments as Ewald. The reciprocal
 # PME component itself remains a 3D-periodic reciprocal-space calculation; the
-# slab term is added by the high-level ``particle_mesh_ewald`` wrapper.
+# slab term is added by the high-level ``particle_mesh_ewald`` wrapper. This
+# direct-output tuple is a legacy compatibility check; the following section is
+# the training recipe.
 
-pme_3d_energy, pme_3d_forces = particle_mesh_ewald(
+pme_3d_energy, pme_3d_forces = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -309,7 +376,8 @@ pme_3d_energy, pme_3d_forces = particle_mesh_ewald(
     compute_forces=True,
 )
 
-pme_slab_energy, pme_slab_forces = particle_mesh_ewald(
+pme_slab_energy, pme_slab_forces = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -329,6 +397,37 @@ print(f"  Slab PME energy: {float(pme_slab_energy.sum()): .8f}")
 print(f"  Energy delta: {float((pme_slab_energy - pme_3d_energy).sum()): .8f}")
 print(
     f"  Max force magnitude: {float(jnp.linalg.norm(pme_slab_forces, axis=1).max()): .8f}"
+)
+
+# %%
+# PME Energy-Autograd Slab Forces
+# -------------------------------
+# PME uses the same training recipe: omit direct-output flags and differentiate
+# the energy. This is the path to copy into force-loss training code.
+
+
+def pme_slab_total_energy(pos: jax.Array) -> jax.Array:
+    """Return total slab-corrected PME energy for force autograd."""
+    return jnp.sum(
+        particle_mesh_ewald(
+            positions=pos,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            mesh_dimensions=mesh_dimensions,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            pbc=pbc_slab,
+            slab_correction=True,
+        )
+    )
+
+
+pme_forces_ag = -jax.grad(pme_slab_total_energy)(positions)
+print("\nPME slab energy-autograd force check:")
+print(
+    f"  Max force delta vs legacy direct: {float(jnp.max(jnp.abs(pme_forces_ag - pme_slab_forces))):.2e}"
 )
 
 # %%
@@ -397,16 +496,16 @@ triclinic_energy, triclinic_forces = compute_slab_correction(
 )
 
 print("\nTriclinic standalone correction:")
-print(f"  Cell rows:\n{jax.device_get(triclinic_cell[0])}")
+print(f"  Cell rows:\n{_format_array(triclinic_cell[0])}")
 print(f"  Correction energy: {float(triclinic_energy.sum()): .8f}")
-print(f"  Forces:\n{jax.device_get(triclinic_forces)}")
+print(f"  Forces:\n{_format_array(triclinic_forces)}")
 
 # %%
 # JIT Compilation
 # ---------------
 # Demonstrate combining the neighbor list build and PME slab calculation into a
-# single ``jax.jit``-compiled function. This allows JAX to fuse the entire
-# pipeline into one optimized computation.
+# single ``jax.jit``-compiled function. This compiles the array program into one
+# callable while keeping launch-size metadata static.
 #
 # For JIT compatibility:
 #
@@ -524,7 +623,8 @@ print(
 # -------
 # Use ``ewald_summation(..., slab_correction=True, pbc=pbc_slab)`` or
 # ``particle_mesh_ewald(..., slab_correction=True, pbc=pbc_slab)`` when you want
-# the correction included in the total outputs. Use ``compute_slab_correction``
+# the correction included in the total energy. For training derivatives, copy
+# the energy-autograd force sections above. Use ``compute_slab_correction``
 # directly when you need the correction term alone or when composing
 # ``ewald_real_space`` with ``ewald_reciprocal_space`` or
 # ``pme_reciprocal_space``.

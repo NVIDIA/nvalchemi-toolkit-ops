@@ -13,8 +13,25 @@ These functions accept standard ``jax.Array`` inputs.
 High-Level Interface
 --------------------
 
-These are the primary entry points for most users; these methods should
-be ``jax.jit`` compatible.
+These are the primary entry points for most users. They are compatible with
+``jax.jit`` when setup-only PME parameters such as ``mesh_dimensions`` and
+``alpha`` are supplied explicitly whenever those values would otherwise be
+estimated from traced inputs. ``miller_bounds`` is also a static shape control:
+under ``jax.jit``, pass it as a concrete tuple or build ``k_vectors`` outside
+the compiled function.
+Energy derivatives are defined for positions, charges, and cell. Setup values
+such as ``alpha`` and mesh controls are constants; precomputed reciprocal
+metadata such as ``k_vectors``, ``k_squared``, ``volume``, and ``cell_inv_t`` is
+accepted for cell-differentiated calls as static metadata that is assumed to
+correspond to the current ``cell``; cache-generation derivatives are not
+recovered. Energy-returning Ewald, PME, and slab paths support atom-weighted
+losses such as ``(weights * energies).sum()`` for positions, charges, and
+supported cell derivatives. JAX PME supports first-order cell/strain gradients,
+but PME cell/strain HVPs, including full PME with ``slab_correction=True``, are
+explicitly unsupported until a native transposable PME cell-HVP path is
+implemented and tested.
+Point-charge Ewald/PME inputs support ``float32`` and ``float64``. Keep all
+floating inputs and precomputed metadata in a call on a consistent dtype.
 
 .. autofunction:: ewald_summation
 .. autofunction:: particle_mesh_ewald
@@ -42,17 +59,16 @@ PME Components
 Individual components of the Particle Mesh Ewald method.
 
 .. autofunction:: pme_reciprocal_space
-.. autofunction:: pme_green_structure_factor
-.. autofunction:: pme_energy_corrections
-.. autofunction:: pme_energy_corrections_with_charge_grad
+.. autofunction:: compute_bspline_moduli_1d
 
 Slab Correction
 ---------------
 
 Explicit-output Yeh-Berkowitz/Ballenegger slab correction for systems with two
-periodic directions. JAX slab bindings are forward-only; request energies,
-forces, charge gradients, and virials with the same flags used by the Ewald and
-PME wrappers.
+periodic directions. Component-level calls can request energies, forces, charge
+gradients, and virials with the same flags used by the Ewald and PME wrappers.
+The high-level Ewald and PME wrappers can include the slab term in their energy
+autodiff path.
 
 .. autofunction:: compute_slab_correction
 

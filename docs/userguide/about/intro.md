@@ -286,6 +286,8 @@ Choose the right method based on your system size:
 Small to medium systems (<5000 atoms)
 
 ```python
+import torch
+
 from nvalchemiops.torch.interactions.electrostatics import ewald_summation
 from nvalchemiops.torch.neighbors import neighbor_list
 
@@ -295,11 +297,13 @@ neighbors, neighbor_ptr, shifts = neighbor_list(
 )
 
 # Compute electrostatics (parameters estimated automatically)
-energies, forces = ewald_summation(
+positions = positions.detach().clone().requires_grad_(True)
+energies = ewald_summation(
     positions, charges, cell, neighbor_list=neighbors,
     neighbor_ptr=neighbor_ptr, neighbor_shifts=shifts,
-    accuracy=1e-6, compute_forces=True
+    accuracy=1e-6
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 Uses explicit k-vector summation in reciprocal space — $O(N^2)$ scaling.
@@ -311,6 +315,8 @@ Uses explicit k-vector summation in reciprocal space — $O(N^2)$ scaling.
 Large systems (>5000 atoms)
 
 ```python
+import torch
+
 from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
 from nvalchemiops.torch.neighbors import neighbor_list
 
@@ -320,11 +326,13 @@ neighbors, neighbor_ptr, shifts = neighbor_list(
 )
 
 # Compute electrostatics with FFT acceleration
-energies, forces = particle_mesh_ewald(
+positions = positions.detach().clone().requires_grad_(True)
+energies = particle_mesh_ewald(
     positions, charges, cell, neighbor_list=neighbors,
     neighbor_ptr=neighbor_ptr, neighbor_shifts=shifts,
-    accuracy=1e-6, compute_forces=True
+    accuracy=1e-6
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 Uses FFT-based reciprocal-space calculation — $O(N \log N)$ scaling.
@@ -336,6 +344,8 @@ Uses FFT-based reciprocal-space calculation — $O(N \log N)$ scaling.
 Multiple systems processed simultaneously
 
 ```python
+import torch
+
 from nvalchemiops.torch.interactions.electrostatics import ewald_summation
 from nvalchemiops.torch.neighbors import neighbor_list
 
@@ -346,11 +356,13 @@ neighbors, neighbor_ptr, shifts = neighbor_list(
 )
 
 # Batched electrostatics
-energies, forces = ewald_summation(
+positions = positions.detach().clone().requires_grad_(True)
+energies = ewald_summation(
     positions, charges, cell=cells, neighbor_list=neighbors,
     neighbor_ptr=neighbor_ptr, neighbor_shifts=shifts,
-    batch_idx=batch_idx, accuracy=1e-6, compute_forces=True
+    batch_idx=batch_idx, accuracy=1e-6
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 Returns per-atom energies; sum by system using `batch_idx`.

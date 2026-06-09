@@ -110,12 +110,8 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
 )
 from nvalchemiops.math import wp_exp_kernel
 
-# k^2 guard captured as a Python compile-time constant in the kernel bodies.
-_KSQ_EPS = _K_SQUARED_EPSILON
-
 __all__ = [
     "alloc_ewald_recip_sentinels",
-    "get_ewald_recip_component_kernel",
     "get_ewald_recip_kernel",
     "make_ewald_recip_kernel",
 ]
@@ -323,7 +319,7 @@ def make_ewald_recip_kernel(
     _validate_axes(wp_dtype, batched, neighbor_input, deriv_state, cell_grad, order)
 
     if order == "double_backward":
-        return _make_double_backward_kernels(wp_dtype, batched, cell_grad)
+        return _make_double_backward_kernels(wp_dtype, batched, deriv_state, cell_grad)
 
     fill = get_ewald_recip_component_kernel(wp_dtype, component="fill", batched=batched)
     compute = _make_compute_kernel(wp_dtype, batched, deriv_state, order)
@@ -611,6 +607,16 @@ def _make_compute_kernel(
 
         num_k = real_structure_factors.shape[1]
         if num_k == 0:
+            if not BACKWARD:
+                reciprocal_energies[atom_idx] = wp.float64(0.0)
+            if DERIV >= E_F:
+                atomic_forces[atom_idx] = vec_dtype(
+                    wp_dtype(0.0),
+                    wp_dtype(0.0),
+                    wp_dtype(0.0),
+                )
+                if DERIV >= E_F_dQ:
+                    charge_gradients[atom_idx] = wp.float64(0.0)
             return
 
         local_potential = wp.float64(0.0)  # weighted (q_i phi_i)
@@ -735,7 +741,7 @@ def _make_backward_virial_kernel(wp_dtype: type, batched: bool) -> wp.Kernel:
         ky = wp.float64(k_vec[1])
         kz = wp.float64(k_vec[2])
         k_sq = kx * kx + ky * ky + kz * kz
-        if k_sq < wp.float64(_KSQ_EPS):
+        if k_sq < wp.float64(_K_SQUARED_EPSILON):
             return
 
         alpha_ = wp.float64(alpha[isys])
@@ -845,7 +851,7 @@ def _make_backward_kspace_kernel(wp_dtype: type, batched: bool) -> wp.Kernel:
         ky = wp.float64(k_vec[1])
         kz = wp.float64(k_vec[2])
         k_squared = kx * kx + ky * ky + kz * kz
-        if k_squared < wp.float64(_KSQ_EPS):
+        if k_squared < wp.float64(_K_SQUARED_EPSILON):
             return
 
         alpha_ = wp.float64(alpha[isys])
@@ -959,7 +965,7 @@ def _make_backward_kspace_from_cache_kernel(wp_dtype: type, batched: bool) -> wp
         ky = wp.float64(k_vec[1])
         kz = wp.float64(k_vec[2])
         k_squared = kx * kx + ky * ky + kz * kz
-        if k_squared < wp.float64(_KSQ_EPS):
+        if k_squared < wp.float64(_K_SQUARED_EPSILON):
             return
 
         alpha_ = wp.float64(alpha[isys])
@@ -1009,7 +1015,10 @@ def _make_backward_kspace_from_cache_kernel(wp_dtype: type, batched: bool) -> wp
 
 
 def _make_double_backward_kernels(
-    wp_dtype: type, batched: bool, cell_grad: bool = False
+    wp_dtype: type,
+    batched: bool,
+    deriv_state: _DerivState,
+    cell_grad: bool = False,
 ) -> _RecipKernels:
     """Build the second-derivative node (recompute mode).
 
@@ -1056,9 +1065,13 @@ def _make_double_backward_kernels(
     vec_dtype = info.vec
 
     BATCHED = bool(batched)
+    DERIV_DQ = wp.constant(deriv_state is _DerivState.E_F_dQ)
+    CELL_GRAD = wp.constant(bool(cell_grad))
 
-    reduce_suffix = "double_backward_reduce"
-    compute_suffix = "double_backward"
+    deriv_suffix = "dq" if deriv_state is _DerivState.E_F_dQ else "force"
+    cell_suffix = "_cell" if cell_grad else ""
+    reduce_suffix = f"double_backward_reduce_{deriv_suffix}{cell_suffix}"
+    compute_suffix = f"double_backward_{deriv_suffix}{cell_suffix}"
     reduce_module = _ewald_recip_module_name(wp_dtype, BATCHED, reduce_suffix)
     compute_module = _ewald_recip_module_name(wp_dtype, BATCHED, compute_suffix)
 
@@ -1102,7 +1115,7 @@ def _make_double_backward_kernels(
 
         alpha_ = wp.float64(alpha[isys])
         exp_factor = wp.float64(0.25) / (alpha_ * alpha_)
-        if cell_grad != 0:
+        if CELL_GRAD:
             vol = volume[isys]
         else:
             vol = wp.float64(wp.abs(wp.determinant(cell[isys])))
@@ -1112,7 +1125,7 @@ def _make_double_backward_kernels(
         ky = wp.float64(k_vector[1])
         kz = wp.float64(k_vector[2])
         k_squared = kx * kx + ky * ky + kz * kz
-        if k_squared < wp.float64(_KSQ_EPS):
+        if k_squared < wp.float64(_K_SQUARED_EPSILON):
             return
 
         g_k = wp_exp_kernel(k_squared, exp_factor) * wp.float64(EIGHTPI) / vol
@@ -1127,7 +1140,7 @@ def _make_double_backward_kernels(
         vkx = wp.float64(0.0)
         vky = wp.float64(0.0)
         vkz = wp.float64(0.0)
-        if cell_grad != 0:
+        if CELL_GRAD:
             vk_vec = v_kvectors[isys, k_idx]
             vkx = wp.float64(vk_vec[0])
             vky = wp.float64(vk_vec[1])
@@ -1196,12 +1209,12 @@ def _make_double_backward_kernels(
             q_sum += w_i * qs
 
             vq = wp.float64(0.0)
-            if deriv_dq != 0:
+            if DERIV_DQ:
                 vq = v_charge[atom_idx]
                 c_sum += vq * cos_kr
                 d_sum += vq * sin_kr
 
-            if cell_grad != 0:
+            if CELL_GRAD:
                 u_i = vkx * rx + vky * ry + vkz * rz
                 pu_sum += u_i * qc
                 qu_sum += u_i * qs
@@ -1230,7 +1243,7 @@ def _make_double_backward_kernels(
                 vps_x += qs * wp.float64(vp[0])
                 vps_y += qs * wp.float64(vp[1])
                 vps_z += qs * wp.float64(vp[2])
-                if deriv_dq != 0:
+                if DERIV_DQ:
                     rcc_x += vq * cos_kr * rx
                     rcc_y += vq * cos_kr * ry
                     rcc_z += vq * cos_kr * rz
@@ -1242,10 +1255,10 @@ def _make_double_backward_kernels(
         gB[isys, k_idx] = g_k * b_sum
         gP[isys, k_idx] = g_k * p_sum
         gQ[isys, k_idx] = g_k * q_sum
-        if deriv_dq != 0:
+        if DERIV_DQ:
             gC[isys, k_idx] = g_k * c_sum
             gD[isys, k_idx] = g_k * d_sum
-        if cell_grad != 0:
+        if CELL_GRAD:
             gPu[isys, k_idx] = g_k * pu_sum
             gQu[isys, k_idx] = g_k * qu_sum
 
@@ -1254,10 +1267,10 @@ def _make_double_backward_kernels(
         s_sq = a_sum * a_sum + b_sum * b_sum
         # Phi_k base (pos/charge terms); the k/V terms are added under cell_grad below.
         phi_k = b_sum * p_sum - a_sum * q_sum
-        if deriv_dq != 0:
+        if DERIV_DQ:
             phi_k += a_sum * c_sum + b_sum * d_sum
 
-        if cell_grad != 0:
+        if CELL_GRAD:
             # mu = magnitude factor in dg/dk = -g mu k;  wk = vk . k;  vV = v_volume.
             mu = wp.float64(2.0) * exp_factor + wp.float64(2.0) / k_squared
             wk = vkx * kx + vky * ky + vkz * kz
@@ -1432,7 +1445,7 @@ def _make_double_backward_kernels(
         ry = wp.float64(position[1])
         rz = wp.float64(position[2])
         vp = v_pos[atom_idx]
-        if deriv_dq != 0:
+        if DERIV_DQ:
             vqi = v_charge[atom_idx]
         else:
             vqi = wp.float64(0.0)
@@ -1440,7 +1453,7 @@ def _make_double_backward_kernels(
         exp_factor = wp.float64(0.0)
         inv_vol = wp.float64(0.0)
         vV = wp.float64(0.0)
-        if cell_grad != 0:
+        if CELL_GRAD:
             alpha_ = wp.float64(alpha[isys])
             exp_factor = wp.float64(0.25) / (alpha_ * alpha_)
             inv_vol = wp.float64(1.0) / volume[isys]
@@ -1448,6 +1461,13 @@ def _make_double_backward_kernels(
 
         num_k = gA.shape[1]
         if num_k == 0:
+            grad_positions[atom_idx] = vec_dtype(
+                wp_dtype(0.0),
+                wp_dtype(0.0),
+                wp_dtype(0.0),
+            )
+            if DERIV_DQ:
+                grad_charges[atom_idx] = wp.float64(0.0)
             return
 
         gr_x = wp.float64(0.0)
@@ -1461,7 +1481,7 @@ def _make_double_backward_kernels(
             ky = wp.float64(k_vec[1])
             kz = wp.float64(k_vec[2])
             k_squared = kx * kx + ky * ky + kz * kz
-            if k_squared < wp.float64(_KSQ_EPS):
+            if k_squared < wp.float64(_K_SQUARED_EPSILON):
                 continue
 
             k_dot_r = kx * rx + ky * ry + kz * rz
@@ -1475,7 +1495,7 @@ def _make_double_backward_kernels(
             b_g = gB[isys, k_idx]
             p_g = gP[isys, k_idx]
             q_g = gQ[isys, k_idx]
-            if deriv_dq != 0:
+            if DERIV_DQ:
                 c_g = gC[isys, k_idx]
                 d_g = gD[isys, k_idx]
             else:
@@ -1493,7 +1513,7 @@ def _make_double_backward_kernels(
                 + vqi * (b_g * cos_m - a_g * sin_m)
             )
 
-            if deriv_dq != 0:
+            if DERIV_DQ:
                 # dPhi/dq_m = sum_k g_k [ sin_m (P+D) + cos_m (C-Q)
                 #                         + w_m (B cos_m - A sin_m) ]
                 gq += (
@@ -1502,7 +1522,7 @@ def _make_double_backward_kernels(
                     + w_m * (b_g * cos_m - a_g * sin_m)
                 )
 
-            if cell_grad != 0:
+            if CELL_GRAD:
                 pu_g = gPu[isys, k_idx]
                 qu_g = gQu[isys, k_idx]
                 vk_vec = v_kvectors[isys, k_idx]
@@ -1526,7 +1546,7 @@ def _make_double_backward_kernels(
                 gr_y += vkdir * vky
                 gr_z += vkdir * vkz
 
-                if deriv_dq != 0:
+                if DERIV_DQ:
                     # k/V additions to dPhi/dq_m:
                     gq += sin_m * pu_g - cos_m * qu_g + u_m * bcas - wmu_vv * acbs
 
@@ -1539,7 +1559,7 @@ def _make_double_backward_kernels(
             wp_dtype(ge * gr_y),
             wp_dtype(ge * gr_z),
         )
-        if deriv_dq != 0:
+        if DERIV_DQ:
             grad_charges[atom_idx] = ge * gq
 
     for kernel, base in (
@@ -1554,7 +1574,7 @@ def _make_double_backward_kernels(
             base=base,
             wp_dtype=wp_dtype,
             batched=batched,
-            deriv_state=None,
+            deriv_state=deriv_state,
             cell_grad=cell_grad,
             order="double_backward",
         )

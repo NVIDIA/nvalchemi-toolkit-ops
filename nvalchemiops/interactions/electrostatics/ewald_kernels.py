@@ -111,9 +111,9 @@ Environment variables for performance tuning:
 
 ALCH_EWALD_BATCH_BLOCK_SIZE (default: 16)
     Block size for batched structure factor computation. Each thread processes
-    a block of atoms, reducing atomic contention. Benchmark results show:
-    - 16 is optimal for most scenarios (2-3x faster than atom-major)
-    - Atom-major (no blocking) only wins for very large atom counts (>100K atoms)
+    a block of atoms, reducing atomic contention.
+    - 16 is the default block size
+    - Larger values can be useful for workloads with fewer, larger systems
     - Tune this if you have unusual workloads (many small or few large systems)
 
 REFERENCES
@@ -132,14 +132,49 @@ import warp as wp
 
 from nvalchemiops.math import wp_erfc, wp_exp_kernel
 
+__all__ = [
+    "BATCH_BLOCK_SIZE",
+    "REAL_SPACE_TILED_BLOCK_DIM",
+    "batch_ewald_energy_corrections",
+    "batch_ewald_energy_corrections_backward",
+    "batch_ewald_energy_corrections_double_backward",
+    "batch_ewald_real_space_energy",
+    "batch_ewald_real_space_energy_forces",
+    "batch_ewald_real_space_energy_forces_charge_grad",
+    "batch_ewald_real_space_energy_forces_charge_grad_matrix",
+    "batch_ewald_real_space_energy_forces_matrix",
+    "batch_ewald_real_space_energy_matrix",
+    "batch_ewald_reciprocal_space_compute_energy",
+    "batch_ewald_reciprocal_space_energy_forces",
+    "batch_ewald_reciprocal_space_energy_forces_charge_grad",
+    "batch_ewald_reciprocal_space_fill_structure_factors",
+    "batch_ewald_subtract_self_energy",
+    "ewald_energy_corrections",
+    "ewald_energy_corrections_backward",
+    "ewald_energy_corrections_double_backward",
+    "ewald_real_space_energy",
+    "ewald_real_space_energy_forces",
+    "ewald_real_space_energy_forces_charge_grad",
+    "ewald_real_space_energy_forces_charge_grad_matrix",
+    "ewald_real_space_energy_forces_matrix",
+    "ewald_real_space_energy_matrix",
+    "ewald_reciprocal_space_compute_energy",
+    "ewald_reciprocal_space_energy_forces",
+    "ewald_reciprocal_space_energy_forces_charge_grad",
+    "ewald_reciprocal_space_fill_structure_factors",
+    "ewald_subtract_self_energy",
+]
+
 # Mathematical constants
 PI = math.pi
+SQRT_PI = math.sqrt(PI)
+TWO_OVER_SQRT_PI = 2.0 / SQRT_PI
 TWOPI = 2.0 * PI
 FOURPI = 4.0 * PI
-EIGHTPI = 8.0 * PI  # Used for half-space k-vector optimization (2x FOURPI)
+EIGHTPI = 8.0 * PI  # Half-space k-vector Green's function factor.
 
 # Block size for batch structure factor accumulation
-# Benchmark results show 16 is optimal for most cases (except very large atom counts)
+# Tunable via ALCH_EWALD_BATCH_BLOCK_SIZE.
 BATCH_BLOCK_SIZE = int(os.environ.get("ALCH_EWALD_BATCH_BLOCK_SIZE", 16))
 BATCH_BLOCK_SIZE = BATCH_BLOCK_SIZE if BATCH_BLOCK_SIZE > 0 else 16
 
@@ -222,7 +257,7 @@ def _ewald_real_space_force_magnitude(
     wp.float64
         Force magnitude factor.
     """
-    two_over_sqrt_pi = wp.float64(2.0 / 1.7724538509055159)
+    two_over_sqrt_pi = wp.float64(TWO_OVER_SQRT_PI)
 
     prefactor = wp.float64(0.5) * qi * qj
     alpha_r = alpha * distance
@@ -322,7 +357,7 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         Ewald splitting parameter.
     total_charge : wp.array, shape (1,), dtype=wp.float64
         OUTPUT: Accumulated total charge divided by volume (Q/V) for
-        background correction. Only thread 1 accumulates this.
+        background correction. Only the first k-vector thread accumulates this.
     cos_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
         OUTPUT: :math:`\\cos(k \\cdot r_i)` for each (k, atom) pair.
     sin_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
@@ -336,10 +371,10 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     -----
     - K-major iteration avoids atomics (each thread owns its k output).
     - k=0 is skipped (early return) to avoid division by zero in G(k).
-    - Thread 1 accumulates total_charge as Q/V for background correction.
+    - Thread 0 accumulates total_charge as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
     - cos_k_dot_r and sin_k_dot_r store unweighted phases for charge gradient computation.
-    - Half-space k-vectors with 8π Green's function give ~2x speedup.
+    - Half-space k-vectors use the corresponding 8π Green's function factor.
     """
     k_idx = wp.tid()
     num_atoms = positions.shape[0]
@@ -357,6 +392,11 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
 
     # Skip k=0 (would cause division by zero)
     if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            total_charge_accum = wp.float64(0.0)
+            for atom_idx in range(num_atoms):
+                total_charge_accum += wp.float64(charges[atom_idx]) / volume
+            total_charge[0] = total_charge_accum
         for atom_idx in range(num_atoms):
             cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
             sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
@@ -370,15 +410,16 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     # Accumulate structure factors in registers (no atomics!)
     real_sum = wp.float64(0.0)
     imag_sum = wp.float64(0.0)
+    total_charge_accum = wp.float64(0.0)
 
     for atom_idx in range(num_atoms):
         position = positions[atom_idx]
         charge = wp.float64(charges[atom_idx])
 
-        # Thread 1 accumulates total charge for background correction
-        if k_idx == 1:
-            tc = charge / volume
-            wp.atomic_add(total_charge, 0, tc)
+        # Thread 0 accumulates total charge for background correction. This
+        # keeps the correction valid for one-k-vector launches.
+        if k_idx == 0:
+            total_charge_accum += charge / volume
 
         # Compute k*r in float64
         k_dot_r = (
@@ -398,6 +439,8 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         imag_sum += charge * sin_kr * green_function
 
     # Write final structure factors (no atomics needed)
+    if k_idx == 0:
+        total_charge[0] = total_charge_accum
     real_structure_factors[k_idx] = real_sum
     imag_structure_factors[k_idx] = imag_sum
 
@@ -443,6 +486,11 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
     k_squared = kx * kx + ky * ky + kz * kz
 
     if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            total_charge_accum = wp.float64(0.0)
+            for atom_idx in range(num_atoms):
+                total_charge_accum += wp.float64(charges[atom_idx]) / volume
+            total_charge[0] = total_charge_accum
         for atom_idx in range(num_atoms):
             cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
             sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
@@ -464,14 +512,14 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
     rb_x = wp.float64(0.0)
     rb_y = wp.float64(0.0)
     rb_z = wp.float64(0.0)
+    total_charge_accum = wp.float64(0.0)
 
     for atom_idx in range(num_atoms):
         position = positions[atom_idx]
         charge = wp.float64(charges[atom_idx])
 
-        if k_idx == 1:
-            tc = charge / volume
-            wp.atomic_add(total_charge, 0, tc)
+        if k_idx == 0:
+            total_charge_accum += charge / volume
 
         rx = wp.float64(position[0])
         ry = wp.float64(position[1])
@@ -500,6 +548,8 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
 
     real_structure_factors[k_idx] = real_sum
     imag_structure_factors[k_idx] = imag_sum
+    if k_idx == 0:
+        total_charge[0] = total_charge_accum
     cellgrad_cache[k_idx, 0] = a_sum
     cellgrad_cache[k_idx, 1] = b_sum
     cellgrad_cache[k_idx, 2] = ra_x
@@ -1098,7 +1148,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     atom-major iteration while maintaining parallelism.
 
     The block size is controlled by ALCH_EWALD_BATCH_BLOCK_SIZE environment variable
-    (default: 16, which benchmarks show is optimal for most scenarios).
+    (default: 16).
 
     For each system s and atom i in that system:
 
@@ -1148,12 +1198,12 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     -----
     - Blocked iteration reduces atomic contention vs atom-major.
     - Each block computes partial sums in registers before one atomic add.
-    - BATCH_BLOCK_SIZE=16 is optimal for most cases (set via environment variable ALCH_EWALD_BATCH_BLOCK_SIZE).
+    - BATCH_BLOCK_SIZE is set via ALCH_EWALD_BATCH_BLOCK_SIZE.
     - k=0 causes early return (would cause division by zero in G(k)).
     - Blocks beyond the system's atoms cause early return.
-    - Thread 1 accumulates total_charges as Q/V for background correction.
+    - Thread 0 accumulates total_charges as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
-    - Half-space k-vectors with 8π Green's function give ~2x speedup.
+    - Half-space k-vectors use the corresponding 8π Green's function factor.
     """
     k_idx, system_id, block_idx = wp.tid()
 
@@ -1182,6 +1232,11 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
 
     # Skip k=0 (would cause division by zero)
     if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            local_charge = wp.float64(0.0)
+            for atom_idx in range(block_start, block_end):
+                local_charge += wp.float64(charges[atom_idx]) / volume
+            wp.atomic_add(total_charges, system_id, local_charge)
         for atom_idx in range(block_start, block_end):
             cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
             sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
@@ -1199,8 +1254,8 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         position = positions[atom_idx]
         charge = wp.float64(charges[atom_idx])
 
-        # Only first k-thread per block accumulates total charge
-        if k_idx == 1:
+        # Only first k-thread per block accumulates total charge.
+        if k_idx == 0:
             local_charge += charge / volume
 
         # Compute cos(k*r) and sin(k*r) weighted by charge
@@ -1224,7 +1279,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     wp.atomic_add(real_structure_factors, system_id, k_idx, local_real)
     wp.atomic_add(imag_structure_factors, system_id, k_idx, local_imag)
 
-    if k_idx == 1:
+    if k_idx == 0:
         wp.atomic_add(total_charges, system_id, local_charge)
 
 
@@ -1281,6 +1336,11 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
     k_squared = kx * kx + ky * ky + kz * kz
 
     if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            local_charge = wp.float64(0.0)
+            for atom_idx in range(block_start, block_end):
+                local_charge += wp.float64(charges[atom_idx]) / volume
+            wp.atomic_add(total_charges, system_id, local_charge)
         for atom_idx in range(block_start, block_end):
             cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
             sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
@@ -1304,7 +1364,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
         position = positions[atom_idx]
         charge = wp.float64(charges[atom_idx])
 
-        if k_idx == 1:
+        if k_idx == 0:
             local_charge += charge / volume
 
         rx = wp.float64(position[0])
@@ -1344,7 +1404,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
     wp.atomic_add(cellgrad_cache, row, 6, local_rb_y)
     wp.atomic_add(cellgrad_cache, row, 7, local_rb_z)
 
-    if k_idx == 1:
+    if k_idx == 0:
         wp.atomic_add(total_charges, system_id, local_charge)
 
 

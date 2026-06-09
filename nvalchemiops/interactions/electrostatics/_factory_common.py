@@ -17,15 +17,15 @@
 
 This module owns the **component-agnostic** pieces of the kernel factory contract:
 the :class:`_DerivState` axis enum, the per-dtype Warp vec/mat bundle
-(:class:`_WarpDtypes` / :data:`_DTYPE_INFO`), the dtype guard, and the axis literal
-types. Every electrostatics kernel specialization is identified by this 7-tuple::
+(:class:`_WarpDtypes` / :data:`_DTYPE_INFO`), the dtype guard, and the shared
+axis literal types. Every electrostatics kernel specialization is identified
+conceptually by the axes owned by its component factory, for example::
 
     (wp_dtype, component, batched, neighbor_input, deriv_state, cell_grad, order)
 
-This 7-tuple is the *conceptual* key; the concrete cache is the ``@lru_cache`` on
-each per-component factory (e.g. :func:`make_ewald_real_kernel`), keyed on the six
-non-``component`` keyword arguments (``component`` is fixed by which factory is
-called and validated in ``get_*``).
+This tuple is the *conceptual* key; the concrete cache is the ``@lru_cache`` on
+each per-component factory (e.g. :func:`make_ewald_real_kernel`), keyed on the
+axes that factory accepts.
 
 Per-component kernel code lives in sibling factory modules
 (``ewald_real_factory.py`` for ``ewald_real``; sibling factories add
@@ -34,10 +34,6 @@ define their own ``@lru_cache``d ``make_*`` builders. Keep this module's shared
 private infra stable for sibling factories -- adding a new component must not
 require editing it.
 
-For backward compatibility, the public ``ewald_real`` entry points
-(:func:`make_ewald_real_kernel`, :func:`get_ewald_real_kernel`,
-:func:`alloc_ewald_real_sentinels`) are re-exported from this module.
-
 Factory boundary
 ----------------
 The factory owns **Warp-owned work only**. Torch-native spline / FFT / grid
@@ -45,6 +41,7 @@ orchestration stays outside, on Torch autograd.
 """
 
 import enum
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple
@@ -53,12 +50,7 @@ import warp as wp
 
 from nvalchemiops.math import wp_erfc
 
-__all__ = [
-    "alloc_ewald_real_sentinels",
-    "get_backward_scale_kernel",
-    "get_ewald_real_kernel",
-    "make_ewald_real_kernel",
-]
+__all__ = ["get_backward_scale_kernel"]
 
 
 # === C1 axis value types ===
@@ -70,7 +62,9 @@ class _DerivState(enum.Enum):
     * :attr:`E` -- energy only.
     * :attr:`E_F` -- energy + forces (``-dE/dR``).
     * :attr:`E_F_dQ` -- energy + forces + charge gradient (``dE/dq``).
-    * :attr:`E_dQ` -- energy + charge gradient only.
+    * :attr:`E_dQ` -- energy + charge gradient only. This is a forward-only
+      direct-output specialization; backward and double-backward construction
+      must use :attr:`E_F_dQ`.
     """
 
     E = 0
@@ -79,8 +73,7 @@ class _DerivState(enum.Enum):
     E_dQ = 3
 
 
-# Component / neighbor-input / order axis literal types (documentation + validation).
-_Component = Literal["ewald_real", "ewald_recip", "pme_convolve", "pme_corrections"]
+# Neighbor-input / order axis literal types (documentation + validation).
 _NeighborInput = Literal["list", "matrix", "none"]
 _Order = Literal["forward", "backward", "double_backward"]
 _CellCacheMode = Literal["none", "system", "atom"]
@@ -121,8 +114,8 @@ _VEC2_INFO: dict[type, type] = {
 
 # === Shared numeric constants ===
 
-# 2/sqrt(pi); matches the constant baked into _ewald_real_space_force_magnitude.
-_TWO_OVER_SQRT_PI = 2.0 / 1.7724538509055159
+# 2/sqrt(pi); matches ewald_kernels.TWO_OVER_SQRT_PI.
+_TWO_OVER_SQRT_PI = 2.0 / math.sqrt(math.pi)
 
 # Per-pair distance guard for the real-space sum: pairs closer than this (i.e. an
 # atom with its own periodic image at the origin) are skipped.
@@ -273,7 +266,8 @@ def _validate_common_axes(
 
     Checks the dtype, ``order`` membership, that ``deriv_state`` is a
     :class:`_DerivState`, the permanently-invalid ``cell_grad=True`` + ``deriv_state=E``
-    combination, and derivative orders requesting ``deriv_state=E``. The
+    combination, and derivative orders requesting a non-force-bearing
+    ``deriv_state``. The
     ``neighbor_input`` axis is component-specific and validated by the caller. (PME has
     a different axis set and does not use this helper.)
     """
@@ -290,10 +284,14 @@ def _validate_common_axes(
             f"cell_grad=True is invalid with deriv_state={deriv_state!r}: there are no "
             "force terms to sum into the virial. Use E_F or E_F_dQ."
         )
-    if order in ("backward", "double_backward") and deriv_state is _DerivState.E:
+    if order in ("backward", "double_backward") and deriv_state in {
+        _DerivState.E,
+        _DerivState.E_dQ,
+    }:
         raise ValueError(
-            f"order={order!r} requires deriv_state in (E_F, E_F_dQ); the energy-only "
-            "state has nothing to differentiate."
+            f"order={order!r} requires deriv_state in (E_F, E_F_dQ); "
+            f"got {deriv_state.name}. E_dQ is a forward-only direct-output "
+            "specialization."
         )
 
 
@@ -535,16 +533,3 @@ def get_backward_scale_kernel(
         ],
     )
     return _backward_scale
-
-
-# === Re-exports of the ewald_real per-component factory (back-compat) ===
-# The ewald_real kernel builders live in ``ewald_real_factory.py`` (so sibling
-# factories can use the shared infra above), but are surfaced here too for
-# backward compatibility. The import
-# is placed at the end to avoid a circular import (the factory module imports the
-# shared infra above).
-from nvalchemiops.interactions.electrostatics.ewald_real_factory import (  # noqa: E402, F401
-    alloc_ewald_real_sentinels,
-    get_ewald_real_kernel,
-    make_ewald_real_kernel,
-)

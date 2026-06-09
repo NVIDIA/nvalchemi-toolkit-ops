@@ -117,7 +117,9 @@ def generate_k_vectors_ewald_summation(
         Precomputed Miller-index half-bounds as returned by
         :func:`_generate_miller_indices`. Supplying Python integer bounds skips
         the device-to-host synchronization needed to derive FFT range sizes from
-        ``cell`` and ``k_cutoff`` inside tight regenerated-k-vector loops.
+        ``cell`` and ``k_cutoff`` inside tight regenerated-k-vector loops. Tensor
+        bounds are accepted for convenience but are read back to Python integers
+        during setup.
 
     Returns
     -------

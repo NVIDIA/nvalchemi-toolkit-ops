@@ -17,10 +17,11 @@
 
 The public ``compute_forces`` / ``compute_charge_gradients`` / ``compute_virial`` /
 ``hybrid_forces`` flags return the same legacy tuples as before -- explicit forces
-(``-dE/dR``), charge gradients (``dE/dq``) and virial (``W = -dE/dstrain``) computed
-directly from the factory ``order="forward"`` kernels (``_DerivState.E_F`` /
-``E_F_dQ`` + ``cell_grad`` for the virial). These match the hand-written kernels
-bit-exactly with the legacy kernels and run tape-free. The energy itself
+(``-dE/dR``), charge gradients (``dE/dq``) and row-vector displacement virial
+(``W = -dE/dstrain``) computed directly from the factory ``order="forward"``
+kernels (``_DerivState.E_F`` / ``E_F_dQ`` + ``cell_grad`` for the virial).
+These match the hand-written kernels bit-exactly with the legacy kernels and run
+tape-free. The energy itself
 is produced and connected to autograd separately by the explicit chains; this module
 only fills the extra (forward-only) tuple slots.
 """

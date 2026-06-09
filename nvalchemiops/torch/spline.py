@@ -30,6 +30,8 @@ SUPPORTED ORDERS
 - Order 2: Linear
 - Order 3: Quadratic
 - Order 4: Cubic (recommended for PME)
+- Order 5: Quartic
+- Order 6: Quintic
 
 OPERATIONS
 ==========
@@ -157,6 +159,10 @@ from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_
 ###########################################################################################
 ########################### Internal Custom Ops: _spline_* (Single-System) #################
 ###########################################################################################
+
+# Custom-op registration names are internal dispatch keys. Legacy
+# ``alchemiops::`` keys are retained for compatibility; new registrations use
+# ``nvalchemiops::``.
 
 
 @warp_custom_op(
@@ -288,7 +294,6 @@ def _spread_forward_launch(
 
     # Per-order specialized spread kernel: one-thread-per-atom layout
     # with fully-unrolled order^3 stencil and 1D weights in registers.
-    # Substantially faster than the generic kernel at order=6, 128k atoms.
     per_order_kernel = _PER_ORDER_SPREAD_KERNELS[wp_dtype].get(spline_order)
 
     with _scoped_warp_stream(positions.device):
@@ -475,8 +480,9 @@ def _pos_hessian_forward_launch(
 # Register the two raw warp helpers used inside spline backward chains as
 # forward-only custom_ops so that under torch.compile fullgraph=True, AOT
 # autograd traces through gather_gradient.backward → these helpers cleanly.
-# No register_autograd needed — third-order autograd through them is not
-# exercised by any workflow check; AOT treats them as opaque single nodes.
+# No register_autograd is registered: these helpers are forward-only custom ops
+# for compiled second-order spline chains, not a supported third-order
+# differentiation surface.
 register_warp_op_chain(
     name="nvalchemiops::spline_spread_gradient_weights",
     forward=_spread_gradient_weights_launch,
@@ -617,6 +623,13 @@ def _cell_inv_t_grad_from_force(
     cell = torch.linalg.inv(cell_inv_t.transpose(-1, -2))  # (1, 3, 3)
     qgf = -(forces @ cell[0].transpose(-1, -2))
     return (qgf.transpose(-1, -2) @ positions).unsqueeze(0)
+
+
+def _expand_shared_cell(cell: torch.Tensor, num_systems: int) -> torch.Tensor:
+    """Expand a shared 2-D cell to a batched cell without reading ``batch_idx``."""
+    if cell.dim() == 2:
+        return cell.unsqueeze(0).expand(num_systems, -1, -1).contiguous()
+    return cell
 
 
 # Single-system spread + gather. These are mathematical adjoints, so each
@@ -921,9 +934,8 @@ def _gather_with_force_forward_launch(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Single-system fused gather + gather-gradient forward launch.
 
-    Selects the per-order specialized kernel for orders 2-6 (~9x faster
-    than the generic runtime-order kernel) when available; falls back to
-    the generic kernel otherwise.
+    Selects the per-order specialized kernel for orders 2-6 when available;
+    falls back to the generic kernel otherwise.
     """
     device = wp.device_from_torch(positions.device)
     input_dtype = positions.dtype
@@ -2496,7 +2508,7 @@ def spline_spread(
     mesh_dims : tuple[int, int, int]
         Mesh dimensions (nx, ny, nz).
     spline_order : int, default=4
-        B-spline order (1-4, where 4=cubic).
+        B-spline order (1-6, where 4=cubic).
     batch_idx : torch.Tensor | None, shape (N,), dtype=int32, default=None
         System index for each atom. If None, uses single-system kernel.
     cell_inv_t : torch.Tensor | None, default=None
@@ -2569,9 +2581,7 @@ def spline_gather(
         return _spline_gather(positions, mesh, cell, spline_order, cell_inv_t)
     else:
         # Ensure cell is 3D for batch operations
-        if cell.dim() == 2:
-            num_systems = int(batch_idx.max().item()) + 1
-            cell = cell.unsqueeze(0).expand(num_systems, -1, -1).contiguous()
+        cell = _expand_shared_cell(cell, mesh.shape[0])
         return _batch_spline_gather(
             positions, mesh, batch_idx, cell, spline_order, cell_inv_t
         )
@@ -2620,9 +2630,7 @@ def spline_gather_vec3(
         )
     else:
         # Ensure cell is 3D for batch operations
-        if cell.dim() == 2:
-            num_systems = int(batch_idx.max().item()) + 1
-            cell = cell.unsqueeze(0).expand(num_systems, -1, -1).contiguous()
+        cell = _expand_shared_cell(cell, mesh.shape[0])
         return _batch_spline_gather_vec3(
             positions, charges, mesh, batch_idx, cell, spline_order, cell_inv_t
         )
@@ -2675,9 +2683,7 @@ def spline_gather_gradient(
         )
     else:
         # Ensure cell is 3D for batch operations
-        if cell.dim() == 2:
-            num_systems = int(batch_idx.max().item()) + 1
-            cell = cell.unsqueeze(0).expand(num_systems, -1, -1).contiguous()
+        cell = _expand_shared_cell(cell, mesh.shape[0])
         return _batch_spline_gather_gradient(
             positions, charges, mesh, batch_idx, cell, spline_order, cell_inv_t
         )
@@ -2720,9 +2726,7 @@ def spline_gather_with_force(
     wp_dtype = get_wp_dtype(positions.dtype)
     if spline_order in _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS[wp_dtype]:
         # Ensure cell is 3D for batched operations.
-        if cell.dim() == 2:
-            num_systems = int(batch_idx.max().item()) + 1
-            cell = cell.unsqueeze(0).expand(num_systems, -1, -1).contiguous()
+        cell = _expand_shared_cell(cell, mesh.shape[0])
         return _batch_spline_gather_with_force(
             positions, charges, mesh, batch_idx, cell, spline_order, cell_inv_t
         )
@@ -2771,7 +2775,7 @@ def spline_spread_channels(
     mesh_dims : tuple[int, int, int]
         Mesh dimensions (nx, ny, nz).
     spline_order : int, default=4
-        B-spline order (1-4, where 4=cubic).
+        B-spline order (1-6, where 4=cubic).
     batch_idx : torch.Tensor | None, shape (N,), dtype=int32, default=None
         System index for each atom. If None, uses single-system kernel.
 
@@ -2804,10 +2808,10 @@ def spline_spread_channels(
         )
     else:
         if cell.dim() == 2:
-            num_systems = int(batch_idx.max().item()) + 1
-            cell = cell.unsqueeze(0).expand(num_systems, -1, -1).contiguous()
-        else:
-            num_systems = cell.shape[0]
+            raise ValueError(
+                "batched spline_spread_channels requires cell with shape (B, 3, 3)"
+            )
+        num_systems = cell.shape[0]
         return _batch_spline_spread_channels(
             positions,
             values,
@@ -2863,9 +2867,7 @@ def spline_gather_channels(
         return _spline_gather_channels(positions, mesh, cell, spline_order)
     else:
         # Ensure cell is 3D for batch operations
-        if cell.dim() == 2:
-            num_systems = int(batch_idx.max().item()) + 1
-            cell = cell.unsqueeze(0).expand(num_systems, -1, -1).contiguous()
+        cell = _expand_shared_cell(cell, mesh.shape[0])
         return _batch_spline_gather_channels(
             positions, mesh, batch_idx, cell, spline_order
         )
@@ -3111,6 +3113,7 @@ __all__ = [
     "spline_gather",
     "spline_gather_vec3",
     "spline_gather_gradient",
+    "spline_gather_with_force",
     # Unified PyTorch API (multi-channel)
     "spline_spread_channels",
     "spline_gather_channels",

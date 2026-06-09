@@ -84,7 +84,8 @@ systems:
     batch_sizes: [1, 4]
 
 # Methods to benchmark. Honored when --method is NOT passed on the CLI;
-# CLI takes precedence when given. Valid entries: ewald, pme, dsf.
+# CLI takes precedence when given. Valid entries: ewald, ewald_slab, pme,
+# pme_slab, dsf.
 methods:
   - ewald
   - pme

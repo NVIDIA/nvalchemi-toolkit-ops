@@ -50,6 +50,8 @@ In this example you will learn:
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import torch
 
@@ -74,7 +76,7 @@ dtype = torch.float64
 # Create a NaCl Crystal System
 # ----------------------------
 # A small NaCl rock-salt supercell (2x2x2 = 16 atoms) is enough to demonstrate
-# every derivative path. Charges are ``float64`` (the supported charge dtype).
+# every derivative path. Charges use the same floating dtype as the geometry.
 
 
 def create_nacl_system(n_cells: int = 2, lattice_constant: float = 5.64):
@@ -143,9 +145,15 @@ print(f"max force magnitude: {forces.norm(dim=1).max().item():.6f}")
 # Migration check: the autograd force equals the legacy ``compute_forces=True``
 # direct output (the deprecated flag still works, with a ``DeprecationWarning``).
 
-_, forces_direct = particle_mesh_ewald(
-    positions, charges, cell, compute_forces=True, **pme_kwargs
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        message=".*compute_forces.*",
+    )
+    _, forces_direct = particle_mesh_ewald(
+        positions, charges, cell, compute_forces=True, **pme_kwargs
+    )
 
 force_diff = (forces - forces_direct).abs().max().item()
 print(f"max |autograd force - direct force|: {force_diff:.2e}")
@@ -177,7 +185,7 @@ forces_qr = -torch.autograd.grad(energy.sum(), positions_q, create_graph=True)[0
 
 target_forces = torch.zeros_like(forces_qr)
 force_loss = (forces_qr - target_forces).pow(2).sum()
-force_loss.backward()  # explicit double-backward kernels, no tape replay
+force_loss.backward()  # differentiates through the force construction
 
 print(f"\nq(R) force-loss backward OK; weight.grad shape: {tuple(weight.grad.shape)}")
 if not torch.isfinite(weight.grad).all():
@@ -195,8 +203,8 @@ if not torch.isfinite(weight.grad).all():
 # ------------------------------
 # ``strain`` is not a PME argument. Build a differentiable strain tensor, deform
 # positions and cell by ``I + strain``, and let autograd map gradients back to
-# strain. The virial is ``W = -dE/d(strain)``; see the user guide and
-# ``conventions.md`` for the project-wide stress sign (``stress = -W / V``).
+# strain. The virial is ``W = -dE/d(strain)`` and tensile-positive stress is
+# ``dE/d(strain) / V``; see ``conventions.md`` for the project-wide sign.
 
 num_systems = cell.shape[0]
 positions_s = positions.detach().requires_grad_(True)
@@ -206,15 +214,14 @@ deform = eye + strain
 
 # Single system: every atom maps to system 0.
 batch_idx = torch.zeros(positions_s.shape[0], dtype=torch.int32, device=device)
-positions_def = torch.bmm(
-    positions_s.unsqueeze(1), deform[batch_idx].transpose(1, 2)
-).squeeze(1)
-cell_def = torch.bmm(cell, deform.transpose(1, 2))
+positions_def = torch.einsum("ni,nij->nj", positions_s, deform[batch_idx])
+cell_def = torch.einsum("bij,bjk->bik", cell, deform)
 
 energy = particle_mesh_ewald(positions_def, charges, cell_def, **pme_kwargs)
-virial = -torch.autograd.grad(energy.sum(), strain)[0]
+grad_strain = torch.autograd.grad(energy.sum(), strain)[0]
+virial = -grad_strain
 volume = torch.abs(torch.linalg.det(cell_def))
-stress = -virial / volume[:, None, None]  # tensile-positive Cauchy (conventions.md)
+stress = grad_strain / volume[:, None, None]  # tensile-positive Cauchy
 
 print(f"\nvirial shape: {tuple(virial.shape)}")
 print(f"stress shape: {tuple(stress.shape)}")
@@ -223,9 +230,15 @@ print(f"stress shape: {tuple(stress.shape)}")
 # Migration check: the strain-first virial equals the legacy
 # ``compute_virial=True`` direct virial (both are ``-dE/d(strain)``).
 
-_, virial_direct = particle_mesh_ewald(
-    positions, charges, cell, compute_virial=True, **pme_kwargs
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        message=".*compute_virial.*",
+    )
+    _, virial_direct = particle_mesh_ewald(
+        positions, charges, cell, compute_virial=True, **pme_kwargs
+    )
 
 virial_diff = (virial - virial_direct).abs().max().item()
 print(f"max |strain-first virial - direct virial|: {virial_diff:.2e}")
@@ -244,18 +257,17 @@ weight_s = torch.randn(3, dtype=dtype, device=device, requires_grad=True)
 positions_s = positions.detach().requires_grad_(True)
 strain = torch.zeros(num_systems, 3, 3, device=device, dtype=dtype, requires_grad=True)
 deform = torch.eye(3, device=device, dtype=dtype).unsqueeze(0) + strain
-positions_def = torch.bmm(
-    positions_s.unsqueeze(1), deform[batch_idx].transpose(1, 2)
-).squeeze(1)
-cell_def = torch.bmm(cell, deform.transpose(1, 2))
+positions_def = torch.einsum("ni,nij->nj", positions_s, deform[batch_idx])
+cell_def = torch.einsum("bij,bjk->bik", cell, deform)
 
 charges_qr = positions_def @ weight_s
 charges_qr = charges_qr - charges_qr.mean()
 
 energy = particle_mesh_ewald(positions_def, charges_qr, cell_def, **pme_kwargs)
-virial = -torch.autograd.grad(energy.sum(), strain, create_graph=True)[0]
+grad_strain = torch.autograd.grad(energy.sum(), strain, create_graph=True)[0]
+virial = -grad_strain
 volume = torch.abs(torch.linalg.det(cell_def))
-stress = -virial / volume[:, None, None]
+stress = grad_strain / volume[:, None, None]
 
 stress_loss = stress.pow(2).sum()
 stress_loss.backward()
@@ -281,10 +293,8 @@ strain_m = torch.zeros(
     num_systems, 3, 3, device=device, dtype=dtype, requires_grad=True
 )
 deform_m = torch.eye(3, device=device, dtype=dtype).unsqueeze(0) + strain_m
-positions_md = torch.bmm(
-    positions_m.unsqueeze(1), deform_m[batch_idx].transpose(1, 2)
-).squeeze(1)
-cell_md = torch.bmm(cell, deform_m.transpose(1, 2))
+positions_md = torch.einsum("ni,nij->nj", positions_m, deform_m[batch_idx])
+cell_md = torch.einsum("bij,bjk->bik", cell, deform_m)
 charges_m = positions_md @ weight_m
 charges_m = charges_m - charges_m.mean()
 
@@ -294,10 +304,13 @@ energy = particle_mesh_ewald(positions_md, charges_m, cell_md, **pme_kwargs)
 grad_pos, grad_strain = torch.autograd.grad(
     energy.sum(), (positions_m, strain_m), create_graph=True
 )
+# ``positions_m`` are the undeformed reference coordinates, so ``forces_m`` are
+# reference-frame forces. Differentiate with respect to ``positions_md`` instead
+# when training against deformed-coordinate force targets.
 forces_m = -grad_pos
 virial_m = -grad_strain
 volume_m = torch.abs(torch.linalg.det(cell_md))
-stress_m = -virial_m / volume_m[:, None, None]
+stress_m = grad_strain / volume_m[:, None, None]
 
 mixed_loss = energy.sum() + forces_m.pow(2).sum() + stress_m.pow(2).sum()
 mixed_loss.backward()
@@ -316,14 +329,20 @@ energy = particle_mesh_ewald(positions, charges_g, cell, **pme_kwargs)
 charge_grad = torch.autograd.grad(energy.sum(), charges_g)[0]
 print(f"\ncharge gradient shape: {tuple(charge_grad.shape)}")
 
-_, _, charge_grad_direct = particle_mesh_ewald(
-    positions,
-    charges,
-    cell,
-    compute_forces=True,
-    compute_charge_gradients=True,
-    **pme_kwargs,
-)
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        message=".*compute_forces.*",
+    )
+    _, _, charge_grad_direct = particle_mesh_ewald(
+        positions,
+        charges,
+        cell,
+        compute_forces=True,
+        compute_charge_gradients=True,
+        **pme_kwargs,
+    )
 
 cg_diff = (charge_grad - charge_grad_direct).abs().max().item()
 print(f"max |autograd dE/dq - direct dE/dq|: {cg_diff:.2e}")
@@ -340,8 +359,8 @@ if cg_diff >= 1e-6:
 # 2. **q(R) forces** -- keep ``charges = charge_model(positions)`` in the graph so
 #    the full ``dE/dR`` includes the ``dE/dq . dq/dR`` charge-model term.
 # 3. **Virial / stress** -- strain-first: deform positions and cell by
-#    ``I + strain``, then ``virial = -grad(E.sum(), strain)``,
-#    ``stress = -virial / volume[:, None, None]``.
+#    ``I + strain``, then ``virial = -grad(E.sum(), strain)`` and
+#    ``stress = grad(E.sum(), strain) / volume[:, None, None]``.
 # 4. **Charge gradients** -- ``dE/dq = torch.autograd.grad(E.sum(), charges)[0]``.
 # 5. **Combined E + F + stress loss** -- take forces and virial from a single
 #    ``torch.autograd.grad(E.sum(), (positions, strain), create_graph=True)`` call,

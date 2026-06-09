@@ -1,5 +1,5 @@
 :mod:`nvalchemiops.torch.interactions.electrostatics`: Electrostatics
-========================
+======================================================================
 
 .. currentmodule:: nvalchemiops.torch.interactions.electrostatics
 
@@ -8,6 +8,16 @@ long-range electrostatic interactions for molecular simulations with **PyTorch**
 These functions accept standard ``torch.Tensor`` inputs and support automatic differentiation.
 Ewald and PME support full autograd for positions, charges, and cell parameters.
 DSF supports charge gradients via autograd; forces and virials are computed analytically.
+Setup parameters such as ``alpha``, cutoffs, mesh controls, batch metadata, and
+neighbor topology are treated as constants. Cell-derived caches such as
+``k_vectors``, ``k_squared``, ``volume``, and ``cell_inv_t`` are accepted when
+``cell.requires_grad`` is true, but they are static metadata and are assumed to
+correspond to the current ``cell``; their cache-generation derivatives are not
+recovered. Energy-returning Ewald, PME, and slab paths support atom-weighted
+losses such as ``(weights * energies).sum()`` for positions, charges, and
+supported cell derivatives.
+Point-charge Ewald/PME inputs support ``float32`` and ``float64``. Keep all
+floating inputs and precomputed metadata in a call on a consistent dtype.
 
 .. tip::
     For the underlying framework-agnostic Warp kernels, see :doc:`../warp/electrostatics`.
@@ -61,9 +71,7 @@ PME Components
 Individual components of the Particle Mesh Ewald method.
 
 .. autofunction:: pme_reciprocal_space
-.. autofunction:: pme_green_structure_factor
-.. autofunction:: pme_energy_corrections
-.. autofunction:: pme_energy_corrections_with_charge_grad
+.. autofunction:: compute_bspline_moduli_1d
 
 K-Vector Generation
 -------------------

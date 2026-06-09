@@ -13,56 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explicit ``ewald_real`` autograd chain.
+"""Explicit ``ewald_real`` Torch autograd chain.
 
-Replaces the real-space Warp-tape ops with an explicit
-forward -> backward -> double_backward chain over the factory kernels
-(``order in {"forward", "backward", "double_backward"}``), registered through
-:func:`register_warp_op_chain`. Two chains are registered -- single-system and
-batched -- each dispatching the neighbor-list (CSR) vs neighbor-matrix (NM)
-layout at run time via a ``use_matrix`` flag (the unused layout's tensors are
-passed as zero-size placeholders, mirroring the kernel's dead-branch design).
-The float32/float64 specialization is selected inside the launcher from
-``positions.dtype``.
+The chain registers forward, backward, and double-backward custom ops over the
+factory kernels for single-system and batched calls. Forward emits per-atom
+energies plus detached first-derivative caches when an input requires grad;
+backward scales those caches by the per-system energy cotangent; double-backward
+recomputes the pair Hessian-vector product from the forward inputs.
 
-* forward  -- the **fused** ``order="forward"`` E_F / E_F_dQ kernel: it
-  produces per-atom energy ``(N,)`` AND the first-order derivative caches
-  (``dE/dR`` = ``-force``, ``dE/dq``) in ONE pair-loop traversal when an input
-  requires grad. The caches are returned (detached) as extra op outputs and threaded
-  to the backward op via ``register_warp_op_chain(save_forward_outputs=...)``. When
-  nothing requires grad the energy-only ``_DerivState.E`` kernel runs (inference
-  cost unchanged); the energy value is bit-identical across the deriv states
-  (real-space energy uses the same per-pair ``@wp.func`` regardless of ``DERIV``).
-* backward -- a cheap per-system **scale** of the detached caches:
-  ``grad_positions = grad_energy * dE/dR`` and ``grad_charges = grad_energy * dE/dq``
-  (no second pair loop). Numerically identical to the old ``order="backward"``
-  kernel output (same per-system mean reduction; the ``-force`` negation is folded
-  into the ``dE/dR`` cache).
-* double_backward -- ``order="double_backward"`` (pair-Hessian / HVP),
-  **recompute** from the still-threaded forward inputs, so force-loss
-  ``create_graph=True`` double-backward runs tape-free. The detached caches are
-  first-order value only and are NOT differentiated (no double-count).
-
-**Cell gradient.** The ``order="backward"`` ``grad_cell``
-output is the *strain-virial* state ``W = sum sep (x) F = -dE/dstrain`` (the legacy
-direct ``compute_virial`` observable), **not** the literal ``dE/dcell``. The public
-``ewald_real_space(...).sum().backward()`` cell gradient must be the literal
-``dE/dcell`` (it is compared against the TorchPME ``S = shifts @ cell`` reference and
-must compose correctly through the strain Jacobian). The two are not equal, so the
-chain differentiates **positions and charges only** (``cell_grad=False``) and the
-cell gradient is produced by :class:`_RealCellGrad`, a small autograd Function that
-recomputes the real-space erfc energy through the differentiable periodic shift
-``periodic_shift = unit_shifts @ cell`` and emits ``dE/dcell`` (and, under
-``create_graph``, the ``dE/dR dcell`` / ``dE/dq dcell`` cross terms for stress-loss
-double-backward). This mirrors how the reciprocal path routes ``cell`` through Torch
-via ``k_vectors(cell)`` / ``det(cell)``. The cell-gradient kernels are retained
-for the legacy ``compute_virial`` direct output.
-
-The public energy is per-atom ``(N,)`` while the backward consumes a per-system
-``grad_energy`` ``(S,)``. The chain reduces the per-atom cotangent to per-system by a
-per-system **mean**: the supported ``E.sum()`` contract has a uniform per-system
-cotangent, so the mean recovers it exactly (the double-backward distributes the
-per-system ``dL/d(grad_energy)`` back to atoms by ``1/count`` to match).
+The chain owns position and charge derivatives. Literal ``dE/dcell`` is produced
+through a Torch autograd path over periodic shifts, while direct-output virials
+continue to use the legacy strain-virial kernels.
 """
 
 from __future__ import annotations
@@ -90,13 +51,22 @@ from nvalchemiops.interactions.electrostatics.ewald_real_factory import (
 from nvalchemiops.torch._warp_op_helpers import (
     register_warp_op_chain,
 )
+from nvalchemiops.torch.interactions.electrostatics._util import (
+    _is_per_system_uniform_cotangent,
+)
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 __all__ = [
     "ewald_real_energy_single",
     "ewald_real_energy_batch",
+    "register_ewald_real_ops",
     "real_space_cell_connect",
 ]
+
+_REAL_SINGLE: dict[str, object] | None = None
+_REAL_BATCH: dict[str, object] | None = None
+_LITERAL_CELL_GRAD: dict[str, object] | None = None
+_EWALD_REAL_OPS_REGISTERED = False
 
 
 def _wp(tensor: torch.Tensor, dtype):
@@ -153,19 +123,11 @@ def _cotangent_per_system_uniform(grad_energy_atom, batch_idx, num_systems):
     uniform within a system (e.g. ``energy.sum()``). A non-uniform per-atom cotangent
     (a per-atom-energy-weighted loss) needs the weighted recompute below.
     """
-    g = grad_energy_atom.reshape(-1)
-    if g.numel() <= 1:
-        return True
-    if g.is_cuda:
-        return False
-    if batch_idx is None:
-        return bool(torch.all(g == g[0]).item())
-    g64 = g.to(torch.float64)
-    bi = batch_idx.to(torch.long)
-    sys_max = torch.full(
-        (num_systems,), float("-inf"), dtype=torch.float64, device=g.device
-    ).scatter_reduce(0, bi, g64, reduce="amax", include_self=False)
-    return bool(torch.all(g64 == sys_max.index_select(0, bi)).item())
+    return _is_per_system_uniform_cotangent(
+        grad_energy_atom,
+        batch_idx,
+        num_systems,
+    )
 
 
 def _neighbor_edges(
@@ -504,22 +466,17 @@ def _backward_impl(
         if edge_i.numel() > 0 and (need_pos or need_charge):
             with torch.inference_mode(False), torch.enable_grad():
 
+                def _copy64(t):
+                    return torch.empty_like(t, dtype=torch.float64).copy_(t).detach()
+
                 def _leaf(t):
-                    return (
-                        torch.empty_like(t, dtype=torch.float64)
-                        .copy_(t)
-                        .requires_grad_(True)
-                    )
+                    return _copy64(t).requires_grad_(True)
 
                 p_leaf = _leaf(positions)
                 q_leaf = _leaf(charges)
-                c_buf = torch.empty_like(cell, dtype=torch.float64).copy_(cell)
-                alpha_f = torch.empty_like(alpha, dtype=torch.float64).copy_(alpha)
-                w_f = (
-                    torch.empty_like(grad_energy_atom, dtype=torch.float64)
-                    .copy_(grad_energy_atom)
-                    .reshape(-1)
-                )
+                c_buf = _copy64(cell)
+                alpha_f = _copy64(alpha)
+                w_f = _copy64(grad_energy_atom).reshape(-1)
                 loss = _real_space_weighted_energy(
                     p_leaf,
                     q_leaf,
@@ -1041,56 +998,84 @@ def _real_double_backward_fake(
     )
 
 
-_real_single = register_warp_op_chain(
-    name="nvalchemiops::ewald_real_energy_single",
-    forward=_real_forward_single,
-    backward=_real_backward_single,
-    double_backward=_real_double_backward_single,
-    forward_fake=_real_forward_fake,
-    backward_fake=_real_backward_fake,
-    double_backward_fake=_real_double_backward_fake,
-    forward_return_arity=5,
-    propagate_outputs=(0,),
-    save_forward_outputs=(1, 2),
-    diff_input_positions=(0, 1, 2),
-    n_forward_inputs=15,
-    backward_return_arity=3,
-    second_order_diff_positions=(2, 3, 4, 5),
-    n_backward_inputs=18,
-    double_backward_return_arity=4,
-)
+def register_ewald_real_ops() -> None:
+    """Register the Ewald real-space Torch custom-op chain once."""
+    global _EWALD_REAL_OPS_REGISTERED, _LITERAL_CELL_GRAD, _REAL_BATCH, _REAL_SINGLE
+    if _EWALD_REAL_OPS_REGISTERED:
+        return
 
-ewald_real_energy_single = _real_single["forward"]
+    _REAL_SINGLE = register_warp_op_chain(
+        name="nvalchemiops::ewald_real_energy_single",
+        forward=_real_forward_single,
+        backward=_real_backward_single,
+        double_backward=_real_double_backward_single,
+        forward_fake=_real_forward_fake,
+        backward_fake=_real_backward_fake,
+        double_backward_fake=_real_double_backward_fake,
+        forward_return_arity=5,
+        propagate_outputs=(0,),
+        save_forward_outputs=(1, 2),
+        diff_input_positions=(0, 1, 2),
+        n_forward_inputs=15,
+        backward_return_arity=3,
+        second_order_diff_positions=(2, 3, 4, 5),
+        n_backward_inputs=18,
+        double_backward_return_arity=4,
+    )
+
+    # Batched forward inputs (16): 0 positions, 1 charges, 2 cell, 3 alpha,
+    #   4 batch_idx, 5 idx_j, 6 neighbor_ptr, 7 neighbor_shifts, 8 neighbor_matrix,
+    #   9 neighbor_matrix_shifts, 10 mask_value, 11 use_matrix, 12 need_pos,
+    #   13 need_charge, 14 need_cell, 15 need_virial.
+    _REAL_BATCH = register_warp_op_chain(
+        name="nvalchemiops::ewald_real_energy_batch",
+        forward=_real_forward_batch,
+        backward=_real_backward_batch,
+        double_backward=_real_double_backward_batch,
+        forward_fake=_real_forward_fake,
+        backward_fake=_real_backward_fake,
+        double_backward_fake=_real_double_backward_fake,
+        forward_return_arity=5,
+        propagate_outputs=(0,),
+        save_forward_outputs=(1, 2),
+        diff_input_positions=(0, 1, 2),
+        n_forward_inputs=16,
+        backward_return_arity=3,
+        second_order_diff_positions=(2, 3, 4, 5),
+        n_backward_inputs=19,
+        double_backward_return_arity=4,
+        batch_match=True,
+    )
+
+    _LITERAL_CELL_GRAD = register_warp_op_chain(
+        name="nvalchemiops::ewald_real_literal_cell_grad",
+        forward=_literal_cell_grad_forward,
+        backward=_literal_cell_grad_backward,
+        forward_fake=_literal_cell_grad_fake,
+        backward_fake=_literal_cell_grad_backward_fake,
+        diff_input_positions=(0, 1, 2, 12),
+        n_forward_inputs=13,
+        forward_return_arity=1,
+        backward_return_arity=4,
+    )
+
+    _EWALD_REAL_OPS_REGISTERED = True
 
 
-# Batched forward inputs (16): 0 positions, 1 charges, 2 cell, 3 alpha,
-#   4 batch_idx, 5 idx_j, 6 neighbor_ptr, 7 neighbor_shifts, 8 neighbor_matrix,
-#   9 neighbor_matrix_shifts, 10 mask_value, 11 use_matrix, 12 need_pos, 13 need_charge,
-#   14 need_cell, 15 need_virial.
-# Forward OUTPUTS (5): + 3 literal dE/dcell cache, 4 direct virial.
-# Backward op inputs (19): 2 caches + grad_energy(2) + 16 forward inputs (3..18).
+def ewald_real_energy_single(*args, **kwargs):
+    """Call the registered single-system Ewald real-space energy op."""
+    register_ewald_real_ops()
+    if _REAL_SINGLE is None:
+        raise RuntimeError("Ewald real single-system op registration failed")
+    return _REAL_SINGLE["forward"](*args, **kwargs)
 
-_real_batch = register_warp_op_chain(
-    name="nvalchemiops::ewald_real_energy_batch",
-    forward=_real_forward_batch,
-    backward=_real_backward_batch,
-    double_backward=_real_double_backward_batch,
-    forward_fake=_real_forward_fake,
-    backward_fake=_real_backward_fake,
-    double_backward_fake=_real_double_backward_fake,
-    forward_return_arity=5,
-    propagate_outputs=(0,),
-    save_forward_outputs=(1, 2),
-    diff_input_positions=(0, 1, 2),
-    n_forward_inputs=16,
-    backward_return_arity=3,
-    second_order_diff_positions=(2, 3, 4, 5),
-    n_backward_inputs=19,
-    double_backward_return_arity=4,
-    batch_match=True,
-)
 
-ewald_real_energy_batch = _real_batch["forward"]
+def ewald_real_energy_batch(*args, **kwargs):
+    """Call the registered batched Ewald real-space energy op."""
+    register_ewald_real_ops()
+    if _REAL_BATCH is None:
+        raise RuntimeError("Ewald real batched op registration failed")
+    return _REAL_BATCH["forward"](*args, **kwargs)
 
 
 # ===========================================================================
@@ -1734,19 +1719,6 @@ def _literal_cell_grad_backward_fake(h_cell, positions, charges, cell, *args):
     )
 
 
-_literal_cell_grad = register_warp_op_chain(
-    name="nvalchemiops::ewald_real_literal_cell_grad",
-    forward=_literal_cell_grad_forward,
-    backward=_literal_cell_grad_backward,
-    forward_fake=_literal_cell_grad_fake,
-    backward_fake=_literal_cell_grad_backward_fake,
-    diff_input_positions=(0, 1, 2, 12),
-    n_forward_inputs=13,
-    forward_return_arity=1,
-    backward_return_arity=4,
-)
-
-
 def _matrix_to_edges(
     neighbor_matrix: torch.Tensor, neighbor_matrix_shifts: torch.Tensor, mask_value: int
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -2129,6 +2101,7 @@ def real_space_cell_connect(
     empty ``neighbor_matrix``. The connector's backward selects the matching path.
     See :class:`_RealCellGrad`.
     """
+    register_ewald_real_ops()
     return energy + _RealCellGrad.apply(
         positions,
         charges,

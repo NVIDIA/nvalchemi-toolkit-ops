@@ -47,7 +47,6 @@ from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
 )
 from nvalchemiops.jax.interactions.electrostatics._autograd import (
     _cell_grad_from_strain_virial,
-    _direct_output_deprecation_msg,
     _inject_charge_grad,
 )
 from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
@@ -55,6 +54,8 @@ from nvalchemiops.jax.interactions.electrostatics._lazy_jax_kernels import (
 )
 from nvalchemiops.jax.interactions.electrostatics._utils import (
     _build_electrostatic_result,
+    _component_direct_output_deprecation_msg,
+    _direct_output_deprecation_msg,
     _normalize_dtype,
     _prepare_cell,
 )
@@ -535,7 +536,9 @@ def _ewald_real_space_impl(
         Value indicating invalid entries in neighbor_matrix.
         If None (default), uses num_atoms as the mask value.
     batch_idx : jax.Array | None, shape (N,)
-        System index for each atom.
+        System index for each atom. When provided, atoms must be grouped by
+        system: ``batch_idx`` must be contiguous, nondecreasing, and use system
+        IDs ``0..B-1``.
     compute_forces : bool, default=False
         Whether to compute explicit forces.
     compute_charge_gradients : bool, default=False
@@ -660,9 +663,27 @@ def ewald_real_space(
     """Compute real-space Ewald energy and optional direct derivative outputs.
 
     Energy-only calls participate in JAX autodiff through a private custom-JVP
-    wrapper. Direct-output modes remain forward/direct escape hatches and keep
-    their existing tuple layout.
+    wrapper. ``compute_forces=True`` remains a forward/direct escape hatch for
+    no-autograd MD/inference loops; charge-gradient and virial direct outputs
+    are deprecated training-style outputs and warn.
     """
+    component_deprecated_flags = tuple(
+        name
+        for name, enabled in (
+            ("compute_charge_gradients", compute_charge_gradients),
+            ("compute_virial", compute_virial),
+        )
+        if enabled
+    )
+    if component_deprecated_flags:
+        warnings.warn(
+            _component_direct_output_deprecation_msg(
+                "ewald_real_space", component_deprecated_flags
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     if compute_forces or compute_charge_gradients or compute_virial:
         return _ewald_real_space_impl(
             positions=positions,
@@ -730,7 +751,9 @@ def _ewald_reciprocal_space_impl(
     alpha : float or jax.Array
         Ewald splitting parameter. Can be a float or array of shape (1,) or (B,).
     batch_idx : jax.Array | None, shape (N,)
-        System index for each atom.
+        System index for each atom. When provided, atoms must be grouped by
+        system: ``batch_idx`` must be contiguous, nondecreasing, and use system
+        IDs ``0..B-1``.
     max_atoms_per_system : int | None, optional
         Maximum number of atoms in any single system in the batch.
         Required when using ``jax.jit`` with batched inputs. If None,
@@ -772,11 +795,16 @@ def _ewald_reciprocal_space_impl(
     # Prepare alpha
     alpha_arr = _prepare_alpha_array(alpha, cell_cast.shape[0], dtype=dtype)
 
-    # Compute total charge (always float64)
-    # num_systems is derived from cell shape (cell is always (B, 3, 3) by caller convention)
+    # Compute total charge and Q/V correction factor (always float64).
+    # The Warp fill kernel also has a historical total_charge output slot; pass
+    # it a zero scratch buffer and use this explicit JAX value for corrections so
+    # the buffer cannot become Q + Q/V.
     total_charge = _compute_total_charge(
         charges_cast, batch_idx, num_systems=cell_cast.shape[0]
     )
+    volumes_for_background = jnp.abs(jnp.linalg.det(cell_cast)).astype(jnp.float64)
+    total_charge_over_volume = total_charge / volumes_for_background
+    fill_total_charge = jnp.zeros_like(total_charge)
 
     # Determine k-vector dimensions
     if is_batched:
@@ -833,7 +861,7 @@ def _ewald_reciprocal_space_impl(
             max_atoms_per_system + BATCH_BLOCK_SIZE - 1
         ) // BATCH_BLOCK_SIZE
 
-        (total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
+        (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
             _jax_batch_ewald_reciprocal_fill_structure_factors[dtype](
                 positions_cast,
                 charges_cast,
@@ -842,7 +870,7 @@ def _ewald_reciprocal_space_impl(
                 alpha_arr,
                 atom_start,
                 atom_end,
-                total_charge,
+                fill_total_charge,
                 cos_k_dot_r,
                 sin_k_dot_r,
                 real_sf,
@@ -851,14 +879,14 @@ def _ewald_reciprocal_space_impl(
             )
         )
     else:
-        (total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
+        (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
             _jax_ewald_reciprocal_fill_structure_factors[dtype](
                 positions_cast,
                 charges_cast,
                 k_vectors_cast,
                 cell_cast,
                 alpha_arr,
-                total_charge,
+                fill_total_charge,
                 cos_k_dot_r,
                 sin_k_dot_r,
                 real_sf,
@@ -963,7 +991,7 @@ def _ewald_reciprocal_space_impl(
             charges_cast,
             batch_idx_i32,
             alpha_arr,
-            total_charge,
+            total_charge_over_volume,
             raw_energies,
             energies,
             launch_dims=(num_atoms,),
@@ -972,7 +1000,7 @@ def _ewald_reciprocal_space_impl(
         (energies,) = _jax_ewald_subtract_self_energy[dtype](
             charges_cast,
             alpha_arr,
-            total_charge,
+            total_charge_over_volume,
             raw_energies,
             energies,
             launch_dims=(num_atoms,),
@@ -1032,17 +1060,12 @@ def _ewald_reciprocal_space_impl(
         alpha_val = alpha_arr[0] if not is_batched else alpha_arr[batch_idx]
         self_energy_grad = 2.0 * alpha_val / jnp.sqrt(PI) * charges_cast
 
-        # Background gradient: pi / (2 * alpha^2 * V) * Q_total
-        volume = jnp.abs(jnp.linalg.det(cell_cast)).astype(jnp.float64)
         if is_batched:
-            total_charge_per_atom = total_charge[batch_idx]
-            volume_per_atom = volume[batch_idx]
+            total_charge_over_volume_per_atom = total_charge_over_volume[batch_idx]
         else:
-            total_charge_per_atom = total_charge[0]
-            volume_per_atom = volume[0]
-
+            total_charge_over_volume_per_atom = total_charge_over_volume[0]
         background_grad = (
-            PI / (2.0 * alpha_val * alpha_val * volume_per_atom) * total_charge_per_atom
+            PI / (alpha_val * alpha_val) * total_charge_over_volume_per_atom
         )
 
         charge_grads = charge_grads - self_energy_grad - background_grad
@@ -1080,9 +1103,29 @@ def ewald_reciprocal_space(
     """Compute reciprocal-space Ewald energy and optional direct outputs.
 
     Energy-only calls participate in JAX autodiff through a private custom-JVP
-    wrapper. Direct-output modes remain forward/direct escape hatches and keep
-    their existing tuple layout.
+    wrapper. ``compute_forces=True`` remains a forward/direct escape hatch for
+    no-autograd MD/inference loops; charge-gradient and virial direct outputs
+    are deprecated training-style outputs and warn.
     """
+    component_deprecated_flags = tuple(
+        name
+        for name, enabled in (
+            ("compute_charge_gradients", compute_charge_gradients),
+            ("compute_virial", compute_virial),
+        )
+        if enabled
+    )
+    if component_deprecated_flags:
+        warnings.warn(
+            _component_direct_output_deprecation_msg(
+                "ewald_reciprocal_space", component_deprecated_flags
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    k_vectors = jax.lax.stop_gradient(k_vectors)
+
     if compute_forces or compute_charge_gradients or compute_virial:
         return _ewald_reciprocal_space_impl(
             positions=positions,
@@ -1405,7 +1448,7 @@ def _ewald_real_energy_derivatives(
     use_matrix: bool,
 ) -> tuple[jax.Array, jax.Array]:
     """Return real-space ``dE/dR`` and ``dE/dq`` with factory double-backward."""
-    energy, forces, charge_grads = ewald_real_space(
+    energy, forces, charge_grads = _ewald_real_space_impl(
         positions=positions,
         charges=charges,
         cell=cell,
@@ -1432,7 +1475,7 @@ def _ewald_real_energy_derivatives_jvp(
     primals: tuple[jax.Array | None, ...],
     tangents: tuple[jax.Array | None, ...],
 ) -> tuple[tuple[jax.Array, jax.Array], tuple[jax.Array, jax.Array]]:
-    """JVP rule for real-space first derivatives using K1 double-backward."""
+    """JVP rule for real-space first derivatives using real-space double-backward."""
     deriv_state = (
         _DerivState.E_F if _is_symbolic_zero(tangents[1]) else _DerivState.E_F_dQ
     )
@@ -1580,7 +1623,7 @@ def _ewald_reciprocal_energy_derivatives(
     max_atoms_per_system: int | None,
 ) -> tuple[jax.Array, jax.Array]:
     """Return reciprocal ``dE/dR`` and ``dE/dq`` with factory double-backward."""
-    energy, forces, charge_grads = ewald_reciprocal_space(
+    energy, forces, charge_grads = _ewald_reciprocal_space_impl(
         positions=positions,
         charges=charges,
         cell=cell,
@@ -1602,7 +1645,7 @@ def _ewald_reciprocal_energy_derivatives_jvp(
     primals: tuple[jax.Array | None, ...],
     tangents: tuple[jax.Array | None, ...],
 ) -> tuple[tuple[jax.Array, jax.Array], tuple[jax.Array, jax.Array]]:
-    """JVP rule for reciprocal first derivatives using K2 double-backward."""
+    """JVP rule for reciprocal first derivatives using reciprocal double-backward."""
     positions, charges, cell, k_vectors, alpha, batch_idx = primals
     (
         v_pos,
@@ -1738,12 +1781,12 @@ def _ewald_reciprocal_energy_derivatives_jvp(
     alpha_per_atom = alpha_arr[0] if batch_idx is None else alpha_arr[batch_i32]
     self_hess = 2.0 * alpha_per_atom / jnp.sqrt(PI)
     if batch_idx is None:
-        bg_coeff = PI / (2.0 * alpha_arr[0] * alpha_arr[0] * volumes[0])
+        bg_coeff = PI / (alpha_arr[0] * alpha_arr[0] * volumes[0])
         bg_grad = jnp.full_like(
             charges, bg_coeff * v_charge_arr.sum(), dtype=jnp.float64
         )
     else:
-        bg_coeff = PI / (2.0 * alpha_arr * alpha_arr * volumes)
+        bg_coeff = PI / (alpha_arr * alpha_arr * volumes)
         vq_sum = (
             jnp.zeros((num_systems,), dtype=jnp.float64).at[batch_i32].add(v_charge_arr)
         )
@@ -2079,7 +2122,11 @@ def _ewald_real_space_energy_jvp_rule(
     )
     tpos = _tangent_or_zeros(t_positions, positions, dtype=positions.dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
-    if _is_symbolic_zero(t_charges) or not _is_symbolic_zero(t_cell):
+    if (
+        not _is_symbolic_zero(t_positions)
+        or not _is_symbolic_zero(t_charges)
+        or not _is_symbolic_zero(t_cell)
+    ):
         tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
         charges_ref = charges.astype(jnp.float64)
         tq_ref = tq.astype(jnp.float64)
@@ -2218,10 +2265,7 @@ def _ewald_reciprocal_space_energy_jvp_rule(
     tpos = _tangent_or_zeros(t_positions, positions, dtype=positions.dtype)
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
-    if not _is_symbolic_zero(t_cell):
-        tk = _kvector_tangent_from_cell(k_vectors, cell, tcell)
-    else:
-        tk = _tangent_or_zeros(_t_k_vectors, k_vectors, dtype=k_vectors.dtype)
+    tk = jnp.zeros_like(k_vectors)
     charges_ref = charges.astype(jnp.float64)
     tq_ref = tq.astype(jnp.float64)
     _reference_out, tangent_out = jax.jvp(
@@ -2245,7 +2289,7 @@ _ewald_reciprocal_space_energy_jvp.defjvp(
 )
 
 
-@functools.partial(jax.custom_jvp, nondiff_argnums=(11, 12))
+@functools.partial(jax.custom_jvp, nondiff_argnums=(11, 12, 13))
 def _ewald_summation_energy_jvp(
     positions: jax.Array,
     charges: jax.Array,
@@ -2258,6 +2302,7 @@ def _ewald_summation_energy_jvp(
     neighbor_shifts: jax.Array | None,
     neighbor_matrix: jax.Array | None,
     neighbor_matrix_shifts: jax.Array | None,
+    k_vectors_are_internal: bool,
     max_atoms_per_system: int | None,
     mask_value: int,
 ) -> jax.Array:
@@ -2284,6 +2329,7 @@ def _ewald_summation_energy_jvp(
 
 
 def _ewald_summation_energy_jvp_rule(
+    k_vectors_are_internal: bool,
     max_atoms_per_system: int | None,
     mask_value: int,
     primals: tuple[jax.Array | None, ...],
@@ -2329,6 +2375,7 @@ def _ewald_summation_energy_jvp_rule(
         neighbor_shifts,
         neighbor_matrix,
         neighbor_matrix_shifts,
+        k_vectors_are_internal,
         max_atoms_per_system,
         mask_value,
     )
@@ -2337,9 +2384,12 @@ def _ewald_summation_energy_jvp_rule(
     tq = _tangent_or_zeros(t_charges, charges, dtype=charges.dtype)
     tcell = _tangent_or_zeros(t_cell, cell, dtype=cell.dtype)
     if not _is_symbolic_zero(t_cell):
-        tk = _kvector_tangent_from_cell(k_vectors, cell, tcell)
+        if not k_vectors_are_internal:
+            tk = jnp.zeros_like(k_vectors)
+        else:
+            tk = _kvector_tangent_from_cell(k_vectors, cell, tcell)
     else:
-        tk = _tangent_or_zeros(_t_k_vectors, k_vectors, dtype=k_vectors.dtype)
+        tk = jnp.zeros_like(k_vectors)
     use_matrix = neighbor_matrix is not None and neighbor_matrix_shifts is not None
     _component_out, tangent_out = jax.jvp(
         lambda p, q, c, k: (
@@ -2357,14 +2407,13 @@ def _ewald_summation_energy_jvp_rule(
                 mask_value,
                 use_matrix,
             )
-            + _ewald_reciprocal_space_energy_jvp(
+            + _reciprocal_space_energy_reference(
                 p,
                 q,
                 c,
                 k,
                 alpha,
                 batch_idx,
-                max_atoms_per_system,
             )
         ),
         (positions, charges, cell, k_vectors),
@@ -2459,6 +2508,8 @@ def _ewald_summation_impl(
     k_vectors : jax.Array | None
         Reciprocal lattice vectors. If None, generated automatically.
         Shape (K, 3) for single system, (B, K, 3) for batch.
+        When supplied, treated as static metadata that corresponds to the
+        current ``cell``.
     k_cutoff : float | None
         K-space cutoff. Used only if k_vectors is None.
     miller_bounds : tuple[int, int, int] | None, optional
@@ -2468,7 +2519,9 @@ def _ewald_summation_impl(
         Use :func:`generate_miller_indices` to precompute. Ignored when
         ``k_vectors`` is explicitly provided.
     batch_idx : jax.Array | None, shape (N,)
-        System index for each atom.
+        System index for each atom. When provided, atoms must be grouped by
+        system: ``batch_idx`` must be contiguous, nondecreasing, and use system
+        IDs ``0..B-1``.
     max_atoms_per_system : int | None, optional
         Maximum number of atoms in any single system in the batch.
         Required when using ``jax.jit`` with batched inputs. If None,
@@ -2554,37 +2607,43 @@ def _ewald_summation_impl(
         alpha = jax.lax.stop_gradient(alpha)
         k_vectors = jax.lax.stop_gradient(k_vectors)
 
-    # Compute real-space component
-    real_result = ewald_real_space(
-        positions=positions,
-        charges=charges,
-        cell=cell,
-        alpha=alpha,
-        neighbor_list=neighbor_list,
-        neighbor_ptr=neighbor_ptr,
-        neighbor_shifts=neighbor_shifts,
-        neighbor_matrix=neighbor_matrix,
-        neighbor_matrix_shifts=neighbor_matrix_shifts,
-        mask_value=mask_value,
-        batch_idx=batch_idx,
-        compute_forces=compute_forces,
-        compute_charge_gradients=need_charge_gradients,
-        compute_virial=compute_virial,
-    )
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"The component direct-output flag\(s\).*",
+            category=DeprecationWarning,
+        )
+        # Compute real-space component
+        real_result = ewald_real_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            mask_value=mask_value,
+            batch_idx=batch_idx,
+            compute_forces=compute_forces,
+            compute_charge_gradients=need_charge_gradients,
+            compute_virial=compute_virial,
+        )
 
-    # Compute reciprocal-space component
-    recip_result = ewald_reciprocal_space(
-        positions=positions,
-        charges=charges,
-        cell=cell,
-        k_vectors=k_vectors,
-        alpha=alpha,
-        batch_idx=batch_idx,
-        max_atoms_per_system=max_atoms_per_system,
-        compute_forces=compute_forces,
-        compute_charge_gradients=need_charge_gradients,
-        compute_virial=compute_virial,
-    )
+        # Compute reciprocal-space component
+        recip_result = ewald_reciprocal_space(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            k_vectors=k_vectors,
+            alpha=alpha,
+            batch_idx=batch_idx,
+            max_atoms_per_system=max_atoms_per_system,
+            compute_forces=compute_forces,
+            compute_charge_gradients=need_charge_gradients,
+            compute_virial=compute_virial,
+        )
 
     slab_result = None
     if slab_correction:
@@ -2674,7 +2733,6 @@ def ewald_summation(
     alpha: float | jax.Array | None = None,
     k_vectors: jax.Array | None = None,
     k_cutoff: float | jax.Array | None = None,
-    miller_bounds: tuple[int, int, int] | None = None,
     batch_idx: jax.Array | None = None,
     max_atoms_per_system: int | None = None,
     neighbor_list: jax.Array | None = None,
@@ -2690,6 +2748,8 @@ def ewald_summation(
     hybrid_forces: bool = False,
     pbc: jax.Array | None = None,
     slab_correction: bool = False,
+    *,
+    miller_bounds: tuple[int, int, int] | None = None,
 ) -> jax.Array | tuple[jax.Array, ...]:
     """Compute complete Ewald summation.
 
@@ -2707,10 +2767,12 @@ def ewald_summation(
         Reciprocal lattice vectors. Generated from ``cell`` when omitted.
     k_cutoff : float, jax.Array, or None, default=None
         K-space cutoff used when generating ``k_vectors``.
-    miller_bounds : tuple[int, int, int] or None, default=None
+    miller_bounds : tuple[int, int, int] or None, default=None, keyword-only
         Static Miller-index bounds for JIT-compatible k-vector generation.
     batch_idx : jax.Array or None, default=None
-        System index for each atom.
+        System index for each atom. When provided, atoms must be grouped by
+        system: ``batch_idx`` must be contiguous, nondecreasing, and use system
+        IDs ``0..B-1``.
     max_atoms_per_system : int or None, default=None
         Static batch shape control for reciprocal kernels under ``jax.jit``.
     neighbor_list, neighbor_ptr, neighbor_shifts : jax.Array or None
@@ -2720,15 +2782,17 @@ def ewald_summation(
     mask_value : int or None, default=None
         Sentinel value for invalid neighbor-matrix entries.
     compute_forces : bool, default=False
-        Deprecated direct-output flag. Prefer energy autodiff for training.
+        Deprecated direct-output flag. Compute energy and use JAX autodiff for
+        differentiable forces.
     compute_charge_gradients : bool, default=False
-        Deprecated direct-output flag. Prefer energy autodiff for training.
+        Deprecated direct-output flag. Compute energy and use JAX autodiff for
+        ``dE/dq_i``.
     compute_virial : bool, default=False
-        Deprecated direct-output flag. Prefer strain-first energy autodiff.
+        Deprecated direct-output flag for the virial tensor.
     accuracy : float, default=1e-6
         Target accuracy for automatic parameter estimation.
     hybrid_forces : bool, default=False
-        Deprecated direct-output flag. Prefer differentiating through ``charges``.
+        Deprecated direct-output flag retained for transition compatibility.
     pbc : jax.Array, optional
         Per-system periodic boundary conditions for slab correction.
     slab_correction : bool, default=False
@@ -2739,24 +2803,60 @@ def ewald_summation(
     jax.Array or tuple[jax.Array, ...]
         Per-atom energy, plus deprecated direct outputs when requested.
     """
-    if (
-        compute_forces
-        or compute_charge_gradients
-        or compute_virial
-        or hybrid_forces
-        or slab_correction
+    if compute_forces or compute_virial or compute_charge_gradients or hybrid_forces:
+        warnings.warn(
+            _direct_output_deprecation_msg("ewald_summation"),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    if slab_correction and not (
+        compute_forces or compute_charge_gradients or compute_virial or hybrid_forces
     ):
-        if (
-            compute_forces
-            or compute_charge_gradients
-            or compute_virial
-            or hybrid_forces
-        ):
-            warnings.warn(
-                _direct_output_deprecation_msg("ewald_summation"),
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        generated_k_vectors = k_vectors is None
+        cell_3d, num_systems = _prepare_cell(cell)
+        pbc_prepared = _prepare_pbc_for_slab(pbc, num_systems)
+        alpha_resolved, k_vectors_resolved = _resolve_ewald_summation_parameters(
+            positions=positions,
+            charges=charges,
+            cell=cell_3d,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            k_cutoff=k_cutoff,
+            miller_bounds=miller_bounds,
+            batch_idx=batch_idx,
+            accuracy=accuracy,
+        )
+        dtype = _normalize_dtype(positions.dtype)
+        alpha_arr = _prepare_alpha_array(alpha_resolved, cell_3d.shape[0], dtype=dtype)
+        if mask_value is None:
+            mask_value = positions.shape[0]
+        base_energy = _ewald_summation_energy_jvp(
+            positions,
+            charges,
+            cell_3d,
+            alpha_arr,
+            k_vectors_resolved,
+            batch_idx,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            generated_k_vectors,
+            max_atoms_per_system,
+            mask_value,
+        )
+        slab_energy = _slab_correction_energy_autodiff(
+            positions,
+            charges,
+            cell_3d,
+            pbc_prepared,
+            batch_idx=batch_idx,
+        )
+        return base_energy + slab_energy
+
+    if compute_forces or compute_charge_gradients or compute_virial or hybrid_forces:
         return _ewald_summation_impl(
             positions=positions,
             charges=charges,
@@ -2782,6 +2882,7 @@ def ewald_summation(
             slab_correction=slab_correction,
         )
 
+    generated_k_vectors = k_vectors is None
     alpha_resolved, k_vectors_resolved = _resolve_ewald_summation_parameters(
         positions=positions,
         charges=charges,
@@ -2811,6 +2912,7 @@ def ewald_summation(
         neighbor_shifts,
         neighbor_matrix,
         neighbor_matrix_shifts,
+        generated_k_vectors,
         max_atoms_per_system,
         mask_value,
     )
