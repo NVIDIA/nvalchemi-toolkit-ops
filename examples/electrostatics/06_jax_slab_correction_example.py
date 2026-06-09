@@ -548,33 +548,36 @@ def compute_pme_slab_energy_forces(
     mesh_dims: tuple[int, int, int] = mesh_dimensions,
 ) -> tuple[jax.Array, jax.Array]:
     """JIT-compatible neighbor matrix + PME slab pipeline."""
-    neighbor_matrix, _, neighbor_matrix_shifts = naive_neighbor_list(
-        positions_in,
-        cutoff,
-        cell=cell_in,
-        pbc=pbc_slab_in,
-        max_neighbors=max_neighbors,
-        fill_value=mask_value,
-        shift_range_per_dimension=shift_range_per_dimension,
-        num_shifts_per_system=num_shifts,
-        max_shifts_per_system=max_shifts,
-    )
 
-    energies, forces = particle_mesh_ewald(
-        positions=positions_in,
-        charges=charges_in,
-        cell=cell_in,
-        alpha=alpha_in,
-        mesh_dimensions=mesh_dims,
-        neighbor_matrix=neighbor_matrix,
-        neighbor_matrix_shifts=neighbor_matrix_shifts,
-        mask_value=mask_value,
-        compute_forces=True,
-        pbc=pbc_slab_in,
-        slab_correction=True,
-    )
+    def total_energy(pos):
+        neighbor_matrix, _, neighbor_matrix_shifts = naive_neighbor_list(
+            pos,
+            cutoff,
+            cell=cell_in,
+            pbc=pbc_slab_in,
+            max_neighbors=max_neighbors,
+            fill_value=mask_value,
+            shift_range_per_dimension=shift_range_per_dimension,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+        )
 
-    return energies, forces
+        energies = particle_mesh_ewald(
+            positions=pos,
+            charges=charges_in,
+            cell=cell_in,
+            alpha=alpha_in,
+            mesh_dimensions=mesh_dims,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            mask_value=mask_value,
+            pbc=pbc_slab_in,
+            slab_correction=True,
+        )
+        return energies.sum()
+
+    energy, grad_positions = jax.value_and_grad(total_energy)(positions_in)
+    return energy, -grad_positions
 
 
 jit_compute_pme_slab_energy_forces = jax.jit(compute_pme_slab_energy_forces)

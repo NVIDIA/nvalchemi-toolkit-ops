@@ -2480,6 +2480,21 @@ therefore doubles the reciprocal double-backward work; combining them in one
 call avoids duplicate reciprocal double-backward work. The gradients are identical
 either way -- this is purely a performance choice.
 
+### `torch.compile` Compatibility
+
+Direct-output Ewald/PME calls without framework autograd can be wrapped in
+`torch.compile(fullgraph=True)` when all shape-determining metadata is static
+and precomputed outside the compiled function. This is useful for no-autograd
+MD/inference loops and for benchmarking the deprecated direct-output migration
+path.
+
+Energy-autograd training callables that contain `torch.autograd.grad` are not a
+`torch.compile` fast path today: Dynamo does not trace the complete force/stress
+loss callable as one full graph. Compile only the energy-forward function when
+that is useful for an application, and keep the force, stress, and
+double-backward training step in eager PyTorch. Benchmark CSV rows label this
+difference explicitly with `derivative_contract` and `workload`.
+
 ### Charge Gradients
 
 $\partial E/\partial q$ is an ordinary gradient of the energy w.r.t. charges:

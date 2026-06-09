@@ -541,6 +541,25 @@ for i in range(n_systems):
     print(f"  System {i}: {n_atoms} atoms, E={sys_energy:.4f}, |F|_max={max_force:.4f}")
 
 # %%
+# Preferred training recipe: derive batched forces from the scalar energy.
+
+positions_batch_ag = positions_batch.detach().clone().requires_grad_(True)
+energies_batch_ag = ewald_summation(
+    positions=positions_batch_ag,
+    charges=charges_batch,
+    cell=cells_batch,
+    batch_idx=batch_idx,
+    neighbor_matrix=neighbor_matrix_batch,
+    neighbor_matrix_shifts=neighbor_matrix_shifts_batch,
+    accuracy=1e-5,
+)
+forces_batch_ag = -torch.autograd.grad(energies_batch_ag.sum(), positions_batch_ag)[0]
+
+print("\nBatched energy-autograd forces:")
+print(f"  Total energy: {energies_batch_ag.sum().item():.4f}")
+print(f"  Max force magnitude: {torch.norm(forces_batch_ag, dim=1).max().item():.4f}")
+
+# %%
 # Verify batch vs individual calculations:
 
 print("\nVerification (individual calculations with same accuracy):")
