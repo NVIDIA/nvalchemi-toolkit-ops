@@ -247,17 +247,19 @@ def estimate_cell_list_sizes(
     wp_device = str(device)
     wp_dtype = get_wp_dtype(dtype)
     wp_mat_dtype = get_wp_mat_dtype(dtype)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
 
     max_total_cells = torch.zeros(1, device=device, dtype=torch.int32)
     wp_max_total_cells = wp.from_torch(
-        max_total_cells, dtype=wp.int32, return_ctype=True
+        max_total_cells, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
 
     neighbor_search_radius = torch.zeros((3,), dtype=torch.int32, device=device)
     wp_neighbor_search_radius = wp.from_torch(
-        neighbor_search_radius, dtype=wp.int32, return_ctype=True
+        neighbor_search_radius, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
 
     wp.launch(
@@ -340,24 +342,34 @@ def _build_cell_list_op(
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     wp_device = str(device)
 
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
 
     wp_cells_per_dimension = wp.from_torch(
-        cells_per_dimension, dtype=wp.int32, return_ctype=True
+        cells_per_dimension, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_atom_periodic_shifts = wp.from_torch(
-        atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
+        atom_periodic_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     wp_atom_to_cell_mapping = wp.from_torch(
-        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+        atom_to_cell_mapping, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     # underlying warp launcher relies on Python API for array_scan
     # so `return_ctype` is omitted
-    wp_atoms_per_cell_count = wp.from_torch(atoms_per_cell_count, dtype=wp.int32)
-    wp_cell_atom_start_indices = wp.from_torch(cell_atom_start_indices, dtype=wp.int32)
-    wp_cell_atom_list = wp.from_torch(cell_atom_list, dtype=wp.int32, return_ctype=True)
+    wp_atoms_per_cell_count = wp.from_torch(
+        atoms_per_cell_count, dtype=wp.int32, requires_grad=False
+    )
+    wp_cell_atom_start_indices = wp.from_torch(
+        cell_atom_start_indices, dtype=wp.int32, requires_grad=False
+    )
+    wp_cell_atom_list = wp.from_torch(
+        cell_atom_list, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
 
     atoms_per_cell_count.zero_()
     wp_build_cell_list(
@@ -375,6 +387,23 @@ def _build_cell_list_op(
         device=wp_device,
         min_cells_per_dimension=int(min_cells_per_dimension),
     )
+
+
+@_build_cell_list_op.register_fake
+def _(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cells_per_dimension: torch.Tensor,
+    atom_periodic_shifts: torch.Tensor,
+    atom_to_cell_mapping: torch.Tensor,
+    atoms_per_cell_count: torch.Tensor,
+    cell_atom_start_indices: torch.Tensor,
+    cell_atom_list: torch.Tensor,
+    min_cells_per_dimension: int = 4,
+) -> None:
+    return None
 
 
 def build_cell_list(
@@ -521,41 +550,49 @@ def _query_cell_list_op(
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     wp_device = str(device)
 
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
 
     wp_cells_per_dimension = wp.from_torch(
-        cells_per_dimension, dtype=wp.int32, return_ctype=True
+        cells_per_dimension, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_search_radius = wp.from_torch(
-        neighbor_search_radius, dtype=wp.int32, return_ctype=True
+        neighbor_search_radius, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_atom_periodic_shifts = wp.from_torch(
-        atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
+        atom_periodic_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     wp_atom_to_cell_mapping = wp.from_torch(
-        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+        atom_to_cell_mapping, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     wp_atoms_per_cell_count = wp.from_torch(
-        atoms_per_cell_count, dtype=wp.int32, return_ctype=True
+        atoms_per_cell_count, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_cell_atom_start_indices = wp.from_torch(
-        cell_atom_start_indices, dtype=wp.int32, return_ctype=True
+        cell_atom_start_indices, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
-    wp_cell_atom_list = wp.from_torch(cell_atom_list, dtype=wp.int32, return_ctype=True)
+    wp_cell_atom_list = wp.from_torch(
+        cell_atom_list, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
 
     wp_neighbor_matrix = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_matrix_shifts = wp.from_torch(
-        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+        neighbor_matrix_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
-    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    wp_num_neighbors = wp.from_torch(
+        num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
 
     if rebuild_flags is not None:
         wp_rebuild_flags = wp.from_torch(
-            rebuild_flags, dtype=wp.bool, return_ctype=True
+            rebuild_flags, dtype=wp.bool, requires_grad=False, return_ctype=True
         )
         selective_zero_num_neighbors_single(
             wp_num_neighbors, wp_rebuild_flags, wp_device
@@ -638,10 +675,13 @@ def _query_cell_list_op(
                 (int(total_atoms), 3), dtype=torch.int32, device=device
             )
         wp_sorted_positions = wp.from_torch(
-            sorted_positions_t, dtype=wp_vec_dtype, return_ctype=True
+            sorted_positions_t,
+            dtype=wp_vec_dtype,
+            requires_grad=False,
+            return_ctype=True,
         )
         wp_sorted_shifts = wp.from_torch(
-            sorted_shifts_t, dtype=wp.vec3i, return_ctype=True
+            sorted_shifts_t, dtype=wp.vec3i, requires_grad=False, return_ctype=True
         )
 
     wp_query_cell_list(
@@ -836,6 +876,45 @@ def query_cell_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     ):
+        if (
+            pair_fn is None
+            and pair_params is None
+            and pair_energies is None
+            and pair_forces is None
+        ):
+            return _query_cell_list_optional_no_pair_fn_op(
+                positions,
+                cutoff,
+                cell,
+                pbc,
+                cells_per_dimension,
+                neighbor_search_radius,
+                atom_periodic_shifts,
+                atom_to_cell_mapping,
+                atoms_per_cell_count,
+                cell_atom_start_indices,
+                cell_atom_list,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                rebuild_flags,
+                sorted_positions,
+                sorted_shifts,
+                target_indices,
+                neighbor_vectors,
+                neighbor_distances,
+                half_fill,
+                fill_value,
+                strategy,
+                atom_centric_path,
+                return_vectors,
+                return_distances,
+            )
+        if torch.compiler.is_compiling():
+            raise NotImplementedError(
+                "cell_list pair_fn outputs are eager-only because callable Warp "
+                "functions cannot cross a torch.library.custom_op schema boundary.",
+            )
         # Optional per-neighbor outputs bypass the torch custom op (which
         # cannot carry a callable ``pair_fn``) and call the warp factory
         # directly while preserving the requested strategy.
@@ -925,6 +1004,33 @@ def query_cell_list(
     )
 
 
+@_query_cell_list_op.register_fake
+def _(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cells_per_dimension: torch.Tensor,
+    neighbor_search_radius: torch.Tensor,
+    atom_periodic_shifts: torch.Tensor,
+    atom_to_cell_mapping: torch.Tensor,
+    atoms_per_cell_count: torch.Tensor,
+    cell_atom_start_indices: torch.Tensor,
+    cell_atom_list: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    half_fill: bool = False,
+    rebuild_flags: torch.Tensor | None = None,
+    fill_value: int | None = None,
+    algorithm: str = "auto",
+    atom_centric_path: str = "auto",
+    sorted_positions: torch.Tensor | None = None,
+    sorted_shifts: torch.Tensor | None = None,
+) -> None:
+    return None
+
+
 def _query_cell_list_direct_eager(
     positions: torch.Tensor,
     cutoff: float,
@@ -964,39 +1070,47 @@ def _query_cell_list_direct_eager(
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     wp_device = str(device)
 
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_cells_per_dimension = wp.from_torch(
-        cells_per_dimension, dtype=wp.int32, return_ctype=True
+        cells_per_dimension, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_search_radius = wp.from_torch(
-        neighbor_search_radius, dtype=wp.int32, return_ctype=True
+        neighbor_search_radius, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_atom_periodic_shifts = wp.from_torch(
-        atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
+        atom_periodic_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     wp_atom_to_cell_mapping = wp.from_torch(
-        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+        atom_to_cell_mapping, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     wp_atoms_per_cell_count = wp.from_torch(
-        atoms_per_cell_count, dtype=wp.int32, return_ctype=True
+        atoms_per_cell_count, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_cell_atom_start_indices = wp.from_torch(
-        cell_atom_start_indices, dtype=wp.int32, return_ctype=True
+        cell_atom_start_indices, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
-    wp_cell_atom_list = wp.from_torch(cell_atom_list, dtype=wp.int32, return_ctype=True)
+    wp_cell_atom_list = wp.from_torch(
+        cell_atom_list, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
     wp_neighbor_matrix = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_matrix_shifts = wp.from_torch(
-        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+        neighbor_matrix_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
-    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    wp_num_neighbors = wp.from_torch(
+        num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
 
     if rebuild_flags is not None:
         wp_rebuild_flags = wp.from_torch(
-            rebuild_flags, dtype=wp.bool, return_ctype=True
+            rebuild_flags, dtype=wp.bool, requires_grad=False, return_ctype=True
         )
         selective_zero_num_neighbors_single(
             wp_num_neighbors, wp_rebuild_flags, wp_device
@@ -1038,6 +1152,110 @@ def _query_cell_list_direct_eager(
                 wp_neighbor_matrix,
                 wp_device,
             )
+
+
+@torch.library.custom_op(
+    "nvalchemiops::query_cell_list_optional_no_pair_fn",
+    mutates_args=(
+        "neighbor_matrix",
+        "neighbor_matrix_shifts",
+        "num_neighbors",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+def _query_cell_list_optional_no_pair_fn_op(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cells_per_dimension: torch.Tensor,
+    neighbor_search_radius: torch.Tensor,
+    atom_periodic_shifts: torch.Tensor,
+    atom_to_cell_mapping: torch.Tensor,
+    atoms_per_cell_count: torch.Tensor,
+    cell_atom_start_indices: torch.Tensor,
+    cell_atom_list: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
+    sorted_positions: torch.Tensor | None,
+    sorted_shifts: torch.Tensor | None,
+    target_indices: torch.Tensor | None,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    half_fill: bool,
+    fill_value: int | None,
+    strategy: str,
+    atom_centric_path: str,
+    return_vectors: bool,
+    return_distances: bool,
+) -> None:
+    _query_cell_list_optional(
+        positions,
+        cutoff,
+        cell,
+        pbc,
+        cells_per_dimension,
+        neighbor_search_radius,
+        atom_periodic_shifts,
+        atom_to_cell_mapping,
+        atoms_per_cell_count,
+        cell_atom_start_indices,
+        cell_atom_list,
+        neighbor_matrix,
+        neighbor_matrix_shifts,
+        num_neighbors,
+        half_fill=half_fill,
+        rebuild_flags=rebuild_flags,
+        fill_value=fill_value,
+        sorted_positions=sorted_positions,
+        sorted_shifts=sorted_shifts,
+        strategy=strategy,
+        atom_centric_path=atom_centric_path,
+        target_indices=target_indices,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=None,
+        pair_params=None,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=None,
+        pair_forces=None,
+    )
+
+
+@_query_cell_list_optional_no_pair_fn_op.register_fake
+def _(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cells_per_dimension: torch.Tensor,
+    neighbor_search_radius: torch.Tensor,
+    atom_periodic_shifts: torch.Tensor,
+    atom_to_cell_mapping: torch.Tensor,
+    atoms_per_cell_count: torch.Tensor,
+    cell_atom_start_indices: torch.Tensor,
+    cell_atom_list: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    rebuild_flags: torch.Tensor | None,
+    sorted_positions: torch.Tensor | None,
+    sorted_shifts: torch.Tensor | None,
+    target_indices: torch.Tensor | None,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    half_fill: bool,
+    fill_value: int | None,
+    strategy: str,
+    atom_centric_path: str,
+    return_vectors: bool,
+    return_distances: bool,
+) -> None:
+    return None
 
 
 def _query_cell_list_optional(
@@ -1114,39 +1332,47 @@ def _query_cell_list_optional(
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     wp_device = str(device)
 
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_cells_per_dimension = wp.from_torch(
-        cells_per_dimension, dtype=wp.int32, return_ctype=True
+        cells_per_dimension, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_search_radius = wp.from_torch(
-        neighbor_search_radius, dtype=wp.int32, return_ctype=True
+        neighbor_search_radius, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_atom_periodic_shifts = wp.from_torch(
-        atom_periodic_shifts, dtype=wp.vec3i, return_ctype=True
+        atom_periodic_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     wp_atom_to_cell_mapping = wp.from_torch(
-        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+        atom_to_cell_mapping, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
     wp_atoms_per_cell_count = wp.from_torch(
-        atoms_per_cell_count, dtype=wp.int32, return_ctype=True
+        atoms_per_cell_count, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_cell_atom_start_indices = wp.from_torch(
-        cell_atom_start_indices, dtype=wp.int32, return_ctype=True
+        cell_atom_start_indices, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
-    wp_cell_atom_list = wp.from_torch(cell_atom_list, dtype=wp.int32, return_ctype=True)
+    wp_cell_atom_list = wp.from_torch(
+        cell_atom_list, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
     wp_neighbor_matrix = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_matrix_shifts = wp.from_torch(
-        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+        neighbor_matrix_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
-    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    wp_num_neighbors = wp.from_torch(
+        num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
 
     if rebuild_flags is not None:
         wp_rebuild_flags = wp.from_torch(
-            rebuild_flags, dtype=wp.bool, return_ctype=True
+            rebuild_flags, dtype=wp.bool, requires_grad=False, return_ctype=True
         )
         selective_zero_num_neighbors_single(
             wp_num_neighbors, wp_rebuild_flags, wp_device
@@ -1159,7 +1385,9 @@ def _query_cell_list_optional(
 
     # Optional torch buffers -> warp arrays (only when supplied).
     wp_target_indices = (
-        wp.from_torch(target_indices, dtype=wp.int32, return_ctype=True)
+        wp.from_torch(
+            target_indices, dtype=wp.int32, requires_grad=False, return_ctype=True
+        )
         if target_indices is not None
         else None
     )
@@ -1169,25 +1397,27 @@ def _query_cell_list_optional(
     # ``return_ctype`` still aliases the torch tensor zero-copy, so kernel writes
     # land in the output buffers.
     wp_pair_params = (
-        wp.from_torch(pair_params, dtype=wp_dtype) if pair_params is not None else None
+        wp.from_torch(pair_params, dtype=wp_dtype, requires_grad=False)
+        if pair_params is not None
+        else None
     )
     wp_neighbor_vectors = (
-        wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype)
+        wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False)
         if neighbor_vectors is not None
         else None
     )
     wp_neighbor_distances = (
-        wp.from_torch(neighbor_distances, dtype=wp_dtype)
+        wp.from_torch(neighbor_distances, dtype=wp_dtype, requires_grad=False)
         if neighbor_distances is not None
         else None
     )
     wp_pair_energies = (
-        wp.from_torch(pair_energies, dtype=wp_dtype)
+        wp.from_torch(pair_energies, dtype=wp_dtype, requires_grad=False)
         if pair_energies is not None
         else None
     )
     wp_pair_forces = (
-        wp.from_torch(pair_forces, dtype=wp_vec_dtype)
+        wp.from_torch(pair_forces, dtype=wp_vec_dtype, requires_grad=False)
         if pair_forces is not None
         else None
     )
@@ -1245,10 +1475,13 @@ def _query_cell_list_optional(
                 (int(total_atoms), 3), dtype=torch.int32, device=device
             )
         wp_sorted_positions = wp.from_torch(
-            sorted_positions, dtype=wp_vec_dtype, return_ctype=True
+            sorted_positions,
+            dtype=wp_vec_dtype,
+            requires_grad=False,
+            return_ctype=True,
         )
         wp_sorted_shifts = wp.from_torch(
-            sorted_shifts, dtype=wp.vec3i, return_ctype=True
+            sorted_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
         )
 
     wp_query_cell_list(

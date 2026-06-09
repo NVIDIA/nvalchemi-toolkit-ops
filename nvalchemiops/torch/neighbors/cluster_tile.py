@@ -72,6 +72,44 @@ __all__ = [
 ]
 
 
+@torch.library.custom_op(
+    "nvalchemiops::_cluster_tile_fill_neighbor_matrix_tail",
+    mutates_args=("neighbor_matrix",),
+)
+def _cluster_tile_fill_neighbor_matrix_tail_op(
+    num_neighbors: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    n_rows: int,
+    max_neighbors: int,
+    fill_value: int,
+) -> None:
+    if max_neighbors <= 0:
+        return
+    wp_fill_neighbor_matrix_tail(
+        wp.from_torch(
+            num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+        ),
+        int(n_rows),
+        int(max_neighbors),
+        int(fill_value),
+        wp.from_torch(
+            neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
+        ),
+        str(neighbor_matrix.device),
+    )
+
+
+@_cluster_tile_fill_neighbor_matrix_tail_op.register_fake
+def _(
+    num_neighbors: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    n_rows: int,
+    max_neighbors: int,
+    fill_value: int,
+) -> None:
+    return None
+
+
 # =============================================================================
 # Sizing + allocation helpers (torch-side, not ``custom_op``-wrapped)
 # =============================================================================
@@ -246,6 +284,7 @@ def _mat33f_from_torch(mat: torch.Tensor):
     return wp.from_torch(
         mat.detach().contiguous().to(torch.float32),
         dtype=wp.mat33f,
+        requires_grad=False,
         return_ctype=True,
     )
 
@@ -417,6 +456,30 @@ def _build_cluster_tile_list_op(
     )
 
 
+@_build_cluster_tile_list_op.register_fake
+def _(
+    positions: torch.Tensor,
+    cutoff: float,
+    cell: torch.Tensor,
+    inv_cell: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    morton_codes: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    group_ctr_x: torch.Tensor,
+    group_ctr_y: torch.Tensor,
+    group_ctr_z: torch.Tensor,
+    group_ext_x: torch.Tensor,
+    group_ext_y: torch.Tensor,
+    group_ext_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+) -> None:
+    return None
+
+
 def build_cluster_tile_list(
     positions: torch.Tensor,
     cutoff: float,
@@ -556,6 +619,27 @@ def _query_cluster_tile_op(
     )
 
 
+@_query_cluster_tile_op.register_fake
+def _(
+    cutoff: float,
+    natom: int,
+    cell: torch.Tensor,
+    inv_cell: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    n_tiles: int,
+) -> None:
+    return None
+
+
 def query_cluster_tile(
     sorted_atom_index: torch.Tensor,
     sorted_pos_x: torch.Tensor,
@@ -616,9 +700,12 @@ def query_cluster_tile(
     # overflow instead of silently dropping tiles.  This ``.item()`` makes the
     # matrix path non-CUDA-graph/torch.compile-capturable by design.
     tile_capacity = int(tile_row_group.shape[0])
-    n_tiles = int(num_tiles.item())
-    if n_tiles > tile_capacity:
-        raise NeighborOverflowError(tile_capacity, n_tiles)
+    if torch.compiler.is_compiling():
+        n_tiles = tile_capacity
+    else:
+        n_tiles = int(num_tiles.item())
+        if n_tiles > tile_capacity:
+            raise NeighborOverflowError(tile_capacity, n_tiles)
 
     feature_path = (
         cutoff2 is not None
@@ -635,9 +722,45 @@ def query_cluster_tile(
         )
     )
     if feature_path:
-        # Pair outputs are exercised — bypass the torch custom op (which
-        # cannot carry a callable ``pair_fn``) and call the warp
-        # launcher directly.
+        if (
+            pair_fn is None
+            and pair_params is None
+            and pair_energies is None
+            and pair_forces is None
+        ):
+            return _query_cluster_tile_optional_no_pair_fn_op(
+                cell_mat,
+                inv_cell_mat,
+                natom,
+                cutoff,
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                neighbor_matrix,
+                num_neighbors,
+                neighbor_matrix_shifts,
+                neighbor_matrix2,
+                num_neighbors2,
+                neighbor_matrix_shifts2,
+                rebuild_flags,
+                neighbor_vectors,
+                neighbor_distances,
+                n_tiles,
+                cutoff2,
+                return_vectors,
+                return_distances,
+            )
+        if torch.compiler.is_compiling():
+            raise NotImplementedError(
+                "cluster_tile pair_fn outputs are eager-only because callable Warp "
+                "functions cannot cross a torch.library.custom_op schema boundary.",
+            )
+        # Pair outputs are exercised - bypass the torch custom op because it
+        # cannot carry a callable ``pair_fn``.
         _query_cluster_tile_optional(
             cell_mat,
             inv_cell_mat,
@@ -689,6 +812,107 @@ def query_cluster_tile(
     )
 
 
+@torch.library.custom_op(
+    "nvalchemiops::_query_cluster_tile_optional_no_pair_fn",
+    mutates_args=(
+        "neighbor_matrix",
+        "num_neighbors",
+        "neighbor_matrix_shifts",
+        "neighbor_matrix2",
+        "num_neighbors2",
+        "neighbor_matrix_shifts2",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+def _query_cluster_tile_optional_no_pair_fn_op(
+    cell_mat: torch.Tensor,
+    inv_cell_mat: torch.Tensor,
+    natom: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    neighbor_matrix2: torch.Tensor | None,
+    num_neighbors2: torch.Tensor | None,
+    neighbor_matrix_shifts2: torch.Tensor | None,
+    rebuild_flags: torch.Tensor | None,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    n_tiles: int,
+    cutoff2: float | None,
+    return_vectors: bool,
+    return_distances: bool,
+) -> None:
+    _query_cluster_tile_optional(
+        cell_mat,
+        inv_cell_mat,
+        natom,
+        cutoff,
+        sorted_atom_index,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        neighbor_matrix,
+        num_neighbors,
+        neighbor_matrix_shifts,
+        n_tiles=n_tiles,
+        cutoff2=cutoff2,
+        neighbor_matrix2=neighbor_matrix2,
+        num_neighbors2=num_neighbors2,
+        neighbor_matrix_shifts2=neighbor_matrix_shifts2,
+        rebuild_flags=rebuild_flags,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=None,
+        pair_params=None,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=None,
+        pair_forces=None,
+    )
+
+
+@_query_cluster_tile_optional_no_pair_fn_op.register_fake
+def _(
+    cell_mat: torch.Tensor,
+    inv_cell_mat: torch.Tensor,
+    natom: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    neighbor_matrix2: torch.Tensor | None,
+    num_neighbors2: torch.Tensor | None,
+    neighbor_matrix_shifts2: torch.Tensor | None,
+    rebuild_flags: torch.Tensor | None,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    n_tiles: int,
+    cutoff2: float | None,
+    return_vectors: bool,
+    return_distances: bool,
+) -> None:
+    return None
+
+
 def _query_cluster_tile_optional(
     cell_mat: torch.Tensor,
     inv_cell_mat: torch.Tensor,
@@ -736,64 +960,76 @@ def _query_cluster_tile_optional(
     wp_cell = _mat33f_from_torch(cell_mat)
     wp_inv_cell = _mat33f_from_torch(inv_cell_mat)
     wp_pair_params = (
-        wp.from_torch(pair_params, dtype=wp_dtype) if pair_params is not None else None
+        wp.from_torch(pair_params, dtype=wp_dtype, requires_grad=False)
+        if pair_params is not None
+        else None
     )
     wp_neighbor_vectors = (
-        wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype)
+        wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False)
         if neighbor_vectors is not None
         else None
     )
     wp_neighbor_distances = (
-        wp.from_torch(neighbor_distances, dtype=wp_dtype)
+        wp.from_torch(neighbor_distances, dtype=wp_dtype, requires_grad=False)
         if neighbor_distances is not None
         else None
     )
     wp_pair_energies = (
-        wp.from_torch(pair_energies, dtype=wp_dtype)
+        wp.from_torch(pair_energies, dtype=wp_dtype, requires_grad=False)
         if pair_energies is not None
         else None
     )
     wp_pair_forces = (
-        wp.from_torch(pair_forces, dtype=wp_vec_dtype)
+        wp.from_torch(pair_forces, dtype=wp_vec_dtype, requires_grad=False)
         if pair_forces is not None
         else None
     )
     wp_query_cluster_tile(
-        sorted_atom_index=wp.from_torch(sorted_atom_index, dtype=wp.int32),
-        sorted_pos_x=wp.from_torch(sorted_pos_x, dtype=wp_dtype),
-        sorted_pos_y=wp.from_torch(sorted_pos_y, dtype=wp_dtype),
-        sorted_pos_z=wp.from_torch(sorted_pos_z, dtype=wp_dtype),
-        num_tiles=wp.from_torch(num_tiles, dtype=wp.int32),
-        tile_row_group=wp.from_torch(tile_row_group, dtype=wp.int32),
-        tile_col_group=wp.from_torch(tile_col_group, dtype=wp.int32),
+        sorted_atom_index=wp.from_torch(
+            sorted_atom_index, dtype=wp.int32, requires_grad=False
+        ),
+        sorted_pos_x=wp.from_torch(sorted_pos_x, dtype=wp_dtype, requires_grad=False),
+        sorted_pos_y=wp.from_torch(sorted_pos_y, dtype=wp_dtype, requires_grad=False),
+        sorted_pos_z=wp.from_torch(sorted_pos_z, dtype=wp_dtype, requires_grad=False),
+        num_tiles=wp.from_torch(num_tiles, dtype=wp.int32, requires_grad=False),
+        tile_row_group=wp.from_torch(
+            tile_row_group, dtype=wp.int32, requires_grad=False
+        ),
+        tile_col_group=wp.from_torch(
+            tile_col_group, dtype=wp.int32, requires_grad=False
+        ),
         cell=wp_cell,
         inv_cell=wp_inv_cell,
         cutoff=float(cutoff),
         natom=int(natom),
-        neighbor_matrix=wp.from_torch(neighbor_matrix, dtype=wp.int32),
-        num_neighbors=wp.from_torch(num_neighbors, dtype=wp.int32),
-        neighbor_matrix_shifts=wp.from_torch(neighbor_matrix_shifts, dtype=wp.int32),
+        neighbor_matrix=wp.from_torch(
+            neighbor_matrix, dtype=wp.int32, requires_grad=False
+        ),
+        num_neighbors=wp.from_torch(num_neighbors, dtype=wp.int32, requires_grad=False),
+        neighbor_matrix_shifts=wp.from_torch(
+            neighbor_matrix_shifts, dtype=wp.int32, requires_grad=False
+        ),
         wp_dtype=wp_dtype,
         device=wp_device,
         n_tiles=int(n_tiles),
         cutoff2=cutoff2,
         neighbor_matrix2=(
-            wp.from_torch(neighbor_matrix2, dtype=wp.int32)
+            wp.from_torch(neighbor_matrix2, dtype=wp.int32, requires_grad=False)
             if neighbor_matrix2 is not None
             else None
         ),
         num_neighbors2=(
-            wp.from_torch(num_neighbors2, dtype=wp.int32)
+            wp.from_torch(num_neighbors2, dtype=wp.int32, requires_grad=False)
             if num_neighbors2 is not None
             else None
         ),
         neighbor_matrix_shifts2=(
-            wp.from_torch(neighbor_matrix_shifts2, dtype=wp.int32)
+            wp.from_torch(neighbor_matrix_shifts2, dtype=wp.int32, requires_grad=False)
             if neighbor_matrix_shifts2 is not None
             else None
         ),
         rebuild_flags=(
-            wp.from_torch(rebuild_flags, dtype=wp.bool)
+            wp.from_torch(rebuild_flags, dtype=wp.bool, requires_grad=False)
             if rebuild_flags is not None
             else None
         ),
@@ -869,6 +1105,114 @@ def _query_cluster_tile_coo_op(
     )
 
 
+@_query_cluster_tile_coo_op.register_fake
+def _(
+    cutoff: float,
+    natom: int,
+    max_pairs: int,
+    cell: torch.Tensor,
+    inv_cell: torch.Tensor,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    pair_counter: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    n_tiles: int,
+) -> None:
+    return None
+
+
+@torch.library.custom_op(
+    "nvalchemiops::_query_cluster_tile_coo_optional_no_pair_fn",
+    mutates_args=(
+        "pair_counter",
+        "coo_list",
+        "coo_shifts",
+        "neighbor_vectors",
+        "neighbor_distances",
+    ),
+)
+def _query_cluster_tile_coo_optional_no_pair_fn_op(
+    cell_mat: torch.Tensor,
+    inv_cell_mat: torch.Tensor,
+    natom: int,
+    max_pairs: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    pair_counter: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    n_tiles: int,
+    return_vectors: bool,
+    return_distances: bool,
+) -> None:
+    _query_cluster_tile_coo_optional(
+        cell_mat,
+        inv_cell_mat,
+        natom,
+        max_pairs,
+        cutoff,
+        sorted_atom_index,
+        sorted_pos_x,
+        sorted_pos_y,
+        sorted_pos_z,
+        num_tiles,
+        tile_row_group,
+        tile_col_group,
+        pair_counter,
+        coo_list,
+        coo_shifts,
+        n_tiles=n_tiles,
+        return_vectors=return_vectors,
+        return_distances=return_distances,
+        pair_fn=None,
+        pair_params=None,
+        neighbor_vectors=neighbor_vectors,
+        neighbor_distances=neighbor_distances,
+        pair_energies=None,
+        pair_forces=None,
+    )
+
+
+@_query_cluster_tile_coo_optional_no_pair_fn_op.register_fake
+def _(
+    cell_mat: torch.Tensor,
+    inv_cell_mat: torch.Tensor,
+    natom: int,
+    max_pairs: int,
+    cutoff: float,
+    sorted_atom_index: torch.Tensor,
+    sorted_pos_x: torch.Tensor,
+    sorted_pos_y: torch.Tensor,
+    sorted_pos_z: torch.Tensor,
+    num_tiles: torch.Tensor,
+    tile_row_group: torch.Tensor,
+    tile_col_group: torch.Tensor,
+    pair_counter: torch.Tensor,
+    coo_list: torch.Tensor,
+    coo_shifts: torch.Tensor,
+    neighbor_vectors: torch.Tensor | None,
+    neighbor_distances: torch.Tensor | None,
+    n_tiles: int,
+    return_vectors: bool,
+    return_distances: bool,
+) -> None:
+    return None
+
+
 def _query_cluster_tile_coo_optional(
     cell_mat: torch.Tensor,
     inv_cell_mat: torch.Tensor,
@@ -906,44 +1250,52 @@ def _query_cluster_tile_coo_optional(
     wp_dtype = get_wp_dtype(sorted_pos_x.dtype)
     wp_vec_dtype = wp.vec3f
     wp_pair_params = (
-        wp.from_torch(pair_params, dtype=wp_dtype) if pair_params is not None else None
+        wp.from_torch(pair_params, dtype=wp_dtype, requires_grad=False)
+        if pair_params is not None
+        else None
     )
     wp_neighbor_vectors = (
-        wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype)
+        wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False)
         if neighbor_vectors is not None
         else None
     )
     wp_neighbor_distances = (
-        wp.from_torch(neighbor_distances, dtype=wp_dtype)
+        wp.from_torch(neighbor_distances, dtype=wp_dtype, requires_grad=False)
         if neighbor_distances is not None
         else None
     )
     wp_pair_energies = (
-        wp.from_torch(pair_energies, dtype=wp_dtype)
+        wp.from_torch(pair_energies, dtype=wp_dtype, requires_grad=False)
         if pair_energies is not None
         else None
     )
     wp_pair_forces = (
-        wp.from_torch(pair_forces, dtype=wp_vec_dtype)
+        wp.from_torch(pair_forces, dtype=wp_vec_dtype, requires_grad=False)
         if pair_forces is not None
         else None
     )
     wp_query_cluster_tile_coo(
-        sorted_atom_index=wp.from_torch(sorted_atom_index, dtype=wp.int32),
-        sorted_pos_x=wp.from_torch(sorted_pos_x, dtype=wp_dtype),
-        sorted_pos_y=wp.from_torch(sorted_pos_y, dtype=wp_dtype),
-        sorted_pos_z=wp.from_torch(sorted_pos_z, dtype=wp_dtype),
-        num_tiles=wp.from_torch(num_tiles, dtype=wp.int32),
-        tile_row_group=wp.from_torch(tile_row_group, dtype=wp.int32),
-        tile_col_group=wp.from_torch(tile_col_group, dtype=wp.int32),
+        sorted_atom_index=wp.from_torch(
+            sorted_atom_index, dtype=wp.int32, requires_grad=False
+        ),
+        sorted_pos_x=wp.from_torch(sorted_pos_x, dtype=wp_dtype, requires_grad=False),
+        sorted_pos_y=wp.from_torch(sorted_pos_y, dtype=wp_dtype, requires_grad=False),
+        sorted_pos_z=wp.from_torch(sorted_pos_z, dtype=wp_dtype, requires_grad=False),
+        num_tiles=wp.from_torch(num_tiles, dtype=wp.int32, requires_grad=False),
+        tile_row_group=wp.from_torch(
+            tile_row_group, dtype=wp.int32, requires_grad=False
+        ),
+        tile_col_group=wp.from_torch(
+            tile_col_group, dtype=wp.int32, requires_grad=False
+        ),
         cell=_mat33f_from_torch(cell_mat),
         inv_cell=_mat33f_from_torch(inv_cell_mat),
         cutoff=float(cutoff),
         natom=int(natom),
         max_pairs=int(max_pairs),
-        pair_counter=wp.from_torch(pair_counter, dtype=wp.int32),
-        coo_list=wp.from_torch(coo_list, dtype=wp.int32),
-        coo_shifts=wp.from_torch(coo_shifts, dtype=wp.int32),
+        pair_counter=wp.from_torch(pair_counter, dtype=wp.int32, requires_grad=False),
+        coo_list=wp.from_torch(coo_list, dtype=wp.int32, requires_grad=False),
+        coo_shifts=wp.from_torch(coo_shifts, dtype=wp.int32, requires_grad=False),
         wp_dtype=wp_dtype,
         device=wp_device,
         n_tiles=int(n_tiles),
@@ -998,9 +1350,12 @@ def query_cluster_tile_coo(
     # tile-buffer overflow (missing tiles -> missing pairs) instead of
     # silently dropping them.
     tile_capacity = int(tile_row_group.shape[0])
-    n_tiles = int(num_tiles.item())
-    if n_tiles > tile_capacity:
-        raise NeighborOverflowError(tile_capacity, n_tiles)
+    if torch.compiler.is_compiling():
+        n_tiles = tile_capacity
+    else:
+        n_tiles = int(num_tiles.item())
+        if n_tiles > tile_capacity:
+            raise NeighborOverflowError(tile_capacity, n_tiles)
     pair_counter.zero_()
 
     if _has_partial_or_pair_outputs(
@@ -1013,6 +1368,39 @@ def query_cluster_tile_coo(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     ):
+        if (
+            pair_fn is None
+            and pair_params is None
+            and pair_energies is None
+            and pair_forces is None
+        ):
+            return _query_cluster_tile_coo_optional_no_pair_fn_op(
+                cell_mat,
+                inv_cell_mat,
+                natom,
+                max_pairs,
+                cutoff,
+                sorted_atom_index,
+                sorted_pos_x,
+                sorted_pos_y,
+                sorted_pos_z,
+                num_tiles,
+                tile_row_group,
+                tile_col_group,
+                pair_counter,
+                coo_list,
+                coo_shifts,
+                neighbor_vectors,
+                neighbor_distances,
+                n_tiles,
+                return_vectors,
+                return_distances,
+            )
+        if torch.compiler.is_compiling():
+            raise NotImplementedError(
+                "cluster_tile COO pair_fn outputs are eager-only because callable "
+                "Warp functions cannot cross a torch.library.custom_op schema boundary.",
+            )
         _query_cluster_tile_coo_optional(
             cell_mat,
             inv_cell_mat,
@@ -1142,13 +1530,12 @@ def _cluster_tile_pair_outputs_forward(
         neighbor_distances=nd,
     )
     if max_neighbors > 0:
-        wp_fill_neighbor_matrix_tail(
-            wp.from_torch(nn, dtype=wp.int32, return_ctype=True),
+        _cluster_tile_fill_neighbor_matrix_tail_op(
+            nn,
+            nm,
             int(N),
             int(max_neighbors),
             int(fill_value),
-            wp.from_torch(nm, dtype=wp.int32, return_ctype=True),
-            str(device),
         )
     i_idx, j_idx, shifts_flat, batch_idx_flat, mask = _flatten_active_pairs(
         nm,
@@ -1716,22 +2103,20 @@ def cluster_tile_neighbor_list(
     # above to eliminate the per-step ``neighbor_matrix.fill_`` and
     # ``neighbor_matrix_shifts.zero_`` ops.
     if max_neighbors > 0:
-        wp_fill_neighbor_matrix_tail(
-            wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True),
+        _cluster_tile_fill_neighbor_matrix_tail_op(
+            num_neighbors,
+            neighbor_matrix,
             int(N),
             int(max_neighbors),
             int(fill_value),
-            wp.from_torch(neighbor_matrix, dtype=wp.int32, return_ctype=True),
-            str(device),
         )
         if dual_cutoff:
-            wp_fill_neighbor_matrix_tail(
-                wp.from_torch(num_neighbors2, dtype=wp.int32, return_ctype=True),
+            _cluster_tile_fill_neighbor_matrix_tail_op(
+                num_neighbors2,
+                neighbor_matrix2,
                 int(N),
                 int(max_neighbors),
                 int(fill_value),
-                wp.from_torch(neighbor_matrix2, dtype=wp.int32, return_ctype=True),
-                str(device),
             )
 
     if dual_cutoff:

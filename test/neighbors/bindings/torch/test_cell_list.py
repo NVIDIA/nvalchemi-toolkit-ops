@@ -1135,6 +1135,126 @@ class TestCellListCompile:
             "Number of neighbors mismatch"
         )
 
+    @pytest.mark.slow
+    def test_query_cell_list_target_indices_compile(self, device, dtype):
+        """target_indices query path should stay behind a custom-op boundary."""
+        positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
+        cutoff = 3.0
+        max_cells, neighbor_search_radius = estimate_cell_list_sizes(
+            cell,
+            pbc,
+            cutoff,
+        )
+        max_neighbors = estimate_max_neighbors(cutoff)
+        target_indices = torch.tensor([0, 3, 6], dtype=torch.int32, device=device)
+
+        def allocate_outputs():
+            return (
+                torch.full(
+                    (target_indices.shape[0], max_neighbors),
+                    -1,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(
+                    (target_indices.shape[0], max_neighbors, 3),
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(
+                    (target_indices.shape[0],), dtype=torch.int32, device=device
+                ),
+            )
+
+        cache_eager = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius.clone(),
+            device,
+        )
+        build_cell_list(positions, cutoff, cell, pbc, *cache_eager)
+        eager_outputs = allocate_outputs()
+        query_cell_list(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            *cache_eager,
+            *eager_outputs,
+            target_indices=target_indices,
+        )
+
+        cache_compiled = allocate_cell_list(
+            positions.shape[0],
+            max_cells,
+            neighbor_search_radius.clone(),
+            device,
+        )
+        compiled_outputs = allocate_outputs()
+
+        @torch.compile
+        def compiled_query(
+            positions,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            target_indices,
+        ):
+            build_cell_list(
+                positions,
+                cutoff,
+                cell,
+                pbc,
+                cells_per_dimension,
+                neighbor_search_radius,
+                atom_periodic_shifts,
+                atom_to_cell_mapping,
+                atoms_per_cell_count,
+                cell_atom_start_indices,
+                cell_atom_list,
+            )
+            query_cell_list(
+                positions,
+                cutoff,
+                cell,
+                pbc,
+                cells_per_dimension,
+                neighbor_search_radius,
+                atom_periodic_shifts,
+                atom_to_cell_mapping,
+                atoms_per_cell_count,
+                cell_atom_start_indices,
+                cell_atom_list,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                target_indices=target_indices,
+            )
+
+        compiled_query(
+            positions,
+            cell,
+            pbc,
+            *cache_compiled,
+            *compiled_outputs,
+            target_indices,
+        )
+
+        assert torch.equal(eager_outputs[2], compiled_outputs[2])
+        assert torch.equal(
+            torch.sort(eager_outputs[0]).values,
+            torch.sort(compiled_outputs[0]).values,
+        )
+
 
 class TestCellListComponentsAPI:
     """Tests for the modular cell list API functions."""
