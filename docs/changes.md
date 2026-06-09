@@ -2,7 +2,7 @@
 
 # Change Log
 
-## Unreleased
+## v0.4.0 (Unreleased)
 
 ### Electrostatics energy-derivative migration
 
