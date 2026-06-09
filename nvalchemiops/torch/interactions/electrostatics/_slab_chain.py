@@ -75,6 +75,10 @@ def _cotangent_per_system_uniform(
     g = grad_energy_atom.reshape(-1)
     if g.numel() == 0:
         return True
+    if g.numel() == 1 or g.numel() == num_systems:
+        return True
+    if g.numel() != batch_idx.numel():
+        return False
     if g.is_cuda:
         return False
     idx = batch_idx.to(device=g.device, dtype=torch.long)
