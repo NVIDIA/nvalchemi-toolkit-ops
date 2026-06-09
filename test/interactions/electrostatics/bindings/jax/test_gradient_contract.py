@@ -32,7 +32,6 @@ from nvalchemiops.jax.interactions.electrostatics import (
     pme_reciprocal_space,
 )
 
-
 pytestmark = pytest.mark.gpu
 
 
@@ -172,7 +171,9 @@ def test_jax_ewald_reciprocal_silently_accepts_cell_tangent_with_k_vectors(
     assert jnp.isfinite(tangent)
 
 
-@pytest.mark.parametrize("cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"])
+@pytest.mark.parametrize(
+    "cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"]
+)
 def test_jax_pme_silently_accepts_cell_tangent_with_precomputed_metadata(
     device,
     cache_name: str,
@@ -207,7 +208,9 @@ def test_jax_pme_silently_accepts_cell_tangent_with_precomputed_metadata(
     assert jnp.isfinite(tangent)
 
 
-@pytest.mark.parametrize("cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"])
+@pytest.mark.parametrize(
+    "cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"]
+)
 def test_jax_pme_cache_source_cell_tangent_is_static(
     device,
     cache_name: str,

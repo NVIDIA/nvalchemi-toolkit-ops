@@ -40,13 +40,17 @@ def test_pme_positional_slots_preserve_031_order() -> None:
         "compute_virial",
         "hybrid_forces",
     ]
-    assert recip_params[recip_params.index("cell_inv_t") : recip_params.index("moduli_x")] == [
+    assert recip_params[
+        recip_params.index("cell_inv_t") : recip_params.index("moduli_x")
+    ] == [
         "cell_inv_t",
         "volume",
     ]
 
     full_params = list(inspect.signature(electrostatics.particle_mesh_ewald).parameters)
-    assert full_params[full_params.index("k_squared") + 1 : full_params.index("cell_inv_t")] == [
+    assert full_params[
+        full_params.index("k_squared") + 1 : full_params.index("cell_inv_t")
+    ] == [
         "neighbor_list",
         "neighbor_ptr",
         "neighbor_shifts",
@@ -139,7 +143,9 @@ def test_compiled_direct_output_deprecation_signal_uses_graph_break(
     """Compiled deprecated direct-output calls get a graph-break migration signal."""
     messages: list[str] = []
     monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
-    monkeypatch.setattr(torch._dynamo, "graph_break", lambda msg="": messages.append(msg))
+    monkeypatch.setattr(
+        torch._dynamo, "graph_break", lambda msg="": messages.append(msg)
+    )
 
     _compiled_direct_output_deprecation_signal("particle_mesh_ewald")
 

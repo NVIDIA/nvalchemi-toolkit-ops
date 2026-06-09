@@ -31,7 +31,6 @@ from nvalchemiops.torch.interactions.electrostatics import (
     pme_reciprocal_space,
 )
 
-
 pytestmark = pytest.mark.gpu
 
 
@@ -246,7 +245,9 @@ def test_ewald_public_reciprocal_exposes_no_cache_bypass_keyword() -> None:
         )
 
 
-@pytest.mark.parametrize("cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"])
+@pytest.mark.parametrize(
+    "cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"]
+)
 def test_pme_silently_accepts_cell_derived_caches_when_cell_requires_grad(
     cache_name: str,
 ) -> None:
@@ -314,7 +315,9 @@ def test_pme_silently_accepts_cell_derived_caches_when_cell_requires_grad(
     assert grad_cache is None
 
 
-@pytest.mark.parametrize("cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"])
+@pytest.mark.parametrize(
+    "cache_name", ["k_vectors", "k_squared", "volume", "cell_inv_t"]
+)
 def test_pme_cache_source_cell_is_static_metadata(cache_name: str) -> None:
     """Gradients do not flow through the cell that produced supplied PME metadata."""
     positions, charges, cell = _system()
@@ -388,9 +391,7 @@ def test_torch_pme_virial_background_uses_supplied_volume(monkeypatch) -> None:
         [0.7, -0.4, 0.2], dtype=torch.float64, device=positions.device
     )
     alpha = torch.tensor([0.35], dtype=torch.float64, device=positions.device)
-    supplied_volume = (
-        0.5 * torch.abs(torch.linalg.det(cell)).reshape(1)
-    ).contiguous()
+    supplied_volume = (0.5 * torch.abs(torch.linalg.det(cell)).reshape(1)).contiguous()
     pme_module = importlib.import_module(
         "nvalchemiops.torch.interactions.electrostatics.pme"
     )
@@ -421,8 +422,8 @@ def test_torch_pme_virial_background_uses_supplied_volume(monkeypatch) -> None:
         )
 
     q_total = charges.sum()
-    expected_bg = torch.pi * q_total * q_total / (
-        2.0 * alpha[0] * alpha[0] * supplied_volume[0]
+    expected_bg = (
+        torch.pi * q_total * q_total / (2.0 * alpha[0] * alpha[0] * supplied_volume[0])
     )
     expected = -expected_bg * torch.eye(
         3, dtype=positions.dtype, device=positions.device
