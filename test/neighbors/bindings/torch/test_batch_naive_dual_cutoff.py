@@ -24,6 +24,7 @@ from nvalchemiops.torch.neighbors.batch_naive import (
 from nvalchemiops.torch.neighbors.batch_naive_dual_cutoff import (
     batch_naive_neighbor_list_dual_cutoff,
 )
+from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from ...test_utils import (
     create_batch_systems,
@@ -1165,3 +1166,178 @@ class TestBatchNaiveDualCutoffSelectiveRebuildFlags:
             assert _active_neighbor_shift_rows(
                 out_nm2, out_shifts2, ref_nn2, atom_index
             ) == _active_neighbor_shift_rows(ref_nm2, ref_shifts2, ref_nn2, atom_index)
+
+
+class TestBatchNaiveDualCutoffCompile:
+    """Torch compile coverage for explicit-buffer batched dual-cutoff paths."""
+
+    @pytest.mark.slow
+    def test_compile_no_pbc_explicit_buffers(self, device, dtype):
+        """Compile the batched no-PBC dual-cutoff runtime with explicit outputs."""
+        atoms_per_system = [5, 6]
+        positions, _, _, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors1),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.full(
+                    (fill_value, max_neighbors2),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+            )
+
+        def run(pos, nm1, nn1, nm2, nn2):
+            return batch_naive_neighbor_list_dual_cutoff(
+                pos,
+                cutoff1,
+                cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                fill_value=fill_value,
+                neighbor_matrix1=nm1,
+                neighbor_matrix2=nm2,
+                num_neighbors1=nn1,
+                num_neighbors2=nn2,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        for result, expected in zip(compiled, eager):
+            assert torch.equal(result, expected)
+
+    @pytest.mark.slow
+    def test_compile_pbc_explicit_buffers(self, device, dtype):
+        """Compile the batched PBC dual-cutoff runtime with prepared metadata."""
+        atoms_per_system = [5, 6]
+        positions, cell, pbc, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+        max_atoms_per_system = max(atoms_per_system)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff2, pbc
+        )
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors1),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors1, 3), dtype=torch.int32, device=device
+                ),
+                torch.full(
+                    (fill_value, max_neighbors2),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors2, 3), dtype=torch.int32, device=device
+                ),
+                torch.empty_like(positions),
+                torch.empty((fill_value, 3), dtype=torch.int32, device=device),
+                torch.empty_like(cell),
+            )
+
+        def run(
+            pos,
+            nm1,
+            nn1,
+            shifts1,
+            nm2,
+            nn2,
+            shifts2,
+            wrapped,
+            offsets,
+            inv_cell,
+        ):
+            return batch_naive_neighbor_list_dual_cutoff(
+                pos,
+                cutoff1,
+                cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                pbc=pbc,
+                cell=cell,
+                fill_value=fill_value,
+                neighbor_matrix1=nm1,
+                neighbor_matrix2=nm2,
+                neighbor_matrix_shifts1=shifts1,
+                neighbor_matrix_shifts2=shifts2,
+                num_neighbors1=nn1,
+                num_neighbors2=nn2,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                max_atoms_per_system=max_atoms_per_system,
+                positions_wrapped_buffer=wrapped,
+                per_atom_cell_offsets_buffer=offsets,
+                inv_cell_buffer=inv_cell,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        (
+            compiled_nm1,
+            compiled_nn1,
+            compiled_shifts1,
+            compiled_nm2,
+            compiled_nn2,
+            compiled_shifts2,
+        ) = compiled
+        eager_nm1, eager_nn1, eager_shifts1, eager_nm2, eager_nn2, eager_shifts2 = eager
+        assert torch.equal(compiled_nn1, eager_nn1)
+        assert torch.equal(compiled_nn2, eager_nn2)
+        for atom_index in range(fill_value):
+            assert _active_neighbor_shift_rows(
+                compiled_nm1,
+                compiled_shifts1,
+                compiled_nn1,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_nm1,
+                eager_shifts1,
+                eager_nn1,
+                atom_index,
+            )
+            assert _active_neighbor_shift_rows(
+                compiled_nm2,
+                compiled_shifts2,
+                compiled_nn2,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_nm2,
+                eager_shifts2,
+                eager_nn2,
+                atom_index,
+            )

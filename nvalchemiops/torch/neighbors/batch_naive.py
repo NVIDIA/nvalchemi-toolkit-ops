@@ -27,6 +27,7 @@ from nvalchemiops.neighbors.naive import (
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
 )
+from nvalchemiops.torch._warp_op_helpers import register_noop_fake
 from nvalchemiops.torch.neighbors._autograd import (
     _flatten_active_pairs,
     _NeighborForwardOutput,
@@ -105,17 +106,25 @@ def _batch_naive_neighbor_matrix_no_pbc(
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
 
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
-    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
-    wp_neighbor_matrix = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
     )
-    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    wp_batch_idx = wp.from_torch(
+        batch_idx, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_batch_ptr = wp.from_torch(
+        batch_ptr, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_neighbor_matrix = wp.from_torch(
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_num_neighbors = wp.from_torch(
+        num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
     wp_rebuild_flags = None
     if rebuild_flags is not None:
         wp_rebuild_flags = wp.from_torch(
-            rebuild_flags, dtype=wp.bool, return_ctype=True
+            rebuild_flags, dtype=wp.bool, requires_grad=False, return_ctype=True
         )
     batch_naive_neighbor_matrix(
         positions=wp_positions,
@@ -204,23 +213,36 @@ def _batch_naive_neighbor_matrix_pbc(
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     wp_dtype = get_wp_dtype(positions.dtype)
 
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
     wp_shift_range = wp.from_torch(
-        shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
+        shift_range_per_dimension,
+        dtype=wp.vec3i,
+        requires_grad=False,
+        return_ctype=True,
     )
     wp_num_shifts_arr = wp.from_torch(
-        num_shifts_per_system, dtype=wp.int32, return_ctype=True
+        num_shifts_per_system, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_matrix = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_matrix_shifts = wp.from_torch(
-        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+        neighbor_matrix_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
-    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
-    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
-    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
+    wp_num_neighbors = wp.from_torch(
+        num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_batch_idx = wp.from_torch(
+        batch_idx, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_batch_ptr = wp.from_torch(
+        batch_ptr, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
 
     if max_atoms_per_system is None:
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
@@ -228,20 +250,32 @@ def _batch_naive_neighbor_matrix_pbc(
     wp_rebuild_flags = None
     if rebuild_flags is not None:
         wp_rebuild_flags = wp.from_torch(
-            rebuild_flags, dtype=wp.bool, return_ctype=True
+            rebuild_flags, dtype=wp.bool, requires_grad=False, return_ctype=True
         )
     wp_positions_wrapped = (
-        wp.from_torch(positions_wrapped_buffer, dtype=wp_vec_dtype, return_ctype=True)
+        wp.from_torch(
+            positions_wrapped_buffer,
+            dtype=wp_vec_dtype,
+            requires_grad=False,
+            return_ctype=True,
+        )
         if positions_wrapped_buffer is not None
         else None
     )
     wp_per_atom_cell_offsets = (
-        wp.from_torch(per_atom_cell_offsets_buffer, dtype=wp.vec3i, return_ctype=True)
+        wp.from_torch(
+            per_atom_cell_offsets_buffer,
+            dtype=wp.vec3i,
+            requires_grad=False,
+            return_ctype=True,
+        )
         if per_atom_cell_offsets_buffer is not None
         else None
     )
     wp_inv_cell = (
-        wp.from_torch(inv_cell_buffer, dtype=wp_mat_dtype, return_ctype=True)
+        wp.from_torch(
+            inv_cell_buffer, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+        )
         if inv_cell_buffer is not None
         else None
     )
@@ -294,17 +328,29 @@ def _batch_naive_neighbor_matrix_no_pbc_pair(
     device = positions.device
     wp_dtype = get_wp_dtype(positions.dtype)
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
-    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
-    wp_neighbor_matrix = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
     )
-    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
+    wp_batch_idx = wp.from_torch(
+        batch_idx, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_batch_ptr = wp.from_torch(
+        batch_ptr, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_neighbor_matrix = wp.from_torch(
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_num_neighbors = wp.from_torch(
+        num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
     # Validated by ``_prepare_pair_output_args`` in the launcher -> pass real
     # Warp arrays (zero-copy views of the torch tensors), not ctype structs.
-    wp_neighbor_vectors = wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype)
-    wp_neighbor_distances = wp.from_torch(neighbor_distances, dtype=wp_dtype)
+    wp_neighbor_vectors = wp.from_torch(
+        neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False
+    )
+    wp_neighbor_distances = wp.from_torch(
+        neighbor_distances, dtype=wp_dtype, requires_grad=False
+    )
     batch_naive_neighbor_matrix(
         positions=wp_positions,
         cutoff=cutoff,
@@ -362,27 +408,44 @@ def _batch_naive_neighbor_matrix_pbc_pair(
     wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
     wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
     wp_dtype = get_wp_dtype(positions.dtype)
-    wp_positions = wp.from_torch(positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_positions = wp.from_torch(
+        positions, dtype=wp_vec_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
     wp_shift_range = wp.from_torch(
-        shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
+        shift_range_per_dimension,
+        dtype=wp.vec3i,
+        requires_grad=False,
+        return_ctype=True,
     )
     wp_num_shifts_arr = wp.from_torch(
-        num_shifts_per_system, dtype=wp.int32, return_ctype=True
+        num_shifts_per_system, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_matrix = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
     wp_neighbor_matrix_shifts = wp.from_torch(
-        neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+        neighbor_matrix_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
     )
-    wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32, return_ctype=True)
-    wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
-    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
+    wp_num_neighbors = wp.from_torch(
+        num_neighbors, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_batch_idx = wp.from_torch(
+        batch_idx, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    wp_batch_ptr = wp.from_torch(
+        batch_ptr, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
     # Validated by ``_prepare_pair_output_args`` in the launcher -> pass real
     # Warp arrays (zero-copy views of the torch tensors), not ctype structs.
-    wp_neighbor_vectors = wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype)
-    wp_neighbor_distances = wp.from_torch(neighbor_distances, dtype=wp_dtype)
+    wp_neighbor_vectors = wp.from_torch(
+        neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False
+    )
+    wp_neighbor_distances = wp.from_torch(
+        neighbor_distances, dtype=wp_dtype, requires_grad=False
+    )
     batch_naive_neighbor_matrix_pbc(
         positions=wp_positions,
         cell=wp_cell,
@@ -406,6 +469,12 @@ def _batch_naive_neighbor_matrix_pbc_pair(
         neighbor_vectors=wp_neighbor_vectors,
         neighbor_distances=wp_neighbor_distances,
     )
+
+
+register_noop_fake(_batch_naive_neighbor_matrix_no_pbc)
+register_noop_fake(_batch_naive_neighbor_matrix_pbc)
+register_noop_fake(_batch_naive_neighbor_matrix_no_pbc_pair)
+register_noop_fake(_batch_naive_neighbor_matrix_pbc_pair)
 
 
 def _batch_naive_pair_outputs_forward(
@@ -470,29 +539,53 @@ def _batch_naive_pair_outputs_forward(
             wrap_positions=wrap_positions,
         )
     else:
+        if torch.compiler.is_compiling():
+            raise NotImplementedError(
+                "batch naive pair_fn kernels are eager-only because Python "
+                "callables cannot cross a torch custom-op boundary.",
+            )
         wp_dtype = get_wp_dtype(positions.dtype)
         wp_vec_dtype = get_wp_vec_dtype(positions.dtype)
         pair_kwargs = {
             "pair_fn": pair_fn,
-            "pair_params": wp.from_torch(pair_params, dtype=wp_dtype),
-            "pair_energies": wp.from_torch(pair_energies, dtype=wp_dtype),
-            "pair_forces": wp.from_torch(pair_forces, dtype=wp_vec_dtype),
+            "pair_params": wp.from_torch(
+                pair_params, dtype=wp_dtype, requires_grad=False
+            ),
+            "pair_energies": wp.from_torch(
+                pair_energies, dtype=wp_dtype, requires_grad=False
+            ),
+            "pair_forces": wp.from_torch(
+                pair_forces, dtype=wp_vec_dtype, requires_grad=False
+            ),
         }
-        wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
-        wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, return_ctype=True)
+        wp_batch_idx = wp.from_torch(
+            batch_idx, dtype=wp.int32, requires_grad=False, return_ctype=True
+        )
+        wp_batch_ptr = wp.from_torch(
+            batch_ptr, dtype=wp.int32, requires_grad=False, return_ctype=True
+        )
         if pbc is None:
             batch_naive_neighbor_matrix(
                 positions=wp.from_torch(
-                    positions.detach(), dtype=wp_vec_dtype, return_ctype=True
+                    positions.detach(),
+                    dtype=wp_vec_dtype,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 cutoff=cutoff,
                 batch_idx=wp_batch_idx,
                 batch_ptr=wp_batch_ptr,
                 neighbor_matrix=wp.from_torch(
-                    neighbor_matrix, dtype=wp.int32, return_ctype=True
+                    neighbor_matrix,
+                    dtype=wp.int32,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 num_neighbors=wp.from_torch(
-                    num_neighbors, dtype=wp.int32, return_ctype=True
+                    num_neighbors,
+                    dtype=wp.int32,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 wp_dtype=wp_dtype,
                 device=str(positions.device),
@@ -500,37 +593,62 @@ def _batch_naive_pair_outputs_forward(
                 rebuild_flags=None,
                 return_vectors=True,
                 return_distances=True,
-                neighbor_vectors=wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype),
-                neighbor_distances=wp.from_torch(neighbor_distances, dtype=wp_dtype),
+                neighbor_vectors=wp.from_torch(
+                    neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False
+                ),
+                neighbor_distances=wp.from_torch(
+                    neighbor_distances, dtype=wp_dtype, requires_grad=False
+                ),
                 **pair_kwargs,
             )
         else:
             wp_mat_dtype = get_wp_mat_dtype(positions.dtype)
             batch_naive_neighbor_matrix_pbc(
                 positions=wp.from_torch(
-                    positions.detach(), dtype=wp_vec_dtype, return_ctype=True
+                    positions.detach(),
+                    dtype=wp_vec_dtype,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 cell=wp.from_torch(
-                    cell.detach(), dtype=wp_mat_dtype, return_ctype=True
+                    cell.detach(),
+                    dtype=wp_mat_dtype,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 cutoff=cutoff,
                 batch_ptr=wp_batch_ptr,
                 batch_idx=wp_batch_idx,
                 shift_range=wp.from_torch(
-                    shift_range_per_dimension, dtype=wp.vec3i, return_ctype=True
+                    shift_range_per_dimension,
+                    dtype=wp.vec3i,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 num_shifts_arr=wp.from_torch(
-                    num_shifts_per_system, dtype=wp.int32, return_ctype=True
+                    num_shifts_per_system,
+                    dtype=wp.int32,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 max_shifts_per_system=int(max_shifts_per_system),
                 neighbor_matrix=wp.from_torch(
-                    neighbor_matrix, dtype=wp.int32, return_ctype=True
+                    neighbor_matrix,
+                    dtype=wp.int32,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 neighbor_matrix_shifts=wp.from_torch(
-                    neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+                    neighbor_matrix_shifts,
+                    dtype=wp.vec3i,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 num_neighbors=wp.from_torch(
-                    num_neighbors, dtype=wp.int32, return_ctype=True
+                    num_neighbors,
+                    dtype=wp.int32,
+                    requires_grad=False,
+                    return_ctype=True,
                 ),
                 wp_dtype=wp_dtype,
                 device=str(positions.device),
@@ -540,8 +658,12 @@ def _batch_naive_pair_outputs_forward(
                 wrap_positions=wrap_positions,
                 return_vectors=True,
                 return_distances=True,
-                neighbor_vectors=wp.from_torch(neighbor_vectors, dtype=wp_vec_dtype),
-                neighbor_distances=wp.from_torch(neighbor_distances, dtype=wp_dtype),
+                neighbor_vectors=wp.from_torch(
+                    neighbor_vectors, dtype=wp_vec_dtype, requires_grad=False
+                ),
+                neighbor_distances=wp.from_torch(
+                    neighbor_distances, dtype=wp_dtype, requires_grad=False
+                ),
                 **pair_kwargs,
             )
     shifts_arg = (

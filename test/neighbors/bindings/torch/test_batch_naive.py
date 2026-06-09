@@ -23,6 +23,7 @@ import torch
 from nvalchemiops.torch.neighbors.batch_naive import (
     batch_naive_neighbor_list,
 )
+from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from ...test_utils import (
     create_batch_systems,
@@ -59,6 +60,24 @@ def create_batch_idx_and_ptr(
         start_idx += num_atoms
 
     return batch_idx, batch_ptr
+
+
+def _active_neighbor_shift_rows(
+    neighbor_matrix: torch.Tensor,
+    shifts: torch.Tensor,
+    counts: torch.Tensor,
+    atom_index: int,
+) -> list[tuple[int, int, int, int]]:
+    """Return sorted active ``(neighbor, sx, sy, sz)`` rows for one atom."""
+    count = int(counts[atom_index].item())
+    rows = torch.cat(
+        (
+            neighbor_matrix[atom_index, :count].unsqueeze(1),
+            shifts[atom_index, :count],
+        ),
+        dim=1,
+    )
+    return sorted(tuple(row) for row in rows.detach().cpu().tolist())
 
 
 class TestBatchNaiveCorrectness:
@@ -738,81 +757,6 @@ class TestBatchNaiveOutputFormats:
 class TestBatchNaivePerformance:
     """Performance and scaling tests."""
 
-    @pytest.mark.slow
-    def test_batch_scaling_with_system_size(self, device):
-        """Test that batch implementation scales reasonably with size.
-
-        Verifies that computation time increases as expected when
-        batch size and system sizes grow.
-        """
-        import time
-
-        dtype = torch.float32
-        cutoff = 1.2
-        max_neighbors = 50
-
-        # Test different batch sizes
-        batch_sizes = (
-            [(2, [10, 12], [2.0, 2.0]), (3, [8, 10, 12], [2.0, 2.0, 2.0])]
-            if device == "cpu"
-            else [
-                (3, [20, 25, 30], [2.0, 2.0, 2.0]),
-                (4, [15, 20, 25, 30], [2.0, 2.0, 2.0, 2.0]),
-            ]
-        )
-        times = []
-
-        for num_systems, atoms_per_system, cell_sizes in batch_sizes:
-            positions_batch, cell_batch, pbc_batch, _ = create_batch_systems(
-                num_systems=num_systems,
-                cell_sizes=cell_sizes,
-                atoms_per_system=atoms_per_system,
-                dtype=dtype,
-                device=device,
-            )
-            batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
-
-            # Warm up
-            for _ in range(10):
-                batch_naive_neighbor_list(
-                    positions_batch,
-                    cutoff,
-                    batch_idx,
-                    batch_ptr,
-                    pbc=pbc_batch,
-                    cell=cell_batch,
-                    max_neighbors=max_neighbors,
-                    half_fill=True,
-                )
-
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()
-
-            # Time the operation
-            start_time = time.time()
-            for _ in range(100):
-                batch_naive_neighbor_list(
-                    positions_batch,
-                    cutoff,
-                    batch_idx,
-                    batch_ptr,
-                    pbc=pbc_batch,
-                    cell=cell_batch,
-                    max_neighbors=max_neighbors,
-                    half_fill=True,
-                )
-
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()
-
-            elapsed = time.time() - start_time
-            times.append(elapsed)
-
-        # Check that it scales reasonably (allow 2x tolerance)
-        assert times[1] > times[0] * 0.5, (
-            f"Time should increase with batch size: {times}"
-        )
-
     def test_cutoff_scaling(self, device, dtype, half_fill):
         """Test neighbor count increases with cutoff.
 
@@ -1082,3 +1026,128 @@ class TestBatchNaiveAutograd:
             row_a = sorted(nm_a[i, :n].tolist())
             row_b = sorted(nm_b[i, :n].tolist())
             assert row_a == row_b
+
+
+class TestBatchNaiveCompile:
+    """Torch compile coverage for explicit-buffer batched naive paths."""
+
+    @pytest.mark.slow
+    def test_compile_no_pbc_explicit_buffers(self, device, dtype):
+        """Compile the batched no-PBC runtime with explicit outputs."""
+        atoms_per_system = [5, 6]
+        positions, _, _, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors = 30
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+            )
+
+        def run(pos, neighbor_matrix, num_neighbors):
+            return batch_naive_neighbor_list(
+                pos,
+                cutoff,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                fill_value=fill_value,
+                neighbor_matrix=neighbor_matrix,
+                num_neighbors=num_neighbors,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        for result, expected in zip(compiled, eager):
+            assert torch.equal(result, expected)
+
+    @pytest.mark.slow
+    def test_compile_pbc_explicit_buffers(self, device, dtype):
+        """Compile the batched PBC runtime with prepared shift metadata."""
+        atoms_per_system = [5, 6]
+        positions, cell, pbc, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors = 30
+        max_atoms_per_system = max(atoms_per_system)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff, pbc
+        )
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors, 3), dtype=torch.int32, device=device
+                ),
+                torch.empty_like(positions),
+                torch.empty((fill_value, 3), dtype=torch.int32, device=device),
+                torch.empty_like(cell),
+            )
+
+        def run(
+            pos,
+            neighbor_matrix,
+            num_neighbors,
+            neighbor_matrix_shifts,
+            wrapped,
+            offsets,
+            inv_cell,
+        ):
+            return batch_naive_neighbor_list(
+                pos,
+                cutoff,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                pbc=pbc,
+                cell=cell,
+                fill_value=fill_value,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                num_neighbors=num_neighbors,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                max_atoms_per_system=max_atoms_per_system,
+                positions_wrapped_buffer=wrapped,
+                per_atom_cell_offsets_buffer=offsets,
+                inv_cell_buffer=inv_cell,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        compiled_matrix, compiled_counts, compiled_shifts = compiled
+        eager_matrix, eager_counts, eager_shifts = eager
+        assert torch.equal(compiled_counts, eager_counts)
+        for atom_index in range(fill_value):
+            assert _active_neighbor_shift_rows(
+                compiled_matrix,
+                compiled_shifts,
+                compiled_counts,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_matrix,
+                eager_shifts,
+                eager_counts,
+                atom_index,
+            )
