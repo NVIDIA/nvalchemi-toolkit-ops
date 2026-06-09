@@ -2634,7 +2634,7 @@ class TestCoulombTorchCompile:
         charges_eager = charges.clone().requires_grad_(True)
         cell_eager = cell.clone().requires_grad_(True)
         energy_eager, forces_eager = energy_forces(pos_eager, charges_eager, cell_eager)
-        grad_eager = torch.autograd.grad(energy_eager, pos_eager, retain_graph=True)[0]
+        grad_eager = torch.autograd.grad(energy_eager, pos_eager)[0]
 
         pos_compiled = positions.clone().requires_grad_(True)
         charges_compiled = charges.clone().requires_grad_(True)
@@ -2647,7 +2647,6 @@ class TestCoulombTorchCompile:
         grad_compiled = torch.autograd.grad(
             energy_compiled,
             pos_compiled,
-            retain_graph=True,
         )[0]
 
         torch.testing.assert_close(energy_compiled, energy_eager, atol=1e-12, rtol=0.0)
