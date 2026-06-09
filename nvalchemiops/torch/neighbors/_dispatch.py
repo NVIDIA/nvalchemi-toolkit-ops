@@ -34,6 +34,7 @@ from nvalchemiops.neighbors.base_dispatch import (
     estimate_neighbor_list_costs as _estimate_neighbor_list_costs_wp,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
+    _raise_if_compiling_host_only,
     synthesize_cell_for_batch,
     synthesize_cell_for_ss,
 )
@@ -190,6 +191,11 @@ def estimate_neighbor_list_costs(
         faster), sorted cheapest-first.  Host-only: call outside
         ``torch.compile`` and pass the chosen name as an explicit ``method=``.
     """
+    _raise_if_compiling_host_only(
+        "estimate_neighbor_list_costs",
+        "Call it before compiling, then pass the selected strategy name as "
+        "an explicit method= argument to the compiled neighbor-list call.",
+    )
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D tensor")
     num_systems = max(int(batch_ptr.shape[0]) - 1, 0)
@@ -198,12 +204,16 @@ def estimate_neighbor_list_costs(
     if batch_idx is not None:
         batch_idx = batch_idx.detach().to(dtype=torch.int32).contiguous()
 
-    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32)
+    wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32, requires_grad=False)
     wp_batch_idx = (
-        wp.from_torch(batch_idx, dtype=wp.int32) if batch_idx is not None else None
+        wp.from_torch(batch_idx, dtype=wp.int32, requires_grad=False)
+        if batch_idx is not None
+        else None
     )
-    wp_cell = wp.from_torch(cell, dtype=get_wp_mat_dtype(cell.dtype))
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool)
+    wp_cell = wp.from_torch(
+        cell, dtype=get_wp_mat_dtype(cell.dtype), requires_grad=False
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False)
     feature_mask = 0
     if cell.device.type == "cuda":
         feature_mask |= FEATURE_CUDA
@@ -273,6 +283,12 @@ def _auto_method_from_geometry(
     The ``batch_`` prefix is added by the caller from ``num_systems``; this
     returns the unbatched fine-grained name, e.g. ``"naive_tile"``.
     """
+    _raise_if_compiling_host_only(
+        "neighbor_list(method=None)",
+        "Choose the method before compiling with suggest_neighbor_list_method "
+        "or pass method='naive', method='cell_list', or another explicit "
+        "strategy name.",
+    )
     if positions.shape[0] == 0:
         return "cell_list_atom_centric"
 

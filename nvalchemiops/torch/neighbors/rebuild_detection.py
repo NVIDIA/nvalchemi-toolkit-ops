@@ -93,20 +93,33 @@ def _cell_list_needs_rebuild(
 
     # Convert PyTorch tensors to warp arrays
     wp_current_positions = wp.from_torch(
-        current_positions, dtype=wp_vec_dtype, return_ctype=True
+        current_positions,
+        dtype=wp_vec_dtype,
+        requires_grad=False,
+        return_ctype=True,
     )
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_atom_to_cell_mapping = wp.from_torch(
-        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+        atom_to_cell_mapping,
+        dtype=wp.vec3i,
+        requires_grad=False,
+        return_ctype=True,
     )
     wp_cells_per_dimension = wp.from_torch(
-        cells_per_dimension, dtype=wp.int32, return_ctype=True
+        cells_per_dimension,
+        dtype=wp.int32,
+        requires_grad=False,
+        return_ctype=True,
     )
 
     # Initialize rebuild flag (False = no rebuild needed)
     rebuild_needed = torch.tensor([False], device=device, dtype=torch.bool)
-    wp_rebuild_flag = wp.from_torch(rebuild_needed, dtype=wp.bool, return_ctype=True)
+    wp_rebuild_flag = wp.from_torch(
+        rebuild_needed, dtype=wp.bool, requires_grad=False, return_ctype=True
+    )
 
     # Call core warp launcher
     check_cell_list_rebuild(
@@ -254,21 +267,35 @@ def _neighbor_list_needs_rebuild(
     wp_vec_dtype = get_wp_vec_dtype(reference_positions.dtype)
 
     wp_reference_positions = wp.from_torch(
-        reference_positions, dtype=wp_vec_dtype, return_ctype=True
+        reference_positions,
+        dtype=wp_vec_dtype,
+        requires_grad=False,
+        return_ctype=True,
     )
     wp_current_positions = wp.from_torch(
-        current_positions, dtype=wp_vec_dtype, return_ctype=True
+        current_positions,
+        dtype=wp_vec_dtype,
+        requires_grad=False,
+        return_ctype=True,
     )
 
     rebuild_needed = torch.tensor([False], device=device, dtype=torch.bool)
-    wp_rebuild_flag = wp.from_torch(rebuild_needed, dtype=wp.bool, return_ctype=True)
+    wp_rebuild_flag = wp.from_torch(
+        rebuild_needed, dtype=wp.bool, requires_grad=False, return_ctype=True
+    )
 
     wp_cell = wp_cell_inv = wp_pbc = None
     if cell is not None and cell_inv is not None and pbc is not None:
         wp_mat_dtype = get_wp_mat_dtype(reference_positions.dtype)
-        wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-        wp_cell_inv = wp.from_torch(cell_inv, dtype=wp_mat_dtype, return_ctype=True)
-        wp_pbc = wp.from_torch(pbc.squeeze(0), dtype=wp.bool, return_ctype=True)
+        wp_cell = wp.from_torch(
+            cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+        )
+        wp_cell_inv = wp.from_torch(
+            cell_inv, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+        )
+        wp_pbc = wp.from_torch(
+            pbc.squeeze(0), dtype=wp.bool, requires_grad=False, return_ctype=True
+        )
 
     check_neighbor_list_rebuild(
         reference_positions=wp_reference_positions,
@@ -507,6 +534,7 @@ def _batch_neighbor_list_needs_rebuild(
     current_positions: torch.Tensor,
     batch_idx: torch.Tensor,
     skin_distance_threshold: float,
+    num_systems: int,
     update_reference_positions: bool = False,
     cell: torch.Tensor | None = None,
     cell_inv: torch.Tensor | None = None,
@@ -524,6 +552,9 @@ def _batch_neighbor_list_needs_rebuild(
         System index for each atom.
     skin_distance_threshold : float
         Maximum allowed displacement before neighbor list becomes invalid.
+    num_systems : int
+        Number of systems represented by ``batch_idx``. Provided explicitly so
+        fake/meta execution does not need to inspect tensor values.
     update_reference_positions : bool, default=False
         If True, overwrite ``reference_positions`` with ``current_positions``
         after a rebuild is detected. Uses a separate deterministic kernel launch.
@@ -544,7 +575,6 @@ def _batch_neighbor_list_needs_rebuild(
     batch_neighbor_list_needs_rebuild : High-level wrapper function
     """
     if reference_positions.shape != current_positions.shape:
-        num_systems = int(batch_idx.max().item()) + 1 if batch_idx.numel() > 0 else 1
         return torch.ones(
             num_systems, device=current_positions.device, dtype=torch.bool
         )
@@ -552,7 +582,6 @@ def _batch_neighbor_list_needs_rebuild(
     total_atoms = reference_positions.shape[0]
     device = reference_positions.device
 
-    num_systems = int(batch_idx.max().item()) + 1 if total_atoms > 0 else 1
     rebuild_flags = torch.zeros(num_systems, device=device, dtype=torch.bool)
 
     if total_atoms == 0:
@@ -562,20 +591,39 @@ def _batch_neighbor_list_needs_rebuild(
     wp_vec_dtype = get_wp_vec_dtype(reference_positions.dtype)
 
     wp_reference = wp.from_torch(
-        reference_positions, dtype=wp_vec_dtype, return_ctype=True
+        reference_positions,
+        dtype=wp_vec_dtype,
+        requires_grad=False,
+        return_ctype=True,
     )
-    wp_current = wp.from_torch(current_positions, dtype=wp_vec_dtype, return_ctype=True)
+    wp_current = wp.from_torch(
+        current_positions,
+        dtype=wp_vec_dtype,
+        requires_grad=False,
+        return_ctype=True,
+    )
     wp_batch_idx = wp.from_torch(
-        batch_idx.to(dtype=torch.int32), dtype=wp.int32, return_ctype=True
+        batch_idx.to(dtype=torch.int32),
+        dtype=wp.int32,
+        requires_grad=False,
+        return_ctype=True,
     )
-    wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool, return_ctype=True)
+    wp_rebuild_flags = wp.from_torch(
+        rebuild_flags, dtype=wp.bool, requires_grad=False, return_ctype=True
+    )
 
     wp_cell = wp_cell_inv = wp_pbc = None
     if cell is not None and cell_inv is not None and pbc is not None:
         wp_mat_dtype = get_wp_mat_dtype(reference_positions.dtype)
-        wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
-        wp_cell_inv = wp.from_torch(cell_inv, dtype=wp_mat_dtype, return_ctype=True)
-        wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
+        wp_cell = wp.from_torch(
+            cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+        )
+        wp_cell_inv = wp.from_torch(
+            cell_inv, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+        )
+        wp_pbc = wp.from_torch(
+            pbc, dtype=wp.bool, requires_grad=False, return_ctype=True
+        )
 
     check_batch_neighbor_list_rebuild(
         reference_positions=wp_reference,
@@ -600,14 +648,16 @@ def _batch_neighbor_list_needs_rebuild_fake(
     current_positions: torch.Tensor,
     batch_idx: torch.Tensor,
     skin_distance_threshold: float,
+    num_systems: int,
     update_reference_positions: bool = False,
     cell: torch.Tensor | None = None,
     cell_inv: torch.Tensor | None = None,
     pbc: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Fake implementation for torch.compile compatibility."""
-    num_systems = batch_idx.max() + 1 if batch_idx.numel() > 0 else 1
-    return torch.zeros(num_systems, device=reference_positions.device, dtype=torch.bool)
+    return torch.zeros(
+        (num_systems,), device=reference_positions.device, dtype=torch.bool
+    )
 
 
 def batch_neighbor_list_needs_rebuild(
@@ -619,6 +669,8 @@ def batch_neighbor_list_needs_rebuild(
     cell: torch.Tensor | None = None,
     cell_inv: torch.Tensor | None = None,
     pbc: torch.Tensor | None = None,
+    *,
+    num_systems: int | None = None,
 ) -> torch.Tensor:
     """Detect per-system if neighbor lists require rebuilding due to atomic motion.
 
@@ -649,6 +701,10 @@ def batch_neighbor_list_needs_rebuild(
         Inverse cell matrices, same shape as ``cell``.
     pbc : torch.Tensor or None, optional
         PBC flags, shape (num_systems, 3), dtype=bool.
+    num_systems : int, optional
+        Number of systems represented by ``batch_idx``. Required under
+        ``torch.compile`` because deriving it from ``batch_idx.max()`` is a
+        host-only synchronization.
 
     Returns
     -------
@@ -660,17 +716,28 @@ def batch_neighbor_list_needs_rebuild(
     -----
     - torch.compile compatible custom operation
     - No CPU-GPU synchronization required; all flag writes happen on GPU
-    - ``num_systems`` is inferred as ``batch_idx.max() + 1``
+    - In eager mode, ``num_systems`` defaults to ``batch_idx.max() + 1``
 
     See Also
     --------
     neighbor_list_needs_rebuild : Single-system version
     """
+    if num_systems is None:
+        if torch.compiler.is_compiling() or torch._dynamo.is_compiling():
+            raise RuntimeError(
+                "batch_neighbor_list_needs_rebuild requires num_systems under "
+                "torch.compile. Compute it before compiling and pass "
+                "num_systems=... to avoid tracing a host-only batch_idx.max() "
+                "synchronization."
+            )
+        num_systems = int(batch_idx.max().item()) + 1 if batch_idx.numel() > 0 else 1
+
     return _batch_neighbor_list_needs_rebuild(
         reference_positions,
         current_positions,
         batch_idx,
         skin_distance_threshold,
+        int(num_systems),
         update_reference_positions,
         cell,
         cell_inv,
@@ -733,20 +800,38 @@ def _batch_cell_list_needs_rebuild(
     wp_vec_dtype = get_wp_vec_dtype(current_positions.dtype)
     wp_mat_dtype = get_wp_mat_dtype(current_positions.dtype)
 
-    wp_current = wp.from_torch(current_positions, dtype=wp_vec_dtype, return_ctype=True)
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, return_ctype=True)
+    wp_current = wp.from_torch(
+        current_positions,
+        dtype=wp_vec_dtype,
+        requires_grad=False,
+        return_ctype=True,
+    )
+    wp_cell = wp.from_torch(
+        cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
+    )
     wp_atom_to_cell_mapping = wp.from_torch(
-        atom_to_cell_mapping, dtype=wp.vec3i, return_ctype=True
+        atom_to_cell_mapping,
+        dtype=wp.vec3i,
+        requires_grad=False,
+        return_ctype=True,
     )
     wp_batch_idx = wp.from_torch(
-        batch_idx.to(dtype=torch.int32), dtype=wp.int32, return_ctype=True
+        batch_idx.to(dtype=torch.int32),
+        dtype=wp.int32,
+        requires_grad=False,
+        return_ctype=True,
     )
     wp_cells_per_dimension = wp.from_torch(
-        cells_per_dimension, dtype=wp.vec3i, return_ctype=True
+        cells_per_dimension,
+        dtype=wp.vec3i,
+        requires_grad=False,
+        return_ctype=True,
     )
     # pbc shape (num_systems, 3) → 2D warp array of bool
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, return_ctype=True)
-    wp_rebuild_flags = wp.from_torch(rebuild_flags, dtype=wp.bool, return_ctype=True)
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
+    wp_rebuild_flags = wp.from_torch(
+        rebuild_flags, dtype=wp.bool, requires_grad=False, return_ctype=True
+    )
 
     check_batch_cell_list_rebuild(
         current_positions=wp_current,

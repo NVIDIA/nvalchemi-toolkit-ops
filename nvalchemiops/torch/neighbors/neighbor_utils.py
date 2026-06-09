@@ -44,6 +44,15 @@ __all__ = [
 ]
 
 
+def _raise_if_compiling_host_only(name: str, replacement: str) -> None:
+    """Raise a clear error when a host-only helper is traced by Dynamo."""
+    if torch.compiler.is_compiling() or torch._dynamo.is_compiling():
+        raise RuntimeError(
+            f"{name} is a host-only neighbor-list helper and cannot run inside "
+            f"torch.compile. {replacement}"
+        )
+
+
 def compute_naive_num_shifts(
     cell: torch.Tensor,
     cutoff: float,
@@ -81,6 +90,12 @@ def compute_naive_num_shifts(
     --------
     nvalchemiops.neighbors.neighbor_utils.compute_naive_num_shifts : Core warp launcher
     """
+    _raise_if_compiling_host_only(
+        "compute_naive_num_shifts",
+        "Call it before compiling and pass shift_range_per_dimension, "
+        "num_shifts_per_system, and max_shifts_per_system to the compiled "
+        "neighbor-list call.",
+    )
     num_systems = cell.shape[0]
     device = cell.device
 
@@ -91,10 +106,10 @@ def compute_naive_num_shifts(
     wp_mat_dtype = get_wp_mat_dtype(cell.dtype)
     wp_device = wp.device_from_torch(device)
 
-    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype)
-    wp_pbc = wp.from_torch(pbc, dtype=wp.bool)
-    wp_num_shifts = wp.from_torch(num_shifts_i32, dtype=wp.int32)
-    wp_shift_range = wp.from_torch(shift_range, dtype=wp.vec3i)
+    wp_cell = wp.from_torch(cell, dtype=wp_mat_dtype, requires_grad=False)
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False)
+    wp_num_shifts = wp.from_torch(num_shifts_i32, dtype=wp.int32, requires_grad=False)
+    wp_shift_range = wp.from_torch(shift_range, dtype=wp.vec3i, requires_grad=False)
 
     wp_compute_naive_num_shifts(
         cell=wp_cell,

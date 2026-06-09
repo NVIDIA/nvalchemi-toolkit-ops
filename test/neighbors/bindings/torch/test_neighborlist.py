@@ -2091,6 +2091,7 @@ def test_suggest_then_run_under_torch_compile():
     matrix-format result compiled as eager.
     """
     from nvalchemiops.torch.neighbors import suggest_neighbor_list_method
+    from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(0)
@@ -2101,13 +2102,81 @@ def test_suggest_then_run_under_torch_compile():
     batch_ptr = torch.tensor([0, n], dtype=torch.int32, device=device)
 
     method = suggest_neighbor_list_method(batch_ptr, cell, pbc, 5.0)
+    shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+        cell, 5.0, pbc.reshape(1, 3)
+    )
 
-    def run(pos):
-        return neighbor_list(
-            pos, 5.0, cell=cell, pbc=pbc, method=method, max_neighbors=128
+    def alloc_outputs():
+        return (
+            torch.full((n, 128), n, dtype=torch.int32, device=device),
+            torch.zeros(n, dtype=torch.int32, device=device),
+            torch.zeros((n, 128, 3), dtype=torch.int32, device=device),
         )
 
-    eager = run(positions)
-    compiled = torch.compile(run)(positions)
+    def run(pos, neighbor_matrix, num_neighbors, neighbor_matrix_shifts):
+        return neighbor_list(
+            pos,
+            5.0,
+            cell=cell,
+            pbc=pbc,
+            method=method,
+            neighbor_matrix=neighbor_matrix,
+            num_neighbors=num_neighbors,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            shift_range_per_dimension=shift_range,
+            num_shifts_per_system=num_shifts,
+            max_shifts_per_system=max_shifts,
+        )
+
+    eager = run(positions, *alloc_outputs())
+    compiled = torch.compile(run)(positions, *alloc_outputs())
 
     assert torch.equal(eager[1], compiled[1])  # num_neighbors agree
+
+
+def test_host_only_suggest_rejects_inside_torch_compile():
+    """Strategy estimation must happen before Dynamo traces the runtime call."""
+    from nvalchemiops.torch.neighbors import suggest_neighbor_list_method
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    batch_ptr = torch.tensor([0, 4], dtype=torch.int32, device=device)
+    cell = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3)
+    pbc = torch.ones(3, dtype=torch.bool, device=device)
+
+    def run(ptr, cell_arg, pbc_arg):
+        return suggest_neighbor_list_method(ptr, cell_arg, pbc_arg, 1.0)
+
+    with pytest.raises(RuntimeError, match="host-only neighbor-list helper"):
+        torch.compile(run)(batch_ptr, cell, pbc)
+
+
+def test_host_only_auto_method_rejects_inside_torch_compile():
+    """Auto dispatch is host-only; compiled callers must pass method= explicitly."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    positions = torch.rand(4, 3, dtype=torch.float32, device=device)
+    cell = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3)
+    pbc = torch.ones(3, dtype=torch.bool, device=device)
+
+    def run(pos):
+        return neighbor_list(pos, 1.0, cell=cell, pbc=pbc)
+
+    with pytest.raises(RuntimeError, match="neighbor_list\\(method=None\\)"):
+        torch.compile(run)(positions)
+
+
+def test_host_only_naive_shift_metadata_rejects_inside_torch_compile():
+    """Naive PBC shift metadata is prepared once and reused inside compile."""
+    from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    cell = torch.eye(3, dtype=torch.float32, device=device).reshape(1, 3, 3)
+    pbc = torch.ones((1, 3), dtype=torch.bool, device=device)
+
+    def run(cell_arg, pbc_arg):
+        shift_range, num_shifts, _max_shifts = compute_naive_num_shifts(
+            cell_arg, 1.0, pbc_arg
+        )
+        return shift_range, num_shifts
+
+    with pytest.raises(RuntimeError, match="compute_naive_num_shifts"):
+        torch.compile(run)(cell, pbc)
