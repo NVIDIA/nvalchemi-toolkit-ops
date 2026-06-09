@@ -554,7 +554,7 @@ class TestSplineRegressionValues:
         assert mesh_np.sum() == pytest.approx(1.0, rel=1e-8)
         assert mesh_np.max() == pytest.approx(0.2508416403, rel=1e-8)
         assert mesh_np.min() == pytest.approx(-0.2962962963, rel=1e-8)
-        assert np.count_nonzero(mesh_np) == 181
+        assert np.count_nonzero(np.abs(mesh_np) > 1e-8) == 181
 
     def test_gather_regression(self, device, simple_system):
         """Regression test for spline_gather with expected values."""

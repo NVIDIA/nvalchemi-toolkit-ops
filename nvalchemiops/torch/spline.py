@@ -2624,6 +2624,11 @@ def spline_gather_vec3(
     vectors : torch.Tensor, shape (N, 3)
         Interpolated 3D vectors at atomic positions.
     """
+    if _gather_vec3_needs_autograd(positions, charges, mesh, cell):
+        return _spline_gather_vec3_autograd(
+            positions, charges, mesh, cell, spline_order, batch_idx, cell_inv_t
+        )
+
     if batch_idx is None:
         return _spline_gather_vec3(
             positions, charges, mesh, cell, spline_order, cell_inv_t
@@ -2687,6 +2692,129 @@ def spline_gather_gradient(
         return _batch_spline_gather_gradient(
             positions, charges, mesh, batch_idx, cell, spline_order, cell_inv_t
         )
+
+
+def _gather_channels_needs_autograd(
+    positions: torch.Tensor,
+    mesh: torch.Tensor,
+    cell: torch.Tensor,
+) -> bool:
+    return torch.is_grad_enabled() and (
+        positions.requires_grad or mesh.requires_grad or cell.requires_grad
+    )
+
+
+def _spline_gather_channels_autograd(
+    positions: torch.Tensor,
+    mesh: torch.Tensor,
+    cell: torch.Tensor,
+    spline_order: int,
+    batch_idx: torch.Tensor | None,
+) -> torch.Tensor:
+    """Differentiable multi-channel gather using the single-channel backward chain."""
+    if batch_idx is None:
+        channel_values = [
+            spline_gather(positions, mesh[channel], cell, spline_order=spline_order)
+            for channel in range(mesh.shape[0])
+        ]
+    else:
+        channel_values = [
+            spline_gather(
+                positions,
+                mesh[:, channel],
+                cell,
+                spline_order=spline_order,
+                batch_idx=batch_idx,
+            )
+            for channel in range(mesh.shape[1])
+        ]
+    return torch.stack(channel_values, dim=1)
+
+
+def _spread_channels_needs_autograd(
+    positions: torch.Tensor,
+    values: torch.Tensor,
+    cell: torch.Tensor,
+) -> bool:
+    return torch.is_grad_enabled() and (
+        positions.requires_grad or values.requires_grad or cell.requires_grad
+    )
+
+
+def _spline_spread_channels_autograd(
+    positions: torch.Tensor,
+    values: torch.Tensor,
+    cell: torch.Tensor,
+    mesh_dims: tuple[int, int, int],
+    spline_order: int,
+    batch_idx: torch.Tensor | None,
+) -> torch.Tensor:
+    """Differentiable multi-channel spread using the single-channel backward chain."""
+    if batch_idx is None:
+        channel_meshes = [
+            spline_spread(
+                positions,
+                values[:, channel],
+                cell,
+                mesh_dims,
+                spline_order=spline_order,
+            )
+            for channel in range(values.shape[1])
+        ]
+        return torch.stack(channel_meshes, dim=0)
+
+    channel_meshes = [
+        spline_spread(
+            positions,
+            values[:, channel],
+            cell,
+            mesh_dims,
+            spline_order=spline_order,
+            batch_idx=batch_idx,
+        )
+        for channel in range(values.shape[1])
+    ]
+    return torch.stack(channel_meshes, dim=1)
+
+
+def _gather_vec3_needs_autograd(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    mesh: torch.Tensor,
+    cell: torch.Tensor,
+) -> bool:
+    return torch.is_grad_enabled() and (
+        positions.requires_grad
+        or charges.requires_grad
+        or mesh.requires_grad
+        or cell.requires_grad
+    )
+
+
+def _spline_gather_vec3_autograd(
+    positions: torch.Tensor,
+    charges: torch.Tensor,
+    mesh: torch.Tensor,
+    cell: torch.Tensor,
+    spline_order: int,
+    batch_idx: torch.Tensor | None,
+    cell_inv_t: torch.Tensor | None,
+) -> torch.Tensor:
+    """Differentiable vec3 gather using the scalar gather backward chain."""
+    component_values = [
+        spline_gather(
+            positions,
+            mesh[..., component],
+            cell,
+            spline_order=spline_order,
+            batch_idx=batch_idx,
+            cell_inv_t=cell_inv_t,
+        )
+        for component in range(3)
+    ]
+    return torch.stack(component_values, dim=1) * charges.to(positions.dtype).unsqueeze(
+        1
+    )
 
 
 def spline_gather_with_force(
@@ -2795,6 +2923,16 @@ def spline_spread_channels(
     mesh_nx, mesh_ny, mesh_nz = mesh_dims
     num_channels = values.shape[1]
 
+    if batch_idx is not None and cell.dim() == 2:
+        raise ValueError(
+            "batched spline_spread_channels requires cell with shape (B, 3, 3)"
+        )
+
+    if _spread_channels_needs_autograd(positions, values, cell):
+        return _spline_spread_channels_autograd(
+            positions, values, cell, mesh_dims, spline_order, batch_idx
+        )
+
     if batch_idx is None:
         return _spline_spread_channels(
             positions,
@@ -2807,10 +2945,6 @@ def spline_spread_channels(
             spline_order,
         )
     else:
-        if cell.dim() == 2:
-            raise ValueError(
-                "batched spline_spread_channels requires cell with shape (B, 3, 3)"
-            )
         num_systems = cell.shape[0]
         return _batch_spline_spread_channels(
             positions,
@@ -2863,6 +2997,11 @@ def spline_gather_channels(
     >>> potentials = spline_gather_channels(positions, potential_mesh, cell)
     >>> print(potentials.shape)  # (100, 9)
     """
+    if _gather_channels_needs_autograd(positions, mesh, cell):
+        return _spline_gather_channels_autograd(
+            positions, mesh, cell, spline_order, batch_idx
+        )
+
     if batch_idx is None:
         return _spline_gather_channels(positions, mesh, cell, spline_order)
     else:
