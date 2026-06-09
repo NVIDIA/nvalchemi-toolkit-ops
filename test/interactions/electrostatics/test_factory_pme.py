@@ -25,9 +25,10 @@ Covers:
    ``dL/dk_squared``), asserted FD-correct and genuinely nonzero.
 
 2. **Stress-path second backward** -- end-to-end through the public PME reciprocal
-   energy: ``d2E/dV2`` (volume fed as a leaf) matches a scalar finite difference,
-   and the full ``d2E/dcell2`` second backward runs and is finite + nonzero
-   (confirming the k_squared/volume -> cell propagation is live).
+   energy: caller-supplied ``volume=`` is pinned as static metadata, while the
+   full ``d2E/dcell2`` second backward runs and is finite + nonzero (confirming
+   the k_squared/volume -> cell propagation is live when volume is derived from
+   ``cell``).
 
 3. **Launcher parity** -- direct factory kernel launches and the public
    ``pme_convolve`` / ``pme_corrections`` wrapper launchers produce identical
@@ -1018,11 +1019,11 @@ class TestStressPathDoubleBackward:
     path. The per-k math itself is pinned by ``TestConvolveDoubleBackwardFD``.
     """
 
-    def test_volume_second_derivative_matches_fd(self, device):
-        # Clean isolation: feed volume as a leaf via the ``volume=`` kwarg so the
-        # ONLY autograd path to it is the convolve op's volume input (spline /
-        # k_squared bypass the leaf). d2E/dV2 from the registered double-backward
-        # must match a scalar finite difference of dE/dV.
+    def test_supplied_volume_is_static_metadata(self, device):
+        # Public PME treats caller-supplied volume as fixed setup metadata,
+        # matching k_vectors / k_squared / cell_inv_t. Cell-derived volume
+        # gradients are covered by test_full_cell_second_backward_nonzero and
+        # low-level dL/dvolume correctness is pinned by TestConvolveDoubleBackwardFD.
         from nvalchemiops.torch.interactions.electrostatics.pme import (
             pme_reciprocal_space,
         )
@@ -1044,19 +1045,8 @@ class TestStressPathDoubleBackward:
             ).sum()
 
         vol = torch.tensor([v0], dtype=torch.float64, device=tdev, requires_grad=True)
-        g = torch.autograd.grad(energy_vol(vol), vol, create_graph=True)[0]
-        d2 = torch.autograd.grad(g.sum(), vol)[0]
-        assert torch.isfinite(d2).all()
-        assert float(d2.abs().max()) > 0.0  # genuinely nonzero (not zeroed)
-
-        def dEdV(v):
-            vv = torch.tensor([v], dtype=torch.float64, device=tdev, requires_grad=True)
-            return float(torch.autograd.grad(energy_vol(vv), vv)[0][0])
-
-        eps = 1e-4
-        fd = (dEdV(v0 + eps) - dEdV(v0 - eps)) / (2 * eps)
-        max_abs = abs(float(d2[0]) - fd)
-        assert max_abs < 1e-7, f"d2E/dV2 FD max_abs={max_abs:.3e}"
+        energy = energy_vol(vol)
+        assert not energy.requires_grad
 
     def test_full_cell_second_backward_nonzero(self, device):
         # Full cell second derivative: cell flows to E through spline, k_squared
@@ -1065,8 +1055,7 @@ class TestStressPathDoubleBackward:
         # (no "no autograd formula registered") and the result is finite + nonzero.
         # It does NOT validate the magnitude of the cell terms (the spline->cell
         # path alone makes g2 nonzero) -- the per-k correctness + nonzero-ness of
-        # dL/dk_squared/dL/dvolume is pinned by TestConvolveDoubleBackwardFD, and
-        # the V end-to-end FD-correctness by test_volume_second_derivative_*.
+        # dL/dk_squared/dL/dvolume is pinned by TestConvolveDoubleBackwardFD.
         from nvalchemiops.torch.interactions.electrostatics.pme import (
             pme_reciprocal_space,
         )

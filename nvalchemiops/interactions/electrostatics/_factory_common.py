@@ -53,7 +53,7 @@ from nvalchemiops.math import wp_erfc
 __all__ = ["get_backward_scale_kernel"]
 
 
-# === C1 axis value types ===
+# === Factory axis value types ===
 
 
 class _DerivState(enum.Enum):
@@ -262,7 +262,7 @@ def _validate_common_axes(
     component: str,
     supported_orders: Sequence[str] = ("forward", "backward", "double_backward"),
 ) -> None:
-    """Validate the C1 axes shared by the ``ewald_real`` / ``ewald_recip`` factories.
+    """Validate the axes shared by the ``ewald_real`` / ``ewald_recip`` factories.
 
     Checks the dtype, ``order`` membership, that ``deriv_state`` is a
     :class:`_DerivState`, the permanently-invalid ``cell_grad=True`` + ``deriv_state=E``

@@ -18,9 +18,10 @@
 Three guarantees:
 
 1. **Forward derivative parity** -- the factory ``E_F`` / ``E_F_dQ`` / virial
-   outputs are bit-exact (``np.array_equal``) vs the hand-written
+   outputs match the hand-written
    ``ewald_real_space_energy_forces[_charge_grad][_matrix]`` launchers, for
-   ``wp.float32`` + ``wp.float64`` x single/batch x CSR/NM.
+   ``wp.float32`` + ``wp.float64`` x single/batch x CSR/NM, allowing one
+   dtype epsilon of roundoff from equivalent accumulation order.
 2. **Backward finite-diff** -- the ``order="backward"`` kernel emits
    ``grad_E * dE/dR`` / ``dE/dq`` / virial; with ``grad_E = 1`` these are compared to
    central-difference forces / charge gradients / strain virial of the factory
@@ -73,6 +74,17 @@ _MASK = 999
 _NPF = {wp.float32: np.float32, wp.float64: np.float64}
 _VEC = {wp.float32: wp.vec3f, wp.float64: wp.vec3d}
 _MAT = {wp.float32: wp.mat33f, wp.float64: wp.mat33d}
+
+
+def _assert_forward_parity(actual, expected, dtype):
+    """Assert factory forward outputs match direct kernels at dtype precision."""
+    np_dtype = np.float64 if dtype == wp.float64 else np.float32
+    np.testing.assert_allclose(
+        actual,
+        expected,
+        rtol=0.0,
+        atol=np.finfo(np_dtype).eps,
+    )
 
 
 # ==============================================================================
@@ -539,7 +551,7 @@ class TestForwardDerivativeParity:
             charge_grad=False,
             virial=False,
         )
-        assert np.array_equal(f_got, f_ref)
+        _assert_forward_parity(f_got, f_ref, dtype)
 
     @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
     @pytest.mark.parametrize("batched,neighbor_input", _GRID, ids=_GRID_IDS)
@@ -563,8 +575,8 @@ class TestForwardDerivativeParity:
             charge_grad=True,
             virial=False,
         )
-        assert np.array_equal(f_got, f_ref)
-        assert np.array_equal(cg_got, cg_ref)
+        _assert_forward_parity(f_got, f_ref, dtype)
+        _assert_forward_parity(cg_got, cg_ref, dtype)
 
     @pytest.mark.parametrize("dtype", _DTYPES, ids=_DTYPE_IDS)
     @pytest.mark.parametrize("batched,neighbor_input", _GRID, ids=_GRID_IDS)
@@ -588,7 +600,7 @@ class TestForwardDerivativeParity:
             charge_grad=True,
             virial=True,
         )
-        assert np.array_equal(v_got, v_ref)
+        _assert_forward_parity(v_got, v_ref, dtype)
 
 
 # ==============================================================================

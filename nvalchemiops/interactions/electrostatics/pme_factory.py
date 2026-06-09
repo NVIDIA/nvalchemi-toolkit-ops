@@ -232,7 +232,7 @@ def _validate_axes(
     order: str,
     charge_grad: bool,
 ) -> None:
-    """Raise for unsupported / invalid C1 axis combinations."""
+    """Raise for unsupported / invalid component-axis combinations."""
     _require_supported_dtype(wp_dtype)
     if component not in _COMPONENTS:
         raise NotImplementedError(

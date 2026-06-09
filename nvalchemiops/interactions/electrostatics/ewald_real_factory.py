@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``ewald_real`` per-component kernel factory.
+r"""``ewald_real`` per-component kernel factory.
 
 One source per ``(wp_dtype, batched, neighbor_input)`` triple is specialized into
 the derivative matrix by capturing the ``DERIV`` / ``CELL_GRAD`` axes as Python
@@ -39,10 +39,17 @@ kernels:
 The forward 15-parameter list is identical across
 ``(dtype, batched, neighbor_input)``. The backward / double-backward signatures are
 defined here (the contract froze only ``forward``) and are the sibling-factory pattern:
-``backward(grad_energy, *forward_inputs) -> first-deriv outputs``;
-``double_backward(*bwd_cotangents, *bwd_inputs) -> second-order grads``, matching the
-codebase ``register_warp_op_chain`` convention and the PME ``*_double_backward``
-precedent.
+.. math::
+
+    \mathrm{backward}(\bar{E}, x) \rightarrow \bar{x}
+
+.. math::
+
+    \mathrm{double\_backward}(\bar{\bar{x}}, x, \bar{E})
+    \rightarrow \bar{\bar{x}}_\mathrm{inputs}
+
+These signatures match the codebase ``register_warp_op_chain`` convention and the
+PME ``*_double_backward`` precedent.
 
 The double-backward kernel implements the position, charge **and cell** second-order
 terms, so a stress-loss double-backward (nonzero ``v_cell``) is fully supported: it
@@ -50,9 +57,16 @@ emits ``grad_cell`` (the cell-self term) plus the cross-terms from ``v_cell`` in
 ``grad_positions`` (cell<->position) and ``grad_charges`` (cell<->charge). These are
     the directional derivative of the backward **cell output** -- the strain-virial state
 ``W = -dE/dstrain``, not the literal ``dE/dcell`` -- which is the validation contract.
-Cell enters only through the periodic separation
-``sep = pos_j - pos_i + cell_t @ n`` (integer lattice shift ``n``), giving
-``d sep_a / d cell[p, q] = delta_{a, q} n_p`` (i.e. ``d Phi / d cell = n (x) d Phi / d sep``).
+Cell enters only through the periodic separation for integer lattice shift ``n``:
+
+.. math::
+
+    r_{ij} = R_j - R_i + h^\mathsf{T} n,
+    \qquad
+    \frac{\partial r_{ij,a}}{\partial h_{p,q}} = \delta_{a,q} n_p.
+
+Equivalently, ``d Phi / d cell`` is the outer product of ``n`` and
+``d Phi / d sep``.
 """
 
 from functools import lru_cache
@@ -622,7 +636,7 @@ def _validate_axes(
     tiled: bool = False,
     cell_literal: bool = False,
 ) -> None:
-    """Raise for unsupported / invalid C1 axis combinations.
+    """Raise for unsupported / invalid component-axis combinations.
 
     ``NotImplementedError`` for not-yet / out-of-scope axes; ``ValueError`` for the
     permanently invalid ``cell_grad=True`` + ``deriv_state=E`` combination (no force
@@ -787,7 +801,7 @@ def get_ewald_real_kernel(
 ) -> wp.Kernel:
     """Return a cached ``ewald_real`` kernel, validating dtype + component.
 
-    Validates the dtype and ``component`` (the only C1 axis not also a
+    Validates the dtype and ``component`` (the only specialization axis not also a
     :func:`make_ewald_real_kernel` argument), then delegates to that factory.
     Memoization is the ``@lru_cache`` on ``make_*``; there is no separate cache
     dict. Every argument is forwarded **by keyword** (including ``wp_dtype``) so a

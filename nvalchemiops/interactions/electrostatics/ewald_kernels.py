@@ -384,13 +384,11 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     volume = wp.float64(wp.abs(wp.determinant(cell[0])))
 
     k_vector = k_vectors[k_idx]
-    # Cast k_vector components to float64 for precision
     kx = wp.float64(k_vector[0])
     ky = wp.float64(k_vector[1])
     kz = wp.float64(k_vector[2])
     k_squared = kx * kx + ky * ky + kz * kz
 
-    # Skip k=0 (would cause division by zero)
     if k_squared < wp.float64(1e-10):
         if k_idx == 0:
             total_charge_accum = wp.float64(0.0)
@@ -421,7 +419,6 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         if k_idx == 0:
             total_charge_accum += charge / volume
 
-        # Compute k*r in float64
         k_dot_r = (
             kx * wp.float64(position[0])
             + ky * wp.float64(position[1])
@@ -438,7 +435,6 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         real_sum += charge * cos_kr * green_function
         imag_sum += charge * sin_kr * green_function
 
-    # Write final structure factors (no atomics needed)
     if k_idx == 0:
         total_charge[0] = total_charge_accum
     real_structure_factors[k_idx] = real_sum
@@ -627,7 +623,6 @@ def _ewald_reciprocal_space_energy_kernel_compute_energy(
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
 
-    # Write final energy: E_i = (1/2) * q_i * phi_i (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
 
@@ -791,22 +786,18 @@ def _ewald_reciprocal_space_energy_forces_kernel(
         cos_kr = charge * cos_k_dot_r[k_idx, atom_idx]
         sin_kr = charge * sin_k_dot_r[k_idx, atom_idx]
 
-        # Load precomputed structure factors (already include green function)
         s_real = real_structure_factors[k_idx]
         s_imag = imag_structure_factors[k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += phase_sum
 
-        # Force contribution
         force_scalar = s_real * sin_kr - s_imag * cos_kr
         k_vec = k_vectors[k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results with charge multiplication (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
     atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
         type(atomic_forces[atom_idx][0])(local_force_x),
@@ -896,34 +887,27 @@ def _ewald_reciprocal_space_energy_forces_charge_grad_kernel(
         cos_kr = cos_k_dot_r[k_idx, atom_idx]
         sin_kr = sin_k_dot_r[k_idx, atom_idx]
 
-        # Load precomputed structure factors (already include green function)
         s_real = real_structure_factors[k_idx]
         s_imag = imag_structure_factors[k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
         local_potential_uncharged += phase_sum
 
-        # Force contribution
         force_scalar = charge * (s_real * sin_kr - s_imag * cos_kr)
         k_vec = k_vectors[k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results (no atomics needed)
-    # Energy: E_i = (1/2) * q_i * φ_i
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
-    # Forces
     atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
         type(atomic_forces[atom_idx][0])(local_force_x),
         type(atomic_forces[atom_idx][0])(local_force_y),
         type(atomic_forces[atom_idx][0])(local_force_z),
     )
 
-    # Charge gradient
     # Self-energy and background corrections applied in higher-level code
     charge_gradients[atom_idx] = local_potential_uncharged
 
@@ -1002,7 +986,6 @@ def _ewald_reciprocal_space_virial_kernel(
     # so W_ab(k) = E(k) * [δ_ab - 2 k_a k_b / k² (1 + k²/(4α²))].
     k_factor = wp.float64(2.0) * (wp.float64(1.0) + k_sq * exp_factor) / k_sq
 
-    # Build 3x3 virial contribution: W_ab = E_k * (δ_ab - k_factor * k_a * k_b)
     w00 = energy_k * (wp.float64(1.0) - k_factor * kx * kx)
     w01 = energy_k * (-k_factor * kx * ky)
     w02 = energy_k * (-k_factor * kx * kz)
@@ -1013,8 +996,6 @@ def _ewald_reciprocal_space_virial_kernel(
     w21 = energy_k * (-k_factor * kz * ky)
     w22 = energy_k * (wp.float64(1.0) - k_factor * kz * kz)
 
-    # Cast to virial element type (mat33f or mat33d, matching input precision)
-    # Use type() inline as constructor (Warp resolves at compile time)
     _virial_ref = virial[0]
     virial_k = type(_virial_ref)(
         type(k_vec[0])(w00),
@@ -1093,7 +1074,6 @@ def _batch_ewald_reciprocal_space_virial_kernel(
     # so W_ab(k) = E(k) * [δ_ab - 2 k_a k_b / k² (1 + k²/(4α²))].
     k_factor = wp.float64(2.0) * (wp.float64(1.0) + k_sq * exp_factor) / k_sq
 
-    # Build 3x3 virial contribution: W_ab = E_k * (δ_ab - k_factor * k_a * k_b)
     w00 = energy_k * (wp.float64(1.0) - k_factor * kx * kx)
     w01 = energy_k * (-k_factor * kx * ky)
     w02 = energy_k * (-k_factor * kx * kz)
@@ -1104,8 +1084,6 @@ def _batch_ewald_reciprocal_space_virial_kernel(
     w21 = energy_k * (-k_factor * kz * ky)
     w22 = energy_k * (wp.float64(1.0) - k_factor * kz * kz)
 
-    # Cast to virial element type (mat33f or mat33d, matching input precision)
-    # Use type() inline as constructor (Warp resolves at compile time)
     _virial_ref = virial[system_id]
     virial_k = type(_virial_ref)(
         type(k_vec[0])(w00),
@@ -1213,11 +1191,9 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     a_start = atom_start[system_id]
     a_end = atom_end[system_id]
 
-    # Compute atom range for this block
     block_start = a_start + block_idx * BATCH_BLOCK_SIZE
     block_end = wp.min(block_start + BATCH_BLOCK_SIZE, a_end)
 
-    # Skip if this block is beyond the system's atoms
     if block_start >= a_end:
         return
 
@@ -1230,7 +1206,6 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     kz = wp.float64(k_vector[2])
     k_squared = kx * kx + ky * ky + kz * kz
 
-    # Skip k=0 (would cause division by zero)
     if k_squared < wp.float64(1e-10):
         if k_idx == 0:
             local_charge = wp.float64(0.0)
@@ -1258,7 +1233,6 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         if k_idx == 0:
             local_charge += charge / volume
 
-        # Compute cos(k*r) and sin(k*r) weighted by charge
         k_dot_r = (
             kx * wp.float64(position[0])
             + ky * wp.float64(position[1])
@@ -1479,7 +1453,6 @@ def _batch_ewald_reciprocal_space_energy_kernel_compute_energy(
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
 
-    # Write final energy: E_i = (1/2) * q_i * phi_i (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
 
@@ -1964,18 +1937,15 @@ def _batch_ewald_reciprocal_space_energy_forces_kernel(
         s_real = real_structure_factors[system_id, k_idx]
         s_imag = imag_structure_factors[system_id, k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += phase_sum
 
-        # Force contribution
         force_scalar = s_real * sin_kr - s_imag * cos_kr
         k_vec = k_vectors[system_id, k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results with charge multiplication (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
     atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
         type(atomic_forces[atom_idx][0])(local_force_x),
@@ -2071,30 +2041,24 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel(
         s_real = real_structure_factors[system_id, k_idx]
         s_imag = imag_structure_factors[system_id, k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
         local_potential_uncharged += phase_sum
 
-        # Force contribution
         force_scalar = charge * (s_real * sin_kr - s_imag * cos_kr)
         k_vec = k_vectors[system_id, k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results (no atomics needed)
-    # Energy
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
-    # Forces
     atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
         type(atomic_forces[atom_idx][0])(local_force_x),
         type(atomic_forces[atom_idx][0])(local_force_y),
         type(atomic_forces[atom_idx][0])(local_force_z),
     )
 
-    # Charge gradient
     # Self-energy and background corrections applied in higher-level code
     charge_gradients[atom_idx] = local_potential_uncharged
 

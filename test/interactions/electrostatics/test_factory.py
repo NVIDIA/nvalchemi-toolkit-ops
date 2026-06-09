@@ -641,7 +641,7 @@ class TestFactoryKernelNames:
     """Generated kernels carry a descriptive name + a "Specialization" docstring.
 
     R1 mirrors the neighbor-list naming convention: each specialization gets a
-    descriptive ``__name__`` / Warp ``key`` encoding its C1 axes, plus a contract
+    descriptive ``__name__`` / Warp ``key`` encoding its specialization axes, plus a contract
     docstring extended with a "Specialization" section. ``module.name`` (which the
     dead-branch test keys on) stays the per-spec ``module=`` and is unaffected.
     """
@@ -694,7 +694,7 @@ class TestFactoryKernelNames:
         )
         doc = kernel.__doc__
         assert "Specialization" in doc
-        # The section lists the C1 axes with their values.
+        # The section lists the specialization axes with their values.
         assert "dtype = f64" in doc
         assert "neighbor_input = list" in doc
         assert "deriv_state = E_F" in doc

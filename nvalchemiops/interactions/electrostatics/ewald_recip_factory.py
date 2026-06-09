@@ -13,13 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``ewald_recip`` per-component kernel factory.
+r"""``ewald_recip`` per-component kernel factory.
 
 The reciprocal analogue of ``ewald_real_factory``. Unlike the real-space side --
 where every pair is independent and one atom-major kernel covers the whole
 derivative matrix -- the reciprocal sum has a **global reduction barrier**: per-atom
 energy / forces / charge-grad need the structure factors
-``S(k) = G(k) sum_j q_j e^{i k.r_j}`` which sum over *all* atoms. A specialization is
+which sum over *all* atoms:
+
+.. math::
+
+    S(k) = G(k) \sum_j q_j e^{i k \cdot R_j}.
+
+A specialization is
 therefore irreducibly **multi-stage** and ``make_ewald_recip_kernel`` returns a small
 private bundle rather than a single ``wp.Kernel``:
 
@@ -38,7 +44,13 @@ private bundle rather than a single ``wp.Kernel``:
 The reciprocal kernels here compute the **k-space sum only**; self-energy and
 background corrections are a separate higher-level kernel (as in the hand-written
 path) and are excluded from both the factory output and the parity / finite-diff
-oracles. Charge-grad has no ``1/2`` (``dE/dq = phi`` full); energy carries the ``1/2``.
+oracles. Charge-grad has no ``1/2``:
+
+.. math::
+
+    \frac{\partial E}{\partial q_i} = \phi_i
+
+while the energy carries the ``1/2``.
 
 ``order`` families
 ------------------
@@ -59,8 +71,13 @@ oracles. Charge-grad has no ``1/2`` (``dE/dq = phi`` full); energy carries the `
   ``grad_kvectors`` / ``grad_volume``.
 
 Cell second-order: the reciprocal kernel never receives the integer Miller
-indices, so the ``cell -> k`` / ``cell -> V`` derivative is structurally Torch's
-(``k_vectors.py`` / ``det(cell)``). The kernel therefore owns second derivatives w.r.t.
+indices, so the following derivatives are structurally Torch-owned:
+
+.. math::
+
+    h \mapsto k(h), \qquad h \mapsto V(h).
+
+The kernel therefore owns second derivatives w.r.t.
 its differentiable inputs ``k_vectors`` (vec3 per k) and ``volume`` (scalar per
 system), emitting ``grad_kvectors`` / ``grad_volume`` (mirroring PME's
 ``grad_k_squared`` / ``grad_volume``); Torch maps those back to ``cell``. The
@@ -355,7 +372,7 @@ def get_ewald_recip_kernel(
 ) -> _RecipKernels:
     """Return a cached ``ewald_recip`` kernel bundle, validating dtype + component.
 
-    Validates the dtype and ``component`` (the only C1 axis not also a
+    Validates the dtype and ``component`` (the only specialization axis not also a
     :func:`make_ewald_recip_kernel` argument), then delegates to that factory.
     Memoization is the ``@lru_cache`` on ``make_*``; every argument is forwarded **by
     keyword** so a positional vs keyword call can never produce a duplicate cache

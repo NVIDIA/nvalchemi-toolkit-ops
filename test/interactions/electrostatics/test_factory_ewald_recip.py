@@ -1077,7 +1077,8 @@ class TestForwardParity:
         single = get_ewald_recip_kernel(
             wp.float64, deriv_state=_DerivState.E_F, cell_grad=True, order="forward"
         )
-        assert single.virial is _ewald_reciprocal_space_virial_kernel
+        assert single.virial.generic_parent is _ewald_reciprocal_space_virial_kernel
+        assert single.virial.func is _ewald_reciprocal_space_virial_kernel.func
         batch = get_ewald_recip_kernel(
             wp.float64,
             batched=True,
@@ -1085,7 +1086,10 @@ class TestForwardParity:
             cell_grad=True,
             order="forward",
         )
-        assert batch.virial is _batch_ewald_reciprocal_space_virial_kernel
+        assert (
+            batch.virial.generic_parent is _batch_ewald_reciprocal_space_virial_kernel
+        )
+        assert batch.virial.func is _batch_ewald_reciprocal_space_virial_kernel.func
         no_v = get_ewald_recip_kernel(
             wp.float64, deriv_state=_DerivState.E_F, cell_grad=False, order="forward"
         )
