@@ -36,8 +36,8 @@ charges, and row-vector displacement virials using the same per-system
 energy-cotangent reducer as Torch. Higher-order JAX support is limited to tested
 position and charge scalar losses. JAX PME stress/cell/strain, alpha, and
 precomputed-metadata higher-order paths are unsupported until implemented and
-tested. JAX direct-output flags remain functional during the transition but are
-deprecated for differentiable training.
+tested. JAX direct-output flags remain functional for compatibility in v0.4.0
+but are deprecated for differentiable training.
 
 ### Precomputed Electrostatics Metadata
 

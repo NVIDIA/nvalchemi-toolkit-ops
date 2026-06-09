@@ -61,7 +61,7 @@ returned energy tensor. The full-api flags `compute_forces`,
 `compute_charge_gradients`, `compute_virial`, and `hybrid_forces` are deprecated
 and emit `DeprecationWarning`; component APIs such as `ewald_real_space`,
 `ewald_reciprocal_space`, and `pme_reciprocal_space` keep direct outputs as
-no-autograd MD/inference escape hatches. See {ref}`energy-derivative-contract`
+no-autograd MD/inference paths. See {ref}`energy-derivative-contract`
 for the full migration recipe and performance guidance.
 
 JAX Ewald/PME energy autograd supports first-order derivatives for positions,
@@ -2348,12 +2348,12 @@ of the metadata-generation step.
 The direct-output flags `compute_forces`, `compute_virial`,
 `compute_charge_gradients`, and `hybrid_forces` on the full
 `ewald_summation` / `particle_mesh_ewald` APIs are **deprecated** and emit a
-`DeprecationWarning`. They remain functional during the transition, but new code
-should use the energy-derivative recipes below. The
+`DeprecationWarning`. They remain functional for compatibility in v0.4.0, but
+differentiable training code should use the energy-derivative recipes below. The
 lower-level component functions (`ewald_real_space`, `ewald_reciprocal_space`,
 `pme_reciprocal_space`) keep their direct-force outputs as no-autograd
-MD/inference escape hatches and do not warn. Full-API calls that still pass
-`compute_forces=True` etc. will print a `DeprecationWarning`.
+MD/inference paths and do not warn. Full-API calls that still pass
+`compute_forces=True` etc. emit a `DeprecationWarning`.
 ```
 
 The examples below use `particle_mesh_ewald`; `ewald_summation` follows the same
@@ -2407,7 +2407,7 @@ forces = -torch.autograd.grad(energy.sum(), positions, create_graph=True)[0]
 ```{important}
 This replaces the deprecated `hybrid_forces=True` path. A legacy direct force
 (`compute_forces=True`) is the fixed-charge partial $-\partial E/\partial R|_q$
-and silently **omits** the $\partial E/\partial q \cdot \partial q/\partial R$
+and does not include the $\partial E/\partial q \cdot \partial q/\partial R$
 term for `q(R)` models -- which is why direct force output on the full API is
 deprecated.
 ```
@@ -2488,10 +2488,11 @@ and precomputed outside the compiled function. This is useful for no-autograd
 MD/inference loops and for benchmarking the deprecated direct-output migration
 path.
 
-Energy-autograd training callables that contain `torch.autograd.grad` are not a
-`torch.compile` fast path today: Dynamo does not trace the complete force/stress
-loss callable as one full graph. Compile only the energy-forward function when
-that is useful for an application, and keep the force, stress, and
+Energy-autograd training callables that contain `torch.autograd.grad` are not
+treated as a `torch.compile` fast path in this release: Dynamo does not trace the
+complete force/stress loss callable as one full graph. Compile only the
+energy-forward function when that is useful for an application, and keep the
+force, stress, and
 double-backward training step in eager PyTorch. Benchmark CSV rows label this
 difference explicitly with `derivative_contract` and `workload`.
 
@@ -2514,7 +2515,8 @@ charge_grad = torch.autograd.grad(
 ### Migration From Deprecated Flags
 
 Each deprecated direct-output flag maps to an energy-autograd replacement. The
-deprecated flags still work during the transition but emit a `DeprecationWarning`.
+deprecated flags remain available for compatibility in v0.4.0 but emit a
+`DeprecationWarning`.
 
 | Deprecated flag | Replacement |
 |-----------------|-------------|
@@ -2531,13 +2533,14 @@ the differentiable training contract.
 ```
 
 ```{note}
-JAX full Ewald/PME now follows the same first-order energy-derivative contract
+JAX full Ewald/PME follows the same first-order energy-derivative contract
 for positions, charges, and row-vector displacement virials. Higher-order JAX
 support is limited to tested position and charge scalar losses; PME reciprocal
 terms use the native PME mesh HVP path. JAX PME stress/cell/strain, alpha, and
 precomputed-metadata higher-order paths are
 unsupported until implemented and tested. JAX direct-output flags remain
-functional during the transition but are deprecated for differentiable training.
+functional for compatibility in v0.4.0 but are deprecated for differentiable
+training.
 ```
 
 (parameter-estimation)=

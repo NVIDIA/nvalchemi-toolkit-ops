@@ -4,12 +4,12 @@
 
 ### Added
 
-- Full Torch Ewald/PME APIs now support energy-derived forces, charge
+- Full Torch Ewald/PME APIs support energy-derived forces, charge
   gradients, and strain-first virials, including second-order force/stress
   losses.
-- Torch slab correction now participates in autograd when inputs require
+- Torch slab correction participates in autograd when inputs require
   gradients.
-- Full JAX Ewald/PME energy-only calls now support first-order gradients for
+- Full JAX Ewald/PME energy-only calls support first-order gradients for
   positions, charges, and row-vector displacement virials.
 - JAX PME reciprocal higher-order support is limited to tested position and
   charge scalar losses. PME cell/stress/strain higher-order derivatives remain
@@ -19,7 +19,7 @@
   moduli where supported.
 - `compute_bspline_moduli_1d` is exported from the top-level Torch and JAX
   electrostatics namespaces for PME precompute workflows.
-- Electrostatics autograd now documents `positions`, `charges`, and `cell` as
+- Electrostatics autograd documents `positions`, `charges`, and `cell` as
   the only gradient targets. Setup values such as `alpha` are constants, and
   cell-derived reciprocal caches are static metadata assumed to correspond to
   the current cell.
@@ -50,8 +50,8 @@
 
 - Direct-output flags on full Torch and JAX Ewald/PME APIs are deprecated for
   differentiable training: `compute_forces`, `compute_virial`,
-  `compute_charge_gradients`, and `hybrid_forces`. They still work and keep the
-  existing tuple order. Component `compute_forces=True` remains available for
+  `compute_charge_gradients`, and `hybrid_forces`. They remain available and keep
+  the existing tuple order. Component `compute_forces=True` remains available for
   no-autograd MD/inference use; component charge-gradient, virial, and hybrid
   direct outputs warn as legacy training-style outputs.
 - `cells_inv` argument on `compute_cell_kinetic_energy`,

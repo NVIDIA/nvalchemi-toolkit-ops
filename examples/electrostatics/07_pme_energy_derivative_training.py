@@ -24,9 +24,9 @@ derivatives are taken from it with** ``torch.autograd.grad``.
 
 The legacy ``compute_forces`` / ``compute_virial`` / ``compute_charge_gradients``
 / ``hybrid_forces`` flags on ``particle_mesh_ewald`` and ``ewald_summation`` are
-deprecated and emit a ``DeprecationWarning``. They still work during the
-transition, so this example also checks that the autograd results match the
-legacy direct outputs, which is the migration-correctness proof.
+deprecated and emit a ``DeprecationWarning``. They remain available for
+compatibility in v0.4.0, so this example also checks that the autograd results
+match the legacy direct outputs, which is the migration check.
 
 In this example you will learn:
 
@@ -195,7 +195,7 @@ if not torch.isfinite(weight.grad).all():
 # Because ``charges = charge_model(positions)`` stays connected to ``positions``,
 # the autograd force includes both the fixed-charge term and the
 # ``dE/dq . dq/dR`` chain-rule term. The legacy ``compute_forces=True`` output is
-# the fixed-charge partial only and would silently miss the charge-model term --
+# only the fixed-charge partial and does not include the charge-model term --
 # this is the central reason direct force output on the full API is deprecated.
 
 # %%
