@@ -26,7 +26,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 AUDITED_ROOTS = (
     ROOT / "nvalchemiops" / "torch" / "neighbors",
@@ -187,15 +186,15 @@ def _iter_raw_warp_functions() -> list[tuple[str, int, bool]]:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             rel = path.relative_to(ROOT).as_posix()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef) and _has_raw_warp_call(node):
-                    functions.append(
-                        (
-                            f"{rel}::{node.name}",
-                            node.lineno,
-                            _has_boundary_decorator(node),
-                        )
-                    )
+            functions.extend(
+                (
+                    f"{rel}::{node.name}",
+                    node.lineno,
+                    _has_boundary_decorator(node),
+                )
+                for node in ast.walk(tree)
+                if isinstance(node, ast.FunctionDef) and _has_raw_warp_call(node)
+            )
     return sorted(functions)
 
 
@@ -214,11 +213,15 @@ def _iter_custom_ops() -> list[tuple[str, int, bool]]:
                     if _decorator_name(dec).endswith("custom_op"):
                         custom_ops.append((node.name, node.lineno))
                     if _decorator_target_name(dec) == "register_fake":
-                        target = dec.func.value if isinstance(dec, ast.Call) else dec.value
+                        target = (
+                            dec.func.value if isinstance(dec, ast.Call) else dec.value
+                        )
                         if isinstance(target, ast.Name):
                             registered_fakes.add(target.id)
             for node in ast.walk(tree):
-                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                if not isinstance(node, ast.Call) or not isinstance(
+                    node.func, ast.Name
+                ):
                     continue
                 if "fake" not in node.func.id or not node.args:
                     continue
