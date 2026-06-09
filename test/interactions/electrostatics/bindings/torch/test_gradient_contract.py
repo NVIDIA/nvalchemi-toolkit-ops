@@ -30,6 +30,9 @@ from nvalchemiops.torch.interactions.electrostatics import (
     particle_mesh_ewald,
     pme_reciprocal_space,
 )
+from nvalchemiops.torch.interactions.electrostatics._util import (
+    _combine_electrostatic_outputs,
+)
 
 pytestmark = pytest.mark.gpu
 
@@ -82,6 +85,83 @@ def _assert_no_cache_warning(records: list[warnings.WarningMessage]) -> None:
     messages = [str(record.message) for record in records]
     assert not any("Precomputed" in message for message in messages)
     assert not any("current cell" in message for message in messages)
+
+
+def test_combined_charge_gradients_compile_without_disabled_helper() -> None:
+    """Charge-gradient output composition stays traceable under torch.compile."""
+    device = _device()
+    energies_real = torch.tensor([1.0, 2.0], dtype=torch.float64, device=device)
+    energies_recip = torch.tensor([0.5, 0.25], dtype=torch.float64, device=device)
+    forces_real = torch.arange(6, dtype=torch.float64, device=device).reshape(2, 3)
+    forces_recip = torch.ones_like(forces_real)
+    charge_real = torch.tensor([0.1, 0.2], dtype=torch.float64, device=device)
+    charge_recip = torch.tensor([0.3, 0.4], dtype=torch.float64, device=device)
+    virial_real = torch.eye(3, dtype=torch.float64, device=device).reshape(1, 3, 3)
+    virial_recip = torch.ones((1, 3, 3), dtype=torch.float64, device=device)
+
+    def combine(
+        real_charge_grads: torch.Tensor,
+        reciprocal_charge_grads: torch.Tensor,
+    ) -> tuple[torch.Tensor, ...]:
+        return _combine_electrostatic_outputs(
+            (energies_real, forces_real, real_charge_grads, virial_real),
+            (energies_recip, forces_recip, reciprocal_charge_grads, virial_recip),
+            None,
+            compute_forces=True,
+            compute_charge_gradients=True,
+            compute_virial=True,
+        )
+
+    eager = combine(charge_real, charge_recip)
+    compiled = torch.compile(combine)(charge_real, charge_recip)
+
+    assert isinstance(compiled, tuple)
+    assert len(compiled) == len(eager)
+    for eager_tensor, compiled_tensor in zip(eager, compiled, strict=True):
+        torch.testing.assert_close(compiled_tensor, eager_tensor)
+
+
+def test_compiled_ewald_first_order_gradients_match_eager() -> None:
+    """Compiled Ewald energy preserves supported first-order gradients."""
+    positions, charges, cell = _system()
+    alpha = torch.tensor([0.35], dtype=torch.float64, device=positions.device)
+    neighbor_list, neighbor_ptr, shifts = _neighbor_list()
+
+    def loss_fn(
+        pos: torch.Tensor,
+        q: torch.Tensor,
+        lattice: torch.Tensor,
+    ) -> torch.Tensor:
+        return ewald_summation(
+            pos,
+            q,
+            lattice,
+            alpha=alpha,
+            k_cutoff=5.0,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=shifts,
+        ).sum()
+
+    # Register lazy custom-op chains before Dynamo traces the runtime path.
+    loss_fn(positions, charges, cell).detach()
+
+    eager_inputs = (
+        positions.detach().requires_grad_(True),
+        charges.detach().requires_grad_(True),
+        cell.detach().requires_grad_(True),
+    )
+    compiled_inputs = tuple(t.detach().requires_grad_(True) for t in eager_inputs)
+
+    eager_loss = loss_fn(*eager_inputs)
+    eager_grads = torch.autograd.grad(eager_loss, eager_inputs)
+
+    compiled_loss = torch.compile(loss_fn)(*compiled_inputs)
+    compiled_grads = torch.autograd.grad(compiled_loss, compiled_inputs)
+
+    torch.testing.assert_close(compiled_loss, eager_loss)
+    for compiled_grad, eager_grad in zip(compiled_grads, eager_grads, strict=True):
+        torch.testing.assert_close(compiled_grad, eager_grad, rtol=5e-7, atol=5e-8)
 
 
 def test_ewald_alpha_is_setup_constant() -> None:

@@ -1104,6 +1104,60 @@ class TestEwaldSlabDtypes:
 
 
 # ==============================================================================
+# torch.compile behavior
+# ==============================================================================
+
+
+class TestSlabTorchCompile:
+    """Standalone slab correction should compile without tracing raw Warp setup."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_standalone_slab_direct_outputs_compile(self):
+        """Compiled direct outputs match eager and keep energy gradients."""
+        device = torch.device("cuda")
+        dtype = torch.float64
+        positions, charges, cell, pbc = _make_triclinic_slab_system(dtype, device)
+
+        def slab_direct(pos, chg, cell_in):
+            return compute_slab_correction(
+                pos,
+                chg,
+                cell_in,
+                pbc,
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        eager_pos = positions.clone().requires_grad_(True)
+        eager_chg = charges.clone().requires_grad_(True)
+        eager_cell = cell.clone().requires_grad_(True)
+        eager = slab_direct(eager_pos, eager_chg, eager_cell)
+        eager_grads = torch.autograd.grad(
+            eager[0].sum(), (eager_pos, eager_chg, eager_cell)
+        )
+
+        compiled_pos = positions.clone().requires_grad_(True)
+        compiled_chg = charges.clone().requires_grad_(True)
+        compiled_cell = cell.clone().requires_grad_(True)
+        compiled = torch.compile(slab_direct)(
+            compiled_pos,
+            compiled_chg,
+            compiled_cell,
+        )
+        compiled_grads = torch.autograd.grad(
+            compiled[0].sum(), (compiled_pos, compiled_chg, compiled_cell)
+        )
+
+        for actual, expected in zip(compiled, eager, strict=True):
+            torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-14)
+        for actual, expected in zip(compiled_grads, eager_grads, strict=True):
+            torch.testing.assert_close(actual, expected, rtol=1e-10, atol=1e-12)
+
+
+# ==============================================================================
 # pbc=None handling
 # ==============================================================================
 

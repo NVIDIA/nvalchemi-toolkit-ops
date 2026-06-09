@@ -1868,7 +1868,7 @@ def register_pme_ops() -> None:
         volume,
         use_supplied_volume,
         alpha,
-        virial_in: torch.empty_like(virial_in),
+        virial_in: (torch.empty_like(virial_in)),
         batch_match=True,
     )
     _PME_OPS_REGISTERED = True

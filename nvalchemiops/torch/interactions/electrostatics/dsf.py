@@ -133,26 +133,48 @@ def _dsf_csr_op(
     wp_vec = get_wp_vec_dtype(input_dtype)
     wp_mat = get_wp_mat_dtype(input_dtype)
 
-    positions_wp = wp.from_torch(positions.detach(), dtype=wp_vec, return_ctype=True)
-    charges_wp = wp.from_torch(charges.detach(), dtype=wp_scalar, return_ctype=True)
-    idx_j_wp = wp.from_torch(idx_j, dtype=wp.int32, return_ctype=True)
-    neighbor_ptr_wp = wp.from_torch(neighbor_ptr, dtype=wp.int32, return_ctype=True)
+    positions_wp = wp.from_torch(
+        positions.detach(), dtype=wp_vec, requires_grad=False, return_ctype=True
+    )
+    charges_wp = wp.from_torch(
+        charges.detach(), dtype=wp_scalar, requires_grad=False, return_ctype=True
+    )
+    idx_j_wp = wp.from_torch(
+        idx_j, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
+    neighbor_ptr_wp = wp.from_torch(
+        neighbor_ptr, dtype=wp.int32, requires_grad=False, return_ctype=True
+    )
 
-    energy_wp = wp.from_torch(energy, dtype=wp.float64, return_ctype=True)
-    forces_wp = wp.from_torch(forces, dtype=wp_vec, return_ctype=True)
-    virial_wp = wp.from_torch(virial, dtype=wp_mat, return_ctype=True)
-    charge_grad_wp = wp.from_torch(charge_grad, dtype=wp_scalar, return_ctype=True)
+    energy_wp = wp.from_torch(
+        energy, dtype=wp.float64, requires_grad=False, return_ctype=True
+    )
+    forces_wp = wp.from_torch(
+        forces, dtype=wp_vec, requires_grad=False, return_ctype=True
+    )
+    virial_wp = wp.from_torch(
+        virial, dtype=wp_mat, requires_grad=False, return_ctype=True
+    )
+    charge_grad_wp = wp.from_torch(
+        charge_grad, dtype=wp_scalar, requires_grad=False, return_ctype=True
+    )
 
     cell_wp = None
     unit_shifts_wp = None
     if cell is not None:
-        cell_wp = wp.from_torch(cell.detach(), dtype=wp_mat, return_ctype=True)
+        cell_wp = wp.from_torch(
+            cell.detach(), dtype=wp_mat, requires_grad=False, return_ctype=True
+        )
     if unit_shifts is not None:
-        unit_shifts_wp = wp.from_torch(unit_shifts, dtype=wp.vec3i, return_ctype=True)
+        unit_shifts_wp = wp.from_torch(
+            unit_shifts, dtype=wp.vec3i, requires_grad=False, return_ctype=True
+        )
 
     batch_idx_wp = None
     if batch_idx is not None:
-        batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
+        batch_idx_wp = wp.from_torch(
+            batch_idx, dtype=wp.int32, requires_grad=False, return_ctype=True
+        )
 
     wp_dsf_csr(
         positions=positions_wp,
@@ -243,29 +265,48 @@ def _dsf_matrix_op(
     wp_vec = get_wp_vec_dtype(input_dtype)
     wp_mat = get_wp_mat_dtype(input_dtype)
 
-    positions_wp = wp.from_torch(positions.detach(), dtype=wp_vec, return_ctype=True)
-    charges_wp = wp.from_torch(charges.detach(), dtype=wp_scalar, return_ctype=True)
+    positions_wp = wp.from_torch(
+        positions.detach(), dtype=wp_vec, requires_grad=False, return_ctype=True
+    )
+    charges_wp = wp.from_torch(
+        charges.detach(), dtype=wp_scalar, requires_grad=False, return_ctype=True
+    )
     neighbor_matrix_wp = wp.from_torch(
-        neighbor_matrix, dtype=wp.int32, return_ctype=True
+        neighbor_matrix, dtype=wp.int32, requires_grad=False, return_ctype=True
     )
 
-    energy_wp = wp.from_torch(energy, dtype=wp.float64, return_ctype=True)
-    forces_wp = wp.from_torch(forces, dtype=wp_vec, return_ctype=True)
-    virial_wp = wp.from_torch(virial, dtype=wp_mat, return_ctype=True)
-    charge_grad_wp = wp.from_torch(charge_grad, dtype=wp_scalar, return_ctype=True)
+    energy_wp = wp.from_torch(
+        energy, dtype=wp.float64, requires_grad=False, return_ctype=True
+    )
+    forces_wp = wp.from_torch(
+        forces, dtype=wp_vec, requires_grad=False, return_ctype=True
+    )
+    virial_wp = wp.from_torch(
+        virial, dtype=wp_mat, requires_grad=False, return_ctype=True
+    )
+    charge_grad_wp = wp.from_torch(
+        charge_grad, dtype=wp_scalar, requires_grad=False, return_ctype=True
+    )
 
     cell_wp = None
     neighbor_matrix_shifts_wp = None
     if cell is not None:
-        cell_wp = wp.from_torch(cell.detach(), dtype=wp_mat, return_ctype=True)
+        cell_wp = wp.from_torch(
+            cell.detach(), dtype=wp_mat, requires_grad=False, return_ctype=True
+        )
     if neighbor_matrix_shifts is not None:
         neighbor_matrix_shifts_wp = wp.from_torch(
-            neighbor_matrix_shifts, dtype=wp.vec3i, return_ctype=True
+            neighbor_matrix_shifts,
+            dtype=wp.vec3i,
+            requires_grad=False,
+            return_ctype=True,
         )
 
     batch_idx_wp = None
     if batch_idx is not None:
-        batch_idx_wp = wp.from_torch(batch_idx, dtype=wp.int32, return_ctype=True)
+        batch_idx_wp = wp.from_torch(
+            batch_idx, dtype=wp.int32, requires_grad=False, return_ctype=True
+        )
 
     wp_dsf_matrix(
         positions=positions_wp,

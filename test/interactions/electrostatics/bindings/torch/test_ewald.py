@@ -102,6 +102,13 @@ TIGHT_TOL = 1e-6
 LOOSE_TOL = 1e-4
 
 
+def _torchpme_smearing(alpha: float | torch.Tensor) -> float:
+    """Convert Ewald alpha to the scalar smearing parameter torchpme expects."""
+    if isinstance(alpha, torch.Tensor):
+        alpha = float(alpha.detach().cpu())
+    return 1.0 / (math.sqrt(2.0) * alpha)
+
+
 def _ewald_summation_without_direct_output_deprecation(*args, **kwargs):
     """Call legacy direct-output Ewald paths without polluting warning summaries."""
     with warnings.catch_warnings():
@@ -167,12 +174,9 @@ def compute_torchpme_reciprocal(
     positions, charges, cell, k_cutoff, alpha, device, dtype
 ):
     """Compute reciprocal energy using torchpme."""
-    import math
-
     lr_wavelength = 2 * torch.pi / k_cutoff
-    # torchpme uses smearing σ where Gaussian is exp(-r²/(2σ²))
-    # Standard Ewald uses exp(-α²r²), so σ = 1/(√2·α)
-    smearing = 1.0 / (math.sqrt(2.0) * alpha)
+    # torchpme uses smearing sigma where Gaussian is exp(-r^2/(2 sigma^2)).
+    smearing = _torchpme_smearing(alpha)
     potential = CoulombPotential(smearing=smearing).to(device=device, dtype=dtype)
     charges_col = charges.unsqueeze(1)
     calculator = EwaldCalculator(
@@ -186,12 +190,9 @@ def compute_torchpme_real_space(
     charges, neighbor_indices, neighbor_distances, alpha, k_cutoff, device, dtype
 ):
     """Compute real-space energy using torchpme."""
-    import math
-
     lr_wavelength = 2 * torch.pi / k_cutoff
-    # torchpme uses smearing σ where Gaussian is exp(-r²/(2σ²))
-    # Standard Ewald uses exp(-α²r²), so σ = 1/(√2·α)
-    smearing = 1.0 / (math.sqrt(2.0) * alpha)
+    # torchpme uses smearing sigma where Gaussian is exp(-r^2/(2 sigma^2)).
+    smearing = _torchpme_smearing(alpha)
     potential = CoulombPotential(smearing=smearing).to(device=device, dtype=dtype)
     charges_col = charges.unsqueeze(1)
     calculator = EwaldCalculator(
@@ -6477,9 +6478,7 @@ class TestEwaldDifferentiableVirial:
 
 def _torchpme_ewald_energy(positions, charges, cell, alpha, k_cutoff, device):
     """Compute total Ewald energy via torchpme EwaldCalculator."""
-    import math
-
-    smearing = 1.0 / (math.sqrt(2.0) * alpha)
+    smearing = _torchpme_smearing(alpha)
     potential = CoulombPotential(smearing=smearing).to(
         device=device, dtype=VIRIAL_DTYPE
     )

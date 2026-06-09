@@ -26,6 +26,7 @@ This test suite validates the correctness of the unified PME API:
 5. Conservation Laws - Momentum and energy properties
 """
 
+import math
 import warnings
 from importlib import import_module
 
@@ -44,6 +45,8 @@ from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
 from nvalchemiops.torch.interactions.electrostatics.pme import (
     _pme_reciprocal_space_impl,
     _prepare_alpha,
+    pme_energy_corrections,
+    pme_energy_corrections_with_charge_grad,
 )
 from nvalchemiops.torch.interactions.electrostatics.pme import (
     compute_bspline_moduli_1d as pme_compute_bspline_moduli_1d,
@@ -93,6 +96,13 @@ from test.interactions.electrostatics.conftest import (
 ###########################################################################################
 ########################### Helper Functions ##############################################
 ###########################################################################################
+
+
+def _torchpme_smearing(alpha: float | torch.Tensor) -> float:
+    """Convert Ewald alpha to the scalar smearing parameter torchpme expects."""
+    if isinstance(alpha, torch.Tensor):
+        alpha = float(alpha.detach().cpu())
+    return 1.0 / (math.sqrt(2.0) * alpha)
 
 
 def _particle_mesh_ewald_without_direct_output_deprecation(*args, **kwargs):
@@ -155,14 +165,11 @@ def calculate_pme_reciprocal_energy_torchpme(
     dtype: torch.dtype,
 ) -> torch.Tensor:
     """Calculate PME reciprocal-space energy using torchpme as reference."""
-    import math
-
     if not HAS_TORCHPME:
         pytest.skip("torchpme not available")
 
-    # torchpme uses smearing σ where Gaussian is exp(-r²/(2σ²))
-    # Standard Ewald uses exp(-α²r²), so σ = 1/(√2·α)
-    smearing = 1.0 / (math.sqrt(2.0) * alpha)
+    # torchpme uses smearing sigma where Gaussian is exp(-r^2/(2 sigma^2)).
+    smearing = _torchpme_smearing(alpha)
     potential = CoulombPotential(smearing=smearing).to(device=device, dtype=dtype)
     charges_pme = charges.unsqueeze(1)
 
@@ -3780,9 +3787,7 @@ class TestPMEDifferentiableVirial:
 
 def _torchpme_pme_energy(positions, charges, cell, alpha, mesh_spacing, device):
     """Compute PME reciprocal energy via torchpme PMECalculator."""
-    import math
-
-    smearing = 1.0 / (math.sqrt(2.0) * alpha)
+    smearing = _torchpme_smearing(alpha)
     potential = CoulombPotential(smearing=smearing).to(
         device=device, dtype=VIRIAL_DTYPE
     )
@@ -3853,6 +3858,77 @@ class TestPMEVirialTorchPMEParity:
 
 class TestPMETorchCompile:
     """Verify that PME functions work correctly under torch.compile."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_pme_energy_corrections_compile(self):
+        """PME correction custom-op chains should compile and backpropagate."""
+        device = torch.device("cuda")
+        dtype = torch.float64
+        raw = torch.tensor([0.25, -0.5, 0.125], dtype=dtype, device=device)
+        charges = torch.tensor([1.0, -0.25, 0.5], dtype=dtype, device=device)
+        cell = (torch.eye(3, dtype=dtype, device=device) * 8.0).unsqueeze(0)
+        alpha = torch.tensor([0.35], dtype=dtype, device=device)
+
+        def correction_loss(raw_energies, atom_charges, box, ewald_alpha):
+            corrected = pme_energy_corrections(
+                raw_energies,
+                atom_charges,
+                box,
+                ewald_alpha,
+            )
+            return corrected.sum()
+
+        raw_eager = raw.clone().requires_grad_(True)
+        charges_eager = charges.clone().requires_grad_(True)
+        alpha_eager = alpha.clone().requires_grad_(True)
+        loss_eager = correction_loss(raw_eager, charges_eager, cell, alpha_eager)
+        grads_eager = torch.autograd.grad(
+            loss_eager, (raw_eager, charges_eager, alpha_eager)
+        )
+
+        raw_compiled = raw.clone().requires_grad_(True)
+        charges_compiled = charges.clone().requires_grad_(True)
+        alpha_compiled = alpha.clone().requires_grad_(True)
+        compiled_loss = torch.compile(correction_loss)
+        loss_compiled = compiled_loss(
+            raw_compiled, charges_compiled, cell, alpha_compiled
+        )
+        grads_compiled = torch.autograd.grad(
+            loss_compiled,
+            (raw_compiled, charges_compiled, alpha_compiled),
+        )
+
+        torch.testing.assert_close(loss_compiled, loss_eager, atol=1e-12, rtol=0.0)
+        for grad_compiled, grad_eager in zip(grads_compiled, grads_eager, strict=True):
+            torch.testing.assert_close(grad_compiled, grad_eager, atol=1e-12, rtol=0.0)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_pme_energy_corrections_with_charge_grad_compile(self):
+        """Fused PME corrections + analytical charge-gradient op should compile."""
+        device = torch.device("cuda")
+        dtype = torch.float64
+        raw = torch.tensor([0.25, -0.5, 0.125], dtype=dtype, device=device)
+        charges = torch.tensor([1.0, -0.25, 0.5], dtype=dtype, device=device)
+        cell = (torch.eye(3, dtype=dtype, device=device) * 8.0).unsqueeze(0)
+        alpha = torch.tensor([0.35], dtype=dtype, device=device)
+
+        def correction_with_charge_grad(raw_energies, atom_charges, box, ewald_alpha):
+            return pme_energy_corrections_with_charge_grad(
+                raw_energies,
+                atom_charges,
+                box,
+                ewald_alpha,
+            )
+
+        eager = correction_with_charge_grad(raw, charges, cell, alpha)
+        compiled = torch.compile(correction_with_charge_grad)(raw, charges, cell, alpha)
+
+        torch.testing.assert_close(compiled[0], eager[0], atol=1e-12, rtol=0.0)
+        torch.testing.assert_close(compiled[1], eager[1], atol=1e-12, rtol=0.0)
 
     @pytest.mark.skipif(
         not torch.cuda.is_available(), reason="CUDA required for torch.compile"

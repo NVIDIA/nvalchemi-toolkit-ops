@@ -1567,10 +1567,20 @@ def _literal_cell_grad_forward(
                     wp.from_torch(alpha64, dtype=wp.float64, requires_grad=False),
                     wp.from_torch(batch_t, dtype=wp.int32, requires_grad=False),
                     int(is_batched),
-                    wp.from_torch(edge_i.to(torch.int32).contiguous(), dtype=wp.int32),
-                    wp.from_torch(edge_j.to(torch.int32).contiguous(), dtype=wp.int32),
                     wp.from_torch(
-                        unit_shifts.to(torch.int32).contiguous(), dtype=wp.vec3i
+                        edge_i.to(torch.int32).contiguous(),
+                        dtype=wp.int32,
+                        requires_grad=False,
+                    ),
+                    wp.from_torch(
+                        edge_j.to(torch.int32).contiguous(),
+                        dtype=wp.int32,
+                        requires_grad=False,
+                    ),
+                    wp.from_torch(
+                        unit_shifts.to(torch.int32).contiguous(),
+                        dtype=wp.vec3i,
+                        requires_grad=False,
                     ),
                     wp.from_torch(ge64, dtype=wp.float64, requires_grad=False),
                     wp.from_torch(grad_cell, dtype=wp.mat33d, requires_grad=False),
@@ -1685,10 +1695,20 @@ def _literal_cell_grad_backward(
                     wp.from_torch(alpha64, dtype=wp.float64, requires_grad=False),
                     wp.from_torch(batch_t, dtype=wp.int32, requires_grad=False),
                     int(is_batched),
-                    wp.from_torch(edge_i.to(torch.int32).contiguous(), dtype=wp.int32),
-                    wp.from_torch(edge_j.to(torch.int32).contiguous(), dtype=wp.int32),
                     wp.from_torch(
-                        unit_shifts.to(torch.int32).contiguous(), dtype=wp.vec3i
+                        edge_i.to(torch.int32).contiguous(),
+                        dtype=wp.int32,
+                        requires_grad=False,
+                    ),
+                    wp.from_torch(
+                        edge_j.to(torch.int32).contiguous(),
+                        dtype=wp.int32,
+                        requires_grad=False,
+                    ),
+                    wp.from_torch(
+                        unit_shifts.to(torch.int32).contiguous(),
+                        dtype=wp.vec3i,
+                        requires_grad=False,
                     ),
                     wp.from_torch(ge64, dtype=wp.float64, requires_grad=False),
                     wp.from_torch(grad_positions, dtype=wp.vec3d, requires_grad=False),

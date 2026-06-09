@@ -38,12 +38,11 @@ __all__ = [
 ]
 
 
-@torch.compiler.disable
 def _sum_charge_gradients(
     real_space_charge_grads: torch.Tensor,
     reciprocal_charge_grads: torch.Tensor,
 ) -> torch.Tensor:
-    """Sum electrostatic charge gradients eagerly on compiled paths."""
+    """Sum electrostatic charge gradients with traceable Torch arithmetic."""
     return real_space_charge_grads + reciprocal_charge_grads
 
 
@@ -154,12 +153,10 @@ def _combine_electrostatic_outputs(
         and real_charge_grads is not None
         and reciprocal_charge_grads is not None
     ):
-        if torch.compiler.is_compiling():
-            charge_grads = _sum_charge_gradients(
-                real_charge_grads, reciprocal_charge_grads
-            )
-        else:
-            charge_grads = real_charge_grads + reciprocal_charge_grads
+        charge_grads = _sum_charge_gradients(
+            real_charge_grads,
+            reciprocal_charge_grads,
+        )
     else:
         charge_grads = None
 
