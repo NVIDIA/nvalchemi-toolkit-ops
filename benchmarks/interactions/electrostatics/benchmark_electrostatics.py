@@ -56,6 +56,7 @@ import hashlib
 import importlib
 import sys
 import traceback
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -76,6 +77,8 @@ BENCHMARK_CSV_FIELDNAMES = [
     "method",
     "backend",
     "component",
+    "derivative_contract",
+    "workload",
     "compute_forces",
     "compute_virial",
     "neighbor_format",
@@ -96,6 +99,15 @@ BENCHMARK_CSV_FIELDNAMES = [
     "success",
     "error",
     "error_type",
+]
+
+DerivativeContract = Literal["energy_autograd", "legacy_direct"]
+BenchmarkWorkload = Literal[
+    "forward",
+    "backward",
+    "double_backward",
+    "legacy_direct",
+    "autograd_reference",
 ]
 
 
@@ -243,6 +255,43 @@ def compile_policy_for_backend(backend: str, torch_compile: bool = False) -> str
     return "eager"
 
 
+def resolve_derivative_contract(
+    cli_contract: str | None,
+    config_contract: str | None,
+) -> DerivativeContract:
+    """Return the benchmark derivative contract requested by CLI/config."""
+    contract = cli_contract or config_contract or "energy_autograd"
+    if contract not in ("energy_autograd", "legacy_direct"):
+        raise ValueError(
+            "derivative_contract must be 'energy_autograd' or 'legacy_direct'"
+        )
+    return contract
+
+
+def benchmark_workloads(
+    *,
+    method: str,
+    backend: str,
+    derivative_contract: DerivativeContract,
+    compute_forces: bool,
+    compute_virial: bool,
+) -> list[BenchmarkWorkload]:
+    """Return the workload rows to emit for one benchmark request."""
+    if method == "dsf" or backend in ("torchpme", "torch_dsf"):
+        return ["autograd_reference"]
+    if derivative_contract == "legacy_direct":
+        return ["legacy_direct"]
+    if method not in ("ewald", "ewald_slab", "pme", "pme_slab"):
+        return ["forward"]
+
+    workloads: list[BenchmarkWorkload] = ["forward"]
+    if compute_forces or compute_virial:
+        workloads.append("backward")
+        if backend == "torch":
+            workloads.append("double_backward")
+    return workloads
+
+
 def benchmark_result_row(
     *,
     system_data: dict,
@@ -251,6 +300,8 @@ def benchmark_result_row(
     component: str,
     compute_forces: bool,
     compute_virial: bool,
+    derivative_contract: DerivativeContract = "energy_autograd",
+    workload: BenchmarkWorkload = "forward",
     neighbor_format: str,
     torch_compile: bool = False,
     success: bool,
@@ -273,6 +324,8 @@ def benchmark_result_row(
         "method": method,
         "backend": backend,
         "component": component,
+        "derivative_contract": derivative_contract,
+        "workload": workload,
         "compute_forces": compute_forces,
         "compute_virial": compute_virial,
         "neighbor_format": neighbor_format,
@@ -1633,6 +1686,172 @@ def run_nvalchemiops_pme(
             )
 
 
+def _first_tensor(result):
+    """Return the first tensor from a backend result tuple or the tensor itself."""
+    return result[0] if isinstance(result, tuple) else result
+
+
+def _torch_deformed_energy_inputs(
+    system_data: dict,
+    *,
+    use_strain: bool,
+) -> tuple[dict, torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Return differentiable Torch inputs for energy-autograd benchmark rows."""
+    positions = system_data["positions"].detach().clone().requires_grad_(True)
+    charges = system_data["charges"].detach().clone().requires_grad_(True)
+    cell = system_data["cell"].detach().clone()
+    data = dict(system_data)
+    data["positions"] = positions
+    data["charges"] = charges
+
+    if not use_strain:
+        data["cell"] = cell
+        return data, positions, charges, None
+
+    cell_3d = cell if cell.ndim == 3 else cell.unsqueeze(0)
+    num_systems = cell_3d.shape[0]
+    strain = torch.zeros(
+        num_systems,
+        3,
+        3,
+        dtype=positions.dtype,
+        device=positions.device,
+        requires_grad=True,
+    )
+    deform = torch.eye(3, dtype=positions.dtype, device=positions.device).unsqueeze(0)
+    deform = deform + strain
+    batch_idx = system_data.get("batch_idx")
+    if batch_idx is None:
+        atom_system = torch.zeros(
+            positions.shape[0], dtype=torch.long, device=positions.device
+        )
+    else:
+        atom_system = batch_idx.to(device=positions.device, dtype=torch.long)
+
+    data["positions"] = torch.einsum("ni,nij->nj", positions, deform[atom_system])
+    data["cell"] = torch.einsum("bij,bjk->bik", cell_3d, deform)
+    for key in (
+        "cell_inv_t",
+        "volume",
+        "moduli_x",
+        "moduli_y",
+        "moduli_z",
+        "k_vectors_pme",
+        "k_squared_pme",
+    ):
+        data.pop(key, None)
+    return data, positions, charges, strain
+
+
+def _run_torch_energy_autograd(
+    runner,
+    system_data: dict,
+    component: Literal["real", "reciprocal", "full"],
+    compute_forces: bool,
+    compute_virial: bool,
+    workload: BenchmarkWorkload,
+    slab_correction: bool,
+):
+    """Run one Torch energy-autograd benchmark workload."""
+    needs_strain = compute_virial and workload in ("backward", "double_backward")
+    data, positions, charges, strain = _torch_deformed_energy_inputs(
+        system_data, use_strain=needs_strain
+    )
+    energy = _first_tensor(
+        runner(
+            data,
+            component,
+            False,
+            False,
+            slab_correction=slab_correction,
+        )
+    )
+    if workload == "forward" or not (compute_forces or compute_virial):
+        return energy
+
+    targets: list[torch.Tensor] = []
+    if compute_forces:
+        targets.append(positions)
+    if compute_virial and strain is not None:
+        targets.append(strain)
+    grads = torch.autograd.grad(
+        energy.sum(),
+        tuple(targets),
+        create_graph=workload == "double_backward",
+        allow_unused=True,
+    )
+
+    outputs: list[torch.Tensor | None] = [energy]
+    offset = 0
+    force_grad = None
+    strain_grad = None
+    if compute_forces:
+        force_grad = grads[offset]
+        outputs.append(None if force_grad is None else -force_grad)
+        offset += 1
+    if compute_virial and strain is not None:
+        strain_grad = grads[offset]
+        outputs.append(None if strain_grad is None else -strain_grad)
+
+    if workload != "double_backward":
+        return tuple(outputs)
+
+    loss = energy.new_zeros(())
+    if force_grad is not None:
+        loss = loss + force_grad.square().mean()
+    if strain_grad is not None:
+        loss = loss + strain_grad.square().mean()
+    second_targets: list[torch.Tensor] = [positions, charges]
+    if strain is not None:
+        second_targets.append(strain)
+    second_grads = torch.autograd.grad(
+        loss,
+        tuple(second_targets),
+        allow_unused=True,
+    )
+    return (*outputs, loss, *second_grads)
+
+
+def run_nvalchemiops_ewald_energy_autograd(
+    system_data: dict,
+    component: Literal["real", "reciprocal", "full"],
+    compute_forces: bool,
+    compute_virial: bool = False,
+    workload: BenchmarkWorkload = "backward",
+    slab_correction: bool = False,
+):
+    """Run Torch Ewald via public energy API plus autograd-derived derivatives."""
+    return _run_torch_energy_autograd(
+        run_nvalchemiops_ewald,
+        system_data,
+        component,
+        compute_forces,
+        compute_virial,
+        workload,
+        slab_correction,
+    )
+
+
+def run_nvalchemiops_pme_energy_autograd(
+    system_data: dict,
+    component: Literal["real", "reciprocal", "full"],
+    compute_forces: bool,
+    compute_virial: bool = False,
+    workload: BenchmarkWorkload = "backward",
+    slab_correction: bool = False,
+):
+    """Run Torch PME via public energy API plus autograd-derived derivatives."""
+    return _run_torch_energy_autograd(
+        run_nvalchemiops_pme,
+        system_data,
+        component,
+        compute_forces,
+        compute_virial,
+        workload,
+        slab_correction,
+    )
+
+
 # ==============================================================================
 # nvalchemiops JAX Backend
 # ==============================================================================
@@ -1998,6 +2217,233 @@ def prepare_jax_pme(
                 k_squared_pme,
                 pbc_slab,
             )
+
+    return call
+
+
+def _jax_deformed_inputs(
+    positions,
+    cell,
+    batch_idx,
+    strain,
+):
+    """Apply row-vector strain to JAX positions and cells."""
+    cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, ...]
+    deform = jnp.eye(3, dtype=positions.dtype)[jnp.newaxis, ...] + strain
+    if batch_idx is None:
+        atom_system = jnp.zeros((positions.shape[0],), dtype=jnp.int32)
+    else:
+        atom_system = batch_idx.astype(jnp.int32)
+    positions_def = jnp.einsum("ni,nij->nj", positions, deform[atom_system])
+    cell_def = jnp.einsum("bij,bjk->bik", cell_3d, deform)
+    return positions_def, cell_def
+
+
+def prepare_jax_ewald_energy_autograd(
+    system_data: dict,
+    component: Literal["real", "reciprocal", "full"],
+    compute_forces: bool,
+    compute_virial: bool = False,
+    workload: BenchmarkWorkload = "backward",
+    slab_correction: bool = False,
+):
+    """Prepare a JIT-compiled JAX Ewald energy-autograd benchmark callable."""
+    positions = system_data["positions"]
+    charges = system_data["charges"]
+    cell = system_data["cell"]
+    batch_idx = system_data.get("batch_idx")
+    alpha = system_data.get("alpha_ewald", system_data.get("alpha"))
+    k_cutoff = system_data.get("k_cutoff")
+    num_atoms_per_system = system_data.get("num_atoms_per_system")
+    pbc_slab = system_data.get("pbc_slab")
+    neighbor_matrix_data = system_data.get("neighbor_matrix")
+    neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
+    cell_for_miller = cell if cell.ndim == 3 else cell[jnp.newaxis, ...]
+    _bounds = _jax_electrostatics.generate_miller_indices(cell_for_miller, k_cutoff)
+    _miller_bounds = (int(_bounds[0]), int(_bounds[1]), int(_bounds[2]))
+    _k_cutoff = k_cutoff
+    _slab_correction = slab_correction
+
+    def _energy(pos, cell_arg):
+        if component == "real":
+            return _jax_electrostatics.ewald_real_space(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=alpha,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                batch_idx=batch_idx,
+            )
+        if component == "reciprocal":
+            k_vectors = _jax_electrostatics.generate_k_vectors_ewald_summation(
+                jax.lax.stop_gradient(cell_arg),
+                _k_cutoff,
+                miller_bounds=_miller_bounds,
+            )
+            return _jax_electrostatics.ewald_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                k_vectors=k_vectors,
+                alpha=alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=num_atoms_per_system,
+            )
+        return _jax_electrostatics.ewald_summation(
+            positions=pos,
+            charges=charges,
+            cell=cell_arg,
+            alpha=alpha,
+            k_cutoff=_k_cutoff,
+            k_vectors=None,
+            miller_bounds=_miller_bounds,
+            batch_idx=batch_idx,
+            max_atoms_per_system=num_atoms_per_system,
+            neighbor_matrix=neighbor_matrix_data,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            pbc=pbc_slab,
+            slab_correction=_slab_correction,
+        )
+
+    if workload == "forward" or not (compute_forces or compute_virial):
+
+        @jax.jit
+        def _jit_forward(pos, cell_arg):
+            return _energy(pos, cell_arg)
+
+        def call():
+            return _jit_forward(positions, cell)
+
+        return call
+
+    if compute_virial:
+        cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, ...]
+        strain0 = jnp.zeros(cell_3d.shape, dtype=positions.dtype)
+
+        def _strained_total(pos, strain):
+            pos_def, cell_def = _jax_deformed_inputs(pos, cell, batch_idx, strain)
+            return _energy(pos_def, cell_def).sum()
+
+        @jax.jit
+        def _jit_backward(pos, strain):
+            value, grads = jax.value_and_grad(
+                _strained_total,
+                argnums=(0, 1),
+            )(pos, strain)
+            return value, grads
+
+        def call():
+            return _jit_backward(positions, strain0)
+
+        return call
+
+    @jax.jit
+    def _jit_backward(pos):
+        return jax.value_and_grad(lambda p: _energy(p, cell).sum())(pos)
+
+    def call():
+        return _jit_backward(positions)
+
+    return call
+
+
+def prepare_jax_pme_energy_autograd(
+    system_data: dict,
+    component: Literal["real", "reciprocal", "full"],
+    compute_forces: bool,
+    compute_virial: bool = False,
+    workload: BenchmarkWorkload = "backward",
+    slab_correction: bool = False,
+):
+    """Prepare a JIT-compiled JAX PME energy-autograd benchmark callable."""
+    positions = system_data["positions"]
+    charges = system_data["charges"]
+    cell = system_data["cell"]
+    batch_idx = system_data.get("batch_idx")
+    alpha = system_data.get("alpha_pme", system_data.get("alpha"))
+    mesh_dimensions = system_data.get("mesh_dimensions")
+    spline_order = system_data.get("spline_order")
+    pbc_slab = system_data.get("pbc_slab")
+    neighbor_matrix_data = system_data.get("neighbor_matrix")
+    neighbor_matrix_shifts = system_data.get("neighbor_matrix_shifts")
+    _mesh_dimensions = mesh_dimensions
+    _spline_order = spline_order
+    _slab_correction = slab_correction
+
+    def _energy(pos, cell_arg):
+        if component == "real":
+            return _jax_electrostatics.ewald_real_space(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=alpha,
+                neighbor_matrix=neighbor_matrix_data,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                batch_idx=batch_idx,
+            )
+        if component == "reciprocal":
+            return _jax_electrostatics.pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=alpha,
+                mesh_dimensions=_mesh_dimensions,
+                spline_order=_spline_order,
+                batch_idx=batch_idx,
+            )
+        return _jax_electrostatics.particle_mesh_ewald(
+            positions=pos,
+            charges=charges,
+            cell=cell_arg,
+            alpha=alpha,
+            mesh_dimensions=_mesh_dimensions,
+            spline_order=_spline_order,
+            batch_idx=batch_idx,
+            neighbor_matrix=neighbor_matrix_data,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            pbc=pbc_slab,
+            slab_correction=_slab_correction,
+        )
+
+    if workload == "forward" or not (compute_forces or compute_virial):
+
+        @jax.jit
+        def _jit_forward(pos, cell_arg):
+            return _energy(pos, cell_arg)
+
+        def call():
+            return _jit_forward(positions, cell)
+
+        return call
+
+    if compute_virial:
+        cell_3d = cell if cell.ndim == 3 else cell[jnp.newaxis, ...]
+        strain0 = jnp.zeros(cell_3d.shape, dtype=positions.dtype)
+
+        def _strained_total(pos, strain):
+            pos_def, cell_def = _jax_deformed_inputs(pos, cell, batch_idx, strain)
+            return _energy(pos_def, cell_def).sum()
+
+        @jax.jit
+        def _jit_backward(pos, strain):
+            value, grads = jax.value_and_grad(
+                _strained_total,
+                argnums=(0, 1),
+            )(pos, strain)
+            return value, grads
+
+        def call():
+            return _jit_backward(positions, strain0)
+
+        return call
+
+    @jax.jit
+    def _jit_backward(pos):
+        return jax.value_and_grad(lambda p: _energy(p, cell).sum())(pos)
+
+    def call():
+        return _jit_backward(positions)
 
     return call
 
@@ -2417,6 +2863,8 @@ def run_benchmark(
     compute_virial: bool,
     timer: BenchmarkTimer,
     neighbor_format: str = "list",
+    derivative_contract: DerivativeContract = "energy_autograd",
+    workload: BenchmarkWorkload = "forward",
     torch_compile: bool = False,
 ) -> dict:
     """Run a single benchmark configuration.
@@ -2458,6 +2906,8 @@ def run_benchmark(
                     component=component,
                     compute_forces=compute_forces,
                     compute_virial=effective_virial,
+                    derivative_contract=derivative_contract,
+                    workload=workload,
                     neighbor_format=neighbor_format,
                     torch_compile=torch_compile,
                     success=False,
@@ -2468,40 +2918,78 @@ def run_benchmark(
             if method in ("ewald", "ewald_slab"):
 
                 def bench_fn():
-                    return run_nvalchemiops_ewald(
+                    if derivative_contract == "legacy_direct":
+                        return run_nvalchemiops_ewald(
+                            system_data,
+                            component,
+                            compute_forces,
+                            effective_virial,
+                            slab_correction=method == "ewald_slab",
+                        )
+                    return run_nvalchemiops_ewald_energy_autograd(
+                        system_data,
+                        component,
+                        compute_forces,
+                        effective_virial,
+                        workload=workload,
+                        slab_correction=method == "ewald_slab",
+                    )
+            else:  # pme
+
+                def bench_fn():
+                    if derivative_contract == "legacy_direct":
+                        return run_nvalchemiops_pme(
+                            system_data,
+                            component,
+                            compute_forces,
+                            effective_virial,
+                            slab_correction=method == "pme_slab",
+                        )
+                    return run_nvalchemiops_pme_energy_autograd(
+                        system_data,
+                        component,
+                        compute_forces,
+                        effective_virial,
+                        workload=workload,
+                        slab_correction=method == "pme_slab",
+                    )
+        elif backend == "jax":
+            if method in ("ewald", "ewald_slab"):
+                if derivative_contract == "legacy_direct":
+                    bench_fn = prepare_jax_ewald(
                         system_data,
                         component,
                         compute_forces,
                         effective_virial,
                         slab_correction=method == "ewald_slab",
                     )
+                else:
+                    bench_fn = prepare_jax_ewald_energy_autograd(
+                        system_data,
+                        component,
+                        compute_forces,
+                        effective_virial,
+                        workload=workload,
+                        slab_correction=method == "ewald_slab",
+                    )
             else:  # pme
-
-                def bench_fn():
-                    return run_nvalchemiops_pme(
+                if derivative_contract == "legacy_direct":
+                    bench_fn = prepare_jax_pme(
                         system_data,
                         component,
                         compute_forces,
                         effective_virial,
                         slab_correction=method == "pme_slab",
                     )
-        elif backend == "jax":
-            if method in ("ewald", "ewald_slab"):
-                bench_fn = prepare_jax_ewald(
-                    system_data,
-                    component,
-                    compute_forces,
-                    effective_virial,
-                    slab_correction=method == "ewald_slab",
-                )
-            else:  # pme
-                bench_fn = prepare_jax_pme(
-                    system_data,
-                    component,
-                    compute_forces,
-                    effective_virial,
-                    slab_correction=method == "pme_slab",
-                )
+                else:
+                    bench_fn = prepare_jax_pme_energy_autograd(
+                        system_data,
+                        component,
+                        compute_forces,
+                        effective_virial,
+                        workload=workload,
+                        slab_correction=method == "pme_slab",
+                    )
         elif backend == "torchpme":
             if method in SLAB_METHODS:
                 return benchmark_result_row(
@@ -2511,6 +2999,8 @@ def run_benchmark(
                     component=component,
                     compute_forces=compute_forces,
                     compute_virial=effective_virial,
+                    derivative_contract=derivative_contract,
+                    workload=workload,
                     neighbor_format=neighbor_format,
                     torch_compile=torch_compile,
                     success=False,
@@ -2525,6 +3015,8 @@ def run_benchmark(
                     component=component,
                     compute_forces=compute_forces,
                     compute_virial=effective_virial,
+                    derivative_contract=derivative_contract,
+                    workload=workload,
                     neighbor_format=neighbor_format,
                     torch_compile=torch_compile,
                     success=False,
@@ -2554,12 +3046,25 @@ def run_benchmark(
                 component=component,
                 compute_forces=compute_forces,
                 compute_virial=effective_virial,
+                derivative_contract=derivative_contract,
+                workload=workload,
                 neighbor_format=neighbor_format,
                 torch_compile=torch_compile,
                 success=False,
                 error=f"Backend '{backend}' not applicable for {method}",
                 error_type="NotApplicable",
             )
+
+        if derivative_contract == "legacy_direct":
+            raw_bench_fn = bench_fn
+
+            def bench_fn():
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        category=DeprecationWarning,
+                    )
+                    return raw_bench_fn()
 
         # Framework-compile cost (torch.compile or JAX jit) measured by a
         # one-shot wrap + first-call timing AFTER the raw bench_fn has been
@@ -2598,6 +3103,8 @@ def run_benchmark(
                     component=component,
                     compute_forces=compute_forces,
                     compute_virial=effective_virial,
+                    derivative_contract=derivative_contract,
+                    workload=workload,
                     neighbor_format=neighbor_format,
                     torch_compile=torch_compile,
                     success=False,
@@ -2630,6 +3137,8 @@ def run_benchmark(
                     component=component,
                     compute_forces=compute_forces,
                     compute_virial=effective_virial,
+                    derivative_contract=derivative_contract,
+                    workload=workload,
                     neighbor_format=neighbor_format,
                     torch_compile=torch_compile,
                     success=False,
@@ -2653,6 +3162,8 @@ def run_benchmark(
                 component=component,
                 compute_forces=compute_forces,
                 compute_virial=effective_virial,
+                derivative_contract=derivative_contract,
+                workload=workload,
                 neighbor_format=neighbor_format,
                 torch_compile=torch_compile,
                 success=False,
@@ -2672,6 +3183,8 @@ def run_benchmark(
             component=component,
             compute_forces=compute_forces,
             compute_virial=effective_virial,
+            derivative_contract=derivative_contract,
+            workload=workload,
             neighbor_format=neighbor_format,
             torch_compile=torch_compile,
             success=True,
@@ -2692,6 +3205,8 @@ def run_benchmark(
             component=component,
             compute_forces=compute_forces,
             compute_virial=effective_virial,
+            derivative_contract=derivative_contract,
+            workload=workload,
             neighbor_format=neighbor_format,
             torch_compile=torch_compile,
             success=False,
@@ -2800,6 +3315,18 @@ def main():
             "first-call XLA trace cost is recorded under the same column."
         ),
     )
+    parser.add_argument(
+        "--derivative-contract",
+        type=str,
+        choices=["energy_autograd", "legacy_direct"],
+        default=None,
+        help=(
+            "Derivative contract for nvalchemiops Ewald/PME rows. "
+            "Default is energy_autograd, which benchmarks energy-only calls plus "
+            "framework autograd for force/stress workloads. Use legacy_direct to "
+            "benchmark deprecated compute_forces/compute_virial direct outputs."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -2871,6 +3398,10 @@ def main():
     components = config.get("components", ["full"])
     compute_forces = config.get("compute_forces", True)
     compute_virial = config.get("compute_virial", False)
+    derivative_contract = resolve_derivative_contract(
+        args.derivative_contract,
+        config.get("derivative_contract"),
+    )
 
     # Optional PME real-space cutoff (CLI overrides config)
     if args.real_space_cutoff is not None:
@@ -2905,6 +3436,7 @@ def main():
     print(f"Dtype: {dtype_str}")
     print(f"Methods: {methods}")
     print(f"Components: {components}")
+    print(f"Derivative contract: {derivative_contract}")
     print(f"Compute forces: {compute_forces}")
     print(f"Compute virial: {compute_virial}")
     print(f"Accuracy: {accuracy:g}")
@@ -2922,6 +3454,7 @@ def main():
 
     def _print_result(result, method, backend, component):
         """Print benchmark result."""
+        workload = result.get("workload", "forward")
         if result["success"]:
             throughput = result["total_atoms"] / result["median_time_ms"] * 1000
             mem_str = ""
@@ -2932,13 +3465,13 @@ def main():
                 compile_str = f" | warmup {result['compile_ms']:.0f} ms"
             print(
                 f"    {method:5s} {backend:16s} {component:10s}: "
-                f"{result['median_time_ms']:.3f} ms "
+                f"{workload:15s} {result['median_time_ms']:.3f} ms "
                 f"({throughput:.1f} atoms/s){mem_str}{compile_str}"
             )
         else:
             print(
                 f"    {method:5s} {backend:16s} {component:10s}: "
-                f"FAILED ({result.get('error_type', 'Unknown')})"
+                f"{workload:15s} FAILED ({result.get('error_type', 'Unknown')})"
             )
 
     for system_config in config["systems"]:
@@ -3051,69 +3584,85 @@ def main():
                                 nf_list = ["n/a"]
 
                             for nf in nf_list:
-                                try:
-                                    if method == "dsf":
-                                        build_neighbors(system_data, nf)
-                                    result = run_benchmark(
-                                        method,
-                                        backend,
-                                        system_data,
-                                        component,
-                                        compute_forces,
-                                        compute_virial,
-                                        timer,
-                                        neighbor_format=nf,
-                                        torch_compile=args.torch_compile,
-                                    )
-                                    annotate_result_row(
-                                        result,
-                                        supercell_size=size,
-                                        mode=mode,
-                                        dtype=dtype_str,
-                                        config_path=config_path,
-                                        config_sha256=config_sha256,
-                                        accuracy=accuracy,
-                                        real_space_cutoff=real_space_cutoff,
-                                    )
-                                    all_results.append(result)
-                                    nf_tag = f" [{nf}]" if nf != "n/a" else ""
-                                    _print_result(
-                                        result, method, backend + nf_tag, component
-                                    )
-                                except RuntimeError as oom:
-                                    if "out of memory" not in str(oom).lower():
-                                        raise
-                                    if TORCH_AVAILABLE and torch.cuda.is_available():
-                                        torch.cuda.empty_cache()
-                                    nf_tag = f" [{nf}]" if nf != "n/a" else ""
-                                    result = benchmark_result_row(
-                                        system_data=system_data,
-                                        method=method,
-                                        backend=backend,
-                                        component=component,
-                                        compute_forces=compute_forces,
-                                        compute_virial=compute_virial,
-                                        neighbor_format=nf,
-                                        torch_compile=args.torch_compile,
-                                        success=False,
-                                        error=str(oom).split(".")[0],
-                                        error_type=type(oom).__name__,
-                                    )
-                                    annotate_result_row(
-                                        result,
-                                        supercell_size=size,
-                                        mode=mode,
-                                        dtype=dtype_str,
-                                        config_path=config_path,
-                                        config_sha256=config_sha256,
-                                        accuracy=accuracy,
-                                        real_space_cutoff=real_space_cutoff,
-                                    )
-                                    all_results.append(result)
-                                    print(
-                                        f"    {method:5s} {backend + nf_tag:16s} "
-                                        f"{component:10s}: SKIPPED (OOM)"
-                                    )
+                                workloads = benchmark_workloads(
+                                    method=method,
+                                    backend=backend,
+                                    derivative_contract=derivative_contract,
+                                    compute_forces=compute_forces,
+                                    compute_virial=compute_virial,
+                                )
+                                for workload in workloads:
+                                    try:
+                                        if method == "dsf":
+                                            build_neighbors(system_data, nf)
+                                        result = run_benchmark(
+                                            method,
+                                            backend,
+                                            system_data,
+                                            component,
+                                            compute_forces,
+                                            compute_virial,
+                                            timer,
+                                            neighbor_format=nf,
+                                            derivative_contract=derivative_contract,
+                                            workload=workload,
+                                            torch_compile=args.torch_compile,
+                                        )
+                                        annotate_result_row(
+                                            result,
+                                            supercell_size=size,
+                                            mode=mode,
+                                            dtype=dtype_str,
+                                            config_path=config_path,
+                                            config_sha256=config_sha256,
+                                            accuracy=accuracy,
+                                            real_space_cutoff=real_space_cutoff,
+                                        )
+                                        all_results.append(result)
+                                        nf_tag = f" [{nf}]" if nf != "n/a" else ""
+                                        _print_result(
+                                            result, method, backend + nf_tag, component
+                                        )
+                                    except RuntimeError as oom:
+                                        if "out of memory" not in str(oom).lower():
+                                            raise
+                                        if (
+                                            TORCH_AVAILABLE
+                                            and torch.cuda.is_available()
+                                        ):
+                                            torch.cuda.empty_cache()
+                                        nf_tag = f" [{nf}]" if nf != "n/a" else ""
+                                        result = benchmark_result_row(
+                                            system_data=system_data,
+                                            method=method,
+                                            backend=backend,
+                                            component=component,
+                                            compute_forces=compute_forces,
+                                            compute_virial=compute_virial,
+                                            derivative_contract=derivative_contract,
+                                            workload=workload,
+                                            neighbor_format=nf,
+                                            torch_compile=args.torch_compile,
+                                            success=False,
+                                            error=str(oom).split(".")[0],
+                                            error_type=type(oom).__name__,
+                                        )
+                                        annotate_result_row(
+                                            result,
+                                            supercell_size=size,
+                                            mode=mode,
+                                            dtype=dtype_str,
+                                            config_path=config_path,
+                                            config_sha256=config_sha256,
+                                            accuracy=accuracy,
+                                            real_space_cutoff=real_space_cutoff,
+                                        )
+                                        all_results.append(result)
+                                        print(
+                                            f"    {method:5s} {backend + nf_tag:16s} "
+                                            f"{component:10s}: {workload:15s} "
+                                            "SKIPPED (OOM)"
+                                        )
 
         else:  # batched
             base_size = system_config["base_supercell_size"]
@@ -3230,69 +3779,85 @@ def main():
                                 nf_list = ["n/a"]
 
                             for nf in nf_list:
-                                try:
-                                    if method == "dsf":
-                                        build_neighbors(system_data, nf)
-                                    result = run_benchmark(
-                                        method,
-                                        backend,
-                                        system_data,
-                                        component,
-                                        compute_forces,
-                                        compute_virial,
-                                        timer,
-                                        neighbor_format=nf,
-                                        torch_compile=args.torch_compile,
-                                    )
-                                    annotate_result_row(
-                                        result,
-                                        supercell_size=base_size,
-                                        mode=mode,
-                                        dtype=dtype_str,
-                                        config_path=config_path,
-                                        config_sha256=config_sha256,
-                                        accuracy=accuracy,
-                                        real_space_cutoff=real_space_cutoff,
-                                    )
-                                    all_results.append(result)
-                                    nf_tag = f" [{nf}]" if nf != "n/a" else ""
-                                    _print_result(
-                                        result, method, backend + nf_tag, component
-                                    )
-                                except RuntimeError as oom:
-                                    if "out of memory" not in str(oom).lower():
-                                        raise
-                                    if TORCH_AVAILABLE and torch.cuda.is_available():
-                                        torch.cuda.empty_cache()
-                                    nf_tag = f" [{nf}]" if nf != "n/a" else ""
-                                    result = benchmark_result_row(
-                                        system_data=system_data,
-                                        method=method,
-                                        backend=backend,
-                                        component=component,
-                                        compute_forces=compute_forces,
-                                        compute_virial=compute_virial,
-                                        neighbor_format=nf,
-                                        torch_compile=args.torch_compile,
-                                        success=False,
-                                        error=str(oom).split(".")[0],
-                                        error_type=type(oom).__name__,
-                                    )
-                                    annotate_result_row(
-                                        result,
-                                        supercell_size=base_size,
-                                        mode=mode,
-                                        dtype=dtype_str,
-                                        config_path=config_path,
-                                        config_sha256=config_sha256,
-                                        accuracy=accuracy,
-                                        real_space_cutoff=real_space_cutoff,
-                                    )
-                                    all_results.append(result)
-                                    print(
-                                        f"    {method:5s} {backend + nf_tag:16s} "
-                                        f"{component:10s}: SKIPPED (OOM)"
-                                    )
+                                workloads = benchmark_workloads(
+                                    method=method,
+                                    backend=backend,
+                                    derivative_contract=derivative_contract,
+                                    compute_forces=compute_forces,
+                                    compute_virial=compute_virial,
+                                )
+                                for workload in workloads:
+                                    try:
+                                        if method == "dsf":
+                                            build_neighbors(system_data, nf)
+                                        result = run_benchmark(
+                                            method,
+                                            backend,
+                                            system_data,
+                                            component,
+                                            compute_forces,
+                                            compute_virial,
+                                            timer,
+                                            neighbor_format=nf,
+                                            derivative_contract=derivative_contract,
+                                            workload=workload,
+                                            torch_compile=args.torch_compile,
+                                        )
+                                        annotate_result_row(
+                                            result,
+                                            supercell_size=base_size,
+                                            mode=mode,
+                                            dtype=dtype_str,
+                                            config_path=config_path,
+                                            config_sha256=config_sha256,
+                                            accuracy=accuracy,
+                                            real_space_cutoff=real_space_cutoff,
+                                        )
+                                        all_results.append(result)
+                                        nf_tag = f" [{nf}]" if nf != "n/a" else ""
+                                        _print_result(
+                                            result, method, backend + nf_tag, component
+                                        )
+                                    except RuntimeError as oom:
+                                        if "out of memory" not in str(oom).lower():
+                                            raise
+                                        if (
+                                            TORCH_AVAILABLE
+                                            and torch.cuda.is_available()
+                                        ):
+                                            torch.cuda.empty_cache()
+                                        nf_tag = f" [{nf}]" if nf != "n/a" else ""
+                                        result = benchmark_result_row(
+                                            system_data=system_data,
+                                            method=method,
+                                            backend=backend,
+                                            component=component,
+                                            compute_forces=compute_forces,
+                                            compute_virial=compute_virial,
+                                            derivative_contract=derivative_contract,
+                                            workload=workload,
+                                            neighbor_format=nf,
+                                            torch_compile=args.torch_compile,
+                                            success=False,
+                                            error=str(oom).split(".")[0],
+                                            error_type=type(oom).__name__,
+                                        )
+                                        annotate_result_row(
+                                            result,
+                                            supercell_size=base_size,
+                                            mode=mode,
+                                            dtype=dtype_str,
+                                            config_path=config_path,
+                                            config_sha256=config_sha256,
+                                            accuracy=accuracy,
+                                            real_space_cutoff=real_space_cutoff,
+                                        )
+                                        all_results.append(result)
+                                        print(
+                                            f"    {method:5s} {backend + nf_tag:16s} "
+                                            f"{component:10s}: {workload:15s} "
+                                            "SKIPPED (OOM)"
+                                        )
 
     # Save results
     if all_results:

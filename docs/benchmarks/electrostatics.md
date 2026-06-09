@@ -335,6 +335,14 @@ targeting $10^{-4}$ relative accuracy by default:
 `component`
 : Which part of the calculation was benchmarked (`real`, `reciprocal`, or `full`).
 
+`derivative_contract`
+: Whether nvalchemiops Ewald/PME rows use the default `energy_autograd`
+  contract or the opt-in deprecated `legacy_direct` output flags.
+
+`workload`
+: Runtime row type: `forward`, `backward`, `double_backward`,
+  `legacy_direct`, or `autograd_reference`.
+
 `compute_forces`
 : Whether forces were computed in addition to energies.
 
@@ -437,6 +445,13 @@ python benchmark_electrostatics.py \
 `--torch-compile`
 : Time torch backends through `torch.compile(fullgraph=True)` and record
   framework compile costs.
+
+`--derivative-contract {energy_autograd,legacy_direct}`
+: Select the nvalchemiops Ewald/PME derivative contract. The default
+  `energy_autograd` path benchmarks energy-only calls plus framework autograd
+  force/stress workloads, including Torch double-backward rows when derivatives
+  are requested. `legacy_direct` benchmarks deprecated direct-output flags and
+  suppresses their migration warnings inside the explicit legacy rows.
 
 `--gpu-sku <name>`
 : Override GPU SKU name for output files (default: auto-detect).

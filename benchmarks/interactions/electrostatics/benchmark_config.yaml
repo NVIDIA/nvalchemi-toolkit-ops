@@ -98,5 +98,8 @@ components:
   - reciprocal
 
 # Whether to compute forces and virial
+# Default contract derives forces/virials through energy autograd. Set to
+# legacy_direct to benchmark deprecated compute_forces/compute_virial outputs.
+derivative_contract: energy_autograd
 compute_forces: true
 compute_virial: true
