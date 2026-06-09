@@ -177,6 +177,16 @@ ignore = ["E501", "S311"]
 testpaths = ["test"]
 norecursedirs = [".git", "third_party"]
 addopts = ["-vv", "-r", "xfXs"]
+filterwarnings = [
+    "ignore:`torch\\.jit\\.script_method` is deprecated.*:DeprecationWarning",
+    "ignore:The direct-output flags .* are deprecated.*:DeprecationWarning",
+    "ignore:The component direct-output flag.* deprecated.*:DeprecationWarning",
+    "ignore:The 'inv_cell' kwarg is deprecated; use 'inv_cell_buffer' instead\\.:DeprecationWarning",
+    "ignore:The 'positions_wrapped' kwarg is deprecated; use 'positions_wrapped_buffer' instead\\.:DeprecationWarning",
+    "ignore:The 'per_atom_cell_offsets' kwarg is deprecated; use 'per_atom_cell_offsets_buffer' instead\\.:DeprecationWarning",
+    "ignore:'cells_inv' is deprecated and ignored.*:DeprecationWarning",
+    "ignore:'volumes' is deprecated and ignored.*:DeprecationWarning",
+]
 markers = [
     "slow: marks tests as slow (deselect with: -m 'not slow')",
     "gpu: marks tests that require GPU",

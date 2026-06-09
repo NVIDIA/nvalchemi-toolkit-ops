@@ -29,16 +29,26 @@ Coverage:
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 import torch
 
 from nvalchemiops.torch.interactions.electrostatics import (
     compute_slab_correction,
-    ewald_real_space,
-    particle_mesh_ewald,
-    pme_reciprocal_space,
 )
-from nvalchemiops.torch.interactions.electrostatics.ewald import ewald_summation
+from nvalchemiops.torch.interactions.electrostatics import (
+    ewald_real_space as _ewald_real_space,
+)
+from nvalchemiops.torch.interactions.electrostatics import (
+    particle_mesh_ewald as _particle_mesh_ewald,
+)
+from nvalchemiops.torch.interactions.electrostatics import (
+    pme_reciprocal_space as _pme_reciprocal_space,
+)
+from nvalchemiops.torch.interactions.electrostatics.ewald import (
+    ewald_summation as _ewald_summation,
+)
 from nvalchemiops.torch.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
@@ -66,6 +76,68 @@ SLAB_CHARGE_GRAD_RTOL = 2e-7
 SLAB_CHARGE_GRAD_ATOL = 5e-8
 PME_SLAB_GRADCHECK_RTOL = 1e-6
 PME_SLAB_GRADCHECK_ATOL = 1e-9
+
+
+def _call_without_direct_output_deprecation(api_name, api, *args, **kwargs):
+    """Call a deprecated direct-output full API without polluting test warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=f"The direct-output flags .* on {api_name} are deprecated",
+            category=DeprecationWarning,
+        )
+        return api(*args, **kwargs)
+
+
+def _call_without_component_direct_output_deprecation(api_name, api, *args, **kwargs):
+    """Call deprecated component direct outputs without polluting test warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=f"The component direct-output flag.* on {api_name} are deprecated",
+            category=DeprecationWarning,
+        )
+        return api(*args, **kwargs)
+
+
+def ewald_summation(*args, **kwargs):
+    """Test-local wrapper suppressing intentional direct-output deprecations."""
+    return _call_without_direct_output_deprecation(
+        "ewald_summation",
+        _ewald_summation,
+        *args,
+        **kwargs,
+    )
+
+
+def ewald_real_space(*args, **kwargs):
+    """Test-local wrapper suppressing intentional component deprecations."""
+    return _call_without_component_direct_output_deprecation(
+        "ewald_real_space",
+        _ewald_real_space,
+        *args,
+        **kwargs,
+    )
+
+
+def particle_mesh_ewald(*args, **kwargs):
+    """Test-local wrapper suppressing intentional direct-output deprecations."""
+    return _call_without_direct_output_deprecation(
+        "particle_mesh_ewald",
+        _particle_mesh_ewald,
+        *args,
+        **kwargs,
+    )
+
+
+def pme_reciprocal_space(*args, **kwargs):
+    """Test-local wrapper suppressing intentional component deprecations."""
+    return _call_without_component_direct_output_deprecation(
+        "pme_reciprocal_space",
+        _pme_reciprocal_space,
+        *args,
+        **kwargs,
+    )
 
 
 # ==============================================================================

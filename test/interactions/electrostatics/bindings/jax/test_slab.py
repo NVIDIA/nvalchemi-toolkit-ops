@@ -17,22 +17,30 @@
 
 from __future__ import annotations
 
+import warnings
+
 import jax
 import jax.numpy as jnp
 import pytest
 
 from nvalchemiops.jax.interactions.electrostatics import compute_slab_correction
 from nvalchemiops.jax.interactions.electrostatics.ewald import (
-    ewald_real_space,
-    ewald_reciprocal_space,
-    ewald_summation,
+    ewald_real_space as _ewald_real_space,
+)
+from nvalchemiops.jax.interactions.electrostatics.ewald import (
+    ewald_reciprocal_space as _ewald_reciprocal_space,
+)
+from nvalchemiops.jax.interactions.electrostatics.ewald import (
+    ewald_summation as _ewald_summation,
 )
 from nvalchemiops.jax.interactions.electrostatics.k_vectors import (
     generate_k_vectors_ewald_summation,
 )
 from nvalchemiops.jax.interactions.electrostatics.pme import (
-    particle_mesh_ewald,
-    pme_reciprocal_space,
+    particle_mesh_ewald as _particle_mesh_ewald,
+)
+from nvalchemiops.jax.interactions.electrostatics.pme import (
+    pme_reciprocal_space as _pme_reciprocal_space,
 )
 from nvalchemiops.jax.neighbors import batch_cell_list, cell_list
 
@@ -52,6 +60,78 @@ OUTPUT_CASES = [
     (False, True, True, ("energies", "charge_grads", "virial")),
     (True, True, True, ("energies", "forces", "charge_grads", "virial")),
 ]
+
+
+def _call_without_direct_output_deprecation(api_name, api, *args, **kwargs):
+    """Call a deprecated direct-output full API without polluting test warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=f"The direct-output flags .* on {api_name} are deprecated",
+            category=DeprecationWarning,
+        )
+        return api(*args, **kwargs)
+
+
+def _call_without_component_direct_output_deprecation(api_name, api, *args, **kwargs):
+    """Call deprecated component direct outputs without polluting test warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=f"The component direct-output flag.* on {api_name} are deprecated",
+            category=DeprecationWarning,
+        )
+        return api(*args, **kwargs)
+
+
+def ewald_summation(*args, **kwargs):
+    """Test-local wrapper suppressing intentional direct-output deprecations."""
+    return _call_without_direct_output_deprecation(
+        "ewald_summation",
+        _ewald_summation,
+        *args,
+        **kwargs,
+    )
+
+
+def ewald_real_space(*args, **kwargs):
+    """Test-local wrapper suppressing intentional component deprecations."""
+    return _call_without_component_direct_output_deprecation(
+        "ewald_real_space",
+        _ewald_real_space,
+        *args,
+        **kwargs,
+    )
+
+
+def ewald_reciprocal_space(*args, **kwargs):
+    """Test-local wrapper suppressing intentional component deprecations."""
+    return _call_without_component_direct_output_deprecation(
+        "ewald_reciprocal_space",
+        _ewald_reciprocal_space,
+        *args,
+        **kwargs,
+    )
+
+
+def particle_mesh_ewald(*args, **kwargs):
+    """Test-local wrapper suppressing intentional direct-output deprecations."""
+    return _call_without_direct_output_deprecation(
+        "particle_mesh_ewald",
+        _particle_mesh_ewald,
+        *args,
+        **kwargs,
+    )
+
+
+def pme_reciprocal_space(*args, **kwargs):
+    """Test-local wrapper suppressing intentional component deprecations."""
+    return _call_without_component_direct_output_deprecation(
+        "pme_reciprocal_space",
+        _pme_reciprocal_space,
+        *args,
+        **kwargs,
+    )
 
 
 def _make_slab_system(dtype=jnp.float64):

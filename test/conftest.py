@@ -39,6 +39,7 @@ import hashlib
 import os
 import sys
 import tempfile
+import warnings
 from collections.abc import Callable
 from typing import Literal
 
@@ -50,6 +51,12 @@ _JAX_ALLOCATOR_ENVIRONMENT = {
     "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
 }
+
+warnings.filterwarnings(
+    "ignore",
+    message="`torch.jit.script_method` is deprecated.*",
+    category=DeprecationWarning,
+)
 
 _FRAMEWORK_PATH_MARKERS: tuple[tuple[str, FrameworkName], ...] = (
     ("/bindings/jax/", "jax"),

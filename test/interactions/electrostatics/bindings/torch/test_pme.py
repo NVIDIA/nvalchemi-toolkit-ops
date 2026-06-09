@@ -95,6 +95,17 @@ from test.interactions.electrostatics.conftest import (
 ###########################################################################################
 
 
+def _particle_mesh_ewald_without_direct_output_deprecation(*args, **kwargs):
+    """Call legacy direct-output PME paths without polluting warning summaries."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="The direct-output flags .* on particle_mesh_ewald are deprecated",
+            category=DeprecationWarning,
+        )
+        return particle_mesh_ewald(*args, **kwargs)
+
+
 def create_simple_system(
     device: torch.device,
     dtype: torch.dtype = torch.float64,
@@ -3704,7 +3715,7 @@ class TestPMEDifferentiableVirial:
         alpha = torch.tensor([0.3], dtype=dtype, device=device)
         nl, nptr, us = get_virial_neighbor_data(positions, cell, cutoff=6.0)
 
-        _, _, virial = particle_mesh_ewald(
+        _, _, virial = _particle_mesh_ewald_without_direct_output_deprecation(
             positions,
             charges,
             cell,
