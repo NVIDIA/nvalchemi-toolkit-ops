@@ -47,14 +47,45 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
 
 import torch
+import warp as wp
 
 __all__ = [
     "attach_simple_backward",
+    "register_noop_fake",
     "register_warp_op_chain",
+    "scoped_warp_stream",
 ]
+
+
+def scoped_warp_stream(device: torch.device | str):
+    """Bind Warp launches to PyTorch's current CUDA stream when needed.
+
+    If a caller already installed a matching ``wp.ScopedStream`` (for example
+    around ``wp.capture_begin/end``), reuse that stream. Re-wrapping the same
+    CUDA stream creates a distinct Warp stream wrapper and invalidates capture.
+    """
+    torch_device = torch.device(device)
+    if torch_device.type != "cuda":
+        return nullcontext()
+
+    torch_stream = torch.cuda.current_stream(torch_device)
+    wp_stream = wp.get_stream(str(torch_device))
+    if wp_stream.cuda_stream == torch_stream.cuda_stream:
+        return nullcontext()
+    return wp.ScopedStream(wp.stream_from_torch(torch_stream))
+
+
+def register_noop_fake(op) -> None:
+    """Register fake behavior for mutating custom ops with no tensor return."""
+
+    @op.register_fake
+    def _(*args, **kwargs) -> None:
+        return None
+
 
 # ===========================================================================
 # Grad-shape coercion helpers
