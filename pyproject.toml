@@ -205,6 +205,9 @@ omit = [
 ]
 show_missing = true
 fail_under = 70
+# Warn instead of aborting on missing source files (e.g. stale cached
+# testmon/coverage baselines referencing files deleted in the current PR).
+ignore_errors = true
 
 [tool.coverage.xml]
 output = "nvalchemiops.coverage.xml"
