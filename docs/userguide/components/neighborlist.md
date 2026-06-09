@@ -402,6 +402,12 @@ batched inputs.
 | `"naive_dual_cutoff"` | \(O(N^2)\) with two cutoffs | Two-cutoff queries |
 | `"batch_*"` | Per-system batched form of any of the above (e.g. `"batch_cell_list"`, `"batch_cluster_tile"`, `"batch_naive_dual_cutoff"`) | Batched systems |
 
+Method names that do not start with `batch_` refer to single-system algorithms.
+When `batch_idx` or `batch_ptr` (batch metadata) is supplied, those explicit
+method names are treated as aliases for the corresponding `batch_*` methods.
+For example, `method="naive"` is dispatched as `method="batch_naive"` when batch
+metadata is provided.
+
 Override automatic selection by passing the `method` parameter:
 
 ::::{tab-set}
