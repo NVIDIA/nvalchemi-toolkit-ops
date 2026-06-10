@@ -150,7 +150,13 @@ def neighbor_list(
         comparing estimated work from per-system atom counts and cell (or
         bounding-box) volumes and can select cluster-tile when the CUDA,
         float32, fully-periodic, contiguous-batch, and output-option guards
-        allow it. When only ``batch_idx`` is provided (no ``batch_ptr`` or 3-D ``cell``),
+        allow it. Method names that do not start with ``batch_`` refer to
+        single-system algorithms. When ``batch_idx`` or ``batch_ptr`` (batch
+        metadata) is supplied, those explicit method names are treated as aliases
+        for the corresponding ``batch_*`` methods. For example,
+        ``method="naive"`` is dispatched as ``method="batch_naive"`` when batch
+        metadata is provided. When only ``batch_idx`` is provided (no
+        ``batch_ptr`` or 3-D ``cell``),
         auto-selection computes ``batch_idx.max() + 1`` (and a ``bincount``)
         which triggers a device-to-host
         synchronization. To avoid this, pass ``batch_ptr``, a 3-D ``cell``
@@ -394,6 +400,11 @@ def neighbor_list(
         elif has_batch_inputs:
             cell, pbc = _squeeze_single_system_cell_pbc(cell, pbc)
     else:
+        if batch_idx is not None or batch_ptr is not None:
+            # Route explicit single-system method names through the matching
+            # batch method when batch metadata is provided.
+            if not method.startswith("batch_"):
+                method = "batch_" + method
         base = method[len("batch_") :] if method.startswith("batch_") else method
         if base in NEIGHBOR_LIST_STRATEGIES:
             # Fine-grained strategy name (e.g. from suggest/report): decompose
