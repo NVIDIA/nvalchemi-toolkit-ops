@@ -74,3 +74,19 @@ operations:
     enabled: false
   segmented_rms_norm_dbl:
     enabled: false
+
+# ----------------------------------------------------------------------------
+# Public Torch bindings (nvalchemiops.torch.segment_ops custom ops).
+#
+# Separate from the Warp-vs-torch comparison above: times the bindings users
+# actually call (forward), eager and optionally under torch.compile, against
+# the hand-written torch they replace.  Opt-in.  Equivalent CLI flags:
+#   --torch-bindings   enable this section (overrides ``enabled`` below)
+#   --torch-compile    add the torch.compile(fullgraph=True) column
+# ----------------------------------------------------------------------------
+torch_bindings:
+  enabled: true
+  compile: true
+  # Subset of ops to time; omit to benchmark all six.
+  # ops: [segmented_sum, segmented_dot, segmented_mul, segmented_mean,
+  #       segmented_rms_norm, segmented_matvec]

@@ -68,6 +68,10 @@ from nvalchemiops.segment_ops_backward import (
     segmented_sum_double_backward,
 )
 
+# Public Torch bindings (``torch.library`` custom ops). Aliased so they don't
+# shadow the raw Warp launchers of the same name imported above.
+from nvalchemiops.torch import segment_ops as torch_seg
+
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
@@ -1509,6 +1513,251 @@ def bench_segmented_rms_norm_dbl(
 
 
 # ---------------------------------------------------------------------------
+# Torch-binding benchmarks (public ``nvalchemiops.torch.segment_ops`` API)
+# ---------------------------------------------------------------------------
+#
+# The benchmarks above time the raw Warp launchers against hand-written torch.
+# This section times the *public Torch bindings* — the ``torch.library`` custom
+# ops users actually call — in two modes: eager, and (optionally)
+# ``torch.compile(fullgraph=True)``.  Each is compared against the equivalent
+# hand-written torch the binding is meant to replace.  Forward only: the bindings
+# are opaque custom ops, so the interesting question is dispatch/wrapper overhead
+# vs. plain torch and what ``torch.compile`` recovers by fusing the surrounding
+# graph.  (Eager binding calls also pay the public wrapper's input-validation
+# host sync, which ``torch.compile`` elides via ``torch.compiler.is_compiling``.)
+
+_TORCH_BINDING_OPS = [
+    "segmented_sum",
+    "segmented_dot",
+    "segmented_mul",
+    "segmented_mean",
+    "segmented_rms_norm",
+    "segmented_matvec",
+]
+
+
+def _torch_binding_case(op_name, N, M, torch_device, rng):
+    """Build ``(binding_fn, ref_fn, label)`` for one public op.
+
+    Both are zero-arg closures over freshly-built leaf tensors. ``binding_fn``
+    calls the public Torch binding; ``ref_fn`` is the hand-written torch the
+    binding replaces (forward only). ``idx`` is ``int32`` for the binding and
+    ``int64`` for torch ``index_add_`` / advanced indexing.
+    """
+    idx_np = _make_segments(N, M, rng)
+    idx32 = torch.from_numpy(idx_np).to(torch_device)
+    idx64 = torch.from_numpy(idx_np.astype(np.int64)).to(torch_device)
+    kw = {"dtype": torch.float32, "device": torch_device}
+
+    def _randn(*shape):
+        return torch.from_numpy(rng.standard_normal(shape).astype(np.float32)).to(
+            torch_device
+        )
+
+    if op_name == "segmented_sum":
+        x = _randn(N, 3)
+        out = torch.zeros(M, 3, **kw)
+
+        def ref():
+            out.zero_()
+            out.index_add_(0, idx64, x)
+            return out
+
+        return (lambda: torch_seg.segmented_sum(x, idx32, M)), ref, "vec3f"
+
+    if op_name == "segmented_dot":
+        x = _randn(N, 3)
+        y = _randn(N, 3)
+        out = torch.zeros(M, **kw)
+
+        def ref():
+            out.zero_()
+            out.index_add_(0, idx64, (x * y).sum(-1))
+            return out
+
+        return (lambda: torch_seg.segmented_dot(x, y, idx32, M)), ref, "vec3f"
+
+    if op_name == "segmented_mul":
+        x = _randn(N, 3)
+        y = _randn(M)
+
+        def ref():
+            return x * y[idx64].unsqueeze(1)
+
+        return (lambda: torch_seg.segmented_mul(x, y, idx32, M)), ref, "vec3f_scalar"
+
+    if op_name == "segmented_mean":
+        x = _randn(N, 3)
+        counts = torch.bincount(idx64, minlength=M).clamp(min=1).to(torch.float32)
+        sums = torch.zeros(M, 3, **kw)
+
+        def ref():
+            sums.zero_()
+            sums.index_add_(0, idx64, x)
+            return sums / counts.unsqueeze(1)
+
+        return (lambda: torch_seg.segmented_mean(x, idx32, M)), ref, "vec3f"
+
+    if op_name == "segmented_rms_norm":
+        x = _randn(N, 3)
+        counts = torch.bincount(idx64, minlength=M).clamp(min=1).to(torch.float32)
+        ssq = torch.zeros(M, **kw)
+
+        def ref():
+            ssq.zero_()
+            ssq.index_add_(0, idx64, (x * x).sum(-1))
+            return (ssq / counts).sqrt()
+
+        return (lambda: torch_seg.segmented_rms_norm(x, idx32, M)), ref, "vec3f"
+
+    if op_name == "segmented_matvec":
+        v = _randn(N, 3)
+        m = _randn(M, 3, 3)
+
+        def ref():
+            return torch.einsum("nji,nj->ni", m[idx64], v)
+
+        return (lambda: torch_seg.segmented_matvec(v, m, idx32, M)), ref, "mat33f"
+
+    raise ValueError(f"unknown torch-binding op: {op_name}")
+
+
+def _print_binding_header(with_compile):
+    cols = f"{'N':>10}  {'M':>7}  {'L':>9}  {'binding ms':>11}  "
+    if with_compile:
+        cols += f"{'compiled ms':>12}  "
+    cols += f"{'torch ms':>9}  {'bind spd':>9}"
+    if with_compile:
+        cols += f"  {'comp spd':>9}"
+    sep = "-" * len(cols)
+    print(sep)
+    print(cols)
+    print(sep)
+
+
+def _print_binding_row(N, M, ms_bind, ms_ref, ms_comp):
+    L = N / max(M, 1)
+    bind_spd = ms_ref / ms_bind if ms_bind > 0 else float("inf")
+    line = f"{N:>10}  {M:>7}  {L:>9.1f}  {ms_bind:>11.4f}  "
+    if ms_comp is not None:
+        line += f"{ms_comp:>12.4f}  "
+    line += f"{ms_ref:>9.4f}  {bind_spd:>8.2f}x"
+    if ms_comp is not None:
+        comp_spd = ms_ref / ms_comp if ms_comp > 0 else float("inf")
+        line += f"  {comp_spd:>8.2f}x"
+    print(line)
+
+
+def bench_torch_binding(
+    N, M, torch_device, rng, warmup, runs, op_name, compile_binding
+):
+    """Time one public Torch binding (eager + optional compiled) vs hand-torch."""
+    binding, ref, label = _torch_binding_case(op_name, N, M, torch_device, rng)
+
+    ms_bind = _bench_cuda(_noop, binding, torch_device, warmup, runs)
+    ms_ref = _bench_cuda(_noop, ref, torch_device, warmup, runs)
+
+    ms_comp = None
+    if compile_binding:
+        # Each sweep point closes over differently-shaped tensors (and a
+        # different ``M``), so reusing one Dynamo cache would recompile the same
+        # code object past the recompile limit. Reset first so every point gets
+        # a clean, single compile — which is exactly the graph we want to time.
+        torch._dynamo.reset()
+        compiled = torch.compile(binding, fullgraph=True)
+        # Trigger compilation + warm the cache outside the timed region.
+        for _ in range(3):
+            compiled()
+        torch.cuda.synchronize(torch_device)
+        ms_comp = _bench_cuda(_noop, compiled, torch_device, warmup, runs)
+
+    _print_binding_row(N, M, ms_bind, ms_ref, ms_comp)
+    return (op_name, label, N, M, ms_bind, ms_comp, ms_ref)
+
+
+def run_torch_binding_benchmarks(config, output_dir, device_str, compile_binding):
+    """Benchmark the public Torch bindings (forward) across the N x L sweep."""
+    params = config.get("parameters", {})
+    warmup = params.get("warmup", 5)
+    runs = params.get("runs", 50)
+
+    sweep = config.get("sweep", {})
+    n_values = sweep.get("total_elements", [1_000, 10_000, 100_000, 1_000_000])
+    l_values = sweep.get("avg_segment_lengths", [10, 100, 1_000, 10_000])
+
+    binding_cfg = config.get("torch_bindings", {}) or {}
+    ops = binding_cfg.get("ops", _TORCH_BINDING_OPS)
+
+    torch_device = torch.device(device_str)
+    rng = np.random.default_rng(42)
+    gpu_sku = _get_gpu_sku()
+
+    print("\n" + "=" * 70)
+    print("Torch bindings (public custom ops) — forward")
+    mode = "eager + torch.compile" if compile_binding else "eager"
+    print(f"Mode: {mode}; {warmup} warmup, median of {runs} runs")
+    print("=" * 70)
+
+    all_results = []
+    for op_name in ops:
+        print(f"\n{op_name} (torch binding)")
+        _print_binding_header(compile_binding)
+        for N in n_values:
+            for L in l_values:
+                if L > N:
+                    continue
+                M = max(N // L, 1)
+                all_results.append(
+                    bench_torch_binding(
+                        N, M, torch_device, rng, warmup, runs, op_name, compile_binding
+                    )
+                )
+            print()
+
+    if all_results:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = output_dir / f"segment_ops_torch_binding_{gpu_sku}.csv"
+        fieldnames = [
+            "operation",
+            "dtype",
+            "total_elements",
+            "num_segments",
+            "avg_segment_length",
+            "binding_median_ms",
+            "compiled_median_ms",
+            "torch_ref_median_ms",
+            "binding_speedup",
+            "compiled_speedup",
+        ]
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for op, label, N, M, ms_bind, ms_comp, ms_ref in all_results:
+                L = N / max(M, 1)
+                bind_spd = ms_ref / ms_bind if ms_bind > 0 else float("inf")
+                comp_spd = ms_ref / ms_comp if ms_comp and ms_comp > 0 else None
+                writer.writerow(
+                    {
+                        "operation": op,
+                        "dtype": label,
+                        "total_elements": N,
+                        "num_segments": M,
+                        "avg_segment_length": f"{L:.1f}",
+                        "binding_median_ms": f"{ms_bind:.4f}",
+                        "compiled_median_ms": (
+                            f"{ms_comp:.4f}" if ms_comp is not None else ""
+                        ),
+                        "torch_ref_median_ms": f"{ms_ref:.4f}",
+                        "binding_speedup": f"{bind_spd:.2f}",
+                        "compiled_speedup": (
+                            f"{comp_spd:.2f}" if comp_spd is not None else ""
+                        ),
+                    }
+                )
+        print(f"Wrote torch-binding results to {csv_path}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1728,11 +1977,31 @@ def main():
         help="Output directory for CSV files",
     )
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        "--torch-bindings",
+        action="store_true",
+        help="Benchmark the public nvalchemiops.torch.segment_ops bindings "
+        "(custom ops) vs hand-written torch.",
+    )
+    parser.add_argument(
+        "--torch-compile",
+        action="store_true",
+        help="With --torch-bindings, also time the bindings under "
+        "torch.compile(fullgraph=True).",
+    )
     args = parser.parse_args()
 
     config = _load_config(args.config)
     output_dir = Path(args.output_dir)
     run_benchmarks(config, output_dir, args.device)
+
+    binding_cfg = config.get("torch_bindings", {}) or {}
+    run_bindings = args.torch_bindings or binding_cfg.get("enabled", False)
+    compile_binding = args.torch_compile or binding_cfg.get("compile", False)
+    if run_bindings:
+        run_torch_binding_benchmarks(
+            config, output_dir, args.device, compile_binding=compile_binding
+        )
 
 
 if __name__ == "__main__":

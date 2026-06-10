@@ -14,36 +14,44 @@
 # limitations under the License.
 
 """
-Segment Op Autograd: First- and Second-Order Backward
+Segment Ops: Pooling, Autograd, and ``torch.compile``
 =====================================================
 
-This example exercises the explicit backward and double-backward kernels in
-``nvalchemiops.segment_ops_backward`` through the public Torch wrappers in
-``nvalchemiops.torch.segment_ops``.
+Segment operations are the scatter/gather primitives behind graph pooling and
+message passing. Each one reduces or broadcasts a per-element array over
+variable-length *segments* defined by a sorted index — exactly the operation you
+need to pool per-atom quantities up to per-molecule ones (and to push
+per-molecule quantities back down to atoms).
 
-For each of the six differentiable segment ops we
+We use a tiny batch of molecules as the running example: 12 atoms grouped into
+3 molecules. A single ``atom_idx`` array maps each atom to its molecule, and the
+segment ops do the pooling.
 
-1. run the forward pass,
-2. call ``torch.autograd.grad(..., create_graph=True)`` to invoke the
-   first-order backward kernel,
-3. differentiate the result once more to invoke the double-backward kernel.
+In this example you will learn:
 
-Inputs are tiny (``N = 12`` elements over ``M = 3`` segments) so the printed
-gradients can be eyeballed.  The script runs on CUDA if available, otherwise
-CPU.
+- How each of the six segment ops pools (or broadcasts) atom data over molecules
+- How a pooled energy backpropagates to per-atom **forces** (first-order grad)
+  and to a **Hessian-vector product** (second-order grad) — the quantities an
+  MLIP trains on
+- That the ops are ``torch.compile``-clean: an MLIP model can compile straight
+  through them with ``fullgraph=True``
 
-Ops covered
------------
-- ``segmented_sum``       scatter-add: ``out[s] = sum_{i: idx[i]==s} x[i]``
-- ``segmented_dot``       per-segment dot product
-- ``segmented_mul``       per-element scale by a per-segment scalar
-- ``segmented_mean``      per-segment mean
-- ``segmented_rms_norm``  per-segment RMS norm of vec3 inputs
-- ``segmented_matvec``    per-segment matvec ``out[i] = M[idx[i]]^T @ v[i]``
+.. important::
+    ``atom_idx`` must be ``int32`` and sorted in non-decreasing order (atoms of
+    the same molecule are contiguous). The script runs on CUDA if available,
+    otherwise CPU.
 """
+
+# %%
+# Setup
+# -----
+# Import the six public ops and define the atom-to-molecule map. ``atom_idx`` is
+# the only piece of bookkeeping the segment ops need.
 
 from __future__ import annotations
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 
 from nvalchemiops.torch.segment_ops import (
@@ -55,120 +63,186 @@ from nvalchemiops.torch.segment_ops import (
     segmented_sum,
 )
 
-# %%
-# Problem setup
-# -------------
-# A sorted segment index of length ``N`` mapping into ``M`` segments. The
-# library expects ``idx`` to be int32 and sorted in non-decreasing order.
-
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.manual_seed(0)
 
-N, M = 12, 3
-idx = torch.tensor(
+# 12 atoms, 3 molecules. atom_idx[i] is the molecule atom i belongs to.
+atom_idx = torch.tensor(
     [0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2], dtype=torch.int32, device=device
 )
+n_atoms = atom_idx.numel()
+n_molecules = 3
+print(f"{n_atoms} atoms over {n_molecules} molecules, running on {device}")
 
+# %%
+# Pooling a per-atom scalar: ``segmented_sum`` and ``segmented_mean``
+# ------------------------------------------------------------------
+# Give every atom a partial charge. ``segmented_sum`` gives each molecule's net
+# charge; ``segmented_mean`` gives its average. Both map ``(n_atoms,)`` down to
+# ``(n_molecules,)``.
 
-def _leaf(shape, *, dtype=torch.float32):
-    """Fresh leaf tensor with ``requires_grad=True``."""
-    return torch.randn(shape, dtype=dtype, device=device, requires_grad=True)
+charge = torch.tensor(
+    [0.4, -0.3, 0.1, -0.2, 0.5, -0.5, 0.2, -0.1, 0.3, -0.4, 0.2, 0.1],
+    device=device,
+)
 
+net_charge = segmented_sum(charge, atom_idx, n_molecules)
+mean_charge = segmented_mean(charge, atom_idx, n_molecules)
 
-def demo(name, forward, leaves):
-    """Run forward, first-order backward, and double-backward for one op.
+print("net charge per molecule :", net_charge.tolist())
+print("mean charge per molecule:", mean_charge.tolist())
 
-    ``leaves`` is the tuple of floating-point inputs whose gradients we want.
-    ``forward`` is a zero-arg closure that calls the op on those leaves (it
-    may also capture non-differentiable arguments like ``idx`` and ``M``).
-    """
-    print(f"\n=== {name} ===")
-    out = forward()
-    print(f"  forward out shape  : {tuple(out.shape)}")
+# %%
+# The scatter-then-reduce picture: each bar is one atom's charge, colored by its
+# molecule; the dashed lines mark the per-molecule mean that ``segmented_mean``
+# returns and the annotation gives the ``segmented_sum`` total.
 
-    # --- 1st-order backward -------------------------------------------------
-    # An external ``grad_outputs`` tensor lets the double-backward depend on
-    # it, which is what triggers ``_launch_*_double_backward``.
-    g_out = torch.randn_like(out, requires_grad=True)
-    grads = torch.autograd.grad(out, leaves, grad_outputs=g_out, create_graph=True)
-    for leaf, g in zip(leaves, grads):
-        print(f"  d(out·g_out)/d{tuple(leaf.shape)} : norm={g.norm().item():.4f}")
+colors = plt.cm.tab10(np.arange(n_molecules))
+idx_np = atom_idx.cpu().numpy()
 
-    # --- 2nd-order backward -------------------------------------------------
-    # Reduce ``grads`` to a scalar and differentiate w.r.t. ``g_out`` and the
-    # original leaves. For linear ops (sum, mean, broadcast) the leaf-leaf
-    # cross term is zero and only ``d/d g_out`` is non-trivial. For non-linear
-    # ops (rms_norm, dot, mul, matvec) the leaf-leaf term is also non-zero.
-    scalar = sum(g.sum() for g in grads)
-    second = torch.autograd.grad(
-        scalar, (g_out, *leaves), allow_unused=True, retain_graph=False
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.bar(range(n_atoms), charge.cpu().numpy(), color=colors[idx_np], edgecolor="black")
+ax.axhline(0, color="gray", lw=0.8)
+for mol in range(n_molecules):
+    atoms = np.where(idx_np == mol)[0]
+    ax.hlines(
+        mean_charge[mol].item(),
+        atoms[0] - 0.4,
+        atoms[-1] + 0.4,
+        color=colors[mol],
+        ls="--",
+        lw=2,
     )
-    print(
-        f"  d²/d g_out shape   : {tuple(second[0].shape)}  "
-        f"norm={second[0].norm().item():.4f}"
+    ax.text(
+        atoms.mean(),
+        ax.get_ylim()[1] * 0.92,
+        f"mol {mol}\nΣ={net_charge[mol].item():.1f}",
+        ha="center",
+        va="top",
+        fontsize=9,
     )
-    for leaf, s in zip(leaves, second[1:]):
-        tag = "zero" if s is None else f"norm={s.norm().item():.4f}"
-        print(f"  d²/d{tuple(leaf.shape)} cross : {tag}")
-
-
-# %%
-# segmented_sum
-# -------------
-# Linear in ``x``, so the double-backward only feeds ``g_out``.
-
-x = _leaf((N,))
-demo("segmented_sum (scalar)", lambda: segmented_sum(x, idx, M), (x,))
-
-xv = _leaf((N, 3))
-demo("segmented_sum (vec3)", lambda: segmented_sum(xv, idx, M), (xv,))
+ax.set_xlabel("atom index")
+ax.set_ylabel("partial charge")
+ax.set_title("segmented_sum / segmented_mean: pooling per-atom charge by molecule")
+plt.tight_layout()
+plt.show()
 
 # %%
-# segmented_dot
-# -------------
-# Bilinear in ``(x, y)``: backward mixes the two, and the double-backward has
-# non-zero cross terms with respect to both inputs.
+# Pooling per-atom vectors
+# ------------------------
+# Give every atom a 3-vector (say a displacement). The remaining reductions act
+# per molecule:
+#
+# - ``segmented_dot`` contracts two per-atom vector fields and sums the result
+# - ``segmented_rms_norm`` is the root-mean-square vector magnitude
 
-x = _leaf((N, 3))
-y = _leaf((N, 3))
-demo("segmented_dot", lambda: segmented_dot(x, y, idx, M), (x, y))
+displacement = torch.randn(n_atoms, 3, device=device)
+velocity = torch.randn(n_atoms, 3, device=device)
 
-# %%
-# segmented_mul
-# -------------
-# ``out[i] = x[i] * y[idx[i]]``.  ``x`` is per-element, ``y`` is per-segment.
+overlap = segmented_dot(displacement, velocity, atom_idx, n_molecules)  # (n_molecules,)
+rms = segmented_rms_norm(displacement, atom_idx, n_molecules)  # (n_molecules,)
 
-x = _leaf((N, 3))
-y = _leaf((M,))
-demo("segmented_mul", lambda: segmented_mul(x, y, idx, M), (x, y))
-
-# %%
-# segmented_mean
-# --------------
-# Linear in ``x``; division by the per-segment count is folded into the
-# backward kernel (counts are cached in the autograd context).
-
-x = _leaf((N, 3))
-demo("segmented_mean", lambda: segmented_mean(x, idx, M), (x,))
+print("Σ <disp, vel> per molecule:", [f"{v:.3f}" for v in overlap.tolist()])
+print("RMS |disp| per molecule   :", [f"{v:.3f}" for v in rms.tolist()])
 
 # %%
-# segmented_rms_norm
-# ------------------
-# Non-linear: backward uses a cached ``inv_norm`` precomputed during forward,
-# and the double-backward returns the projection-onto-tangent term.
+# Broadcasting per-molecule values back to atoms
+# ----------------------------------------------
+# The other direction: take a per-molecule quantity and apply it to every atom
+# in that molecule.
+#
+# - ``segmented_mul`` scales each atom's vector by its molecule's scalar
+# - ``segmented_matvec`` applies its molecule's 3x3 matrix to each atom's vector
 
-x = _leaf((N, 3))
-demo("segmented_rms_norm", lambda: segmented_rms_norm(x, idx, M), (x,))
+scale = torch.tensor([2.0, 0.5, -1.0], device=device)  # one scalar per molecule
+scaled = segmented_mul(displacement, scale, atom_idx, n_molecules)  # (n_atoms, 3)
+
+rotation = torch.randn(n_molecules, 3, 3, device=device)  # one matrix per molecule
+rotated = segmented_matvec(
+    displacement, rotation, atom_idx, n_molecules
+)  # (n_atoms, 3)
+
+print("scaled  shape:", tuple(scaled.shape), "(per-atom, scaled by molecule)")
+print("rotated shape:", tuple(rotated.shape), "(per-atom, matvec'd by molecule)")
 
 # %%
-# segmented_matvec
-# ----------------
-# Bilinear: ``out[i] = m[idx[i]]^T @ v[i]``. The double-backward has both a
-# ``grad_v_extra`` term and a ``grad_m_extra`` term (see the kernel docstring
-# in ``segment_ops_backward.py``).
+# First-order autograd: forces from a pooled energy
+# -------------------------------------------------
+# The ops are differentiable, so a pooled energy backpropagates to per-atom
+# gradients with no special handling. Here a toy per-atom energy ``||r||^2`` is
+# summed into a per-molecule energy; the gradient of the total energy w.r.t.
+# positions is the per-atom force.
 
-v = _leaf((N, 3))
-m = _leaf((M, 3, 3))
-demo("segmented_matvec", lambda: segmented_matvec(v, m, idx, M), (v, m))
+positions = torch.randn(n_atoms, 3, device=device, requires_grad=True)
 
-print("\nAll forward, backward, and double-backward calls completed.")
+atom_energy = (positions**2).sum(dim=1)  # (n_atoms,)
+molecule_energy = segmented_sum(atom_energy, atom_idx, n_molecules)  # (n_molecules,)
+total_energy = molecule_energy.sum()
+
+total_energy.backward()
+forces = -positions.grad
+print("force on atom 0:", forces[0].tolist())
+
+# %%
+# Second-order autograd: a Hessian-vector product
+# -----------------------------------------------
+# Training on forces (a "force loss") differentiates the gradient again, so the
+# segment op must support double-backward. ``create_graph=True`` keeps the
+# first gradient in the graph; differentiating ``grad · v`` then gives the
+# Hessian-vector product — all the way through ``segmented_sum``.
+
+positions = torch.randn(n_atoms, 3, device=device, requires_grad=True)
+
+atom_energy = (positions**2).sum(dim=1)
+total_energy = segmented_sum(atom_energy, atom_idx, n_molecules).sum()
+
+(grad,) = torch.autograd.grad(total_energy, positions, create_graph=True)
+v = torch.randn_like(positions)
+(hvp,) = torch.autograd.grad((grad * v).sum(), positions)
+print("‖Hessian·v‖:", hvp.norm().item())
+
+# %%
+# Compiling through the ops with ``torch.compile``
+# ------------------------------------------------
+# Each op is a ``torch.library`` custom op wrapping a Warp kernel, so TorchDynamo
+# captures it as a single opaque node. A model that pools with these ops compiles
+# with ``fullgraph=True`` — one graph, no breaks — and matches eager exactly.
+
+
+def molecule_energy_model(positions: torch.Tensor) -> torch.Tensor:
+    """Toy MLIP energy: per-atom ``||r||^2`` pooled to a scalar total energy."""
+    atom_energy = (positions**2).sum(dim=1)
+    return segmented_sum(atom_energy, atom_idx, n_molecules).sum()
+
+
+positions = torch.randn(n_atoms, 3, device=device, requires_grad=True)
+eager_energy = molecule_energy_model(positions)
+(eager_force,) = torch.autograd.grad(eager_energy, positions)
+
+compiled_model = torch.compile(molecule_energy_model, fullgraph=True)
+compiled_energy = compiled_model(positions)
+(compiled_force,) = torch.autograd.grad(compiled_energy, positions)
+
+torch.testing.assert_close(compiled_energy, eager_energy)
+torch.testing.assert_close(compiled_force, eager_force)
+print("torch.compile(fullgraph=True): energy and force match eager")
+
+# %%
+# Summary
+# -------
+# Using a 12-atom / 3-molecule batch, this guide showed the six segment ops in
+# their natural roles:
+#
+# - **Pooling** per-atom data to molecules: ``segmented_sum``, ``segmented_mean``,
+#   ``segmented_dot``, ``segmented_rms_norm``
+# - **Broadcasting** per-molecule data back to atoms: ``segmented_mul``,
+#   ``segmented_matvec``
+# - **First-order autograd** turning a pooled energy into per-atom forces
+# - **Second-order autograd** (Hessian-vector product) for force-loss training
+# - **``torch.compile``** capturing the whole pooled-energy model in one graph
+#
+# Each op is a Warp-backed ``torch.library`` custom op: differentiable to second
+# order *and* opaque to TorchDynamo, so it drops into a compiled MLIP model
+# without forcing a graph break.
+
+print("Done.")

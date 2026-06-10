@@ -383,6 +383,7 @@ def _default_forward_fake(launcher: Callable) -> Callable:
 def _default_backward_fake(
     diff_input_positions: tuple[int, ...],
     cotangent_arity: int,
+    return_arity: int,
 ) -> Callable:
     """Default backward fake: for each ``diff_input_positions[i]``, return
     ``empty_like`` of the forward input at that position.
@@ -390,6 +391,11 @@ def _default_backward_fake(
     Backward op signature is ``(*cotangents, *forward_inputs)``; the fake
     receives args in the same order, so the forward inputs start at
     position ``cotangent_arity``.
+
+    The fake's return arity MUST match the registered schema: a single
+    ``Tensor`` (``return_arity == 1``) or a tuple. Returning a 1-tuple when the
+    schema declares ``-> Tensor`` slips past eager (which calls the real impl)
+    but raises "Unable to cast (FakeTensor,) to Tensor" under torch.compile.
     """
 
     def backward_fake(*args):
@@ -404,7 +410,7 @@ def _default_backward_fake(
                     "explicit ``backward_fake`` for this op."
                 )
             out.append(torch.empty_like(inp))
-        return tuple(out)
+        return out[0] if return_arity == 1 else tuple(out)
 
     return backward_fake
 
@@ -412,12 +418,17 @@ def _default_backward_fake(
 def _default_double_backward_fake(
     second_order_diff_positions: tuple[int, ...],
     n_cotangents_of_backward: int,
+    return_arity: int,
 ) -> Callable:
     """Default double-backward fake: ``empty_like`` of each backward input
     at the corresponding diff position.
 
     Double-bwd signature is ``(*bwd_cotangents, *bwd_inputs)``. The bwd
     inputs themselves are ``(*forward_cotangents, *forward_inputs)``.
+
+    As with the backward fake, the return arity must match the schema: a single
+    ``Tensor`` for ``return_arity == 1``, else a tuple (see
+    ``_default_backward_fake``).
     """
 
     def double_backward_fake(*args):
@@ -433,7 +444,7 @@ def _default_double_backward_fake(
                     "``double_backward_fake``."
                 )
             out.append(torch.empty_like(inp))
-        return tuple(out)
+        return out[0] if return_arity == 1 else tuple(out)
 
     return double_backward_fake
 
@@ -553,6 +564,7 @@ def register_warp_op_chain(
         backward_fake = _default_backward_fake(
             diff_input_positions,
             cotangent_arity=forward_return_arity,
+            return_arity=backward_return_arity,
         )
     torch.library.register_fake(bwd_name, backward_fake)
     bwd_callable = getattr(getattr(torch.ops, namespace), f"{base_name}_backward")
@@ -596,6 +608,7 @@ def register_warp_op_chain(
         double_backward_fake = _default_double_backward_fake(
             second_order_diff_positions,
             n_cotangents_of_backward=backward_return_arity,
+            return_arity=double_backward_return_arity,
         )
     torch.library.register_fake(dbwd_name, double_backward_fake)
     dbwd_callable = getattr(

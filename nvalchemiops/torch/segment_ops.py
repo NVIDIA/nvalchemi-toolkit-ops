@@ -13,11 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PyTorch autograd bindings for segment operations (PR 2).
+"""PyTorch autograd bindings for segment operations.
 
 Each public function accepts PyTorch tensors and returns a PyTorch tensor with
 full first-order and second-order backward support.  Integer metadata (``idx``,
 ``num_segments``) always receives ``None`` gradient.
+
+Every op is wired through :func:`register_warp_op_chain`, so the Warp launches
+are opaque ``torch.library`` custom ops: the bindings are ``torch.compile``-clean
+(single-graph capturable, no graph breaks) and differentiable to second order.
 
 Tensor layout conventions
 -------------------------
@@ -72,19 +76,18 @@ from nvalchemiops.segment_ops_backward import (
     segmented_sum_backward,
     segmented_sum_double_backward,
 )
-from nvalchemiops.torch.autograd import warp_stream_from_torch
+from nvalchemiops.torch._warp_op_helpers import (
+    register_warp_op_chain,
+    scoped_warp_stream,
+)
 
 # from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype  #, get_wp_vec_dtype
 
 __all__ = [
-    # torch.autograd.Function classes — callers may use ``.apply`` directly.
-    "SegmentedDot",
-    "SegmentedMatvec",
-    "SegmentedMean",
-    "SegmentedMul",
-    "SegmentedRmsNorm",
-    "SegmentedSum",
-    # Convenience wrappers around ``.apply``.
+    # All six ops are ``register_warp_op_chain`` custom-op chains: opaque to
+    # TorchDynamo (single-graph capturable) with full first- and second-order
+    # autograd. Callers use these public functions; there are no longer any
+    # ``torch.autograd.Function`` classes to invoke via ``.apply``.
     "segmented_dot",
     "segmented_matvec",
     "segmented_mean",
@@ -150,21 +153,24 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
     Raises
     ------
     ValueError
-        On dtype mismatch (not ``int32``), wrong rank (not 1-D), or any value
-        outside ``[0, num_segments)``.
+        On dtype mismatch (not ``int32``), wrong rank (not 1-D), or — in eager
+        mode only — any value outside ``[0, num_segments)``.
 
     Notes
     -----
-    The range check requires a CUDA → host synchronization to read
-    ``idx.min()`` and ``idx.max()`` as scalars.  This is unavoidable for a
-    correctness-level check on opaque integer metadata; callers that have
-    already validated ``idx`` can invoke the underlying ``Function.apply``
-    directly to skip the wrapper.
+    The range check reads ``idx.min()`` / ``idx.max()`` as scalars, which forces
+    a CUDA → host synchronization *and* a ``torch.compile`` graph break. We skip
+    it under ``torch.compiler.is_compiling()`` so the public wrappers stay
+    fullgraph-clean when a caller (e.g. an MLIP model) compiles straight through
+    them; compiled callers are trusted to pass ``idx`` already validated at
+    construction. The cheap dtype/rank guards add no sync and run on every path.
     """
     if idx.dtype != torch.int32:
         raise ValueError(f"{op}: idx must be int32; got dtype={idx.dtype}.")
     if idx.ndim != 1:
         raise ValueError(f"{op}: idx must be 1-D; got shape={tuple(idx.shape)}.")
+    if torch.compiler.is_compiling():
+        return
     if idx.numel() == 0:
         return
     idx_min = int(idx.min().item())
@@ -187,83 +193,81 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
 # =============================================================================
 
 
-class SegmentedSumBwd(torch.autograd.Function):
-    """Differentiable backward of segmented_sum.
+def _segmented_sum_forward(
+    x: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    """Forward launcher: ``out[s] = sum_i x[i] where idx[i] == s``."""
+    out_shape = (num_segments, 3) if x.ndim == 2 else (num_segments,)
+    out = x.new_zeros(out_shape)
+    with scoped_warp_stream(x.device):
+        _wp_segmented_sum(_inp(x), _inp_int(idx), _out(out))
+    return out
 
-    Forward : ``grad_x[i] = g_out[idx[i]]``    (broadcast — linear in g_out)
-    Backward: ``grad_g_out[s] = sum_i gg_x[i]``  (scatter-sum — same as fwd)
+
+def _segmented_sum_forward_fake(
+    x: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    # Output is per-segment, so it does NOT share x's leading dim — the default
+    # ``empty_like(x)`` fake would report the wrong shape under torch.compile.
+    out_shape = (num_segments, 3) if x.ndim == 2 else (num_segments,)
+    return x.new_empty(out_shape)
+
+
+def _segmented_sum_backward(
+    g_out: torch.Tensor, x: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    """First-order backward: ``grad_x[i] = g_out[idx[i]]`` (a gather).
+
+    ``x`` is unused in the computation; it is part of the signature because the
+    chain convention passes ``(*cotangents, *forward_inputs)`` and the helper
+    reshapes the returned grad against the matching forward input.
     """
-
-    @staticmethod
-    def forward(
-        g_out: torch.Tensor, idx: torch.Tensor, num_segments: int
-    ) -> torch.Tensor:
-        """Launch the segmented_sum first-order backward kernel."""
-        N = idx.shape[0]
-        out_shape = (N, 3) if g_out.ndim == 2 else (N,)
-        grad_x = g_out.new_zeros(out_shape)
-        with warp_stream_from_torch(g_out):
-            segmented_sum_backward(_inp(g_out), _inp_int(idx), _out(grad_x))
-        return grad_x
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save the cotangents and saved state needed by the segmented_sum double-backward."""
-        g_out, idx, num_segments = inputs
-        ctx.save_for_backward(idx)
-        ctx.num_segments = num_segments
-
-    @staticmethod
-    def backward(ctx, gg_x: torch.Tensor):
-        """Launch the segmented_sum double-backward kernel."""
-        (idx,) = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        out_shape = (num_segments, 3) if gg_x.ndim == 2 else (num_segments,)
-        grad_g_out = gg_x.new_zeros(out_shape)
-        with warp_stream_from_torch(gg_x):
-            segmented_sum_double_backward(
-                _inp(gg_x), _inp_int(idx), num_segments, _out(grad_g_out)
-            )
-        return grad_g_out, None, None
+    N = idx.shape[0]
+    out_shape = (N, 3) if g_out.ndim == 2 else (N,)
+    grad_x = g_out.new_zeros(out_shape)
+    with scoped_warp_stream(g_out.device):
+        segmented_sum_backward(_inp(g_out), _inp_int(idx), _out(grad_x))
+    return grad_x
 
 
-class SegmentedSum(torch.autograd.Function):
-    """``torch.autograd.Function`` for the segmented sum.
+def _segmented_sum_double_backward(
+    gg_x: torch.Tensor,
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> torch.Tensor:
+    """Double-backward: ``grad_g_out[s] = sum_i gg_x[i]`` (scatter-sum).
 
-    Forward signature is ``apply(x, idx, num_segments) -> out`` where ``x`` is the per-element
-    tensor and ``out[s]`` is the sum of entries with ``idx[i] == s``.  First-order
-    backward (``out → x``) is a gather; the gather is itself wrapped in
-    :class:`SegmentedSumBwd`, so :func:`torch.autograd.grad` over the gather's
-    output produces the second-order adjoint (a scatter-sum).  Index inputs are
-    non-differentiable and receive ``None`` gradient slots.
-
-    Prefer :func:`segmented_sum` in user code; this class is exposed for callers
-    that want to invoke :py:meth:`apply` directly to avoid the wrapper.
+    The first backward is linear in ``g_out``, so the second-order adjoint of
+    that backward w.r.t. ``g_out`` is the segmented sum of ``gg_x`` — the same
+    scatter-sum as the original forward.
     """
+    out_shape = (num_segments, 3) if gg_x.ndim == 2 else (num_segments,)
+    grad_g_out = gg_x.new_zeros(out_shape)
+    with scoped_warp_stream(gg_x.device):
+        segmented_sum_double_backward(
+            _inp(gg_x), _inp_int(idx), num_segments, _out(grad_g_out)
+        )
+    return grad_g_out
 
-    @staticmethod
-    def forward(x: torch.Tensor, idx: torch.Tensor, num_segments: int) -> torch.Tensor:
-        """Launch the segmented_sum forward Warp kernel."""
-        out_shape = (num_segments, 3) if x.ndim == 2 else (num_segments,)
-        out = x.new_zeros(out_shape)
-        with warp_stream_from_torch(x):
-            _wp_segmented_sum(_inp(x), _inp_int(idx), _out(out))
-        return out
 
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save tensors and ``num_segments`` needed by the segmented_sum backward."""
-        _, idx, num_segments = inputs
-        ctx.save_for_backward(idx)
-        ctx.num_segments = num_segments
-
-    @staticmethod
-    def backward(ctx, g_out: torch.Tensor):
-        """Dispatch to the paired ``SegmentedSumBwd`` to produce gradients (differentiable)."""
-        (idx,) = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        grad_x = SegmentedSumBwd.apply(g_out.contiguous(), idx, num_segments)
-        return grad_x, None, None
+# Forward op + first-order backward + double-backward, wired for autograd and
+# torch.compile (the Warp launches are opaque to the inductor tracer). The
+# first backward is a gather (grad w.r.t. ``x`` at position 0); its own
+# backward is the scatter-sum above (grad w.r.t. ``g_out`` at position 0 of the
+# backward op's inputs).
+_SEGMENTED_SUM_OPS = register_warp_op_chain(
+    name="nvalchemiops::segmented_sum",
+    forward=_segmented_sum_forward,
+    backward=_segmented_sum_backward,
+    double_backward=_segmented_sum_double_backward,
+    diff_input_positions=(0,),
+    n_forward_inputs=3,
+    second_order_diff_positions=(0,),
+    n_backward_inputs=4,
+    forward_fake=_segmented_sum_forward_fake,
+)
 
 
 def segmented_sum(
@@ -286,7 +290,7 @@ def segmented_sum(
         Shape ``(num_segments,)`` or ``(num_segments, 3)``.
     """
     _validate_idx(idx, num_segments, op="segmented_sum")
-    return SegmentedSum.apply(x, idx, num_segments)
+    return _SEGMENTED_SUM_OPS["forward"](x, idx, num_segments)
 
 
 # =============================================================================
@@ -294,102 +298,82 @@ def segmented_sum(
 # =============================================================================
 
 
-class SegmentedDotBwd(torch.autograd.Function):
-    """Differentiable backward of segmented_dot.
-
-    Forward:
-        grad_x[i] = g_out[s] * y[i]
-        grad_y[i] = g_out[s] * x[i]
-    Backward (double-backward):
-        grad_g_out[s]  = sum_i dot(gg_gx[i], y[i]) + sum_i dot(gg_gy[i], x[i])
-        grad_x_extra[i] = gg_gy[i] * g_out[s]
-        grad_y_extra[i] = gg_gx[i] * g_out[s]
-    """
-
-    @staticmethod
-    def forward(
-        g_out: torch.Tensor,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        idx: torch.Tensor,
-    ):
-        """Launch the segmented_dot first-order backward kernel."""
-        N = x.shape[0]
-        out_shape = (N, 3) if x.ndim == 2 else (N,)
-        grad_x = x.new_zeros(out_shape)
-        grad_y = y.new_zeros(out_shape)
-        with warp_stream_from_torch(g_out):
-            segmented_dot_backward(
-                _inp(g_out), _inp(x), _inp(y), _inp_int(idx), _out(grad_x), _out(grad_y)
-            )
-        return grad_x, grad_y
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save the cotangents and saved state needed by the segmented_dot double-backward."""
-        g_out, x, y, idx = inputs
-        ctx.save_for_backward(g_out, x, y, idx)
-        ctx.num_segments = g_out.shape[0]
-
-    @staticmethod
-    def backward(ctx, gg_gx: torch.Tensor, gg_gy: torch.Tensor):
-        """Launch the segmented_dot double-backward kernel."""
-        g_out, x, y, idx = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        grad_g_out = g_out.new_zeros((num_segments,))
-        grad_x_extra = x.new_zeros(x.shape)
-        grad_y_extra = y.new_zeros(y.shape)
-        with warp_stream_from_torch(gg_gx):
-            segmented_dot_double_backward(
-                _inp(gg_gx),
-                _inp(gg_gy),
-                _inp(g_out),
-                _inp(x),
-                _inp(y),
-                _inp_int(idx),
-                num_segments,
-                _out(grad_g_out),
-                _out(grad_x_extra),
-                _out(grad_y_extra),
-            )
-        return grad_g_out, grad_x_extra, grad_y_extra, None
+def _segmented_dot_forward(
+    x: torch.Tensor, y: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    """Forward launcher: ``out[s] = sum_i dot(x[i], y[i]) where idx[i] == s``."""
+    out = x.new_zeros((num_segments,))
+    with scoped_warp_stream(x.device):
+        _wp_segmented_dot(_inp(x), _inp(y), _inp_int(idx), _out(out))
+    return out
 
 
-class SegmentedDot(torch.autograd.Function):
-    """``torch.autograd.Function`` for the per-segment dot product.
+def _segmented_dot_forward_fake(
+    x: torch.Tensor, y: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    # Output is one scalar per segment, not per element.
+    return x.new_empty((num_segments,))
 
-    Forward signature is ``apply(x, y, idx, num_segments) -> out`` where
-    ``out[s] = sum_{i: idx[i]==s} dot(x[i], y[i])``.  Backward returns
-    ``(grad_x, grad_y, None, None)``; the gradient path is wrapped in
-    :class:`SegmentedDotBwd`, enabling clean double-backward.
 
-    Prefer :func:`segmented_dot` in user code; this class is exposed for callers
-    that want to invoke :py:meth:`apply` directly to avoid the wrapper.
-    """
+def _segmented_dot_backward(
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """First-order backward: ``grad_x[i] = g_out[s]*y[i]``, ``grad_y[i] = g_out[s]*x[i]``."""
+    grad_x = x.new_zeros(x.shape)
+    grad_y = y.new_zeros(y.shape)
+    with scoped_warp_stream(g_out.device):
+        segmented_dot_backward(
+            _inp(g_out), _inp(x), _inp(y), _inp_int(idx), _out(grad_x), _out(grad_y)
+        )
+    return grad_x, grad_y
 
-    @staticmethod
-    def forward(
-        x: torch.Tensor, y: torch.Tensor, idx: torch.Tensor, num_segments: int
-    ) -> torch.Tensor:
-        """Launch the segmented_dot forward Warp kernel."""
-        out = x.new_zeros((num_segments,))
-        with warp_stream_from_torch(x):
-            _wp_segmented_dot(_inp(x), _inp(y), _inp_int(idx), _out(out))
-        return out
 
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save tensors and ``num_segments`` needed by the segmented_dot backward."""
-        x, y, idx, num_segments = inputs
-        ctx.save_for_backward(x, y, idx)
-        ctx.num_segments = num_segments
+def _segmented_dot_double_backward(
+    gg_gx: torch.Tensor,
+    gg_gy: torch.Tensor,
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Double-backward w.r.t. the first backward's diff inputs ``(g_out, x, y)``."""
+    grad_g_out = g_out.new_zeros((num_segments,))
+    grad_x_extra = x.new_zeros(x.shape)
+    grad_y_extra = y.new_zeros(y.shape)
+    with scoped_warp_stream(gg_gx.device):
+        segmented_dot_double_backward(
+            _inp(gg_gx),
+            _inp(gg_gy),
+            _inp(g_out),
+            _inp(x),
+            _inp(y),
+            _inp_int(idx),
+            num_segments,
+            _out(grad_g_out),
+            _out(grad_x_extra),
+            _out(grad_y_extra),
+        )
+    return grad_g_out, grad_x_extra, grad_y_extra
 
-    @staticmethod
-    def backward(ctx, g_out: torch.Tensor):
-        """Dispatch to the paired ``SegmentedDotBwd`` to produce gradients (differentiable)."""
-        x, y, idx = ctx.saved_tensors
-        grad_x, grad_y = SegmentedDotBwd.apply(g_out.contiguous(), x, y, idx)
-        return grad_x, grad_y, None, None
+
+# Diff forward inputs x(0), y(1). Backward returns (grad_x, grad_y); its own
+# backward differentiates (g_out, x, y) at backward-input positions (0, 1, 2).
+_SEGMENTED_DOT_OPS = register_warp_op_chain(
+    name="nvalchemiops::segmented_dot",
+    forward=_segmented_dot_forward,
+    backward=_segmented_dot_backward,
+    double_backward=_segmented_dot_double_backward,
+    forward_fake=_segmented_dot_forward_fake,
+    diff_input_positions=(0, 1),
+    n_forward_inputs=4,
+    second_order_diff_positions=(0, 1, 2),
+    n_backward_inputs=5,
+)
 
 
 def segmented_dot(
@@ -414,7 +398,7 @@ def segmented_dot(
         Shape ``(num_segments,)`` — scalar per segment.
     """
     _validate_idx(idx, num_segments, op="segmented_dot")
-    return SegmentedDot.apply(x, y, idx, num_segments)
+    return _SEGMENTED_DOT_OPS["forward"](x, y, idx, num_segments)
 
 
 # =============================================================================
@@ -422,110 +406,80 @@ def segmented_dot(
 # =============================================================================
 
 
-class SegmentedMulBwd(torch.autograd.Function):
-    """Differentiable backward of segmented_mul.
-
-    Forward:
-        grad_x[i] = g_out[i] * y[s]
-        grad_y[s] = sum_i dot(g_out[i], x[i])
-    Backward (double-backward):
-        grad_g_out[i]   = gg_gx[i]*y[s] + gg_gy[s]*x[i]
-        grad_x_extra[i] = gg_gy[s] * g_out[i]
-        grad_y_extra[s] = sum_i dot(gg_gx[i], g_out[i])
-    """
-
-    @staticmethod
-    def forward(
-        g_out: torch.Tensor,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        idx: torch.Tensor,
-        num_segments: int,
-    ):
-        # N = x.shape[0]
-        """Launch the segmented_mul first-order backward kernel."""
-        grad_x = x.new_zeros(x.shape)
-        grad_y = y.new_zeros((num_segments,))
-        with warp_stream_from_torch(g_out):
-            segmented_mul_backward(
-                _inp(g_out),
-                _inp(x),
-                _inp(y),
-                _inp_int(idx),
-                num_segments,
-                _out(grad_x),
-                _out(grad_y),
-            )
-        return grad_x, grad_y
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save the cotangents and saved state needed by the segmented_mul double-backward."""
-        g_out, x, y, idx, num_segments = inputs
-        ctx.save_for_backward(g_out, x, y, idx)
-        ctx.num_segments = num_segments
-
-    @staticmethod
-    def backward(ctx, gg_gx: torch.Tensor, gg_gy: torch.Tensor):
-        """Launch the segmented_mul double-backward kernel."""
-        g_out, x, y, idx = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        grad_g_out = g_out.new_zeros(g_out.shape)
-        grad_x_extra = x.new_zeros(x.shape)
-        grad_y_extra = y.new_zeros((num_segments,))
-        with warp_stream_from_torch(gg_gx):
-            segmented_mul_double_backward(
-                _inp(gg_gx),
-                _inp(gg_gy),
-                _inp(g_out),
-                _inp(x),
-                _inp(y),
-                _inp_int(idx),
-                _out(grad_g_out),
-                _out(grad_x_extra),
-                _out(grad_y_extra),
-            )
-        return grad_g_out, grad_x_extra, grad_y_extra, None, None
+def _segmented_mul_forward(
+    x: torch.Tensor, y: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    """Forward launcher: ``out[i] = x[i] * y[idx[i]]`` (per-element, same shape as ``x``)."""
+    out = x.new_zeros(x.shape)
+    with scoped_warp_stream(x.device):
+        _wp_segmented_mul(_inp(x), _inp(y), _inp_int(idx), _out(out))
+    return out
 
 
-class SegmentedMul(torch.autograd.Function):
-    """``torch.autograd.Function`` for ``out[i] = x[i] * y[idx[i]]``.
-
-    Forward signature is ``apply(x, y, idx, num_segments) -> out``: each element of ``x`` is
-    scaled by the per-segment scalar in ``y``.  Backward returns
-    ``(grad_x, grad_y, None, None)`` via :class:`SegmentedMulBwd`, which is
-    itself differentiable so double-backward works through both leaves.
-
-    Prefer :func:`segmented_mul` in user code; this class is exposed for callers
-    that want to invoke :py:meth:`apply` directly to avoid the wrapper.
-    """
-
-    @staticmethod
-    def forward(
-        x: torch.Tensor, y: torch.Tensor, idx: torch.Tensor, num_segments: int
-    ) -> torch.Tensor:
-        """Launch the segmented_mul forward Warp kernel."""
-        out = x.new_zeros(x.shape)
-        with warp_stream_from_torch(x):
-            _wp_segmented_mul(_inp(x), _inp(y), _inp_int(idx), _out(out))
-        return out
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save tensors and ``num_segments`` needed by the segmented_mul backward."""
-        x, y, idx, num_segments = inputs
-        ctx.save_for_backward(x, y, idx)
-        ctx.num_segments = num_segments
-
-    @staticmethod
-    def backward(ctx, g_out: torch.Tensor):
-        """Dispatch to the paired ``SegmentedMulBwd`` to produce gradients (differentiable)."""
-        x, y, idx = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        grad_x, grad_y = SegmentedMulBwd.apply(
-            g_out.contiguous(), x, y, idx, num_segments
+def _segmented_mul_backward(
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """First-order backward: ``grad_x[i] = g_out[i]*y[s]``, ``grad_y[s] = sum_i dot(g_out[i], x[i])``."""
+    grad_x = x.new_zeros(x.shape)
+    grad_y = y.new_zeros((num_segments,))
+    with scoped_warp_stream(g_out.device):
+        segmented_mul_backward(
+            _inp(g_out),
+            _inp(x),
+            _inp(y),
+            _inp_int(idx),
+            num_segments,
+            _out(grad_x),
+            _out(grad_y),
         )
-        return grad_x, grad_y, None, None
+    return grad_x, grad_y
+
+
+def _segmented_mul_double_backward(
+    gg_gx: torch.Tensor,
+    gg_gy: torch.Tensor,
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Double-backward w.r.t. the first backward's diff inputs ``(g_out, x, y)``."""
+    grad_g_out = g_out.new_zeros(g_out.shape)
+    grad_x_extra = x.new_zeros(x.shape)
+    grad_y_extra = y.new_zeros((num_segments,))
+    with scoped_warp_stream(gg_gx.device):
+        segmented_mul_double_backward(
+            _inp(gg_gx),
+            _inp(gg_gy),
+            _inp(g_out),
+            _inp(x),
+            _inp(y),
+            _inp_int(idx),
+            _out(grad_g_out),
+            _out(grad_x_extra),
+            _out(grad_y_extra),
+        )
+    return grad_g_out, grad_x_extra, grad_y_extra
+
+
+# Diff forward inputs x(0), y(1). Output matches x's shape, so the default
+# forward fake (``empty_like(x)``) is correct. Backward differentiates
+# (g_out, x, y) at backward-input positions (0, 1, 2).
+_SEGMENTED_MUL_OPS = register_warp_op_chain(
+    name="nvalchemiops::segmented_mul",
+    forward=_segmented_mul_forward,
+    backward=_segmented_mul_backward,
+    double_backward=_segmented_mul_double_backward,
+    diff_input_positions=(0, 1),
+    n_forward_inputs=4,
+    second_order_diff_positions=(0, 1, 2),
+    n_backward_inputs=5,
+)
 
 
 def segmented_mul(
@@ -566,7 +520,7 @@ def segmented_mul(
             f"y.shape[0] ({y.shape[0]}); y is the per-segment broadcast operand."
         )
     _validate_idx(idx, num_segments, op="segmented_mul")
-    return SegmentedMul.apply(x, y, idx, num_segments)
+    return _SEGMENTED_MUL_OPS["forward"](x, y, idx, num_segments)
 
 
 # =============================================================================
@@ -574,92 +528,107 @@ def segmented_mul(
 # =============================================================================
 
 
-class SegmentedMeanBwd(torch.autograd.Function):
-    """Differentiable backward of segmented_mean.
+def _segmented_mean_forward(x: torch.Tensor, idx: torch.Tensor, num_segments: int):
+    """Forward launcher: ``(out, counts)`` where ``out[s] = mean(x[i] : idx[i]==s)``.
 
-    Forward : ``grad_x[i] = g_out[s] / count[s]``  (linear in g_out)
-    Backward: ``grad_g_out[s] = sum_i gg_x[i] / count[s]``  (mean of gg_x)
+    ``counts`` (per-segment population, int32) is returned as a second output so
+    the backward op can consume it via ``save_forward_outputs`` without
+    recomputing — it is non-differentiable (integer dtype).
     """
-
-    @staticmethod
-    def forward(
-        g_out: torch.Tensor, counts: torch.Tensor, idx: torch.Tensor
-    ) -> torch.Tensor:
-        """Launch the segmented_mean first-order backward kernel."""
-        N = idx.shape[0]
-        out_shape = (N, 3) if g_out.ndim == 2 else (N,)
-        grad_x = g_out.new_zeros(out_shape)
-        with warp_stream_from_torch(g_out):
-            segmented_mean_backward(
-                _inp(g_out), _inp_int(counts), _inp_int(idx), _out(grad_x)
-            )
-        return grad_x
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save the cotangents and saved state needed by the segmented_mean double-backward."""
-        g_out, counts, idx = inputs
-        ctx.save_for_backward(counts, idx)
-        ctx.num_segments = g_out.shape[0]
-
-    @staticmethod
-    def backward(ctx, gg_x: torch.Tensor):
-        """Launch the segmented_mean double-backward kernel."""
-        counts, idx = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        out_shape = (num_segments, 3) if gg_x.ndim == 2 else (num_segments,)
-        grad_g_out = gg_x.new_zeros(out_shape)
-        with warp_stream_from_torch(gg_x):
-            segmented_mean_double_backward(
-                _inp(gg_x), _inp_int(counts), _inp_int(idx), _out(grad_g_out)
-            )
-        return grad_g_out, None, None
+    out_shape = (num_segments, 3) if x.ndim == 2 else (num_segments,)
+    out = x.new_zeros(out_shape)
+    sums = x.new_zeros(out_shape)
+    counts = x.new_zeros((num_segments,), dtype=torch.int32)
+    with scoped_warp_stream(x.device):
+        _wp_segmented_mean(
+            _inp(x), _inp_int(idx), _out(sums), _out_int(counts), _out(out)
+        )
+    return out, counts
 
 
-class SegmentedMean(torch.autograd.Function):
-    """``torch.autograd.Function`` for the per-segment mean.
+def _segmented_mean_forward_fake(x: torch.Tensor, idx: torch.Tensor, num_segments: int):
+    out_shape = (num_segments, 3) if x.ndim == 2 else (num_segments,)
+    return (
+        x.new_empty(out_shape),
+        x.new_empty((num_segments,), dtype=torch.int32),
+    )
 
-    Forward signature is ``apply(x, idx, num_segments) -> (out, counts)``: ``out[s]`` is the
-    mean of entries with ``idx[i] == s`` and ``counts[s]`` is the per-segment
-    population (returned so callers and the saved-state path don't recompute).
-    Only ``out`` carries a gradient; ``counts`` is integer and non-differentiable.
 
-    Prefer :func:`segmented_mean` in user code; this class is exposed for callers
-    that want to invoke :py:meth:`apply` directly to avoid the wrapper.
+def _segmented_mean_backward(
+    counts: torch.Tensor,
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> torch.Tensor:
+    """First-order backward: ``grad_x[i] = g_out[s] / count[s]`` (linear in g_out).
+
+    ``counts`` is prepended by ``save_forward_outputs``; ``x`` is unused (the
+    gradient does not depend on the forward input values).
     """
+    N = idx.shape[0]
+    out_shape = (N, 3) if g_out.ndim == 2 else (N,)
+    grad_x = g_out.new_zeros(out_shape)
+    with scoped_warp_stream(g_out.device):
+        segmented_mean_backward(
+            _inp(g_out), _inp_int(counts), _inp_int(idx), _out(grad_x)
+        )
+    return grad_x
 
-    @staticmethod
-    def forward(x: torch.Tensor, idx: torch.Tensor, num_segments: int):
-        """Launch the segmented_mean forward Warp kernel."""
-        out_shape = (num_segments, 3) if x.ndim == 2 else (num_segments,)
-        out = x.new_zeros(out_shape)
-        sums = x.new_zeros(out_shape)
-        counts = x.new_zeros((num_segments,), dtype=torch.int32)
-        with warp_stream_from_torch(x):
-            _wp_segmented_mean(
-                _inp(x), _inp_int(idx), _out(sums), _out_int(counts), _out(out)
-            )
-        return out, counts
 
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save tensors and ``num_segments`` needed by the segmented_mean backward."""
-        _, idx, num_segments = inputs
-        out, counts = output
-        ctx.save_for_backward(counts, idx)
-        ctx.num_segments = num_segments
-        # ``counts`` is saved state, not a differentiable output.  Marking it
-        # non-differentiable makes ``counts.requires_grad`` False so a caller
-        # that tries to backprop through it gets a clear ``RuntimeError`` rather
-        # than a silently dropped gradient.
-        ctx.mark_non_differentiable(counts)
+def _segmented_mean_backward_fake(counts, g_out, x, idx, num_segments) -> torch.Tensor:
+    return torch.empty_like(x)
 
-    @staticmethod
-    def backward(ctx, g_out: torch.Tensor, _g_counts):
-        """Dispatch to the paired ``SegmentedMeanBwd`` to produce gradients (differentiable)."""
-        counts, idx = ctx.saved_tensors
-        grad_x = SegmentedMeanBwd.apply(g_out.contiguous(), counts, idx)
-        return grad_x, None, None
+
+def _segmented_mean_double_backward(
+    gg_x: torch.Tensor,
+    counts: torch.Tensor,
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> torch.Tensor:
+    """Double-backward: ``grad_g_out[s] = sum_i gg_x[i] / count[s]`` (mean of gg_x).
+
+    The first backward is linear in ``g_out`` (and independent of ``x``), so the
+    only second-order term is w.r.t. ``g_out``.
+    """
+    out_shape = (num_segments, 3) if gg_x.ndim == 2 else (num_segments,)
+    grad_g_out = gg_x.new_zeros(out_shape)
+    with scoped_warp_stream(gg_x.device):
+        segmented_mean_double_backward(
+            _inp(gg_x), _inp_int(counts), _inp_int(idx), _out(grad_g_out)
+        )
+    return grad_g_out
+
+
+def _segmented_mean_double_backward_fake(
+    gg_x, counts, g_out, x, idx, num_segments
+) -> torch.Tensor:
+    return torch.empty_like(g_out)
+
+
+# Forward returns (out, counts); only ``out``'s cotangent drives the backward
+# (propagate_outputs=(0,)) and ``counts`` is threaded to the backward op as a
+# detached cache (save_forward_outputs=(1,)). The backward op's inputs are
+# therefore (counts, g_out, x, idx, num_segments) — the first backward is linear
+# in g_out, so its own backward differentiates only g_out at position 1.
+_SEGMENTED_MEAN_OPS = register_warp_op_chain(
+    name="nvalchemiops::segmented_mean",
+    forward=_segmented_mean_forward,
+    backward=_segmented_mean_backward,
+    double_backward=_segmented_mean_double_backward,
+    forward_fake=_segmented_mean_forward_fake,
+    backward_fake=_segmented_mean_backward_fake,
+    double_backward_fake=_segmented_mean_double_backward_fake,
+    forward_return_arity=2,
+    propagate_outputs=(0,),
+    save_forward_outputs=(1,),
+    diff_input_positions=(0,),
+    n_forward_inputs=3,
+    second_order_diff_positions=(1,),
+    n_backward_inputs=5,
+)
 
 
 def segmented_mean(
@@ -684,7 +653,7 @@ def segmented_mean(
         Shape ``(num_segments,)`` or ``(num_segments, 3)``.
     """
     _validate_idx(idx, num_segments, op="segmented_mean")
-    out, _ = SegmentedMean.apply(x, idx, num_segments)
+    out, _ = _SEGMENTED_MEAN_OPS["forward"](x, idx, num_segments)
     return out
 
 
@@ -693,113 +662,126 @@ def segmented_mean(
 # =============================================================================
 
 
-class SegmentedRmsNormBwd(torch.autograd.Function):
-    """Differentiable backward of segmented_rms_norm.
+def _segmented_rms_norm_forward(x: torch.Tensor, idx: torch.Tensor, num_segments: int):
+    """Forward launcher: ``(out, inv_norm, counts)``.
 
-    Forward : ``grad_x[i] = g_out[s] * x[i] * inv_norm[s]``
-    Backward (double-backward):
-        ``inner[s] = sum_i dot(gg_x[i], x[i])``
-        ``grad_g_out[s]  = inner[s] * inv_norm[s]``
-        ``grad_x_extra[i] = g_out[s]*inv_norm[s]*gg_x[i]
-                           - g_out[s]*inv_norm[s]^3*count[s]*inner[s]*x[i]``
+    ``out[s] = sqrt(mean(||x[i]||^2 : idx[i]==s))``. The precompute path also
+    emits ``inv_norm`` and ``counts`` so the backward op can consume them via
+    ``save_forward_outputs`` without recomputing. Neither auxiliary output is
+    surfaced by the public wrapper (it returns ``out`` only).
     """
-
-    @staticmethod
-    def forward(
-        g_out: torch.Tensor,
-        x: torch.Tensor,
-        inv_norm: torch.Tensor,
-        counts: torch.Tensor,
-        idx: torch.Tensor,
-    ) -> torch.Tensor:
-        """Launch the segmented_rms_norm first-order backward kernel."""
-        grad_x = x.new_zeros(x.shape)
-        with warp_stream_from_torch(g_out):
-            segmented_rms_norm_backward(
-                _inp(g_out), _inp(x), _inp(inv_norm), _inp_int(idx), _out(grad_x)
-            )
-        return grad_x
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save the cotangents and saved state needed by the segmented_rms_norm double-backward."""
-        g_out, x, inv_norm, counts, idx = inputs
-        ctx.save_for_backward(g_out, x, inv_norm, counts, idx)
-        ctx.num_segments = g_out.shape[0]
-
-    @staticmethod
-    def backward(ctx, gg_x: torch.Tensor):
-        """Launch the segmented_rms_norm double-backward kernel."""
-        g_out, x, inv_norm, counts, idx = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        grad_x_extra = x.new_zeros(x.shape)
-        grad_g_out = g_out.new_zeros((num_segments,))
-        with warp_stream_from_torch(gg_x):
-            segmented_rms_norm_double_backward(
-                _inp(gg_x),
-                _inp(x),
-                _inp(g_out),
-                _inp(inv_norm),
-                _inp_int(counts),
-                _inp_int(idx),
-                num_segments,
-                _out(grad_x_extra),
-                _out(grad_g_out),
-            )
-        return grad_g_out, grad_x_extra, None, None, None
+    out = x.new_zeros((num_segments,))
+    sum_sq = x.new_zeros((num_segments,))
+    counts = x.new_zeros((num_segments,), dtype=torch.int32)
+    inv_norm = x.new_zeros((num_segments,))
+    with scoped_warp_stream(x.device):
+        segmented_rms_norm_forward_precompute(
+            _inp(x),
+            _inp_int(idx),
+            _out(sum_sq),
+            _out_int(counts),
+            _out(out),
+            _out(inv_norm),
+        )
+    return out, inv_norm, counts
 
 
-class SegmentedRmsNorm(torch.autograd.Function):
-    """``torch.autograd.Function`` for the per-segment RMS vector norm.
+def _segmented_rms_norm_forward_fake(
+    x: torch.Tensor, idx: torch.Tensor, num_segments: int
+):
+    return (
+        x.new_empty((num_segments,)),
+        x.new_empty((num_segments,)),
+        x.new_empty((num_segments,), dtype=torch.int32),
+    )
 
-    Forward signature is ``apply(x, idx, num_segments) -> (out, inv_norm, counts)``: the
-    forward kernel takes the precompute path so backward can consume the saved
-    ``inv_norm`` and ``counts`` without recomputing them.  Only ``out`` carries
-    a gradient; ``inv_norm`` and ``counts`` are returned for inspection / reuse.
 
-    Prefer :func:`segmented_rms_norm` in user code; this class is exposed for
-    callers that want to invoke :py:meth:`apply` directly to avoid the wrapper.
+def _segmented_rms_norm_backward(
+    inv_norm: torch.Tensor,
+    counts: torch.Tensor,
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> torch.Tensor:
+    """First-order backward: ``grad_x[i] = g_out[s] * x[i] * inv_norm[s]``.
+
+    ``inv_norm`` and ``counts`` are prepended by ``save_forward_outputs``;
+    ``counts`` is unused at first order (only the double-backward needs it).
     """
+    grad_x = x.new_zeros(x.shape)
+    with scoped_warp_stream(g_out.device):
+        segmented_rms_norm_backward(
+            _inp(g_out), _inp(x), _inp(inv_norm), _inp_int(idx), _out(grad_x)
+        )
+    return grad_x
 
-    @staticmethod
-    def forward(x: torch.Tensor, idx: torch.Tensor, num_segments: int):
-        """Launch the segmented_rms_norm forward Warp kernel."""
-        out = x.new_zeros((num_segments,))
-        sum_sq = x.new_zeros((num_segments,))
-        counts = x.new_zeros((num_segments,), dtype=torch.int32)
-        inv_norm = x.new_zeros((num_segments,))
-        with warp_stream_from_torch(x):
-            segmented_rms_norm_forward_precompute(
-                _inp(x),
-                _inp_int(idx),
-                _out(sum_sq),
-                _out_int(counts),
-                _out(out),
-                _out(inv_norm),
-            )
-        return out, inv_norm, counts
 
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save tensors and ``num_segments`` needed by the segmented_rms_norm backward."""
-        x, idx, num_segments = inputs
-        out, inv_norm, counts = output
-        ctx.save_for_backward(x, inv_norm, counts, idx)
-        ctx.num_segments = num_segments
-        # ``inv_norm`` and ``counts`` are saved state, not first-class
-        # differentiable outputs — backward only consumes the cotangent of
-        # ``out`` and discards the other slots.  Marking them
-        # non-differentiable sets ``requires_grad=False`` on both, so a caller
-        # that tries ``inv_norm.sum().backward()`` gets a clear ``RuntimeError``
-        # rather than a silently dropped VJP into ``x``.
-        ctx.mark_non_differentiable(inv_norm, counts)
+def _segmented_rms_norm_backward_fake(
+    inv_norm, counts, g_out, x, idx, num_segments
+) -> torch.Tensor:
+    return torch.empty_like(x)
 
-    @staticmethod
-    def backward(ctx, g_out: torch.Tensor, _g_inv_norm, _g_counts):
-        """Dispatch to the paired ``SegmentedRmsNormBwd`` to produce gradients (differentiable)."""
-        x, inv_norm, counts, idx = ctx.saved_tensors
-        grad_x = SegmentedRmsNormBwd.apply(g_out.contiguous(), x, inv_norm, counts, idx)
-        return grad_x, None, None
+
+def _segmented_rms_norm_double_backward(
+    gg_x: torch.Tensor,
+    inv_norm: torch.Tensor,
+    counts: torch.Tensor,
+    g_out: torch.Tensor,
+    x: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Double-backward w.r.t. the first backward's diff inputs ``(g_out, x)``.
+
+    Returns ``(grad_g_out, grad_x_extra)`` — order matches the backward op's
+    input positions ``(2, 3)`` = ``(g_out, x)``.
+    """
+    grad_x_extra = x.new_zeros(x.shape)
+    grad_g_out = g_out.new_zeros((num_segments,))
+    with scoped_warp_stream(gg_x.device):
+        segmented_rms_norm_double_backward(
+            _inp(gg_x),
+            _inp(x),
+            _inp(g_out),
+            _inp(inv_norm),
+            _inp_int(counts),
+            _inp_int(idx),
+            num_segments,
+            _out(grad_x_extra),
+            _out(grad_g_out),
+        )
+    return grad_g_out, grad_x_extra
+
+
+def _segmented_rms_norm_double_backward_fake(
+    gg_x, inv_norm, counts, g_out, x, idx, num_segments
+):
+    return (torch.empty_like(g_out), torch.empty_like(x))
+
+
+# Forward returns (out, inv_norm, counts); only ``out``'s cotangent drives the
+# backward (propagate_outputs=(0,)), with ``inv_norm``/``counts`` threaded to the
+# backward op as detached caches (save_forward_outputs=(1, 2)). The backward op's
+# inputs are (inv_norm, counts, g_out, x, idx, num_segments); its own backward
+# differentiates (g_out, x) at positions (2, 3).
+_SEGMENTED_RMS_NORM_OPS = register_warp_op_chain(
+    name="nvalchemiops::segmented_rms_norm",
+    forward=_segmented_rms_norm_forward,
+    backward=_segmented_rms_norm_backward,
+    double_backward=_segmented_rms_norm_double_backward,
+    forward_fake=_segmented_rms_norm_forward_fake,
+    backward_fake=_segmented_rms_norm_backward_fake,
+    double_backward_fake=_segmented_rms_norm_double_backward_fake,
+    forward_return_arity=3,
+    propagate_outputs=(0,),
+    save_forward_outputs=(1, 2),
+    diff_input_positions=(0,),
+    n_forward_inputs=3,
+    second_order_diff_positions=(2, 3),
+    n_backward_inputs=6,
+    double_backward_return_arity=2,
+)
 
 
 def segmented_rms_norm(
@@ -824,7 +806,7 @@ def segmented_rms_norm(
         Shape ``(num_segments,)`` — scalar RMS norm per segment.
     """
     _validate_idx(idx, num_segments, op="segmented_rms_norm")
-    out, _, _ = SegmentedRmsNorm.apply(x, idx, num_segments)
+    out, _, _ = _SEGMENTED_RMS_NORM_OPS["forward"](x, idx, num_segments)
     return out
 
 
@@ -833,108 +815,79 @@ def segmented_rms_norm(
 # =============================================================================
 
 
-class SegmentedMatvecBwd(torch.autograd.Function):
-    """Differentiable backward of segmented_matvec.
-
-    Forward convention: ``out[i] = num_segments[s]^T @ v[i]``
-
-    Backward:
-        grad_v[i]    = num_segments[s] @ g_out[i]
-        grad_m[s]    = sum_i outer(v[i], g_out[i])
-    Double-backward (w.r.t. gg_gv, gg_gm):
-        grad_g_out[i]   = num_segments[s]^T @ gg_gv[i] + gg_gm[s]^T @ v[i]
-        grad_v_extra[i] = gg_gm[s] @ g_out[i]
-        grad_m_extra[s] = sum_i outer(gg_gv[i], g_out[i])
-    """
-
-    @staticmethod
-    def forward(
-        g_out: torch.Tensor,
-        v: torch.Tensor,
-        m: torch.Tensor,
-        idx: torch.Tensor,
-        num_segments: int,
-    ):
-        """Launch the segmented_matvec first-order backward kernel."""
-        grad_v = v.new_zeros(v.shape)
-        grad_m = m.new_zeros(m.shape)
-        with warp_stream_from_torch(g_out):
-            segmented_matvec_backward(
-                _inp(g_out),
-                _inp(v),
-                _inp(m),
-                _inp_int(idx),
-                _out(grad_v),
-                _out(grad_m),
-            )
-        return grad_v, grad_m
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save the cotangents and saved state needed by the segmented_matvec double-backward."""
-        g_out, v, m, idx, num_segments = inputs
-        ctx.save_for_backward(g_out, v, m, idx)
-        ctx.num_segments = num_segments
-
-    @staticmethod
-    def backward(ctx, gg_gv: torch.Tensor, gg_gm: torch.Tensor):
-        """Launch the segmented_matvec double-backward kernel."""
-        g_out, v, m, idx = ctx.saved_tensors
-        # num_segments = ctx.num_segments
-        grad_g_out = g_out.new_zeros(g_out.shape)
-        grad_v_extra = v.new_zeros(v.shape)
-        grad_m_extra = m.new_zeros(m.shape)
-        with warp_stream_from_torch(gg_gv):
-            segmented_matvec_double_backward(
-                _inp(gg_gv),
-                _inp(gg_gm),
-                _inp(g_out),
-                _inp(v),
-                _inp(m),
-                _inp_int(idx),
-                _out(grad_g_out),
-                _out(grad_v_extra),
-                _out(grad_m_extra),
-            )
-        return grad_g_out, grad_v_extra, grad_m_extra, None, None
+def _segmented_matvec_forward(
+    v: torch.Tensor, m: torch.Tensor, idx: torch.Tensor, num_segments: int
+) -> torch.Tensor:
+    """Forward launcher: ``out[i] = m[idx[i]]^T @ v[i]`` (per-element, same shape as ``v``)."""
+    out = v.new_zeros(v.shape)
+    with scoped_warp_stream(v.device):
+        _wp_segmented_matvec(_inp(v), _inp(m), _inp_int(idx), _out(out))
+    return out
 
 
-class SegmentedMatvec(torch.autograd.Function):
-    """``torch.autograd.Function`` for ``out[i] = m[idx[i]]^T @ v[i]``.
-
-    Forward signature is ``apply(v, m, idx, num_segments) -> out``: each per-atom vector is
-    transformed by the matrix assigned to its segment.  Backward returns
-    ``(grad_v, grad_m, None, None)`` via :class:`SegmentedMatvecBwd`, which is
-    itself differentiable so double-backward works through both leaves.
-
-    Prefer :func:`segmented_matvec` in user code; this class is exposed for
-    callers that want to invoke :py:meth:`apply` directly to avoid the wrapper.
-    """
-
-    @staticmethod
-    def forward(v: torch.Tensor, m: torch.Tensor, idx: torch.Tensor, num_segments: int):
-        """Launch the segmented_matvec forward Warp kernel."""
-        out = v.new_zeros(v.shape)
-        with warp_stream_from_torch(v):
-            _wp_segmented_matvec(_inp(v), _inp(m), _inp_int(idx), _out(out))
-        return out
-
-    @staticmethod
-    def setup_context(ctx, inputs, output):
-        """Save tensors and ``num_segments`` needed by the segmented_matvec backward."""
-        v, m, idx, num_segments = inputs
-        ctx.save_for_backward(v, m, idx)
-        ctx.num_segments = num_segments
-
-    @staticmethod
-    def backward(ctx, g_out: torch.Tensor):
-        """Dispatch to the paired ``SegmentedMatvecBwd`` to produce gradients (differentiable)."""
-        v, m, idx = ctx.saved_tensors
-        num_segments = ctx.num_segments
-        grad_v, grad_m = SegmentedMatvecBwd.apply(
-            g_out.contiguous(), v, m, idx, num_segments
+def _segmented_matvec_backward(
+    g_out: torch.Tensor,
+    v: torch.Tensor,
+    m: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """First-order backward: ``grad_v[i] = m[s] @ g_out[i]``, ``grad_m[s] = sum_i outer(v[i], g_out[i])``."""
+    grad_v = v.new_zeros(v.shape)
+    grad_m = m.new_zeros(m.shape)
+    with scoped_warp_stream(g_out.device):
+        segmented_matvec_backward(
+            _inp(g_out),
+            _inp(v),
+            _inp(m),
+            _inp_int(idx),
+            _out(grad_v),
+            _out(grad_m),
         )
-        return grad_v, grad_m, None, None
+    return grad_v, grad_m
+
+
+def _segmented_matvec_double_backward(
+    gg_gv: torch.Tensor,
+    gg_gm: torch.Tensor,
+    g_out: torch.Tensor,
+    v: torch.Tensor,
+    m: torch.Tensor,
+    idx: torch.Tensor,
+    num_segments: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Double-backward w.r.t. the first backward's diff inputs ``(g_out, v, m)``."""
+    grad_g_out = g_out.new_zeros(g_out.shape)
+    grad_v_extra = v.new_zeros(v.shape)
+    grad_m_extra = m.new_zeros(m.shape)
+    with scoped_warp_stream(gg_gv.device):
+        segmented_matvec_double_backward(
+            _inp(gg_gv),
+            _inp(gg_gm),
+            _inp(g_out),
+            _inp(v),
+            _inp(m),
+            _inp_int(idx),
+            _out(grad_g_out),
+            _out(grad_v_extra),
+            _out(grad_m_extra),
+        )
+    return grad_g_out, grad_v_extra, grad_m_extra
+
+
+# Diff forward inputs v(0), m(1). Output matches v's shape, so the default
+# forward fake (``empty_like(v)``) is correct. Backward differentiates
+# (g_out, v, m) at backward-input positions (0, 1, 2).
+_SEGMENTED_MATVEC_OPS = register_warp_op_chain(
+    name="nvalchemiops::segmented_matvec",
+    forward=_segmented_matvec_forward,
+    backward=_segmented_matvec_backward,
+    double_backward=_segmented_matvec_double_backward,
+    diff_input_positions=(0, 1),
+    n_forward_inputs=4,
+    second_order_diff_positions=(0, 1, 2),
+    n_backward_inputs=5,
+)
 
 
 def segmented_matvec(
@@ -974,4 +927,4 @@ def segmented_matvec(
             f"m.shape[0] ({m.shape[0]}); m is the per-segment matrix operand."
         )
     _validate_idx(idx, num_segments, op="segmented_matvec")
-    return SegmentedMatvec.apply(v, m, idx, num_segments)
+    return _SEGMENTED_MATVEC_OPS["forward"](v, m, idx, num_segments)
