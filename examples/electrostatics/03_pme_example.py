@@ -53,6 +53,7 @@ PME accelerates the reciprocal-space sum using B-spline interpolation:
 from __future__ import annotations
 
 import time
+import warnings
 
 import numpy as np
 import torch
@@ -77,6 +78,18 @@ if torch.cuda.is_available():
 else:
     device = torch.device("cpu")
     print("Using CPU")
+
+
+def _legacy_direct_output_call(function, *args, **kwargs):
+    """Call a deprecated direct-output path used for explicit migration checks."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            message="The direct-output flags.*",
+        )
+        return function(*args, **kwargs)
+
 
 # %%
 # Create a NaCl Crystal System
@@ -133,7 +146,7 @@ positions, charges, cell, pbc = create_nacl_system(n_cells=3)
 
 print(f"System: {len(positions)} atoms NaCl crystal")
 print(f"Cell size: {cell[0, 0, 0]:.2f} Å")
-print(f"Total charge: {charges.sum().item():.1f} (should be 0 for neutral)")
+print(f"Total charge: {charges.sum().item():.1f} (constructed neutral system)")
 
 # %%
 # Estimate optimal PME parameters:
@@ -163,16 +176,17 @@ neighbor_list, neighbor_ptr, neighbor_shifts = neighbor_list_fn(
 )
 
 t0 = time.time()
-energies, forces = particle_mesh_ewald(
-    positions=positions,
+positions_grad = positions.detach().clone().requires_grad_(True)
+energies = particle_mesh_ewald(
+    positions=positions_grad,
     charges=charges,
     cell=cell,
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
-    compute_forces=True,
     accuracy=1e-6,  # Parameters estimated automatically
 )
+forces = -torch.autograd.grad(energies.sum(), positions_grad)[0]
 t1 = time.time()
 
 total_energy = energies.sum().item()
@@ -211,7 +225,8 @@ print(f"  Using alpha={params.alpha.item():.4f}, mesh_dims={params.mesh_dimensio
 # Using neighbor list format:
 
 t0 = time.time()
-energies_list, forces_list = particle_mesh_ewald(
+energies_list, forces_list = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -229,7 +244,8 @@ print(f"  List format: E={energies_list.sum().item():.6f}, time={t_list:.2f} ms"
 # Using neighbor matrix format:
 
 t0 = time.time()
-energies_matrix, forces_matrix = particle_mesh_ewald(
+energies_matrix, forces_matrix = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -397,11 +413,11 @@ print(f"  Reciprocal-space (PME): {recip_energy.sum().item():.6f}")
 print(f"  Total: {(real_energy.sum() + recip_energy.sum()).item():.6f}")
 
 # %%
-# Charge Gradients for ML Potentials
-# ----------------------------------
-# PME supports computing analytical charge gradients (∂E/∂q_i), which are useful
-# for training machine learning potentials that predict atomic partial charges.
-# The charge gradient represents the electrostatic potential at each atom.
+# Legacy Direct Charge-Gradient Outputs
+# -------------------------------------
+# PME component charge-gradient outputs remain available for compatibility and
+# migration checks. New differentiable training code should prefer the energy
+# autograd recipe verified below.
 
 print("\nCharge Gradients:")
 
@@ -445,9 +461,12 @@ print(
 )
 
 # %%
-# Full PME with charge gradients in one call:
+# Full PME legacy charge-gradient output in one call:
+# This direct-output flag remains functional for compatibility; use
+# ``torch.autograd.grad`` on the scalar energy for new training code.
 
-energies_full, forces_full, charge_grads_full = particle_mesh_ewald(
+energies_full, forces_full, charge_grads_full = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -464,7 +483,7 @@ print(
 )
 
 # %%
-# Verify charge gradients against autograd:
+# Verify legacy direct charge gradients against the training autograd recipe:
 
 charges.requires_grad_(True)
 energies_total = particle_mesh_ewald(
@@ -482,7 +501,7 @@ autograd_charge_grads = charges.grad.clone()
 charges.requires_grad_(False)
 charges.grad = None
 
-# Compare explicit vs autograd charge gradients
+# Compare legacy direct vs autograd charge gradients
 charge_grad_diff = (charge_grads_full - autograd_charge_grads).abs().max().item()
 print(f"  Explicit vs Autograd charge gradient max diff: {charge_grad_diff:.2e}")
 
@@ -525,7 +544,7 @@ params_batch = estimate_pme_parameters(
 )
 
 print(f"\nTotal atoms: {len(positions_batch)}")
-print(f"Per-system alphas: {params_batch.alpha.tolist()}")
+print(f"Estimated alphas: {params_batch.alpha.tolist()}")
 print(f"Mesh dimensions: {params_batch.mesh_dimensions}")
 print(f"Real-space cutoff: {params_batch.real_space_cutoff.max().item():.2f} Å")
 
@@ -545,7 +564,8 @@ neighbor_matrix_batch, _, neighbor_matrix_shifts_batch = neighbor_list_fn(
 )
 
 t0 = time.time()
-energies_batch, forces_batch = particle_mesh_ewald(
+energies_batch, forces_batch = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions_batch,
     charges=charges_batch,
     cell=cells_batch,
@@ -565,6 +585,25 @@ for i in range(n_systems):
     sys_energy = energies_batch[mask].sum().item()
     max_force = torch.norm(forces_batch[mask], dim=1).max().item()
     print(f"  System {i}: {n_atoms} atoms, E={sys_energy:.4f}, |F|_max={max_force:.4f}")
+
+# %%
+# Preferred training recipe: derive batched forces from the scalar energy.
+
+positions_batch_ag = positions_batch.detach().clone().requires_grad_(True)
+energies_batch_ag = particle_mesh_ewald(
+    positions=positions_batch_ag,
+    charges=charges_batch,
+    cell=cells_batch,
+    batch_idx=batch_idx,
+    neighbor_matrix=neighbor_matrix_batch,
+    neighbor_matrix_shifts=neighbor_matrix_shifts_batch,
+    accuracy=1e-5,
+)
+forces_batch_ag = -torch.autograd.grad(energies_batch_ag.sum(), positions_batch_ag)[0]
+
+print("\nBatched energy-autograd forces:")
+print(f"  Total energy: {energies_batch_ag.sum().item():.4f}")
+print(f"  Max force magnitude: {torch.norm(forces_batch_ag, dim=1).max().item():.4f}")
 
 # %%
 # Verify batch vs individual calculations:

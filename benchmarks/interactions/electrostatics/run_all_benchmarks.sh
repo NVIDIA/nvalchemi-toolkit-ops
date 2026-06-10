@@ -10,7 +10,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/benchmark_results"
 mkdir -p "${OUTPUT_DIR}"
 
 for dtype in float32 float64; do
-  for method in both dsf; do
+  for method in both ewald_slab pme_slab dsf; do
     echo "========================================"
     echo "  method=${method}  dtype=${dtype}"
     echo "========================================"

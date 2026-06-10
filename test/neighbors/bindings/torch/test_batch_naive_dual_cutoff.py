@@ -24,10 +24,29 @@ from nvalchemiops.torch.neighbors.batch_naive import (
 from nvalchemiops.torch.neighbors.batch_naive_dual_cutoff import (
     batch_naive_neighbor_list_dual_cutoff,
 )
+from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from ...test_utils import (
     create_batch_systems,
 )
+
+
+def _active_neighbor_shift_rows(
+    neighbor_matrix: torch.Tensor,
+    shifts: torch.Tensor,
+    counts: torch.Tensor,
+    atom_index: int,
+) -> list[tuple[int, int, int, int]]:
+    """Return sorted active ``(neighbor, sx, sy, sz)`` rows for one atom."""
+    count = int(counts[atom_index].item())
+    rows = torch.cat(
+        (
+            neighbor_matrix[atom_index, :count].unsqueeze(1),
+            shifts[atom_index, :count],
+        ),
+        dim=1,
+    )
+    return sorted(tuple(row) for row in rows.detach().cpu().tolist())
 
 
 def create_batch_idx_and_ptr(
@@ -1020,3 +1039,305 @@ class TestBatchNaiveDualCutoffSelectiveRebuildFlags:
         assert torch.equal(nn2_sel, nn2_ref), (
             "nn2 should match full rebuild when all flags=True"
         )
+
+    def test_no_rebuild_preserves_pbc_shift_data(self, device, dtype):
+        """All flags False preserve batched PBC neighbor and shift buffers."""
+        atoms_per_system = [5, 6]
+        positions_batch, cell_batch, pbc_batch, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+
+        nm1, nn1, shifts1, nm2, nn2, shifts2 = batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            pbc=pbc_batch,
+            cell=cell_batch,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+        )
+        saved = (
+            nm1.clone(),
+            nn1.clone(),
+            shifts1.clone(),
+            nm2.clone(),
+            nn2.clone(),
+            shifts2.clone(),
+        )
+
+        rebuild_flags = torch.zeros(2, dtype=torch.bool, device=device)
+        out = batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            pbc=pbc_batch,
+            cell=cell_batch,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1,
+            neighbor_matrix2=nm2,
+            neighbor_matrix_shifts1=shifts1,
+            neighbor_matrix_shifts2=shifts2,
+            num_neighbors1=nn1,
+            num_neighbors2=nn2,
+            rebuild_flags=rebuild_flags,
+        )
+
+        for result, expected in zip(out, saved):
+            assert torch.equal(result, expected)
+
+    def test_rebuild_updates_pbc_shift_data(self, device, dtype):
+        """All flags True rebuild batched PBC neighbor and shift buffers."""
+        atoms_per_system = [5, 6]
+        positions_batch, cell_batch, pbc_batch, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+
+        reference = batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            pbc=pbc_batch,
+            cell=cell_batch,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+        )
+
+        total_atoms = positions_batch.shape[0]
+        nm1 = torch.full(
+            (total_atoms, max_neighbors1), 99, dtype=torch.int32, device=device
+        )
+        nm2 = torch.full(
+            (total_atoms, max_neighbors2), 99, dtype=torch.int32, device=device
+        )
+        shifts1 = torch.full(
+            (total_atoms, max_neighbors1, 3), 7, dtype=torch.int32, device=device
+        )
+        shifts2 = torch.full(
+            (total_atoms, max_neighbors2, 3), 7, dtype=torch.int32, device=device
+        )
+        nn1 = torch.full((total_atoms,), 99, dtype=torch.int32, device=device)
+        nn2 = torch.full((total_atoms,), 99, dtype=torch.int32, device=device)
+
+        rebuild_flags = torch.ones(2, dtype=torch.bool, device=device)
+        out = batch_naive_neighbor_list_dual_cutoff(
+            positions_batch,
+            cutoff1,
+            cutoff2,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            pbc=pbc_batch,
+            cell=cell_batch,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1,
+            neighbor_matrix2=nm2,
+            neighbor_matrix_shifts1=shifts1,
+            neighbor_matrix_shifts2=shifts2,
+            num_neighbors1=nn1,
+            num_neighbors2=nn2,
+            rebuild_flags=rebuild_flags,
+        )
+
+        out_nm1, out_nn1, out_shifts1, out_nm2, out_nn2, out_shifts2 = out
+        ref_nm1, ref_nn1, ref_shifts1, ref_nm2, ref_nn2, ref_shifts2 = reference
+        assert torch.equal(out_nn1, ref_nn1)
+        assert torch.equal(out_nn2, ref_nn2)
+        for atom_index in range(total_atoms):
+            assert _active_neighbor_shift_rows(
+                out_nm1, out_shifts1, ref_nn1, atom_index
+            ) == _active_neighbor_shift_rows(ref_nm1, ref_shifts1, ref_nn1, atom_index)
+            assert _active_neighbor_shift_rows(
+                out_nm2, out_shifts2, ref_nn2, atom_index
+            ) == _active_neighbor_shift_rows(ref_nm2, ref_shifts2, ref_nn2, atom_index)
+
+
+class TestBatchNaiveDualCutoffCompile:
+    """Torch compile coverage for explicit-buffer batched dual-cutoff paths."""
+
+    @pytest.mark.slow
+    def test_compile_no_pbc_explicit_buffers(self, device, dtype):
+        """Compile the batched no-PBC dual-cutoff runtime with explicit outputs."""
+        atoms_per_system = [5, 6]
+        positions, _, _, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors1),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.full(
+                    (fill_value, max_neighbors2),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+            )
+
+        def run(pos, nm1, nn1, nm2, nn2):
+            return batch_naive_neighbor_list_dual_cutoff(
+                pos,
+                cutoff1,
+                cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                fill_value=fill_value,
+                neighbor_matrix1=nm1,
+                neighbor_matrix2=nm2,
+                num_neighbors1=nn1,
+                num_neighbors2=nn2,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        for result, expected in zip(compiled, eager):
+            assert torch.equal(result, expected)
+
+    @pytest.mark.slow
+    def test_compile_pbc_explicit_buffers(self, device, dtype):
+        """Compile the batched PBC dual-cutoff runtime with prepared metadata."""
+        atoms_per_system = [5, 6]
+        positions, cell, pbc, _ = create_batch_systems(
+            num_systems=2, atoms_per_system=atoms_per_system, dtype=dtype, device=device
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors1 = 20
+        max_neighbors2 = 30
+        max_atoms_per_system = max(atoms_per_system)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff2, pbc
+        )
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors1),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors1, 3), dtype=torch.int32, device=device
+                ),
+                torch.full(
+                    (fill_value, max_neighbors2),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors2, 3), dtype=torch.int32, device=device
+                ),
+                torch.empty_like(positions),
+                torch.empty((fill_value, 3), dtype=torch.int32, device=device),
+                torch.empty_like(cell),
+            )
+
+        def run(
+            pos,
+            nm1,
+            nn1,
+            shifts1,
+            nm2,
+            nn2,
+            shifts2,
+            wrapped,
+            offsets,
+            inv_cell,
+        ):
+            return batch_naive_neighbor_list_dual_cutoff(
+                pos,
+                cutoff1,
+                cutoff2,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                pbc=pbc,
+                cell=cell,
+                fill_value=fill_value,
+                neighbor_matrix1=nm1,
+                neighbor_matrix2=nm2,
+                neighbor_matrix_shifts1=shifts1,
+                neighbor_matrix_shifts2=shifts2,
+                num_neighbors1=nn1,
+                num_neighbors2=nn2,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                max_atoms_per_system=max_atoms_per_system,
+                positions_wrapped_buffer=wrapped,
+                per_atom_cell_offsets_buffer=offsets,
+                inv_cell_buffer=inv_cell,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        (
+            compiled_nm1,
+            compiled_nn1,
+            compiled_shifts1,
+            compiled_nm2,
+            compiled_nn2,
+            compiled_shifts2,
+        ) = compiled
+        eager_nm1, eager_nn1, eager_shifts1, eager_nm2, eager_nn2, eager_shifts2 = eager
+        assert torch.equal(compiled_nn1, eager_nn1)
+        assert torch.equal(compiled_nn2, eager_nn2)
+        for atom_index in range(fill_value):
+            assert _active_neighbor_shift_rows(
+                compiled_nm1,
+                compiled_shifts1,
+                compiled_nn1,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_nm1,
+                eager_shifts1,
+                eager_nn1,
+                atom_index,
+            )
+            assert _active_neighbor_shift_rows(
+                compiled_nm2,
+                compiled_shifts2,
+                compiled_nn2,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_nm2,
+                eager_shifts2,
+                eager_nn2,
+                atom_index,
+            )

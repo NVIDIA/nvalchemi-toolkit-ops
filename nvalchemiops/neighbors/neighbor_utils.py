@@ -19,150 +19,272 @@ This module contains warp kernels and launchers for neighbor list operations.
 See `nvalchemiops.torch.neighbors` for PyTorch bindings.
 """
 
+import contextlib
 import math
 import warnings
+from functools import lru_cache
 from typing import Any
 
 import warp as wp
 
+DTYPE_INFO_ALL: dict[type, tuple[type, type]] = {
+    wp.float16: (wp.vec3h, wp.mat33h),
+    wp.float32: (wp.vec3f, wp.mat33f),
+    wp.float64: (wp.vec3d, wp.mat33d),
+}
+
+_DTYPE_NAME: dict[type, str] = {
+    wp.float16: "f16",
+    wp.float32: "f32",
+    wp.float64: "f64",
+}
+
+
+def wp_device_str(device) -> str:
+    """Return Warp's canonical device alias for cache keys and allocations."""
+    return str(wp.get_device(device))
+
+
+def require_supported_dtype(
+    wp_dtype: type, allowed: tuple[type, ...] | None = None
+) -> None:
+    """Validate that ``wp_dtype`` is a supported Warp scalar dtype."""
+    allowed_dtypes = tuple(DTYPE_INFO_ALL) if allowed is None else allowed
+    if wp_dtype not in allowed_dtypes:
+        names = ", ".join(str(dtype) for dtype in allowed_dtypes)
+        raise ValueError(f"Unsupported dtype {wp_dtype!r}; expected one of: {names}")
+
+
+def dtype_info(
+    wp_dtype: type, allowed: tuple[type, ...] | None = None
+) -> tuple[type, type]:
+    """Return ``(vec_dtype, mat_dtype)`` for a supported scalar dtype."""
+    require_supported_dtype(wp_dtype, allowed)
+    return DTYPE_INFO_ALL[wp_dtype]
+
+
+def kernel_specialization_name(
+    base: str,
+    *,
+    wp_dtype: type | None = None,
+    features: tuple[str, ...] = (),
+) -> str:
+    """Return a stable name for a factory-created Warp specialization."""
+    tokens = tuple(str(feature) for feature in features if feature)
+    name = str(base)
+    if tokens:
+        name = f"{name}__{'_'.join(tokens)}"
+    if wp_dtype is not None:
+        require_supported_dtype(wp_dtype)
+        name = f"{name}__{_DTYPE_NAME[wp_dtype]}"
+    return name
+
+
+def set_fn_name(fn: Any, name: str) -> Any:
+    """Set Python- and Warp-visible names on a generated function object."""
+    fn.__name__ = name
+    fn.__qualname__ = name
+    if hasattr(fn, "key"):
+        old_key = fn.key
+        fn.key = name
+        # If this is a Warp kernel/function registered in a module, update its registration key
+        if hasattr(fn, "module") and fn.module is not None:
+            if hasattr(fn.module, "kernels") and old_key in fn.module.kernels:
+                del fn.module.kernels[old_key]
+                fn.module.kernels[name] = fn
+            elif hasattr(fn.module, "functions") and old_key in fn.module.functions:
+                del fn.module.functions[old_key]
+                fn.module.functions[name] = fn
+            # If this is a unique module, rename the module itself to match the new kernel name
+            if hasattr(fn.module, "name") and fn.module.name:
+                old_module_name = fn.module.name
+                if old_key in old_module_name:
+                    new_module_name = old_module_name.replace(old_key, name)
+                    from warp._src.context import user_modules
+
+                    if old_module_name in user_modules:
+                        del user_modules[old_module_name]
+                        user_modules[new_module_name] = fn.module
+                    fn.module.name = new_module_name
+            # Clear module hashers cache to force hash re-evaluation and rebuild on all platforms
+            if hasattr(fn.module, "hashers"):
+                fn.module.hashers.clear()
+        # Force recomputing kernel hash using the new key if it has one
+        # (best-effort: a Warp-internal change here must not break naming).
+        if hasattr(fn, "hash"):
+            with contextlib.suppress(Exception):
+                opts = (
+                    fn.module.options
+                    if (hasattr(fn, "module") and fn.module is not None)
+                    else {}
+                )
+                hasher = wp._src.context.ModuleHasher([], opts)
+                fn.hash = hasher.hash_kernel(fn)
+    wrapped = getattr(fn, "func", None)
+    if wrapped is not None:
+        wrapped.__name__ = name
+        wrapped.__qualname__ = name
+    return fn
+
+
+def set_fn_doc(fn: Any, doc: str) -> Any:
+    """Set Python- and Warp-visible docs on a generated function object."""
+    fn.__doc__ = doc
+    if hasattr(fn, "doc"):
+        fn.doc = doc
+    wrapped = getattr(fn, "func", None)
+    if wrapped is not None:
+        wrapped.__doc__ = doc
+    return fn
+
+
+def _append_specialization_doc(
+    base_doc: str | None,
+    *,
+    dtype: type | str | None = None,
+    entries: tuple[tuple[str, object], ...] = (),
+) -> str:
+    """Append runtime specialization metadata to a source docstring."""
+    doc = (base_doc or "").rstrip()
+    lines = ["", "Specialization", "--------------"]
+    if dtype is not None:
+        dtype_value = _DTYPE_NAME.get(dtype, dtype)
+        lines.append(f"dtype : {dtype_value}")
+    for name, value in entries:
+        lines.append(f"{name} : {value}")
+    return f"{doc}\n" + "\n".join(lines)
+
+
+def resolve_buffer_alias(new_name, new_value, old_name, old_value):
+    """Resolve a deprecated scratch-buffer kwarg alias.
+
+    Returns the active value, emitting a :class:`DeprecationWarning` if the
+    caller used the old unsuffixed name.  Raises ``ValueError`` if both names
+    are populated.
+    """
+    if old_value is None:
+        return new_value
+    warnings.warn(
+        f"The {old_name!r} kwarg is deprecated; use {new_name!r} instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    if new_value is not None:
+        raise ValueError(f"Pass either {new_name!r} or {old_name!r}, not both.")
+    return old_value
+
+
+def empty_sentinel(ndim: int, dtype: type, device) -> wp.array:
+    """Return a cached zero-size sentinel array for ``ndim``/``dtype``/``device``."""
+    return _empty_sentinel_cached(int(ndim), dtype, wp_device_str(device))
+
+
+@lru_cache(maxsize=None)
+def _empty_sentinel_cached(ndim: int, dtype: type, device: str) -> wp.array:
+    """Allocate a cached zero-size sentinel array for a canonical device alias."""
+    return wp.empty((0,) * ndim, dtype=dtype, device=device)
+
+
+_empty_sentinel = empty_sentinel
+
 
 class NeighborOverflowError(Exception):
-    """Exception raised when the number of neighbors exceeds the maximum allowed.
+    """Exception raised when a neighbor output exceeds its capacity.
 
-    This error indicates that the pre-allocated neighbor matrix is too small
-    to hold all discovered neighbors. Users should increase `max_neighbors`
-    parameter or use a larger pre-allocated tensor.
+    This error indicates that a pre-allocated neighbor matrix or COO segment
+    is too small to hold all discovered neighbors. Users should increase the
+    relevant ``max_neighbors`` / segment-capacity parameter or provide a
+    larger pre-allocated tensor.
 
     Parameters
     ----------
     max_neighbors : int
-        The maximum number of neighbors the matrix can hold.
+        The maximum number of neighbors or COO entries the output can hold.
     num_neighbors : int
-        The actual number of neighbors found.
+        The actual number of neighbors or COO entries found.
+    system_index : int, optional
+        System index for segmented batched outputs.
     """
 
-    def __init__(self, max_neighbors: int, num_neighbors: int):
-        super().__init__(
-            f"The number of neighbors is larger than the maximum allowed: "
-            f"{num_neighbors} > {max_neighbors}."
-        )
+    def __init__(
+        self, max_neighbors: int, num_neighbors: int, system_index: int | None = None
+    ):
+        if system_index is None:
+            message = (
+                "The number of neighbors is larger than the maximum allowed: "
+                f"{num_neighbors} > {max_neighbors}."
+            )
+        else:
+            message = (
+                f"The number of neighbors in segment {system_index} is larger "
+                f"than the maximum allowed: {num_neighbors} > {max_neighbors}."
+            )
+        super().__init__(message)
         self.max_neighbors = max_neighbors
         self.num_neighbors = num_neighbors
+        self.system_index = system_index
 
 
 __all__ = [
+    "DTYPE_INFO_ALL",
     "NeighborOverflowError",
+    "dtype_info",
+    "empty_sentinel",
     "compute_naive_num_shifts",
     "compute_inv_cells",
+    "estimate_max_neighbors",
+    "fill_neighbor_matrix_tail",
+    "get_compute_inv_cells_kernel",
+    "get_compute_naive_num_shifts_kernel",
+    "get_gather_positions_and_shifts_kernel",
+    "get_update_ref_positions_kernel",
+    "get_wrap_positions_kernel",
+    "kernel_specialization_name",
+    "require_supported_dtype",
+    "resolve_buffer_alias",
     "selective_zero_num_neighbors",
     "selective_zero_num_neighbors_single",
-    "estimate_max_neighbors",
-    "wrap_positions_single",
-    "wrap_positions_batch",
-    "_expand_naive_shifts_selective",
+    "set_fn_name",
     "update_ref_positions",
     "update_ref_positions_batch",
+    "wrap_positions_single",
+    "wrap_positions_batch",
+    "wp_device_str",
+    "zero_array",
 ]
 
 
-@wp.kernel(enable_backward=False)
-def _expand_naive_shifts(
-    shift_range: wp.array(dtype=wp.vec3i),
-    shift_offset: wp.array(dtype=int),
-    shifts: wp.array(dtype=wp.vec3i),
-    shift_system_idx: wp.array(dtype=int),
-) -> None:
-    """Expand shift ranges into actual shift vectors for all systems in the batch.
+def zero_array(array: wp.array, device: str) -> None:
+    """Zero all elements of a Warp array in place.
 
-    Converts the compact shift range representation into a flattened array
-    of explicit shift vectors, maintaining proper indexing to avoid double
-    counting of periodic images.
+    .. deprecated::
+        Use ``array.zero_()`` directly.  This shim forwards to it and will be
+        removed in a future release.
 
     Parameters
     ----------
-    shift_range : wp.array, shape (num_systems, 3), dtype=wp.vec3i
-        Array of shift ranges in each dimension for each system.
-    shift_offset : wp.array, shape (num_systems+1,), dtype=wp.int32
-        Cumulative sum of number of shifts for each system.
-    shifts : wp.array, shape (total_shifts, 3), dtype=wp.vec3i
-        OUTPUT: Flattened array to store the shift vectors.
-    shift_system_idx : wp.array, shape (total_shifts,), dtype=wp.int32
-        OUTPUT: System index mapping for each shift vector.
-
-    Notes
-    -----
-    - Thread launch: One thread per system in the batch (dim=num_systems)
-    - Modifies: shifts, shift_system_idx
-    - total_shifts = shift_offset[-1]
-    - Shift vectors generated in order k0, k1, k2 (increasing)
-    - All shift vectors are integer lattice coordinates
+    array : wp.array, dtype=Any
+        OUTPUT: Array to be zeroed in place.
+    device : str
+        Accepted for backward compatibility and ignored; ``array.zero_()``
+        runs on the array's own device.
     """
-    tid = wp.tid()
-    pos = shift_offset[tid]
-    _shift_range = shift_range[tid]
-    for k0 in range(0, _shift_range[0] + 1):
-        for k1 in range(-_shift_range[1], _shift_range[1] + 1):
-            for k2 in range(-_shift_range[2], _shift_range[2] + 1):
-                if k0 > 0 or (k0 == 0 and k1 > 0) or (k0 == 0 and k1 == 0 and k2 >= 0):
-                    shifts[pos] = wp.vec3i(k0, k1, k2)
-                    shift_system_idx[pos] = tid
-                    pos += 1
-
-
-@wp.kernel(enable_backward=False)
-def _expand_naive_shifts_selective(
-    shift_range: wp.array(dtype=wp.vec3i),
-    shift_offset: wp.array(dtype=int),
-    shifts: wp.array(dtype=wp.vec3i),
-    shift_system_idx: wp.array(dtype=int),
-    rebuild_flags: wp.array(dtype=wp.bool),
-) -> None:
-    """Expand shift ranges into actual shift vectors, skipping non-rebuilt systems.
-
-    Identical to ``_expand_naive_shifts`` but checks ``rebuild_flags[tid]``
-    on the GPU and exits immediately for systems that do not need rebuilding.
-    No CPU-GPU synchronisation occurs.
-
-    Parameters
-    ----------
-    shift_range : wp.array, shape (num_systems, 3), dtype=wp.vec3i
-        Array of shift ranges in each dimension for each system.
-    shift_offset : wp.array, shape (num_systems+1,), dtype=wp.int32
-        Cumulative sum of number of shifts for each system.
-    shifts : wp.array, shape (total_shifts, 3), dtype=wp.vec3i
-        OUTPUT: Flattened array to store the shift vectors.
-    shift_system_idx : wp.array, shape (total_shifts,), dtype=wp.int32
-        OUTPUT: System index mapping for each shift vector.
-    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
-        Per-system rebuild flags. False → kernel returns immediately for that system.
-
-    Notes
-    -----
-    - Thread launch: One thread per system in the batch (dim=num_systems)
-    - Modifies: shifts, shift_system_idx (only for rebuilt systems)
-    - total_shifts = shift_offset[-1]
-    """
-    tid = wp.tid()
-    if not rebuild_flags[tid]:
-        return
-    pos = shift_offset[tid]
-    _shift_range = shift_range[tid]
-    for k0 in range(0, _shift_range[0] + 1):
-        for k1 in range(-_shift_range[1], _shift_range[1] + 1):
-            for k2 in range(-_shift_range[2], _shift_range[2] + 1):
-                if k0 > 0 or (k0 == 0 and k1 > 0) or (k0 == 0 and k1 == 0 and k2 >= 0):
-                    shifts[pos] = wp.vec3i(k0, k1, k2)
-                    shift_system_idx[pos] = tid
-                    pos += 1
+    warnings.warn(
+        "nvalchemiops.neighbors.zero_array is deprecated; use array.zero_() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    del device  # retained only for signature compatibility
+    array.zero_()
 
 
 @wp.func
 def _decode_shift_index(local_idx: int, shift_range: wp.vec3i) -> wp.vec3i:
-    """Decode a flat shift index into (kx, ky, kz) lattice shift vector.
+    """Decode a flat shift index into (kx, ky, kz) lattice shift vector
 
-    Reverses the enumeration order used by ``_expand_naive_shifts`` so that
-    shift vectors can be computed on-the-fly from a thread index without
-    materialising the full shifts array.
+    Decodes the half-shell enumeration used by the naive PBC kernels so
+    shift vectors can be computed on-the-fly without materialising the
+    full shifts array.
 
     Parameters
     ----------
@@ -202,43 +324,196 @@ def _decode_shift_index(local_idx: int, shift_range: wp.vec3i) -> wp.vec3i:
 
 
 @wp.func
-def _update_neighbor_matrix(
-    i: int,
-    j: int,
-    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
-    num_neighbors: wp.array(dtype=wp.int32),
-    max_neighbors: int,
-    half_fill: bool,
-):
-    """
-    Update the neighbor matrix with the given atom indices.
+def _decode_full_shift_index(local_idx: int, shift_range: wp.vec3i) -> wp.vec3i:
+    """Decode a flat full-shell index into ``(kx, ky, kz)``, excluding ``(0, 0, 0)``
+
+    Companion to :func:`_decode_shift_index`.  Enumerates the FULL sphere
+    of shift vectors at radius ``shift_range`` (not the half-shell), in
+    the natural Cartesian order (``k0`` outer, ``k2`` inner), skipping the
+    self entry at the centre.
 
     Parameters
     ----------
-    i: int
-        The index of the source atom.
-    j: int
-        The index of the target atom.
-    neighbor_matrix: wp.array(dtype=wp.int32, ndim=2)
-        OUTPUT: The neighbor matrix to be updated.
-    num_neighbors: wp.array(dtype=wp.int32)
-        OUTPUT: The number of neighbors for each atom.
-    max_neighbors: int
-        The maximum number of neighbors for each atom.
-    half_fill: bool
-        If True, only fill half of the neighbor matrix.
+    local_idx : int
+        Zero-based index in ``[0, (2*Rx+1)*(2*Ry+1)*(2*Rz+1) - 1)``.
+    shift_range : wp.vec3i
+        Per-axis radius ``(Rx, Ry, Rz)``.
+
+    Returns
+    -------
+    wp.vec3i
+        The integer lattice shift vector ``(kx, ky, kz)`` with
+        ``-Rx <= kx <= Rx`` etc., and never ``(0, 0, 0)``.
     """
-    pos = wp.atomic_add(num_neighbors, i, 1)
-    if pos < max_neighbors:
-        neighbor_matrix[i, pos] = j
-    if not half_fill and i < j:
-        pos = wp.atomic_add(num_neighbors, j, 1)
-        if pos < max_neighbors:
-            neighbor_matrix[j, pos] = i
+    k1_size = 2 * shift_range[1] + 1
+    k2_size = 2 * shift_range[2] + 1
+    plane = k1_size * k2_size
+    self_pos = shift_range[0] * plane + shift_range[1] * k2_size + shift_range[2]
+
+    raw_idx = local_idx
+    if local_idx >= self_pos:
+        raw_idx = local_idx + 1
+
+    k0 = raw_idx / plane - shift_range[0]
+    rem = raw_idx % plane
+    k1 = rem / k2_size - shift_range[1]
+    k2 = rem % k2_size - shift_range[2]
+    return wp.vec3i(k0, k1, k2)
 
 
 @wp.func
-def _update_neighbor_matrix_pbc(
+def _shifted_position(shift: wp.vec3i, cell: Any, position: Any):
+    """Position translated by lattice shift ``shift`` under cell matrix ``cell``
+
+    Parameters
+    ----------
+    shift : wp.vec3i
+        Integer lattice shift vector.
+    cell : wp.mat33*
+        Cell matrix used to convert ``shift`` to Cartesian displacement.
+    position : wp.vec3*
+        Cartesian position to translate.
+
+    Returns
+    -------
+    wp.vec3*
+        Translated Cartesian position.
+
+    Notes
+    -----
+    The cell-element scalar type is recovered from ``cell[0]`` so the cast of
+    ``shift`` matches the position dtype.
+    """
+    return type(cell[0])(shift) * cell + position
+
+
+@wp.func
+def _update_dual_neighbor_matrix(
+    i: int,
+    j: int,
+    dist_sq: Any,
+    cutoff1_sq: Any,
+    cutoff2_sq: Any,
+    neighbor_matrix1: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts1: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors1: wp.array(dtype=wp.int32),
+    max_neighbors1: int,
+    neighbor_matrix2: wp.array(dtype=wp.int32, ndim=2),
+    neighbor_matrix_shifts2: wp.array(dtype=wp.vec3i, ndim=2),
+    num_neighbors2: wp.array(dtype=wp.int32),
+    max_neighbors2: int,
+    unit_shift: wp.vec3i,
+    half_fill: bool,
+    pbc: bool,
+):
+    """Update primary and secondary dual-cutoff neighbor matrices
+
+    Parameters
+    ----------
+    i : int
+        Source atom row.
+    j : int
+        Neighbor atom index.
+    dist_sq : float
+        Squared pair distance.
+    cutoff1_sq : float
+        Squared primary cutoff distance.
+    cutoff2_sq : float
+        Squared secondary cutoff distance.
+    neighbor_matrix1 : wp.array, shape (rows, max_neighbors1), dtype=wp.int32
+        OUTPUT: Primary cutoff neighbor matrix.
+    neighbor_matrix_shifts1 : wp.array, shape (rows, max_neighbors1), dtype=wp.vec3i
+        OUTPUT: Primary cutoff shift matrix for PBC mode.
+    num_neighbors1 : wp.array, shape (rows,), dtype=wp.int32
+        MODIFIED: Primary cutoff neighbor counts.
+    max_neighbors1 : int
+        Maximum primary cutoff neighbors per row.
+    neighbor_matrix2 : wp.array, shape (rows, max_neighbors2), dtype=wp.int32
+        OUTPUT: Secondary cutoff neighbor matrix.
+    neighbor_matrix_shifts2 : wp.array, shape (rows, max_neighbors2), dtype=wp.vec3i
+        OUTPUT: Secondary cutoff shift matrix for PBC mode.
+    num_neighbors2 : wp.array, shape (rows,), dtype=wp.int32
+        MODIFIED: Secondary cutoff neighbor counts.
+    max_neighbors2 : int
+        Maximum secondary cutoff neighbors per row.
+    unit_shift : wp.vec3i
+        Periodic unit shift stored with PBC neighbor pairs.
+    half_fill : bool
+        If True, store only one direction for each unordered pair.
+    pbc : bool
+        If True, write shift matrices alongside atom indices.
+
+    Returns
+    -------
+    None
+        This function modifies the input arrays in-place.
+
+    Notes
+    -----
+    - Modifies: neighbor matrices, shift matrices in PBC mode, and neighbor counts.
+    """
+    if dist_sq < cutoff2_sq:
+        _update_neighbor_matrix(
+            i,
+            j,
+            neighbor_matrix2,
+            neighbor_matrix_shifts2,
+            num_neighbors2,
+            unit_shift,
+            max_neighbors2,
+            half_fill,
+            pbc,
+        )
+        if dist_sq < cutoff1_sq:
+            _update_neighbor_matrix(
+                i,
+                j,
+                neighbor_matrix1,
+                neighbor_matrix_shifts1,
+                num_neighbors1,
+                unit_shift,
+                max_neighbors1,
+                half_fill,
+                pbc,
+            )
+
+
+@wp.func
+def _correct_shift(
+    shift: wp.vec3i,
+    offset_i: wp.vec3i,
+    offset_j: wp.vec3i,
+) -> wp.vec3i:
+    """Apply wrap-on-entry shift correction
+
+    Parameters
+    ----------
+    shift : wp.vec3i
+        Periodic image shift before wrap-on-entry correction.
+    offset_i : wp.vec3i
+        Integer cell offset for the source atom.
+    offset_j : wp.vec3i
+        Integer cell offset for the neighbor atom.
+
+    Returns
+    -------
+    wp.vec3i
+        Corrected periodic shift vector.
+
+    Notes
+    -----
+    The returned shift is adjusted by ``offset_i - offset_j`` so the reconstructed
+    displacement matches the original unwrapped geometry.
+    """
+    return wp.vec3i(
+        shift[0] - offset_j[0] + offset_i[0],
+        shift[1] - offset_j[1] + offset_i[1],
+        shift[2] - offset_j[2] + offset_i[2],
+    )
+
+
+@wp.func
+def _update_neighbor_matrix(
     i: int,
     j: int,
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
@@ -247,9 +522,9 @@ def _update_neighbor_matrix_pbc(
     unit_shift: wp.vec3i,
     max_neighbors: int,
     half_fill: bool,
+    pbc: bool,
 ):
-    """
-    Update the neighbor matrix with the given atom indices and periodic shift.
+    """Update the neighbor matrix with the given atom indices
 
     Parameters
     ----------
@@ -260,7 +535,7 @@ def _update_neighbor_matrix_pbc(
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2)
         OUTPUT: The neighbor matrix to be updated.
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2)
-        OUTPUT: The neighbor matrix shifts to be updated.
+        OUTPUT: The neighbor matrix shifts to be updated when ``pbc`` is true.
     num_neighbors: wp.array(dtype=wp.int32)
         OUTPUT: The number of neighbors for each atom.
     unit_shift: wp.vec3i
@@ -269,16 +544,25 @@ def _update_neighbor_matrix_pbc(
         The maximum number of neighbors for each atom.
     half_fill: bool
         If True, only fill half of the neighbor matrix.
+    pbc: bool
+        If True, write periodic shift entries alongside atom indices.
+
+    Returns
+    -------
+    None
+        This function modifies the input arrays in-place.
     """
     pos = wp.atomic_add(num_neighbors, i, 1)
     if pos < max_neighbors:
         neighbor_matrix[i, pos] = j
-        neighbor_matrix_shifts[i, pos] = unit_shift
-    if not half_fill:
+        if pbc:
+            neighbor_matrix_shifts[i, pos] = unit_shift
+    if not half_fill and (pbc or i < j):
         pos = wp.atomic_add(num_neighbors, j, 1)
         if pos < max_neighbors:
             neighbor_matrix[j, pos] = i
-            neighbor_matrix_shifts[j, pos] = -unit_shift
+            if pbc:
+                neighbor_matrix_shifts[j, pos] = -unit_shift
 
 
 @wp.kernel(enable_backward=False)
@@ -289,7 +573,7 @@ def _compute_naive_num_shifts(
     num_shifts: wp.array(dtype=int),
     shift_range: wp.array(dtype=wp.vec3i),
 ) -> None:
-    """Compute periodic image shifts needed for neighbor searching.
+    """Compute periodic image shifts needed for neighbor searching
 
     Calculates the number and range of periodic boundary shifts required
     to ensure all atoms within the cutoff distance are found, taking into
@@ -321,9 +605,14 @@ def _compute_naive_num_shifts(
         - num_shifts : Updated with total shift counts per system
         - shift_range : Updated with shift ranges per dimension
 
+    Notes
+    -----
+    - Thread launch: see launcher-specific launch dimension.
+    - Modifies: see OUTPUT or MODIFIED parameters.
+
     See Also
     --------
-    _expand_naive_shifts : Expands shift ranges into explicit shift vectors
+    get_compute_naive_num_shifts_kernel : Return the specialized periodic-image shift-count kernel.
     """
     tid = wp.tid()
 
@@ -345,115 +634,98 @@ def _compute_naive_num_shifts(
     num_shifts[tid] = _s[0] * k1 * k2 + _s[1] * k2 + _s[2] + 1
 
 
-## Generate overloads
-T = [wp.float32, wp.float64, wp.float16]
-V = [wp.vec3f, wp.vec3d, wp.vec3h]
-M = [wp.mat33f, wp.mat33d, wp.mat33h]
-_compute_naive_num_shifts_overload = {}
-for t, v, m in zip(T, V, M):
-    _compute_naive_num_shifts_overload[t] = wp.overload(
+@lru_cache(maxsize=None)
+def get_compute_naive_num_shifts_kernel(wp_dtype: type) -> wp.Kernel:
+    """Return the specialized periodic-image shift-count kernel."""
+    _vec_dtype, mat_dtype = dtype_info(wp_dtype)
+    kernel = wp.overload(
         _compute_naive_num_shifts,
         [
-            wp.array(dtype=m),
-            t,
+            wp.array(dtype=mat_dtype),
+            wp_dtype,
             wp.array2d(dtype=wp.bool),
             wp.array(dtype=int),
             wp.array(dtype=wp.vec3i),
         ],
     )
-
-
-@wp.kernel(enable_backward=False)
-def _zero_array_kernel(
-    array: wp.array(dtype=Any),
-) -> None:
-    """Zero an array in parallel.
-
-    Parameters
-    ----------
-    array : wp.array, dtype=Any
-        OUTPUT: Array to be zeroed.
-
-    Notes
-    -----
-    - Thread launch: One thread per element (dim=array.shape[0])
-    - Modifies: array (sets all elements to 0)
-    """
-    tid = wp.tid()
-    array[tid] = type(array[tid])(0)
-
-
-def zero_array(
-    array: wp.array,
-    device: str,
-) -> None:
-    """Core warp launcher for zeroing an array.
-
-    .. deprecated::
-        Use ``array.zero_()`` (Warp's built-in in-place zero) instead.
-
-    Zeros all elements of an array in parallel using pure warp operations.
-
-    Parameters
-    ----------
-    array : wp.array, dtype=Any
-        OUTPUT: Array to be zeroed.
-    device : str
-        Warp device string (e.g., 'cuda:0', 'cpu').
-
-    Notes
-    -----
-    - This is a low-level warp interface kept for backwards compatibility.
-    - Operates on arrays of any dtype.
-
-    See Also
-    --------
-    _zero_array_kernel : Kernel that performs the zeroing
-    warp.array.zero_ : Recommended in-place replacement
-    """
-    warnings.warn(
-        "nvalchemiops.neighbors.neighbor_utils.zero_array is deprecated; "
-        "use the Warp built-in `array.zero_()` instead "
-        "(e.g. `my_array.zero_()`).",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    n = array.shape[0]
-
-    wp.launch(
-        kernel=_zero_array_kernel,
-        dim=n,
-        inputs=[array],
-        device=device,
+    name = kernel_specialization_name("_compute_naive_num_shifts", wp_dtype=wp_dtype)
+    return set_fn_doc(
+        set_fn_name(kernel, name),
+        _append_specialization_doc(
+            kernel.__doc__,
+            dtype=wp_dtype,
+            entries=(("operation", "compute_naive_num_shifts"),),
+        ),
     )
 
 
-@wp.kernel(enable_backward=False)
-def _selective_zero_num_neighbors(
-    num_neighbors: wp.array(dtype=wp.int32),
-    batch_idx: wp.array(dtype=wp.int32),
-    rebuild_flags: wp.array(dtype=wp.bool),
-) -> None:
-    """Zero num_neighbors entries for atoms in systems that need rebuilding.
+def _make_selective_zero_num_neighbors_kernel(*, batched: bool):
+    """Build the selective ``num_neighbors`` zeroing kernel."""
+    BATCHED = wp.constant(bool(batched))
 
-    Parameters
-    ----------
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
-        OUTPUT: Number of neighbors; zeroed for atoms in rebuilt systems.
-    batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32
-        System index for each atom.
-    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
-        Per-system rebuild flags. True means this system needs rebuilding.
+    @wp.kernel(enable_backward=False, module="unique")
+    def _kernel(
+        num_neighbors: wp.array(dtype=wp.int32),
+        batch_idx: wp.array(dtype=wp.int32),
+        rebuild_flags: wp.array(dtype=wp.bool),
+    ) -> None:
+        """Zero neighbor counts for atoms in rebuilt systems
 
-    Notes
-    -----
-    - Thread launch: One thread per atom (dim=total_atoms)
-    - Modifies: num_neighbors (selective zero for rebuilt systems)
-    """
-    tid = wp.tid()
-    isys = batch_idx[tid]
-    if rebuild_flags[isys]:
-        num_neighbors[tid] = 0
+        Parameters
+        ----------
+        num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
+            OUTPUT: Per-atom neighbor counts to zero selectively.
+        batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32
+            System index for each atom. Zero-size sentinel in single-system
+            specializations.
+        rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+            Rebuild flags controlling which atoms have their counts reset.
+
+        Returns
+        -------
+        None
+            This function modifies the input arrays in-place.
+
+        Notes
+        -----
+        - Thread launch: One thread per atom.
+        - Modifies: ``num_neighbors`` entries for rebuilt systems.
+        ``BATCHED`` is a static specialization. Single-system launchers pass a
+        zero-size ``batch_idx`` sentinel that is not read.
+
+        See Also
+        --------
+        _get_selective_zero_num_neighbors_kernel : Return the specialized selective neighbor-count zeroing kernel.
+        """
+        tid = wp.tid()
+        isys = wp.int32(0)
+        if BATCHED:
+            isys = batch_idx[tid]
+        if rebuild_flags[isys]:
+            num_neighbors[tid] = 0
+
+    base = (
+        "_selective_zero_num_neighbors"
+        if batched
+        else "_selective_zero_num_neighbors_single"
+    )
+    name = kernel_specialization_name(base)
+    return set_fn_doc(
+        set_fn_name(_kernel, name),
+        _append_specialization_doc(
+            _kernel.__doc__,
+            entries=(
+                ("batched", bool(batched)),
+                ("operation", "selective_zero_num_neighbors"),
+            ),
+        ),
+    )
+
+
+@lru_cache(maxsize=None)
+def _get_selective_zero_num_neighbors_kernel(*, batched: bool) -> wp.Kernel:
+    """Return the selective ``num_neighbors`` zeroing kernel for batching."""
+    return _make_selective_zero_num_neighbors_kernel(batched=bool(batched))
 
 
 def selective_zero_num_neighbors(
@@ -480,39 +752,15 @@ def selective_zero_num_neighbors(
 
     See Also
     --------
-    _selective_zero_num_neighbors : Kernel that performs the selective zeroing
+    _get_selective_zero_num_neighbors_kernel : Selects the batched kernel
     """
     total_atoms = num_neighbors.shape[0]
     wp.launch(
-        kernel=_selective_zero_num_neighbors,
+        kernel=_get_selective_zero_num_neighbors_kernel(batched=True),
         dim=total_atoms,
         inputs=[num_neighbors, batch_idx, rebuild_flags],
         device=device,
     )
-
-
-@wp.kernel(enable_backward=False)
-def _selective_zero_num_neighbors_single(
-    num_neighbors: wp.array(dtype=wp.int32),
-    rebuild_flags: wp.array(dtype=wp.bool),
-) -> None:
-    """Zero num_neighbors entries when the single-system rebuild flag is set.
-
-    Parameters
-    ----------
-    num_neighbors : wp.array, shape (total_atoms,), dtype=wp.int32
-        OUTPUT: Number of neighbors; zeroed for all atoms when rebuild_flags[0] is True.
-    rebuild_flags : wp.array, shape (1,) or shape (), dtype=wp.bool
-        Single-system flag. When True, all entries of num_neighbors are zeroed.
-
-    Notes
-    -----
-    - Thread launch: One thread per atom (dim=total_atoms)
-    - Modifies: num_neighbors (only when rebuild_flags[0] is True)
-    """
-    tid = wp.tid()
-    if rebuild_flags[0]:
-        num_neighbors[tid] = 0
 
 
 def selective_zero_num_neighbors_single(
@@ -536,14 +784,18 @@ def selective_zero_num_neighbors_single(
 
     See Also
     --------
-    _selective_zero_num_neighbors_single : Kernel that performs the selective zeroing
+    _get_selective_zero_num_neighbors_kernel : Selects the single-system kernel
     selective_zero_num_neighbors : Batch variant using per-atom batch_idx
     """
     total_atoms = num_neighbors.shape[0]
     wp.launch(
-        kernel=_selective_zero_num_neighbors_single,
+        kernel=_get_selective_zero_num_neighbors_kernel(batched=False),
         dim=total_atoms,
-        inputs=[num_neighbors, rebuild_flags],
+        inputs=[
+            num_neighbors,
+            _empty_sentinel(1, wp.int32, device),
+            rebuild_flags,
+        ],
         device=device,
     )
 
@@ -553,7 +805,7 @@ def _compute_inv_cells_kernel(
     cell: wp.array(dtype=Any),
     inv_cell: wp.array(dtype=Any),
 ) -> None:
-    """Compute the inverse of each cell matrix.
+    """Compute the inverse of each cell matrix
 
     Parameters
     ----------
@@ -562,22 +814,40 @@ def _compute_inv_cells_kernel(
     inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*
         OUTPUT: Inverse of each cell matrix.
 
+    Returns
+    -------
+    None
+        This function modifies the input arrays in-place.
+
     Notes
     -----
+    - Modifies: see OUTPUT or MODIFIED parameters.
     - Thread launch: One thread per system (dim=num_systems)
+
+    See Also
+    --------
+    get_compute_inv_cells_kernel : Return the specialized inverse-cell kernel.
     """
     tid = wp.tid()
     inv_cell[tid] = wp.inverse(cell[tid])
 
 
-_compute_inv_cells_overload = {}
-for _t, _m in zip(
-    [wp.float32, wp.float64, wp.float16],
-    [wp.mat33f, wp.mat33d, wp.mat33h],
-):
-    _compute_inv_cells_overload[_t] = wp.overload(
+@lru_cache(maxsize=None)
+def get_compute_inv_cells_kernel(wp_dtype: type) -> wp.Kernel:
+    """Return the specialized inverse-cell kernel."""
+    _vec_dtype, mat_dtype = dtype_info(wp_dtype)
+    kernel = wp.overload(
         _compute_inv_cells_kernel,
-        [wp.array(dtype=_m), wp.array(dtype=_m)],
+        [wp.array(dtype=mat_dtype), wp.array(dtype=mat_dtype)],
+    )
+    name = kernel_specialization_name("_compute_inv_cells_kernel", wp_dtype=wp_dtype)
+    return set_fn_doc(
+        set_fn_name(kernel, name),
+        _append_specialization_doc(
+            kernel.__doc__,
+            dtype=wp_dtype,
+            entries=(("operation", "compute_inv_cells"),),
+        ),
     )
 
 
@@ -607,11 +877,11 @@ def compute_inv_cells(
 
     See Also
     --------
-    _compute_inv_cells_kernel : Underlying warp kernel
+    get_compute_inv_cells_kernel : Factory-selected inverse-cell kernel
     """
     num_systems = cell.shape[0]
     wp.launch(
-        kernel=_compute_inv_cells_overload[wp_dtype],
+        kernel=get_compute_inv_cells_kernel(wp_dtype),
         dim=num_systems,
         inputs=[cell, inv_cell],
         device=device,
@@ -662,13 +932,12 @@ def compute_naive_num_shifts(
 
     See Also
     --------
-    _compute_naive_num_shifts : Kernel that performs the computation
-    _expand_naive_shifts : Expands shift ranges into explicit shift vectors
+    get_compute_naive_num_shifts_kernel : Factory-selected shift-count kernel
     """
     num_systems = cell.shape[0]
 
     wp.launch(
-        kernel=_compute_naive_num_shifts,
+        kernel=get_compute_naive_num_shifts_kernel(wp_dtype),
         dim=num_systems,
         inputs=[
             cell,
@@ -740,68 +1009,116 @@ def estimate_max_neighbors(
 ###########################################################################################
 
 
-@wp.kernel(enable_backward=False)
-def _wrap_positions_single_kernel(
-    positions: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    inv_cell: wp.array(dtype=Any),
-    positions_wrapped: wp.array(dtype=Any),
-    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
-) -> None:
-    """Wrap positions into the primary cell for a single system.
+def _make_wrap_positions_kernel(wp_dtype: type, *, batched: bool):
+    """Build a position-wrapping kernel for one dtype and batching mode."""
+    require_supported_dtype(wp_dtype)
+    vec_dtype, mat_dtype = dtype_info(wp_dtype)
+    BATCHED = wp.constant(bool(batched))
 
-    Computes fractional coordinates to determine integer cell offsets, then
-    shifts each atom back into the primary cell. The integer offsets are stored
-    so that corrected shift vectors can be recovered for the original (unwrapped)
-    positions.
+    @wp.kernel(enable_backward=False, module="unique")
+    def _kernel(
+        positions: wp.array(dtype=vec_dtype),
+        cell: wp.array(dtype=mat_dtype),
+        inv_cell: wp.array(dtype=mat_dtype),
+        batch_idx: wp.array(dtype=wp.int32),
+        positions_wrapped: wp.array(dtype=vec_dtype),
+        per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
+    ) -> None:
+        """Wrap positions into the primary cell and store integer offsets
 
-    Parameters
-    ----------
-    positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        Atomic coordinates in Cartesian space. May be unwrapped.
-    cell : wp.array, shape (1,), dtype=wp.mat33*
-        Cell matrix defining lattice vectors in Cartesian coordinates.
-    inv_cell : wp.array, shape (1,), dtype=wp.mat33*
-        Pre-computed inverse of the cell matrix.
-    positions_wrapped : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        OUTPUT: Wrapped positions in Cartesian space.
-    per_atom_cell_offsets : wp.array, shape (total_atoms,), dtype=wp.vec3i
-        OUTPUT: Integer cell offsets for each atom (floor of fractional coordinates).
+        Parameters
+        ----------
+        positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
+            Cartesian coordinates to wrap.
+        cell : wp.array, shape (num_systems,), dtype=wp.mat33*
+            Cell matrices defining lattice vectors.
+        inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*
+            Precomputed inverse cell matrices.
+        batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32
+            System index for each atom. Zero-size sentinel in single-system
+            specializations.
+        positions_wrapped : wp.array, shape (total_atoms,), dtype=wp.vec3*
+            OUTPUT: Wrapped Cartesian coordinates.
+        per_atom_cell_offsets : wp.array, shape (total_atoms,), dtype=wp.vec3i
+            OUTPUT: Integer cell offsets removed from each atom.
 
-    Notes
-    -----
-    - Thread launch: One thread per atom (dim=total_atoms)
-    - Modifies: positions_wrapped, per_atom_cell_offsets
-    """
-    i = wp.tid()
-    _cell = cell[0]
-    _inv_cell = inv_cell[0]
-    _pos = positions[i]
-    _frac = _pos * _inv_cell
-    _int = wp.vec3i(
-        wp.int32(wp.floor(_frac[0])),
-        wp.int32(wp.floor(_frac[1])),
-        wp.int32(wp.floor(_frac[2])),
+        Returns
+        -------
+        None
+            This function modifies the input arrays in-place.
+
+        Notes
+        -----
+        - Thread launch: One thread per atom.
+        - Modifies: ``positions_wrapped`` and ``per_atom_cell_offsets``.
+        ``BATCHED`` is a static specialization. Single-system launchers pass a
+        zero-size ``batch_idx`` sentinel that is not read.
+
+        See Also
+        --------
+        get_wrap_positions_kernel : Return the specialized position-wrapping kernel.
+        """
+        i = wp.tid()
+        isys = wp.int32(0)
+        if BATCHED:
+            isys = batch_idx[i]
+        _cell = cell[isys]
+        _inv_cell = inv_cell[isys]
+        _pos = positions[i]
+        _frac = _pos * _inv_cell
+        _int = wp.vec3i(
+            wp.int32(wp.floor(_frac[0])),
+            wp.int32(wp.floor(_frac[1])),
+            wp.int32(wp.floor(_frac[2])),
+        )
+        positions_wrapped[i] = _pos - type(_pos)(_int) * _cell
+        per_atom_cell_offsets[i] = _int
+
+    base = (
+        "_wrap_positions_batch_kernel" if batched else "_wrap_positions_single_kernel"
     )
-    positions_wrapped[i] = _pos - type(_pos)(_int) * _cell
-    per_atom_cell_offsets[i] = _int
+    name = kernel_specialization_name(base, wp_dtype=wp_dtype)
+    return set_fn_doc(
+        set_fn_name(_kernel, name),
+        _append_specialization_doc(
+            _kernel.__doc__,
+            dtype=wp_dtype,
+            entries=(("batched", bool(batched)),),
+        ),
+    )
 
 
-_wrap_positions_single_overload = {}
-for _t, _v, _m in zip(
-    [wp.float32, wp.float64, wp.float16],
-    [wp.vec3f, wp.vec3d, wp.vec3h],
-    [wp.mat33f, wp.mat33d, wp.mat33h],
-):
-    _wrap_positions_single_overload[_t] = wp.overload(
-        _wrap_positions_single_kernel,
-        [
-            wp.array(dtype=_v),
-            wp.array(dtype=_m),
-            wp.array(dtype=_m),
-            wp.array(dtype=_v),
-            wp.array(dtype=wp.vec3i),
+@lru_cache(maxsize=None)
+def get_wrap_positions_kernel(wp_dtype: type, *, batched: bool = False) -> wp.Kernel:
+    """Return the specialized position-wrapping kernel."""
+    return _make_wrap_positions_kernel(wp_dtype, batched=bool(batched))
+
+
+def _launch_wrap_positions(
+    positions: wp.array,
+    cell: wp.array,
+    inv_cell: wp.array,
+    batch_idx: wp.array,
+    positions_wrapped: wp.array,
+    per_atom_cell_offsets: wp.array,
+    wp_dtype: type,
+    device: str,
+    *,
+    batched: bool,
+) -> None:
+    """Launch the shared position-wrapping kernel."""
+    wp.launch(
+        kernel=get_wrap_positions_kernel(wp_dtype, batched=batched),
+        dim=positions.shape[0],
+        inputs=[
+            positions,
+            cell,
+            inv_cell,
+            batch_idx if batched else _empty_sentinel(1, wp.int32, device),
+            positions_wrapped,
+            per_atom_cell_offsets,
         ],
+        device=device,
     )
 
 
@@ -841,84 +1158,19 @@ def wrap_positions_single(
 
     See Also
     --------
-    _wrap_positions_single_kernel : Underlying warp kernel
+    get_wrap_positions_kernel : Factory-selected wrapping kernel.
     wrap_positions_batch : Batch variant for multiple systems
     """
-    total_atoms = positions.shape[0]
-    wp.launch(
-        kernel=_wrap_positions_single_overload[wp_dtype],
-        dim=total_atoms,
-        inputs=[positions, cell, inv_cell, positions_wrapped, per_atom_cell_offsets],
-        device=device,
-    )
-
-
-@wp.kernel(enable_backward=False)
-def _wrap_positions_batch_kernel(
-    positions: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    inv_cell: wp.array(dtype=Any),
-    batch_idx: wp.array(dtype=wp.int32),
-    positions_wrapped: wp.array(dtype=Any),
-    per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
-) -> None:
-    """Wrap positions into the primary cell for a batch of systems.
-
-    Each atom uses the cell matrix of its system (indexed via batch_idx).
-    Computes fractional coordinates to determine integer cell offsets, then
-    shifts each atom back into the primary cell.
-
-    Parameters
-    ----------
-    positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        Concatenated atomic coordinates for all systems. May be unwrapped.
-    cell : wp.array, shape (num_systems,), dtype=wp.mat33*
-        Cell matrices for each system.
-    inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*
-        Pre-computed inverse cell matrices.
-    batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32
-        System index for each atom.
-    positions_wrapped : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        OUTPUT: Wrapped positions in Cartesian space.
-    per_atom_cell_offsets : wp.array, shape (total_atoms,), dtype=wp.vec3i
-        OUTPUT: Integer cell offsets for each atom (floor of fractional coordinates).
-
-    Notes
-    -----
-    - Thread launch: One thread per atom (dim=total_atoms)
-    - Modifies: positions_wrapped, per_atom_cell_offsets
-    """
-    i = wp.tid()
-    isys = batch_idx[i]
-    _cell = cell[isys]
-    _inv_cell = inv_cell[isys]
-    _pos = positions[i]
-    _frac = _pos * _inv_cell
-    _int = wp.vec3i(
-        wp.int32(wp.floor(_frac[0])),
-        wp.int32(wp.floor(_frac[1])),
-        wp.int32(wp.floor(_frac[2])),
-    )
-    positions_wrapped[i] = _pos - type(_pos)(_int) * _cell
-    per_atom_cell_offsets[i] = _int
-
-
-_wrap_positions_batch_overload = {}
-for _t, _v, _m in zip(
-    [wp.float32, wp.float64, wp.float16],
-    [wp.vec3f, wp.vec3d, wp.vec3h],
-    [wp.mat33f, wp.mat33d, wp.mat33h],
-):
-    _wrap_positions_batch_overload[_t] = wp.overload(
-        _wrap_positions_batch_kernel,
-        [
-            wp.array(dtype=_v),
-            wp.array(dtype=_m),
-            wp.array(dtype=_m),
-            wp.array(dtype=wp.int32),
-            wp.array(dtype=_v),
-            wp.array(dtype=wp.vec3i),
-        ],
+    _launch_wrap_positions(
+        positions,
+        cell,
+        inv_cell,
+        _empty_sentinel(1, wp.int32, device),
+        positions_wrapped,
+        per_atom_cell_offsets,
+        wp_dtype,
+        device,
+        batched=False,
     )
 
 
@@ -962,22 +1214,19 @@ def wrap_positions_batch(
 
     See Also
     --------
-    _wrap_positions_batch_kernel : Underlying warp kernel
+    get_wrap_positions_kernel : Factory-selected wrapping kernel.
     wrap_positions_single : Single-system variant
     """
-    total_atoms = positions.shape[0]
-    wp.launch(
-        kernel=_wrap_positions_batch_overload[wp_dtype],
-        dim=total_atoms,
-        inputs=[
-            positions,
-            cell,
-            inv_cell,
-            batch_idx,
-            positions_wrapped,
-            per_atom_cell_offsets,
-        ],
-        device=device,
+    _launch_wrap_positions(
+        positions,
+        cell,
+        inv_cell,
+        batch_idx,
+        positions_wrapped,
+        per_atom_cell_offsets,
+        wp_dtype,
+        device,
+        batched=True,
     )
 
 
@@ -986,38 +1235,101 @@ def wrap_positions_batch(
 ###########################################################################################
 
 
-@wp.kernel(enable_backward=False)
-def _update_ref_positions_kernel(
-    positions: wp.array(dtype=Any),
-    rebuild_flag: wp.array(dtype=wp.bool),
-    ref_positions: wp.array(dtype=Any),
+def _make_update_ref_positions_kernel(wp_dtype: type, *, batched: bool):
+    """Build a conditional reference-position update kernel."""
+    require_supported_dtype(wp_dtype, (wp.float32, wp.float64))
+    vec_dtype, _mat_dtype = dtype_info(wp_dtype, (wp.float32, wp.float64))
+    BATCHED = wp.constant(bool(batched))
+
+    @wp.kernel(enable_backward=False, module="unique")
+    def _kernel(
+        positions: wp.array(dtype=vec_dtype),
+        rebuild_flags: wp.array(dtype=wp.bool),
+        batch_idx: wp.array(dtype=wp.int32),
+        ref_positions: wp.array(dtype=vec_dtype),
+    ) -> None:
+        """Copy current positions into reference positions when rebuilding
+
+        Parameters
+        ----------
+        positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
+            Current Cartesian coordinates.
+        rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+            Rebuild flags controlling which systems update their references.
+        batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32
+            System index for each atom. Zero-size sentinel in single-system
+            specializations.
+        ref_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
+            OUTPUT: Reference coordinates updated for rebuilt systems.
+
+        Returns
+        -------
+        None
+            This function modifies the input arrays in-place.
+
+        Notes
+        -----
+        - Thread launch: One thread per atom.
+        - Modifies: ``ref_positions`` entries for rebuilt systems.
+        ``BATCHED`` is a static specialization. Single-system launchers pass a
+        zero-size ``batch_idx`` sentinel that is not read.
+
+        See Also
+        --------
+        get_update_ref_positions_kernel : Return the specialized reference-position update kernel.
+        """
+        i = wp.tid()
+        isys = wp.int32(0)
+        if BATCHED:
+            isys = batch_idx[i]
+        if rebuild_flags[isys]:
+            ref_positions[i] = positions[i]
+
+    base = (
+        "_update_ref_positions_batch_kernel"
+        if batched
+        else "_update_ref_positions_kernel"
+    )
+    name = kernel_specialization_name(base, wp_dtype=wp_dtype)
+    return set_fn_doc(
+        set_fn_name(_kernel, name),
+        _append_specialization_doc(
+            _kernel.__doc__,
+            dtype=wp_dtype,
+            entries=(("batched", bool(batched)),),
+        ),
+    )
+
+
+@lru_cache(maxsize=None)
+def get_update_ref_positions_kernel(
+    wp_dtype: type, *, batched: bool = False
+) -> wp.Kernel:
+    """Return the specialized conditional reference-position update kernel."""
+    return _make_update_ref_positions_kernel(wp_dtype, batched=bool(batched))
+
+
+def _launch_update_ref_positions(
+    positions: wp.array,
+    rebuild_flags: wp.array,
+    batch_idx: wp.array,
+    ref_positions: wp.array,
+    wp_dtype: type,
+    device: str,
+    *,
+    batched: bool,
 ) -> None:
-    """Conditionally copy positions to ref_positions when rebuild_flag[0] is True.
-
-    Parameters
-    ----------
-    positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        Current atomic coordinates.
-    rebuild_flag : wp.array, shape (1,), dtype=wp.bool
-        Single-system rebuild flag. When True, ref_positions is updated.
-    ref_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        OUTPUT: Reference positions updated when rebuild_flag[0] is True.
-
-    Notes
-    -----
-    - Thread launch: One thread per atom (dim=total_atoms)
-    - Modifies: ref_positions (only when rebuild_flag[0] is True)
-    """
-    i = wp.tid()
-    if rebuild_flag[0]:
-        ref_positions[i] = positions[i]
-
-
-_update_ref_positions_overload = {}
-for _t, _v in zip([wp.float32, wp.float64], [wp.vec3f, wp.vec3d]):
-    _update_ref_positions_overload[_t] = wp.overload(
-        _update_ref_positions_kernel,
-        [wp.array(dtype=_v), wp.array(dtype=wp.bool), wp.array(dtype=_v)],
+    """Launch the shared conditional reference-position update kernel."""
+    wp.launch(
+        kernel=get_update_ref_positions_kernel(wp_dtype, batched=batched),
+        dim=positions.shape[0],
+        inputs=[
+            positions,
+            rebuild_flags,
+            batch_idx if batched else _empty_sentinel(1, wp.int32, device),
+            ref_positions,
+        ],
+        device=device,
     )
 
 
@@ -1048,58 +1360,17 @@ def update_ref_positions(
 
     See Also
     --------
-    _update_ref_positions_kernel : Underlying warp kernel
+    get_update_ref_positions_kernel : Factory-selected update kernel.
     update_ref_positions_batch : Batch variant
     """
-    total_atoms = positions.shape[0]
-    wp.launch(
-        kernel=_update_ref_positions_overload[wp_dtype],
-        dim=total_atoms,
-        inputs=[positions, rebuild_flag, ref_positions],
-        device=device,
-    )
-
-
-@wp.kernel(enable_backward=False)
-def _update_ref_positions_batch_kernel(
-    positions: wp.array(dtype=Any),
-    rebuild_flags: wp.array(dtype=wp.bool),
-    batch_idx: wp.array(dtype=wp.int32),
-    ref_positions: wp.array(dtype=Any),
-) -> None:
-    """Conditionally copy positions to ref_positions per-system (batch, no CPU sync).
-
-    Parameters
-    ----------
-    positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        Current atomic coordinates for all systems.
-    rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
-        Per-system rebuild flags.
-    batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32
-        System index for each atom.
-    ref_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
-        OUTPUT: Reference positions; updated for atoms in rebuilt systems.
-
-    Notes
-    -----
-    - Thread launch: One thread per atom (dim=total_atoms)
-    - Modifies: ref_positions (only for atoms in rebuilt systems)
-    """
-    i = wp.tid()
-    if rebuild_flags[batch_idx[i]]:
-        ref_positions[i] = positions[i]
-
-
-_update_ref_positions_batch_overload = {}
-for _t, _v in zip([wp.float32, wp.float64], [wp.vec3f, wp.vec3d]):
-    _update_ref_positions_batch_overload[_t] = wp.overload(
-        _update_ref_positions_batch_kernel,
-        [
-            wp.array(dtype=_v),
-            wp.array(dtype=wp.bool),
-            wp.array(dtype=wp.int32),
-            wp.array(dtype=_v),
-        ],
+    _launch_update_ref_positions(
+        positions,
+        rebuild_flag,
+        _empty_sentinel(1, wp.int32, device),
+        ref_positions,
+        wp_dtype,
+        device,
+        batched=False,
     )
 
 
@@ -1133,13 +1404,260 @@ def update_ref_positions_batch(
 
     See Also
     --------
-    _update_ref_positions_batch_kernel : Underlying warp kernel
+    get_update_ref_positions_kernel : Factory-selected update kernel.
     update_ref_positions : Single-system variant
     """
-    total_atoms = positions.shape[0]
-    wp.launch(
-        kernel=_update_ref_positions_batch_overload[wp_dtype],
-        dim=total_atoms,
-        inputs=[positions, rebuild_flags, batch_idx, ref_positions],
+    _launch_update_ref_positions(
+        positions,
+        rebuild_flags,
+        batch_idx,
+        ref_positions,
+        wp_dtype,
+        device,
+        batched=True,
+    )
+
+
+# =============================================================================
+# Fused gather kernels for cell-list pair-centric layout
+# =============================================================================
+
+
+def _make_gather_positions_and_shifts_kernel(wp_dtype: type):
+    """Build the fused position/shift gather kernel for ``wp_dtype``.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        Warp scalar dtype (``wp.float32`` or ``wp.float64``).
+
+    Returns
+    -------
+    wp.Kernel
+        Kernel that writes ``dst_pos[i] = src_pos[perm[i]]`` and
+        ``dst_shifts[i] = src_shifts[perm[i]]``.
+    """
+    require_supported_dtype(wp_dtype, (wp.float32, wp.float64))
+    vec_dtype, _mat_dtype = dtype_info(wp_dtype, (wp.float32, wp.float64))
+
+    @wp.kernel(enable_backward=False, module="unique")
+    def _kernel(
+        src_pos: wp.array(dtype=vec_dtype),
+        src_shifts: wp.array(dtype=wp.vec3i),
+        perm: wp.array(dtype=wp.int32),
+        dst_pos: wp.array(dtype=vec_dtype),
+        dst_shifts: wp.array(dtype=wp.vec3i),
+    ) -> None:
+        """Gather positions and shifts under one permutation
+
+        Parameters
+        ----------
+        src_pos : wp.array, shape (total_atoms,), dtype=wp.vec3*
+            Source positions in original ordering.
+        src_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i
+            Source periodic shifts in original ordering.
+        perm : wp.array, shape (total_atoms,), dtype=wp.int32
+            Permutation mapping destination slots to source atom indices.
+        dst_pos : wp.array, shape (total_atoms,), dtype=wp.vec3*
+            OUTPUT: Gathered positions.
+        dst_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i
+            OUTPUT: Gathered periodic shifts.
+
+        Returns
+        -------
+        None
+            This function modifies the input arrays in-place.
+
+        Notes
+        -----
+        - Thread launch: One thread per destination slot.
+        - Modifies: ``dst_pos`` and ``dst_shifts``.
+
+        See Also
+        --------
+        get_gather_positions_and_shifts_kernel : Return the specialized fused gather kernel.
+        """
+        i = wp.tid()
+        idx = perm[i]
+        dst_pos[i] = src_pos[idx]
+        dst_shifts[i] = src_shifts[idx]
+
+    name = kernel_specialization_name("_gather_positions_and_shifts", wp_dtype=wp_dtype)
+    return set_fn_doc(
+        set_fn_name(_kernel, name),
+        _append_specialization_doc(
+            _kernel.__doc__,
+            dtype=wp_dtype,
+            entries=(("operation", "gather_positions_and_shifts"),),
+        ),
+    )
+
+
+@lru_cache(maxsize=None)
+def get_gather_positions_and_shifts_kernel(wp_dtype: type) -> wp.Kernel:
+    """Return the specialized fused position/shift gather kernel."""
+    return _make_gather_positions_and_shifts_kernel(wp_dtype)
+
+
+# =============================================================================
+# Neighbor matrix tail-fill kernel + launcher (used by cluster_tile + cell_list)
+# =============================================================================
+FILL_TAIL_BLOCK_DIM = 128
+
+
+def _make_fill_neighbor_matrix_tail_kernel(block_dim: int):
+    """Build a tiled kernel that fills unused neighbor-matrix columns.
+
+    Parameters
+    ----------
+    block_dim : int
+        Static tile width used by ``wp.tile_arange`` and ``wp.launch_tiled``.
+
+    Returns
+    -------
+    wp.Kernel
+        Tail-fill kernel specialized to ``block_dim``.
+    """
+    block_dim = int(block_dim)
+    if block_dim <= 0:
+        raise ValueError("block_dim must be positive")
+    block_dim_const = wp.constant(block_dim)
+
+    @wp.kernel(enable_backward=False, module=f"tail_fill_block_{block_dim}")
+    def _kernel(
+        num_neighbors: wp.array(dtype=wp.int32),
+        natom: wp.int32,
+        max_neighbors: wp.int32,
+        fill_value: wp.int32,
+        neighbor_matrix: wp.array2d(dtype=wp.int32),
+    ) -> None:
+        """Fill unused neighbor-matrix columns with ``fill_value``
+
+        Parameters
+        ----------
+        num_neighbors : wp.array, shape (natom,), dtype=wp.int32
+            Active-slot count for each atom row.
+        natom : wp.int32
+            Number of atom rows to process.
+        max_neighbors : wp.int32
+            Number of columns in ``neighbor_matrix``.
+        fill_value : wp.int32
+            Value written to unused columns.
+        neighbor_matrix : wp.array, shape (natom, max_neighbors), dtype=wp.int32
+            OUTPUT: Neighbor matrix whose inactive tail columns are filled.
+
+        Returns
+        -------
+        None
+            This function modifies the input arrays in-place.
+
+        Notes
+        -----
+        - Thread launch: Tiled launch with one tile per atom row.
+        - Modifies: Unused columns in ``neighbor_matrix``.
+        ``block_dim`` is a static specialization used by ``wp.tile_arange``.
+
+        See Also
+        --------
+        fill_neighbor_matrix_tail : Launch the specialized neighbor-matrix tail fill kernel.
+        """
+        row = wp.tid()
+        if row >= natom:
+            return
+        nn = num_neighbors[row]
+        if nn >= max_neighbors:
+            return
+        lane_tile = wp.tile_arange(block_dim_const, dtype=wp.int32)
+        lane = wp.untile(lane_tile)
+        k = nn + lane
+        while k < max_neighbors:
+            neighbor_matrix[row, k] = fill_value
+            k += block_dim_const
+
+    name = kernel_specialization_name(
+        "_fill_neighbor_matrix_tail",
+        features=(f"block_{block_dim}",),
+    )
+    return set_fn_doc(
+        set_fn_name(_kernel, name),
+        _append_specialization_doc(
+            _kernel.__doc__,
+            entries=(
+                ("operation", "fill_neighbor_matrix_tail"),
+                ("block_dim", block_dim),
+            ),
+        ),
+    )
+
+
+@lru_cache(maxsize=None)
+def _get_fill_neighbor_matrix_tail_kernel(block_dim: int):
+    """Return the cached tail-fill kernel for ``block_dim``."""
+    return _make_fill_neighbor_matrix_tail_kernel(int(block_dim))
+
+
+def fill_neighbor_matrix_tail(
+    num_neighbors: wp.array,
+    natom: int,
+    max_neighbors: int,
+    fill_value: int,
+    neighbor_matrix: wp.array,
+    device: str,
+    block_dim: int = FILL_TAIL_BLOCK_DIM,
+) -> None:
+    """Core warp launcher for coalesced tail-fill of the neighbor matrix.
+
+    Writes ``fill_value`` into every column of ``neighbor_matrix`` that lies
+    past the active-slot range ``[0, num_neighbors[i])``.  Pairs with
+    always-write neighbor-matrix builders (e.g.
+    :func:`nvalchemiops.neighbors.cluster_tile.query_cluster_tile`, pair-centric
+    cell-list queries) so callers can skip the per-step
+    ``neighbor_matrix.fill_(fill_value)`` prefill.
+
+    Parameters
+    ----------
+    num_neighbors : wp.array, shape (natom,), dtype=wp.int32
+        Per-atom active-slot counts.
+    natom : int
+        Number of atoms.
+    max_neighbors : int
+        Column count of ``neighbor_matrix``.
+    fill_value : int
+        Value written into unused columns.
+    neighbor_matrix : wp.array, shape (natom, max_neighbors), dtype=wp.int32
+        OUTPUT: tail columns filled with ``fill_value``.
+    device : str
+        Warp device string (e.g. ``"cuda:0"``).
+    block_dim : int
+        Static tile width for the specialized tail-fill kernel.
+
+    Returns
+    -------
+    None
+        Modifies ``neighbor_matrix`` in-place; see
+        :func:`_make_fill_neighbor_matrix_tail_kernel`.
+
+    Notes
+    -----
+    - This is a low-level warp interface.  Framework bindings should call
+      it through :mod:`nvalchemiops.torch.neighbors` /
+      :mod:`nvalchemiops.jax.neighbors`.
+
+    See Also
+    --------
+    _make_fill_neighbor_matrix_tail_kernel : Factory for the fill kernel.
+    """
+    block_dim = int(block_dim)
+    wp.launch_tiled(
+        kernel=_get_fill_neighbor_matrix_tail_kernel(block_dim),
+        dim=[int(natom)],
+        inputs=[
+            num_neighbors,
+            int(natom),
+            int(max_neighbors),
+            int(fill_value),
+            neighbor_matrix,
+        ],
+        block_dim=block_dim,
         device=device,
     )

@@ -37,7 +37,7 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.dynamics.optimizers import fire2_step
+from nvalchemiops.dynamics.optimizers import fire2_step, fire2_update
 from nvalchemiops.torch.fire2 import (
     fire2_step_coord,
     fire2_step_coord_cell,
@@ -66,6 +66,8 @@ FIRE2_DEFAULTS = dict(
     tmin=0.005,
     maxstep=0.1,
 )
+
+FIRE2_CELL_DEFAULTS = {**FIRE2_DEFAULTS, "cell_force_scale": 1.0}
 
 
 # ==============================================================================
@@ -162,6 +164,70 @@ def _fire2_reference_step(
         dt[s] *= inv
 
 
+def _fire2_reference_update(
+    velocities: np.ndarray,
+    forces: np.ndarray,
+    batch_idx: np.ndarray,
+    alpha: np.ndarray,
+    dt: np.ndarray,
+    nsteps_inc: np.ndarray,
+    *,
+    delaystep: int,
+    dtgrow: float,
+    dtshrink: float,
+    alphashrink: float,
+    alpha0: float,
+    tmax: float,
+    tmin: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Pure NumPy reference for fire2_update."""
+    N = velocities.shape[0]
+    M = alpha.shape[0]
+    dt_old = dt.copy()
+
+    velocities_half = velocities.copy()
+    for i in range(N):
+        s = batch_idx[i]
+        velocities_half[i] += dt_old[s] * forces[i]
+
+    vf = np.zeros(M, dtype=alpha.dtype)
+    v_sumsq = np.zeros(M, dtype=alpha.dtype)
+    f_sumsq = np.zeros(M, dtype=alpha.dtype)
+    for i in range(N):
+        s = batch_idx[i]
+        vf[s] += np.dot(velocities_half[i], forces[i])
+        v_sumsq[s] += np.dot(velocities_half[i], velocities_half[i])
+        f_sumsq[s] += np.dot(forces[i], forces[i])
+
+    for s in range(M):
+        if vf[s] > 0.0:
+            nsteps_inc[s] += 1
+            if nsteps_inc[s] > delaystep:
+                dt[s] = min(dtgrow * dt[s], tmax)
+                alpha[s] = alphashrink * alpha[s]
+        else:
+            nsteps_inc[s] = 0
+            alpha[s] = alpha0
+            dt[s] = max(dtshrink * dt[s], tmin)
+
+    for s in range(M):
+        ratio = math.sqrt(v_sumsq[s] / f_sumsq[s]) if f_sumsq[s] > 0.0 else 0.0
+        mix_a = 1.0 - alpha[s]
+        mix_b = alpha[s] * ratio
+        for i in range(N):
+            if batch_idx[i] == s:
+                velocities[i] = mix_a * velocities_half[i] + mix_b * forces[i]
+
+    max_norm = np.zeros(M, dtype=alpha.dtype)
+    for i in range(N):
+        s = batch_idx[i]
+        factor = -0.5 if vf[s] <= 0.0 else 1.0
+        step = factor * dt[s] * velocities[i]
+        max_norm[s] = max(max_norm[s], np.linalg.norm(step))
+
+    return vf, v_sumsq, f_sumsq, max_norm
+
+
 # ==============================================================================
 # Helpers
 # ==============================================================================
@@ -174,6 +240,127 @@ def make_fire2_scratch(M, dtype_scalar, device):
     f_sumsq = wp.zeros(M, dtype=dtype_scalar, device=device)
     max_norm = wp.zeros(M, dtype=dtype_scalar, device=device)
     return vf, v_sumsq, f_sumsq, max_norm
+
+
+def _pack_upper_triangular_cell_np(cell: np.ndarray) -> np.ndarray:
+    """Pack one upper-triangular cell matrix into the 2x3 FIRE2 layout."""
+    return np.array(
+        [
+            [cell[0, 0], cell[1, 0], cell[2, 0]],
+            [cell[1, 1], cell[2, 1], cell[2, 2]],
+        ],
+        dtype=cell.dtype,
+    )
+
+
+def _unpack_upper_triangular_cell_np(packed: np.ndarray) -> np.ndarray:
+    """Unpack the 2x3 FIRE2 cell layout into a 3x3 upper-triangular matrix."""
+    return np.array(
+        [
+            [packed[0, 0], 0.0, 0.0],
+            [packed[0, 1], packed[1, 0], 0.0],
+            [packed[0, 2], packed[1, 1], packed[1, 2]],
+        ],
+        dtype=packed.dtype,
+    )
+
+
+def _fractional_coordinates_np(
+    positions: np.ndarray, cells: np.ndarray, batch_idx: np.ndarray
+) -> np.ndarray:
+    """Compute fractional coordinates for row-major NumPy position arrays."""
+    cells_inv_t = np.linalg.inv(cells)[batch_idx].transpose(0, 2, 1)
+    return np.einsum("ni,nij->nj", positions, cells_inv_t)
+
+
+def _fire2_coord_cell_reference_step(
+    positions: np.ndarray,
+    velocities: np.ndarray,
+    forces: np.ndarray,
+    cell: np.ndarray,
+    cell_velocities: np.ndarray,
+    cell_force: np.ndarray,
+    alpha: np.ndarray,
+    dt: np.ndarray,
+    nsteps_inc: np.ndarray,
+    *,
+    delaystep: int,
+    dtgrow: float,
+    dtshrink: float,
+    alphashrink: float,
+    alpha0: float,
+    tmax: float,
+    tmin: float,
+    maxstep: float,
+    cell_force_scale: float = 1.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Single-system NumPy reference for the coupled FIRE2 variable-cell step."""
+    ext_vel = np.vstack([velocities, _pack_upper_triangular_cell_np(cell_velocities)])
+    cell_force_divisor = positions.shape[0] * cell_force_scale
+    ext_forces = np.vstack(
+        [forces, _pack_upper_triangular_cell_np(cell_force / cell_force_divisor)]
+    )
+
+    dt_old = dt[0]
+    alpha_old = alpha[0]
+
+    ext_vel_half = ext_vel + dt_old * ext_forces
+    vf = np.sum(ext_vel_half * ext_forces)
+    v_sumsq = np.sum(ext_vel_half * ext_vel_half)
+    f_sumsq = np.sum(ext_forces * ext_forces)
+
+    alpha_new = alpha_old
+    dt_new = dt_old
+    nsteps_new = nsteps_inc[0]
+    if vf > 0.0:
+        nsteps_new += 1
+        if nsteps_new > delaystep:
+            dt_new = min(dtgrow * dt_new, tmax)
+            alpha_new = alphashrink * alpha_new
+    else:
+        nsteps_new = 0
+        alpha_new = alpha0
+        dt_new = max(dtshrink * dt_new, tmin)
+
+    ratio = math.sqrt(v_sumsq / f_sumsq) if f_sumsq > 0.0 else 0.0
+    ext_vel_mixed = (1.0 - alpha_new) * ext_vel_half + alpha_new * ratio * ext_forces
+
+    velocities_mixed = ext_vel_mixed[: positions.shape[0]]
+    cell_velocities_mixed = _unpack_upper_triangular_cell_np(
+        ext_vel_mixed[positions.shape[0] :]
+    )
+
+    factor = -0.5 if vf <= 0.0 else 1.0
+    raw_cell_step = factor * dt_new * cell_velocities_mixed
+    transform = (cell + raw_cell_step) @ np.linalg.inv(cell)
+    raw_displacement = (
+        positions @ transform.T + factor * dt_new * velocities_mixed - positions
+    )
+    max_norm = np.linalg.norm(raw_displacement, axis=1).max()
+    inv = min(1.0, maxstep / max_norm) if max_norm > 0.0 else 1.0
+
+    positions_new = positions + inv * raw_displacement
+    cell_new = cell + inv * raw_cell_step
+    dt_out = np.array([dt_new * inv], dtype=dt.dtype)
+    alpha_out = np.array([alpha_new], dtype=alpha.dtype)
+    nsteps_out = np.array([nsteps_new], dtype=nsteps_inc.dtype)
+
+    if vf <= 0.0:
+        velocities_out = np.zeros_like(velocities_mixed)
+        cell_velocities_out = np.zeros_like(cell_velocities_mixed)
+    else:
+        velocities_out = velocities_mixed
+        cell_velocities_out = cell_velocities_mixed
+
+    return (
+        positions_new,
+        velocities_out,
+        cell_new,
+        cell_velocities_out,
+        alpha_out,
+        dt_out,
+        nsteps_out,
+    )
 
 
 def make_fire2_state(N, M, dtype_vec, dtype_scalar, np_dtype, device, *, rng=None):
@@ -321,6 +508,309 @@ def make_fire2_variable_state(
 
 class TestFire2Step:
     """Correctness tests for fire2_step against NumPy reference."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_fire2_update_matches_reference(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """fire2_update matches reference and leaves final apply to callers."""
+        rng = np.random.default_rng(401)
+        N, M = 9, 3
+        vel_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.2
+        forces_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.1
+        bidx_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
+
+        sys0 = bidx_np == 0
+        sys1 = bidx_np == 1
+        sys2 = bidx_np == 2
+        forces_np[sys0] = vel_np[sys0]
+        forces_np[sys1] = -vel_np[sys1]
+        forces_np[sys2] = 0.5 * vel_np[sys2]
+
+        alpha_np = np.array([0.07, 0.04, 0.11], dtype=np_dtype)
+        dt_np = np.array([0.05, 0.04, 0.03], dtype=np_dtype)
+        nsteps_np = np.array([5, 8, 4], dtype=np.int32)
+
+        vel_ref = vel_np.copy()
+        alpha_ref = alpha_np.copy()
+        dt_ref = dt_np.copy()
+        nsteps_ref = nsteps_np.copy()
+        vf_ref, v_sumsq_ref, f_sumsq_ref, max_norm_ref = _fire2_reference_update(
+            vel_ref,
+            forces_np,
+            bidx_np,
+            alpha_ref,
+            dt_ref,
+            nsteps_ref,
+            delaystep=FIRE2_DEFAULTS["delaystep"],
+            dtgrow=FIRE2_DEFAULTS["dtgrow"],
+            dtshrink=FIRE2_DEFAULTS["dtshrink"],
+            alphashrink=FIRE2_DEFAULTS["alphashrink"],
+            alpha0=FIRE2_DEFAULTS["alpha0"],
+            tmax=FIRE2_DEFAULTS["tmax"],
+            tmin=FIRE2_DEFAULTS["tmin"],
+        )
+
+        vel = wp.array(vel_np.copy(), dtype=dtype_vec, device=device)
+        forces = wp.array(forces_np.copy(), dtype=dtype_vec, device=device)
+        bidx = wp.array(bidx_np.copy(), dtype=wp.int32, device=device)
+        alpha = wp.array(alpha_np.copy(), dtype=dtype_scalar, device=device)
+        dt = wp.array(dt_np.copy(), dtype=dtype_scalar, device=device)
+        nsteps_inc = wp.array(nsteps_np.copy(), dtype=wp.int32, device=device)
+        vf = wp.array(
+            np.full(M, 999.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        v_sumsq = wp.array(
+            np.full(M, 999.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        f_sumsq = wp.array(
+            np.full(M, 999.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        max_norm = wp.array(
+            np.full(M, 999.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+
+        fire2_update(
+            vel,
+            forces,
+            bidx,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf,
+            v_sumsq,
+            f_sumsq,
+            max_norm,
+            delaystep=FIRE2_DEFAULTS["delaystep"],
+            dtgrow=FIRE2_DEFAULTS["dtgrow"],
+            dtshrink=FIRE2_DEFAULTS["dtshrink"],
+            alphashrink=FIRE2_DEFAULTS["alphashrink"],
+            alpha0=FIRE2_DEFAULTS["alpha0"],
+            tmax=FIRE2_DEFAULTS["tmax"],
+            tmin=FIRE2_DEFAULTS["tmin"],
+        )
+        wp.synchronize()
+
+        rtol = 1e-4 if np_dtype == np.float32 else 1e-10
+        np.testing.assert_allclose(vel.numpy(), vel_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(alpha.numpy(), alpha_ref, rtol=rtol)
+        np.testing.assert_allclose(dt.numpy(), dt_ref, rtol=rtol)
+        np.testing.assert_array_equal(nsteps_inc.numpy(), nsteps_ref)
+        np.testing.assert_allclose(vf.numpy(), vf_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(v_sumsq.numpy(), v_sumsq_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(f_sumsq.numpy(), f_sumsq_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(max_norm.numpy(), max_norm_ref, rtol=rtol, atol=1e-7)
+
+        uphill = vf_ref <= 0.0
+        assert uphill.any()
+        assert np.linalg.norm(vel.numpy()[bidx_np == np.nonzero(uphill)[0][0]]) > 0.0
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_fire2_update_can_skip_max_norm(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """fire2_update can leave max_norm untouched for custom final apply phases."""
+        rng = np.random.default_rng(402)
+        N, M = 8, 2
+        vel_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.2
+        forces_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.1
+        bidx_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
+        alpha_np = np.array([0.07, 0.04], dtype=np_dtype)
+        dt_np = np.array([0.05, 0.04], dtype=np_dtype)
+        nsteps_np = np.array([5, 8], dtype=np.int32)
+
+        vel_ref = vel_np.copy()
+        alpha_ref = alpha_np.copy()
+        dt_ref = dt_np.copy()
+        nsteps_ref = nsteps_np.copy()
+        vf_ref, v_sumsq_ref, f_sumsq_ref, _ = _fire2_reference_update(
+            vel_ref,
+            forces_np,
+            bidx_np,
+            alpha_ref,
+            dt_ref,
+            nsteps_ref,
+            delaystep=FIRE2_DEFAULTS["delaystep"],
+            dtgrow=FIRE2_DEFAULTS["dtgrow"],
+            dtshrink=FIRE2_DEFAULTS["dtshrink"],
+            alphashrink=FIRE2_DEFAULTS["alphashrink"],
+            alpha0=FIRE2_DEFAULTS["alpha0"],
+            tmax=FIRE2_DEFAULTS["tmax"],
+            tmin=FIRE2_DEFAULTS["tmin"],
+        )
+
+        vel = wp.array(vel_np.copy(), dtype=dtype_vec, device=device)
+        forces = wp.array(forces_np.copy(), dtype=dtype_vec, device=device)
+        bidx = wp.array(bidx_np.copy(), dtype=wp.int32, device=device)
+        alpha = wp.array(alpha_np.copy(), dtype=dtype_scalar, device=device)
+        dt = wp.array(dt_np.copy(), dtype=dtype_scalar, device=device)
+        nsteps_inc = wp.array(nsteps_np.copy(), dtype=wp.int32, device=device)
+        vf = wp.zeros(M, dtype=dtype_scalar, device=device)
+        v_sumsq = wp.zeros(M, dtype=dtype_scalar, device=device)
+        f_sumsq = wp.zeros(M, dtype=dtype_scalar, device=device)
+        max_norm = wp.array(
+            np.full(M, 123.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+
+        fire2_update(
+            vel,
+            forces,
+            bidx,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf,
+            v_sumsq,
+            f_sumsq,
+            max_norm,
+            compute_max_norm=False,
+            delaystep=FIRE2_DEFAULTS["delaystep"],
+            dtgrow=FIRE2_DEFAULTS["dtgrow"],
+            dtshrink=FIRE2_DEFAULTS["dtshrink"],
+            alphashrink=FIRE2_DEFAULTS["alphashrink"],
+            alpha0=FIRE2_DEFAULTS["alpha0"],
+            tmax=FIRE2_DEFAULTS["tmax"],
+            tmin=FIRE2_DEFAULTS["tmin"],
+        )
+        wp.synchronize()
+
+        rtol = 1e-4 if np_dtype == np.float32 else 1e-10
+        np.testing.assert_allclose(vel.numpy(), vel_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(alpha.numpy(), alpha_ref, rtol=rtol)
+        np.testing.assert_allclose(dt.numpy(), dt_ref, rtol=rtol)
+        np.testing.assert_array_equal(nsteps_inc.numpy(), nsteps_ref)
+        np.testing.assert_allclose(vf.numpy(), vf_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(v_sumsq.numpy(), v_sumsq_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(f_sumsq.numpy(), f_sumsq_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(max_norm.numpy(), np.full(M, 123.0, dtype=np_dtype))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_fire2_step_zero_atoms_returns(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """fire2_step exits early for zero atoms and zeroes scratch buffers."""
+        M = 2
+        positions = wp.empty(0, dtype=dtype_vec, device=device)
+        velocities = wp.empty(0, dtype=dtype_vec, device=device)
+        forces = wp.empty(0, dtype=dtype_vec, device=device)
+        alpha = wp.array(
+            np.array([0.07, 0.04], dtype=np_dtype),
+            dtype=dtype_scalar,
+            device=device,
+        )
+        dt = wp.array(
+            np.array([0.05, 0.04], dtype=np_dtype),
+            dtype=dtype_scalar,
+            device=device,
+        )
+        nsteps_inc = wp.array(
+            np.array([5, 8], dtype=np.int32), dtype=wp.int32, device=device
+        )
+        vf = wp.array(
+            np.full(M, 9.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        v_sumsq = wp.array(
+            np.full(M, 8.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        f_sumsq = wp.array(
+            np.full(M, 7.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        max_norm = wp.array(
+            np.full(M, 6.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+
+        alpha_before = alpha.numpy().copy()
+        dt_before = dt.numpy().copy()
+        nsteps_before = nsteps_inc.numpy().copy()
+
+        fire2_step(
+            positions,
+            velocities,
+            forces,
+            None,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf,
+            v_sumsq,
+            f_sumsq,
+            max_norm,
+            **FIRE2_DEFAULTS,
+        )
+        wp.synchronize()
+
+        np.testing.assert_allclose(alpha.numpy(), alpha_before)
+        np.testing.assert_allclose(dt.numpy(), dt_before)
+        np.testing.assert_array_equal(nsteps_inc.numpy(), nsteps_before)
+        np.testing.assert_allclose(vf.numpy(), np.zeros(M))
+        np.testing.assert_allclose(v_sumsq.numpy(), np.zeros(M))
+        np.testing.assert_allclose(f_sumsq.numpy(), np.zeros(M))
+        np.testing.assert_allclose(max_norm.numpy(), np.zeros(M))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
+    def test_fire2_update_zero_atoms_returns(
+        self, device, dtype_vec, dtype_scalar, np_dtype
+    ):
+        """fire2_update exits early for zero atoms and zeroes scratch buffers."""
+        M = 2
+        velocities = wp.empty(0, dtype=dtype_vec, device=device)
+        forces = wp.empty(0, dtype=dtype_vec, device=device)
+        alpha = wp.array(
+            np.array([0.07, 0.04], dtype=np_dtype),
+            dtype=dtype_scalar,
+            device=device,
+        )
+        dt = wp.array(
+            np.array([0.05, 0.04], dtype=np_dtype),
+            dtype=dtype_scalar,
+            device=device,
+        )
+        nsteps_inc = wp.array(
+            np.array([5, 8], dtype=np.int32), dtype=wp.int32, device=device
+        )
+        vf = wp.array(
+            np.full(M, 9.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        v_sumsq = wp.array(
+            np.full(M, 8.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        f_sumsq = wp.array(
+            np.full(M, 7.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+        max_norm = wp.array(
+            np.full(M, 6.0, dtype=np_dtype), dtype=dtype_scalar, device=device
+        )
+
+        alpha_before = alpha.numpy().copy()
+        dt_before = dt.numpy().copy()
+        nsteps_before = nsteps_inc.numpy().copy()
+
+        fire2_update(
+            velocities,
+            forces,
+            None,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf,
+            v_sumsq,
+            f_sumsq,
+            max_norm,
+            compute_max_norm=False,
+        )
+        wp.synchronize()
+
+        np.testing.assert_allclose(alpha.numpy(), alpha_before)
+        np.testing.assert_allclose(dt.numpy(), dt_before)
+        np.testing.assert_array_equal(nsteps_inc.numpy(), nsteps_before)
+        np.testing.assert_allclose(vf.numpy(), np.zeros(M))
+        np.testing.assert_allclose(v_sumsq.numpy(), np.zeros(M))
+        np.testing.assert_allclose(f_sumsq.numpy(), np.zeros(M))
+        np.testing.assert_allclose(max_norm.numpy(), np.zeros(M))
 
     @pytest.mark.parametrize("device", DEVICES)
     @pytest.mark.parametrize("dtype_vec,dtype_scalar,np_dtype", DTYPE_CONFIGS)
@@ -974,6 +1464,78 @@ class TestFire2TorchCoord:
             rtol=1e-8,
             atol=1e-7,
         )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_torch_fire2_zero_atoms_return(self, device, torch_dtype):
+        """Torch FIRE2 adapters return early for empty coordinate arrays."""
+        M = 2
+        positions = torch.empty(0, 3, dtype=torch_dtype, device=device)
+        velocities = torch.empty(0, 3, dtype=torch_dtype, device=device)
+        forces = torch.empty(0, 3, dtype=torch_dtype, device=device)
+        batch_idx = torch.empty(0, dtype=torch.int32, device=device)
+        alpha = torch.tensor([0.07, 0.04], dtype=torch_dtype, device=device)
+        dt = torch.tensor([0.05, 0.04], dtype=torch_dtype, device=device)
+        nsteps_inc = torch.tensor([5, 8], dtype=torch.int32, device=device)
+        vf = torch.full((M,), 9.0, dtype=torch_dtype, device=device)
+        v_sumsq = torch.full((M,), 8.0, dtype=torch_dtype, device=device)
+        f_sumsq = torch.full((M,), 7.0, dtype=torch_dtype, device=device)
+        max_norm = torch.full((M,), 6.0, dtype=torch_dtype, device=device)
+
+        alpha_before = alpha.clone()
+        dt_before = dt.clone()
+        nsteps_before = nsteps_inc.clone()
+
+        fire2_step_coord(
+            positions,
+            velocities,
+            forces,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf=vf,
+            v_sumsq=v_sumsq,
+            f_sumsq=f_sumsq,
+            max_norm=max_norm,
+            **FIRE2_DEFAULTS,
+        )
+
+        torch.testing.assert_close(alpha, alpha_before, atol=0, rtol=0)
+        torch.testing.assert_close(dt, dt_before, atol=0, rtol=0)
+        torch.testing.assert_close(nsteps_inc, nsteps_before, atol=0, rtol=0)
+        torch.testing.assert_close(vf, torch.zeros_like(vf), atol=0, rtol=0)
+        torch.testing.assert_close(v_sumsq, torch.zeros_like(v_sumsq), atol=0, rtol=0)
+        torch.testing.assert_close(f_sumsq, torch.zeros_like(f_sumsq), atol=0, rtol=0)
+        torch.testing.assert_close(max_norm, torch.zeros_like(max_norm), atol=0, rtol=0)
+
+        vf.fill_(9.0)
+        v_sumsq.fill_(8.0)
+        f_sumsq.fill_(7.0)
+        max_norm.fill_(6.0)
+
+        fire2_step_extended(
+            positions,
+            velocities,
+            forces,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf=vf,
+            v_sumsq=v_sumsq,
+            f_sumsq=f_sumsq,
+            max_norm=max_norm,
+            **FIRE2_DEFAULTS,
+        )
+
+        torch.testing.assert_close(alpha, alpha_before, atol=0, rtol=0)
+        torch.testing.assert_close(dt, dt_before, atol=0, rtol=0)
+        torch.testing.assert_close(nsteps_inc, nsteps_before, atol=0, rtol=0)
+        torch.testing.assert_close(vf, torch.zeros_like(vf), atol=0, rtol=0)
+        torch.testing.assert_close(v_sumsq, torch.zeros_like(v_sumsq), atol=0, rtol=0)
+        torch.testing.assert_close(f_sumsq, torch.zeros_like(f_sumsq), atol=0, rtol=0)
+        torch.testing.assert_close(max_norm, torch.zeros_like(max_norm), atol=0, rtol=0)
 
 
 # ==============================================================================
@@ -2266,7 +2828,7 @@ class TestFire2TorchCoordCell:
             alpha,
             dt,
             nsteps_inc,
-            **FIRE2_DEFAULTS,
+            **FIRE2_CELL_DEFAULTS,
         )
         torch.cuda.synchronize()
 
@@ -2280,222 +2842,495 @@ class TestFire2TorchCoordCell:
         assert torch.isfinite(dt).all(), "dt should be finite"
 
     @pytest.mark.parametrize("device", DEVICES)
-    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
-    def test_cell_step_matches_manual_pack(self, device, torch_dtype):
-        """fire2_step_coord_cell must match manually packed fire2_step_coord."""
-        rng = np.random.default_rng(51)
-        N, M = 60, 2
-        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
-        vec_type = wp.vec3f if torch_dtype == torch.float32 else wp.vec3d
-        mat_type = wp.mat33f if torch_dtype == torch.float32 else wp.mat33d
+    def test_cell_force_scale_is_extra_atom_count_multiplier(self, device):
+        """cell_force_scale is an extra multiplier after atom normalization."""
+        rng = np.random.default_rng(522)
+        N, M = 24, 2
+        torch_dtype = torch.float64
+        np_dtype = np.float64
 
-        # Create identical state for both methods
-        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
-        vel_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.01
-        forces_np = rng.standard_normal((N, 3)).astype(np_dtype)
-        bidx_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
-        alpha_np = np.full(M, 0.09, dtype=np_dtype)
-        dt_np = np.full(M, 0.05, dtype=np_dtype)
-        nsteps_np = np.zeros(M, dtype=np.int32)
-        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
-        cell_vel_np = np.zeros((M, 3, 3), dtype=np_dtype)
-        cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
-
-        # --- Method A: fire2_step_coord_cell ---
-        pos_a = torch.tensor(pos_np.copy(), dtype=torch_dtype, device=device)
-        vel_a = torch.tensor(vel_np.copy(), dtype=torch_dtype, device=device)
-        forces_a = torch.tensor(forces_np.copy(), dtype=torch_dtype, device=device)
-        bidx_a = torch.tensor(bidx_np.copy(), dtype=torch.int32, device=device)
-        alpha_a = torch.tensor(alpha_np.copy(), dtype=torch_dtype, device=device)
-        dt_a = torch.tensor(dt_np.copy(), dtype=torch_dtype, device=device)
-        nsteps_a = torch.tensor(nsteps_np.copy(), dtype=torch.int32, device=device)
-        cell_a = torch.tensor(cell_np.copy(), dtype=torch_dtype, device=device)
-        cell_vel_a = torch.tensor(cell_vel_np.copy(), dtype=torch_dtype, device=device)
-        cell_force_a = torch.tensor(
-            cell_force_np.copy(), dtype=torch_dtype, device=device
+        (pos_a, vel_a, forces, batch_idx, alpha_a, dt_a, nsteps_a, *_) = (
+            make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
+        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_a = torch.tensor(cell_np, dtype=torch_dtype, device=device)
+        cell_vel_a = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.2
+        cell_force = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
+
+        pos_b = pos_a.clone()
+        vel_b = vel_a.clone()
+        cell_b = cell_a.clone()
+        cell_vel_b = cell_vel_a.clone()
+        alpha_b = alpha_a.clone()
+        dt_b = dt_a.clone()
+        nsteps_b = nsteps_a.clone()
 
         fire2_step_coord_cell(
             pos_a,
             vel_a,
-            forces_a,
+            forces,
             cell_a,
             cell_vel_a,
-            cell_force_a,
-            bidx_a,
+            cell_force,
+            batch_idx,
             alpha_a,
             dt_a,
             nsteps_a,
             **FIRE2_DEFAULTS,
         )
-        torch.cuda.synchronize()
-
-        # --- Method B: manual pack + fire2_step (Warp) + unpack ---
-        from nvalchemiops.batch_utils import (
-            atom_ptr_to_batch_idx,
-            batch_idx_to_atom_ptr,
-        )
-        from nvalchemiops.dynamics.utils.cell_filter import (
-            extend_atom_ptr,
-            pack_forces_with_cell,
-            pack_positions_with_cell,
-            pack_velocities_with_cell,
-            unpack_positions_with_cell,
-            unpack_velocities_with_cell,
-        )
-
-        wp_device = wp.device_from_torch(torch.device(device))
-
-        wp_pos = wp.array(pos_np.copy(), dtype=vec_type, device=wp_device)
-        wp_vel = wp.array(vel_np.copy(), dtype=vec_type, device=wp_device)
-        wp_forces = wp.array(forces_np.copy(), dtype=vec_type, device=wp_device)
-        wp_bidx = wp.array(bidx_np.copy(), dtype=wp.int32, device=wp_device)
-        wp_cell = wp.array(cell_np.copy(), dtype=mat_type, device=wp_device)
-        wp_cell_vel = wp.array(cell_vel_np.copy(), dtype=mat_type, device=wp_device)
-        wp_cell_force = wp.array(cell_force_np.copy(), dtype=mat_type, device=wp_device)
-        scalar_dtype = wp.float32 if torch_dtype == torch.float32 else wp.float64
-        wp_alpha = wp.array(alpha_np.copy(), dtype=scalar_dtype, device=wp_device)
-        wp_dt = wp.array(dt_np.copy(), dtype=scalar_dtype, device=wp_device)
-        wp_nsteps = wp.array(nsteps_np.copy(), dtype=wp.int32, device=wp_device)
-
-        N_ext = N + 2 * M
-
-        # Compute atom_ptr / ext_atom_ptr for batched pack/unpack
-        wp_atom_counts = wp.zeros(M, dtype=wp.int32, device=wp_device)
-        wp_atom_ptr = wp.zeros(M + 1, dtype=wp.int32, device=wp_device)
-        batch_idx_to_atom_ptr(wp_bidx, wp_atom_counts, wp_atom_ptr)
-        wp_ext_atom_ptr = wp.zeros(M + 1, dtype=wp.int32, device=wp_device)
-        extend_atom_ptr(wp_atom_ptr, wp_ext_atom_ptr, device=wp_device)
-
-        # Pre-allocate extended arrays
-        ext_pos = wp.zeros(N_ext, dtype=vec_type, device=wp_device)
-        ext_vel = wp.zeros(N_ext, dtype=vec_type, device=wp_device)
-        ext_forces_b = wp.zeros(N_ext, dtype=vec_type, device=wp_device)
-        ext_bidx = wp.zeros(N_ext, dtype=wp.int32, device=wp_device)
-
-        pack_positions_with_cell(
-            wp_pos,
-            wp_cell,
-            ext_pos,
-            wp_atom_ptr,
-            wp_ext_atom_ptr,
-            device=wp_device,
-        )
-        pack_velocities_with_cell(
-            wp_vel,
-            wp_cell_vel,
-            ext_vel,
-            wp_atom_ptr,
-            wp_ext_atom_ptr,
-            device=wp_device,
-        )
-        pack_forces_with_cell(
-            wp_forces,
-            wp_cell_force,
-            ext_forces_b,
-            wp_atom_ptr,
-            wp_ext_atom_ptr,
-            device=wp_device,
-        )
-        atom_ptr_to_batch_idx(wp_ext_atom_ptr, ext_bidx)
-
-        vf, v_sumsq, f_sumsq, max_norm_buf = make_fire2_scratch(
-            M, scalar_dtype, wp_device
-        )
-
-        fire2_step(
-            ext_pos,
-            ext_vel,
-            ext_forces_b,
-            ext_bidx,
-            wp_alpha,
-            wp_dt,
-            wp_nsteps,
-            vf,
-            v_sumsq,
-            f_sumsq,
-            max_norm_buf,
+        fire2_step_coord_cell(
+            pos_b,
+            vel_b,
+            forces,
+            cell_b,
+            cell_vel_b,
+            cell_force * 2.0,
+            batch_idx,
+            alpha_b,
+            dt_b,
+            nsteps_b,
+            cell_force_scale=2.0,
             **FIRE2_DEFAULTS,
         )
+        torch.cuda.synchronize()
 
-        # Pre-allocate unpack outputs
-        wp_pos_b = wp.zeros(N, dtype=vec_type, device=wp_device)
-        wp_cell_b = wp.zeros(M, dtype=mat_type, device=wp_device)
-        wp_vel_b = wp.zeros(N, dtype=vec_type, device=wp_device)
-        wp_cell_vel_b = wp.zeros(M, dtype=mat_type, device=wp_device)
+        torch.testing.assert_close(pos_a, pos_b, atol=0, rtol=0)
+        torch.testing.assert_close(vel_a, vel_b, atol=0, rtol=0)
+        torch.testing.assert_close(cell_a, cell_b, atol=0, rtol=0)
+        torch.testing.assert_close(cell_vel_a, cell_vel_b, atol=0, rtol=0)
+        torch.testing.assert_close(alpha_a, alpha_b, atol=0, rtol=0)
+        torch.testing.assert_close(dt_a, dt_b, atol=0, rtol=0)
+        torch.testing.assert_close(nsteps_a, nsteps_b, atol=0, rtol=0)
 
-        unpack_positions_with_cell(
-            ext_pos,
-            wp_pos_b,
-            wp_cell_b,
-            atom_ptr=wp_atom_ptr,
-            ext_atom_ptr=wp_ext_atom_ptr,
-            device=wp_device,
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("cell_force_scale", [0.0, -1.0])
+    def test_cell_force_scale_rejects_non_positive(self, device, cell_force_scale):
+        """cell_force_scale must stay positive."""
+        rng = np.random.default_rng(523)
+        N, M = 6, 1
+        torch_dtype = torch.float64
+        np_dtype = np.float64
+
+        (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
+            make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
-        unpack_velocities_with_cell(
-            ext_vel,
-            wp_vel_b,
-            wp_cell_vel_b,
-            atom_ptr=wp_atom_ptr,
-            ext_atom_ptr=wp_ext_atom_ptr,
-            device=wp_device,
+        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
+        cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_force = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+
+        with pytest.raises(ValueError, match="cell_force_scale must be positive"):
+            fire2_step_coord_cell(
+                pos,
+                vel,
+                forces,
+                cell,
+                cell_vel,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps_inc,
+                cell_force_scale=cell_force_scale,
+                **FIRE2_DEFAULTS,
+            )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_cell_step_zero_atoms_returns(self, device, torch_dtype):
+        """fire2_step_coord_cell returns early and zeroes provided scratch buffers."""
+        M = 2
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+        positions = torch.empty(0, 3, dtype=torch_dtype, device=device)
+        velocities = torch.empty(0, 3, dtype=torch_dtype, device=device)
+        forces = torch.empty(0, 3, dtype=torch_dtype, device=device)
+        batch_idx = torch.empty(0, dtype=torch.int32, device=device)
+        cell = torch.tensor(
+            _make_upper_triangular_cell(M, np_dtype),
+            dtype=torch_dtype,
+            device=device,
         )
-        wp.synchronize()
+        cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_force = torch.ones(M, 3, 3, dtype=torch_dtype, device=device)
+        alpha = torch.tensor([0.07, 0.04], dtype=torch_dtype, device=device)
+        dt = torch.tensor([0.05, 0.04], dtype=torch_dtype, device=device)
+        nsteps_inc = torch.tensor([5, 8], dtype=torch.int32, device=device)
+        vf = torch.full((M,), 9.0, dtype=torch_dtype, device=device)
+        v_sumsq = torch.full((M,), 8.0, dtype=torch_dtype, device=device)
+        f_sumsq = torch.full((M,), 7.0, dtype=torch_dtype, device=device)
+        max_norm = torch.full((M,), 6.0, dtype=torch_dtype, device=device)
 
-        pos_b = wp.to_torch(wp_pos_b).reshape(-1, 3)
-        vel_b = wp.to_torch(wp_vel_b).reshape(-1, 3)
-        cell_b = wp.to_torch(wp_cell_b).reshape(M, 3, 3)
-        cell_vel_b = wp.to_torch(wp_cell_vel_b).reshape(M, 3, 3)
-        alpha_b = wp.to_torch(wp_alpha)
-        dt_b = wp.to_torch(wp_dt)
-        nsteps_b = wp.to_torch(wp_nsteps)
+        cell_before = cell.clone()
+        cell_vel_before = cell_vel.clone()
+        alpha_before = alpha.clone()
+        dt_before = dt.clone()
+        nsteps_before = nsteps_inc.clone()
 
-        # --- Compare ---
+        fire2_step_coord_cell(
+            positions,
+            velocities,
+            forces,
+            cell,
+            cell_vel,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            vf=vf,
+            v_sumsq=v_sumsq,
+            f_sumsq=f_sumsq,
+            max_norm=max_norm,
+            **FIRE2_CELL_DEFAULTS,
+        )
+
+        torch.testing.assert_close(cell, cell_before, atol=0, rtol=0)
+        torch.testing.assert_close(cell_vel, cell_vel_before, atol=0, rtol=0)
+        torch.testing.assert_close(alpha, alpha_before, atol=0, rtol=0)
+        torch.testing.assert_close(dt, dt_before, atol=0, rtol=0)
+        torch.testing.assert_close(nsteps_inc, nsteps_before, atol=0, rtol=0)
+        torch.testing.assert_close(vf, torch.zeros_like(vf), atol=0, rtol=0)
+        torch.testing.assert_close(v_sumsq, torch.zeros_like(v_sumsq), atol=0, rtol=0)
+        torch.testing.assert_close(f_sumsq, torch.zeros_like(f_sumsq), atol=0, rtol=0)
+        torch.testing.assert_close(max_norm, torch.zeros_like(max_norm), atol=0, rtol=0)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_cell_step_rejects_empty_system_in_batch(self, device):
+        """Each system must have at least one atom before cell-force normalization."""
+        rng = np.random.default_rng(524)
+        N, M = 4, 2
+        torch_dtype = torch.float64
+        np_dtype = np.float64
+        positions = torch.tensor(
+            rng.standard_normal((N, 3)).astype(np_dtype),
+            dtype=torch_dtype,
+            device=device,
+        )
+        velocities = torch.zeros_like(positions)
+        forces = torch.zeros_like(positions)
+        batch_idx = torch.zeros(N, dtype=torch.int32, device=device)
+        cell = torch.tensor(
+            _make_upper_triangular_cell(M, np_dtype, rng=rng),
+            dtype=torch_dtype,
+            device=device,
+        )
+        cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_force = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        alpha = torch.full((M,), 0.09, dtype=torch_dtype, device=device)
+        dt = torch.full((M,), 0.05, dtype=torch_dtype, device=device)
+        nsteps_inc = torch.zeros(M, dtype=torch.int32, device=device)
+
+        with pytest.raises(ValueError, match="at least one atom per system"):
+            fire2_step_coord_cell(
+                positions,
+                velocities,
+                forces,
+                cell,
+                cell_vel,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps_inc,
+                **FIRE2_CELL_DEFAULTS,
+            )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_cell_only_motion_preserves_fractional_coordinates(self, device):
+        """Cell-only coupled motion preserves atom fractional coordinates."""
+        rng = np.random.default_rng(525)
+        N, M = 12, 2
+        torch_dtype = torch.float64
+        np_dtype = np.float64
+        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
+        batch_idx_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
+        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_force_np = np.zeros((M, 3, 3), dtype=np_dtype)
+        cell_force_np[:, 0, 0] = np.array([0.5, -0.3], dtype=np_dtype)
+        cell_force_np[:, 1, 1] = np.array([0.2, 0.4], dtype=np_dtype)
+        cell_force_np[:, 2, 2] = np.array([-0.1, 0.3], dtype=np_dtype)
+
+        positions = torch.tensor(pos_np.copy(), dtype=torch_dtype, device=device)
+        velocities = torch.zeros(N, 3, dtype=torch_dtype, device=device)
+        forces = torch.zeros(N, 3, dtype=torch_dtype, device=device)
+        batch_idx = torch.tensor(batch_idx_np, dtype=torch.int32, device=device)
+        cell = torch.tensor(cell_np.copy(), dtype=torch_dtype, device=device)
+        cell_before = cell.clone()
+        cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_force = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
+        alpha = torch.full((M,), 0.09, dtype=torch_dtype, device=device)
+        dt = torch.full((M,), 0.05, dtype=torch_dtype, device=device)
+        nsteps_inc = torch.zeros(M, dtype=torch.int32, device=device)
+        defaults = {**FIRE2_CELL_DEFAULTS, "maxstep": 10.0}
+
+        frac_before = _fractional_coordinates_np(pos_np, cell_np, batch_idx_np)
+
+        fire2_step_coord_cell(
+            positions,
+            velocities,
+            forces,
+            cell,
+            cell_vel,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            **defaults,
+        )
+        torch.cuda.synchronize()
+
+        frac_after = _fractional_coordinates_np(
+            positions.cpu().numpy(), cell.cpu().numpy(), batch_idx_np
+        )
+        np.testing.assert_allclose(frac_after, frac_before, atol=1e-10, rtol=1e-10)
+        assert not torch.allclose(cell, cell_before)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_cell_step_matches_coupled_reference(self, device, torch_dtype):
+        """fire2_step_coord_cell matches the single-system coupled reference."""
+        rng = np.random.default_rng(51)
+        N, M = 6, 1
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
+        vel_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.2
+        forces_np = rng.standard_normal((N, 3)).astype(np_dtype)
+        bidx_np = np.zeros(N, dtype=np.int32)
+        alpha_np = np.array([0.07], dtype=np_dtype)
+        dt_np = np.array([0.05], dtype=np_dtype)
+        nsteps_np = np.array([5], dtype=np.int32)
+        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)[0]
+        cell_vel_np = rng.standard_normal((3, 3)).astype(np_dtype) * 0.05
+        cell_vel_np[np.triu_indices(3, k=1)] = 0.0
+        cell_force_np = rng.standard_normal((3, 3)).astype(np_dtype) * 0.3
+        cell_force_np[np.triu_indices(3, k=1)] = 0.0
+        defaults = {**FIRE2_CELL_DEFAULTS, "maxstep": 0.035}
+
+        pos = torch.tensor(pos_np.copy(), dtype=torch_dtype, device=device)
+        vel = torch.tensor(vel_np.copy(), dtype=torch_dtype, device=device)
+        forces = torch.tensor(forces_np.copy(), dtype=torch_dtype, device=device)
+        batch_idx = torch.tensor(bidx_np.copy(), dtype=torch.int32, device=device)
+        alpha = torch.tensor(alpha_np.copy(), dtype=torch_dtype, device=device)
+        dt = torch.tensor(dt_np.copy(), dtype=torch_dtype, device=device)
+        nsteps_inc = torch.tensor(nsteps_np.copy(), dtype=torch.int32, device=device)
+        cell = torch.tensor(cell_np[None, ...], dtype=torch_dtype, device=device)
+        cell_vel = torch.tensor(
+            cell_vel_np[None, ...], dtype=torch_dtype, device=device
+        )
+        cell_force = torch.tensor(
+            cell_force_np[None, ...], dtype=torch_dtype, device=device
+        )
+
+        fire2_step_coord_cell(
+            pos,
+            vel,
+            forces,
+            cell,
+            cell_vel,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            **defaults,
+        )
+        torch.cuda.synchronize()
+
+        (
+            pos_ref,
+            vel_ref,
+            cell_ref,
+            cell_vel_ref,
+            alpha_ref,
+            dt_ref,
+            nsteps_ref,
+        ) = _fire2_coord_cell_reference_step(
+            pos_np,
+            vel_np,
+            forces_np,
+            cell_np,
+            cell_vel_np,
+            cell_force_np,
+            alpha_np,
+            dt_np,
+            nsteps_np,
+            **defaults,
+        )
+
         rtol = 1e-4 if np_dtype == np.float32 else 1e-10
+        np.testing.assert_allclose(pos.cpu().numpy(), pos_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(vel.cpu().numpy(), vel_ref, rtol=rtol, atol=1e-7)
         np.testing.assert_allclose(
-            pos_a.cpu().numpy(),
-            pos_b.cpu().numpy(),
-            rtol=rtol,
-            atol=1e-7,
-            err_msg="Positions mismatch",
+            cell.cpu().numpy()[0], cell_ref, rtol=rtol, atol=1e-7
         )
         np.testing.assert_allclose(
-            vel_a.cpu().numpy(),
-            vel_b.cpu().numpy(),
-            rtol=rtol,
-            atol=1e-7,
-            err_msg="Velocities mismatch",
+            cell_vel.cpu().numpy()[0], cell_vel_ref, rtol=rtol, atol=1e-7
         )
+        np.testing.assert_allclose(alpha.cpu().numpy(), alpha_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(dt.cpu().numpy(), dt_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_array_equal(nsteps_inc.cpu().numpy(), nsteps_ref)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_cell_step_matches_batched_coupled_reference(self, device, torch_dtype):
+        """Batched variable-cell FIRE2 matches per-system coupled references."""
+        rng = np.random.default_rng(512)
+        atom_counts = [4, 7, 3]
+        M = len(atom_counts)
+        N = sum(atom_counts)
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+
+        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
+        vel_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.15
+        forces_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.2
+        bidx_np = np.concatenate(
+            [np.full(n, i, dtype=np.int32) for i, n in enumerate(atom_counts)]
+        )
+        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_vel_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.04
+        cell_vel_np[:, np.triu_indices(3, k=1)[0], np.triu_indices(3, k=1)[1]] = 0.0
+        cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.25
+        cell_force_np[:, np.triu_indices(3, k=1)[0], np.triu_indices(3, k=1)[1]] = 0.0
+
+        # Force one system downhill and one uphill so both branches are checked.
+        sys0 = bidx_np == 0
+        sys1 = bidx_np == 1
+        forces_np[sys0] = vel_np[sys0]
+        forces_np[sys1] = -vel_np[sys1]
+        cell_force_np[0] = cell_vel_np[0]
+        cell_force_np[1] = -cell_vel_np[1]
+
+        alpha_np = np.array([0.07, 0.04, 0.11], dtype=np_dtype)
+        dt_np = np.array([0.05, 0.04, 0.03], dtype=np_dtype)
+        nsteps_np = np.array([61, 8, 59], dtype=np.int32)
+        defaults = {**FIRE2_CELL_DEFAULTS, "maxstep": 0.045}
+
+        pos = torch.tensor(pos_np.copy(), dtype=torch_dtype, device=device)
+        vel = torch.tensor(vel_np.copy(), dtype=torch_dtype, device=device)
+        forces = torch.tensor(forces_np.copy(), dtype=torch_dtype, device=device)
+        batch_idx = torch.tensor(bidx_np.copy(), dtype=torch.int32, device=device)
+        cell = torch.tensor(cell_np.copy(), dtype=torch_dtype, device=device)
+        cell_vel = torch.tensor(cell_vel_np.copy(), dtype=torch_dtype, device=device)
+        cell_force = torch.tensor(
+            cell_force_np.copy(), dtype=torch_dtype, device=device
+        )
+        alpha = torch.tensor(alpha_np.copy(), dtype=torch_dtype, device=device)
+        dt = torch.tensor(dt_np.copy(), dtype=torch_dtype, device=device)
+        nsteps_inc = torch.tensor(nsteps_np.copy(), dtype=torch.int32, device=device)
+
+        fire2_step_coord_cell(
+            pos,
+            vel,
+            forces,
+            cell,
+            cell_vel,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            **defaults,
+        )
+        torch.cuda.synchronize()
+
+        pos_ref = pos_np.copy()
+        vel_ref = vel_np.copy()
+        cell_ref = cell_np.copy()
+        cell_vel_ref = cell_vel_np.copy()
+        alpha_ref = alpha_np.copy()
+        dt_ref = dt_np.copy()
+        nsteps_ref = nsteps_np.copy()
+
+        for sys, count in enumerate(atom_counts):
+            start = sum(atom_counts[:sys])
+            end = start + count
+            (
+                pos_ref[start:end],
+                vel_ref[start:end],
+                cell_ref[sys],
+                cell_vel_ref[sys],
+                alpha_ref[sys : sys + 1],
+                dt_ref[sys : sys + 1],
+                nsteps_ref[sys : sys + 1],
+            ) = _fire2_coord_cell_reference_step(
+                pos_np[start:end],
+                vel_np[start:end],
+                forces_np[start:end],
+                cell_np[sys],
+                cell_vel_np[sys],
+                cell_force_np[sys],
+                alpha_np[sys : sys + 1],
+                dt_np[sys : sys + 1],
+                nsteps_np[sys : sys + 1],
+                **defaults,
+            )
+
+        rtol = 1e-4 if np_dtype == np.float32 else 1e-10
+        np.testing.assert_allclose(pos.cpu().numpy(), pos_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(vel.cpu().numpy(), vel_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(cell.cpu().numpy(), cell_ref, rtol=rtol, atol=1e-7)
         np.testing.assert_allclose(
-            cell_a.cpu().numpy(),
-            cell_b.cpu().numpy(),
-            rtol=rtol,
-            atol=1e-7,
-            err_msg="Cell mismatch",
+            cell_vel.cpu().numpy(), cell_vel_ref, rtol=rtol, atol=1e-7
         )
-        np.testing.assert_allclose(
-            cell_vel_a.cpu().numpy(),
-            cell_vel_b.cpu().numpy(),
-            rtol=rtol,
-            atol=1e-7,
-            err_msg="Cell velocities mismatch",
+        np.testing.assert_allclose(alpha.cpu().numpy(), alpha_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_allclose(dt.cpu().numpy(), dt_ref, rtol=rtol, atol=1e-7)
+        np.testing.assert_array_equal(nsteps_inc.cpu().numpy(), nsteps_ref)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("torch_dtype", [torch.float32, torch.float64])
+    def test_cell_step_uphill_zeroes_atomic_and_cell_velocities(
+        self, device, torch_dtype
+    ):
+        """Uphill variable-cell FIRE2 zeroes both atomic and cell velocities."""
+        rng = np.random.default_rng(511)
+        N, M = 10, 1
+        np_dtype = np.float32 if torch_dtype == torch.float32 else np.float64
+
+        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
+        vel_np = rng.standard_normal((N, 3)).astype(np_dtype) * 0.2
+        forces_np = -vel_np.copy()
+        batch_idx_np = np.zeros(N, dtype=np.int32)
+        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell_vel_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.05
+        cell_vel_np[:, np.triu_indices(3, k=1)[0], np.triu_indices(3, k=1)[1]] = 0.0
+        cell_force_np = -cell_vel_np.copy()
+        alpha_np = np.array([0.04], dtype=np_dtype)
+        dt_np = np.array([0.05], dtype=np_dtype)
+        nsteps_np = np.array([7], dtype=np.int32)
+
+        pos = torch.tensor(pos_np, dtype=torch_dtype, device=device)
+        vel = torch.tensor(vel_np, dtype=torch_dtype, device=device)
+        forces = torch.tensor(forces_np, dtype=torch_dtype, device=device)
+        batch_idx = torch.tensor(batch_idx_np, dtype=torch.int32, device=device)
+        cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
+        cell_vel = torch.tensor(cell_vel_np, dtype=torch_dtype, device=device)
+        cell_force = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
+        alpha = torch.tensor(alpha_np, dtype=torch_dtype, device=device)
+        dt = torch.tensor(dt_np, dtype=torch_dtype, device=device)
+        nsteps_inc = torch.tensor(nsteps_np, dtype=torch.int32, device=device)
+
+        fire2_step_coord_cell(
+            pos,
+            vel,
+            forces,
+            cell,
+            cell_vel,
+            cell_force,
+            batch_idx,
+            alpha,
+            dt,
+            nsteps_inc,
+            **FIRE2_CELL_DEFAULTS,
         )
-        np.testing.assert_allclose(
-            alpha_a.cpu().numpy(),
-            alpha_b.cpu().numpy(),
-            rtol=rtol,
-            err_msg="Alpha mismatch",
-        )
-        np.testing.assert_allclose(
-            dt_a.cpu().numpy(),
-            dt_b.cpu().numpy(),
-            rtol=rtol,
-            err_msg="dt mismatch",
-        )
-        np.testing.assert_array_equal(
-            nsteps_a.cpu().numpy(),
-            nsteps_b.cpu().numpy(),
-        )
+        torch.cuda.synchronize()
+
+        torch.testing.assert_close(vel, torch.zeros_like(vel), atol=0, rtol=0)
+        torch.testing.assert_close(cell_vel, torch.zeros_like(cell_vel), atol=0, rtol=0)
+        assert alpha.item() == pytest.approx(FIRE2_DEFAULTS["alpha0"])
+        assert dt.item() <= dt_np[0] * FIRE2_DEFAULTS["dtshrink"] + 1e-12
+        assert nsteps_inc.item() == 0
 
     @pytest.mark.parametrize("device", DEVICES)
     def test_cell_step_with_scratch_buffers(self, device):
@@ -2515,7 +3350,6 @@ class TestFire2TorchCoordCell:
         cell_force = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
 
         N_ext = N + 2 * M
-        ext_pos = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         ext_vel = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         ext_forces = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         vf = torch.ones(M, dtype=torch_dtype, device=device) * 999.0
@@ -2535,18 +3369,55 @@ class TestFire2TorchCoordCell:
             alpha,
             dt,
             nsteps_inc,
-            ext_positions=ext_pos,
             ext_velocities=ext_vel,
             ext_forces=ext_forces,
             vf=vf,
             v_sumsq=v_sumsq,
             f_sumsq=f_sumsq,
             max_norm=max_norm_buf,
-            **FIRE2_DEFAULTS,
+            **FIRE2_CELL_DEFAULTS,
         )
         torch.cuda.synchronize()
 
         assert not torch.allclose(pos, pos_before), "Positions should be updated"
+        assert torch.isfinite(pos).all()
+        assert torch.isfinite(cell).all()
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_cell_step_deprecated_ext_positions_warns(self, device):
+        """The deprecated ext_positions keyword is accepted with a warning."""
+        rng = np.random.default_rng(521)
+        N, M = 20, 2
+        torch_dtype = torch.float64
+        np_dtype = np.float64
+
+        (pos, vel, forces, batch_idx, alpha, dt, nsteps_inc, *_) = (
+            make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
+        )
+        cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
+        cell = torch.tensor(cell_np, dtype=torch_dtype, device=device)
+        cell_vel = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
+        cell_force = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
+        ext_positions = torch.empty(N + 2 * M, 3, dtype=torch_dtype, device=device)
+
+        with pytest.warns(DeprecationWarning, match="ext_positions"):
+            fire2_step_coord_cell(
+                pos,
+                vel,
+                forces,
+                cell,
+                cell_vel,
+                cell_force,
+                batch_idx,
+                alpha,
+                dt,
+                nsteps_inc,
+                ext_positions=ext_positions,
+                **FIRE2_CELL_DEFAULTS,
+            )
+
+        torch.cuda.synchronize()
         assert torch.isfinite(pos).all()
         assert torch.isfinite(cell).all()
 
@@ -2568,7 +3439,6 @@ class TestFire2TorchCoordCell:
         cell_force = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
 
         N_ext = N + 2 * M
-        ext_pos = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         ext_vel = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         ext_forces = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         vf = torch.empty(M, dtype=torch_dtype, device=device)
@@ -2589,14 +3459,13 @@ class TestFire2TorchCoordCell:
             alpha,
             dt,
             nsteps_inc,
-            ext_positions=ext_pos,
             ext_velocities=ext_vel,
             ext_forces=ext_forces,
             vf=vf,
             v_sumsq=v_sumsq,
             f_sumsq=f_sumsq,
             max_norm=max_norm_buf,
-            **FIRE2_DEFAULTS,
+            **FIRE2_CELL_DEFAULTS,
         )
 
         # Pre-compute static metadata for subsequent reuse.
@@ -2643,7 +3512,6 @@ class TestFire2TorchCoordCell:
                 nsteps_inc,
                 atom_ptr=atom_ptr_t,
                 ext_atom_ptr=ext_atom_ptr_t,
-                ext_positions=ext_pos,
                 ext_velocities=ext_vel,
                 ext_forces=ext_forces,
                 ext_batch_idx=ext_bidx,
@@ -2651,7 +3519,7 @@ class TestFire2TorchCoordCell:
                 v_sumsq=v_sumsq,
                 f_sumsq=f_sumsq,
                 max_norm=max_norm_buf,
-                **FIRE2_DEFAULTS,
+                **FIRE2_CELL_DEFAULTS,
             )
 
         torch.cuda.synchronize()
@@ -2691,7 +3559,7 @@ class TestFire2TorchCoordCell:
             alpha,
             dt,
             nsteps_inc,
-            **FIRE2_DEFAULTS,
+            **FIRE2_CELL_DEFAULTS,
         )
         torch.cuda.synchronize()
 
@@ -2729,7 +3597,7 @@ class TestFire2TorchCoordCell:
                 alpha,
                 dt,
                 nsteps_inc,
-                **FIRE2_DEFAULTS,
+                **FIRE2_CELL_DEFAULTS,
             )
 
         torch.cuda.synchronize()
@@ -2739,14 +3607,13 @@ class TestFire2TorchCoordCell:
         assert torch.isfinite(cell_vel).all(), "Cell velocities should stay finite"
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_cell_step_single_system_parity(self, device):
-        """M==1 produces identical results to batched path."""
+    def test_cell_step_single_system_metadata_parity(self, device):
+        """M==1 matches when metadata is supplied explicitly."""
         rng = np.random.default_rng(56)
         N, M = 40, 1
         torch_dtype = torch.float64
         np_dtype = np.float64
 
-        # Create identical state for both runs
         (pos_a, vel_a, forces, batch_idx, alpha_a, dt_a, nsteps_a, *_) = (
             make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
         )
@@ -2764,7 +3631,6 @@ class TestFire2TorchCoordCell:
         dt_b = dt_a.clone()
         nsteps_b = nsteps_a.clone()
 
-        # Run A: M==1 (convenience API)
         fire2_step_coord_cell(
             pos_a,
             vel_a,
@@ -2776,10 +3642,9 @@ class TestFire2TorchCoordCell:
             alpha_a,
             dt_a,
             nsteps_a,
-            **FIRE2_DEFAULTS,
+            **FIRE2_CELL_DEFAULTS,
         )
 
-        # Run B: Force batched path by providing atom_ptr
         from nvalchemiops.batch_utils import (
             atom_ptr_to_batch_idx as _a2b,
         )
@@ -2808,102 +3673,26 @@ class TestFire2TorchCoordCell:
             wp.from_torch(ext_atom_ptr, dtype=wp.int32),
             wp.from_torch(ext_bidx, dtype=wp.int32),
         )
-
-        # Use M=1 but provide atom_ptr to force batched pack/unpack path.
-        # Run B: Manual pack/fire2_step/unpack using batched kernels.
-        from nvalchemiops.dynamics.optimizers.fire2 import (
-            fire2_step as _fire2_step,
-        )
-        from nvalchemiops.dynamics.utils.cell_filter import (
-            pack_forces_with_cell,
-            pack_positions_with_cell,
-            pack_velocities_with_cell,
-            unpack_positions_with_cell,
-            unpack_velocities_with_cell,
-        )
-
-        vec_type = wp.vec3d
-        mat_type = wp.mat33d
-        wp_device = wp.device_from_torch(device)
-
-        wp_pos_b = wp.from_torch(pos_b, dtype=vec_type)
-        wp_vel_b = wp.from_torch(vel_b, dtype=vec_type)
-        wp_forces = wp.from_torch(forces, dtype=vec_type)
-        wp_cell_b = wp.from_torch(cell_b, dtype=mat_type)
-        wp_cell_vel_b = wp.from_torch(cell_vel_b, dtype=mat_type)
-        wp_cell_force = wp.from_torch(cell_force, dtype=mat_type)
-        wp_atom_ptr = wp.from_torch(atom_ptr, dtype=wp.int32)
-        wp_ext_atom_ptr = wp.from_torch(ext_atom_ptr, dtype=wp.int32)
-
-        ext_pos = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         ext_vel = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         ext_forces = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
-        wp_ext_pos = wp.from_torch(ext_pos, dtype=vec_type)
-        wp_ext_vel = wp.from_torch(ext_vel, dtype=vec_type)
-        wp_ext_forces = wp.from_torch(ext_forces, dtype=vec_type)
 
-        # Pack using batched kernels
-        pack_positions_with_cell(
-            wp_pos_b,
-            wp_cell_b,
-            wp_ext_pos,
-            wp_atom_ptr,
-            wp_ext_atom_ptr,
-            device=wp_device,
-        )
-        pack_velocities_with_cell(
-            wp_vel_b,
-            wp_cell_vel_b,
-            wp_ext_vel,
-            wp_atom_ptr,
-            wp_ext_atom_ptr,
-            device=wp_device,
-        )
-        pack_forces_with_cell(
-            wp_forces,
-            wp_cell_force,
-            wp_ext_forces,
-            wp_atom_ptr,
-            wp_ext_atom_ptr,
-            device=wp_device,
-        )
-
-        vf = torch.zeros(M, dtype=torch_dtype, device=device)
-        v_sumsq = torch.zeros(M, dtype=torch_dtype, device=device)
-        f_sumsq = torch.zeros(M, dtype=torch_dtype, device=device)
-        max_norm_buf = torch.zeros(M, dtype=torch_dtype, device=device)
-
-        _fire2_step(
-            wp_ext_pos,
-            wp_ext_vel,
-            wp_ext_forces,
-            wp.from_torch(ext_bidx, dtype=wp.int32),
-            wp.from_torch(alpha_b),
-            wp.from_torch(dt_b),
-            wp.from_torch(nsteps_b, dtype=wp.int32),
-            wp.from_torch(vf),
-            wp.from_torch(v_sumsq),
-            wp.from_torch(f_sumsq),
-            wp.from_torch(max_norm_buf),
-            **FIRE2_DEFAULTS,
-        )
-
-        # Unpack using batched kernels
-        unpack_positions_with_cell(
-            wp_ext_pos,
-            wp_pos_b,
-            wp_cell_b,
-            atom_ptr=wp_atom_ptr,
-            ext_atom_ptr=wp_ext_atom_ptr,
-            device=wp_device,
-        )
-        unpack_velocities_with_cell(
-            wp_ext_vel,
-            wp_vel_b,
-            wp_cell_vel_b,
-            atom_ptr=wp_atom_ptr,
-            ext_atom_ptr=wp_ext_atom_ptr,
-            device=wp_device,
+        fire2_step_coord_cell(
+            pos_b,
+            vel_b,
+            forces,
+            cell_b,
+            cell_vel_b,
+            cell_force,
+            batch_idx,
+            alpha_b,
+            dt_b,
+            nsteps_b,
+            atom_ptr=atom_ptr,
+            ext_atom_ptr=ext_atom_ptr,
+            ext_velocities=ext_vel,
+            ext_forces=ext_forces,
+            ext_batch_idx=ext_bidx,
+            **FIRE2_CELL_DEFAULTS,
         )
 
         torch.cuda.synchronize()
@@ -2974,7 +3763,7 @@ class TestFire2TorchCoordCell:
                 alpha,
                 dt,
                 nsteps_inc,
-                **FIRE2_DEFAULTS,
+                **FIRE2_CELL_DEFAULTS,
             )
 
         torch.cuda.synchronize()
@@ -2987,49 +3776,52 @@ class TestFire2TorchCoordCell:
         assert torch.isfinite(cell_vel).all(), "Cell velocities should stay finite"
 
     @pytest.mark.parametrize("device", DEVICES)
-    def test_fire2_step_extended_parity(self, device):
-        """fire2_step_extended matches fire2_step_coord_cell over multiple steps."""
+    def test_fire2_step_extended_differs_from_coupled_cell_update(self, device):
+        """The generic extended path does not reproduce coupled cell kinematics."""
         rng = np.random.default_rng(58)
-        N, M = 40, 2
+        N, M = 12, 2
         torch_dtype = torch.float64
         np_dtype = np.float64
-        num_steps = 5
 
-        # --- Path A: fire2_step_coord_cell (convenience API) ---
-        (pos_a, vel_a, forces_a, batch_idx, alpha_a, dt_a, nsteps_a, *_) = (
-            make_fire2_torch_state(N, M, torch_dtype, device, rng=rng)
-        )
+        pos_np = rng.standard_normal((N, 3)).astype(np_dtype)
+        vel_np = np.zeros((N, 3), dtype=np_dtype)
+        forces_np = np.zeros((N, 3), dtype=np_dtype)
+        batch_idx_np = np.repeat(np.arange(M, dtype=np.int32), N // M)
         cell_np = _make_upper_triangular_cell(M, np_dtype, rng=rng)
-        cell_a = torch.tensor(cell_np, dtype=torch_dtype, device=device)
+        cell_force_np = np.zeros((M, 3, 3), dtype=np_dtype)
+        cell_force_np[:, 0, 0] = np.array([0.8, -0.6], dtype=np_dtype)
+        cell_force_np[:, 1, 1] = np.array([0.4, 0.5], dtype=np_dtype)
+        cell_force_np[:, 2, 2] = np.array([-0.3, 0.2], dtype=np_dtype)
+        alpha_np = np.full(M, 0.09, dtype=np_dtype)
+        dt_np = np.full(M, 0.05, dtype=np_dtype)
+        nsteps_np = np.zeros(M, dtype=np.int32)
+
+        pos_a = torch.tensor(pos_np.copy(), dtype=torch_dtype, device=device)
+        vel_a = torch.tensor(vel_np.copy(), dtype=torch_dtype, device=device)
+        forces_a = torch.tensor(forces_np.copy(), dtype=torch_dtype, device=device)
+        batch_idx = torch.tensor(batch_idx_np.copy(), dtype=torch.int32, device=device)
+        cell_a = torch.tensor(cell_np.copy(), dtype=torch_dtype, device=device)
         cell_vel_a = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
-        cell_force_np = rng.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
-        cell_force_a = torch.tensor(cell_force_np, dtype=torch_dtype, device=device)
-
-        for _ in range(num_steps):
-            fire2_step_coord_cell(
-                pos_a,
-                vel_a,
-                forces_a,
-                cell_a,
-                cell_vel_a,
-                cell_force_a,
-                batch_idx,
-                alpha_a,
-                dt_a,
-                nsteps_a,
-                **FIRE2_DEFAULTS,
-            )
-
-        # --- Path B: manual pack + fire2_step_extended + manual unpack ---
-        rng2 = np.random.default_rng(58)  # same seed for identical initial data
-        (pos_b, vel_b, forces_b, batch_idx_b, alpha_b, dt_b, nsteps_b, *_) = (
-            make_fire2_torch_state(N, M, torch_dtype, device, rng=rng2)
+        cell_force_a = torch.tensor(
+            cell_force_np.copy(), dtype=torch_dtype, device=device
         )
-        cell_np_b = _make_upper_triangular_cell(M, np_dtype, rng=rng2)
-        cell_b = torch.tensor(cell_np_b, dtype=torch_dtype, device=device)
-        cell_vel_b = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
-        cell_force_np_b = rng2.standard_normal((M, 3, 3)).astype(np_dtype) * 0.01
-        cell_force_b = torch.tensor(cell_force_np_b, dtype=torch_dtype, device=device)
+        alpha_a = torch.tensor(alpha_np.copy(), dtype=torch_dtype, device=device)
+        dt_a = torch.tensor(dt_np.copy(), dtype=torch_dtype, device=device)
+        nsteps_a = torch.tensor(nsteps_np.copy(), dtype=torch.int32, device=device)
+
+        fire2_step_coord_cell(
+            pos_a,
+            vel_a,
+            forces_a,
+            cell_a,
+            cell_vel_a,
+            cell_force_a,
+            batch_idx,
+            alpha_a,
+            dt_a,
+            nsteps_a,
+            **FIRE2_CELL_DEFAULTS,
+        )
 
         from nvalchemiops.batch_utils import (
             atom_ptr_to_batch_idx as _a2b,
@@ -3051,6 +3843,21 @@ class TestFire2TorchCoordCell:
         vec_type = wp.vec3d
         mat_type = wp.mat33d
         wp_device = wp.device_from_torch(device)
+
+        pos_b = torch.tensor(pos_np.copy(), dtype=torch_dtype, device=device)
+        vel_b = torch.tensor(vel_np.copy(), dtype=torch_dtype, device=device)
+        forces_b = torch.tensor(forces_np.copy(), dtype=torch_dtype, device=device)
+        batch_idx_b = torch.tensor(
+            batch_idx_np.copy(), dtype=torch.int32, device=device
+        )
+        cell_b = torch.tensor(cell_np.copy(), dtype=torch_dtype, device=device)
+        cell_vel_b = torch.zeros(M, 3, 3, dtype=torch_dtype, device=device)
+        cell_force_b = torch.tensor(
+            cell_force_np.copy(), dtype=torch_dtype, device=device
+        )
+        alpha_b = torch.tensor(alpha_np.copy(), dtype=torch_dtype, device=device)
+        dt_b = torch.tensor(dt_np.copy(), dtype=torch_dtype, device=device)
+        nsteps_b = torch.tensor(nsteps_np.copy(), dtype=torch.int32, device=device)
 
         atom_ptr = torch.zeros(M + 1, dtype=torch.int32, device=device)
         atom_counts = torch.zeros(M, dtype=torch.int32, device=device)
@@ -3079,73 +3886,82 @@ class TestFire2TorchCoordCell:
         ext_vel = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
         ext_forces = torch.empty(N_ext, 3, dtype=torch_dtype, device=device)
 
-        for _ in range(num_steps):
-            # Pack
-            pack_positions_with_cell(
-                wp.from_torch(pos_b, dtype=vec_type),
-                wp.from_torch(cell_b, dtype=mat_type),
-                wp.from_torch(ext_pos, dtype=vec_type),
-                wp_atom_ptr,
-                wp_ext_atom_ptr,
-                device=wp_device,
-                batch_idx=wp_bidx,
-            )
-            pack_velocities_with_cell(
-                wp.from_torch(vel_b, dtype=vec_type),
-                wp.from_torch(cell_vel_b, dtype=mat_type),
-                wp.from_torch(ext_vel, dtype=vec_type),
-                wp_atom_ptr,
-                wp_ext_atom_ptr,
-                device=wp_device,
-                batch_idx=wp_bidx,
-            )
-            pack_forces_with_cell(
-                wp.from_torch(forces_b, dtype=vec_type),
-                wp.from_torch(cell_force_b, dtype=mat_type),
-                wp.from_torch(ext_forces, dtype=vec_type),
-                wp_atom_ptr,
-                wp_ext_atom_ptr,
-                device=wp_device,
-                batch_idx=wp_bidx,
-            )
+        pack_positions_with_cell(
+            wp.from_torch(pos_b, dtype=vec_type),
+            wp.from_torch(cell_b, dtype=mat_type),
+            wp.from_torch(ext_pos, dtype=vec_type),
+            wp_atom_ptr,
+            wp_ext_atom_ptr,
+            device=wp_device,
+            batch_idx=wp_bidx,
+        )
+        pack_velocities_with_cell(
+            wp.from_torch(vel_b, dtype=vec_type),
+            wp.from_torch(cell_vel_b, dtype=mat_type),
+            wp.from_torch(ext_vel, dtype=vec_type),
+            wp_atom_ptr,
+            wp_ext_atom_ptr,
+            device=wp_device,
+            batch_idx=wp_bidx,
+        )
+        atom_counts_for_scale = torch.tensor(
+            np.bincount(batch_idx_np, minlength=M),
+            dtype=torch_dtype,
+            device=device,
+        ).reshape(M, 1, 1)
+        normalized_cell_force_b = (cell_force_b / atom_counts_for_scale).contiguous()
+        pack_forces_with_cell(
+            wp.from_torch(forces_b, dtype=vec_type),
+            wp.from_torch(normalized_cell_force_b, dtype=mat_type),
+            wp.from_torch(ext_forces, dtype=vec_type),
+            wp_atom_ptr,
+            wp_ext_atom_ptr,
+            device=wp_device,
+            batch_idx=wp_bidx,
+        )
 
-            # FIRE2 on extended arrays
-            fire2_step_extended(
-                ext_pos,
-                ext_vel,
-                ext_forces,
-                ext_bidx,
-                alpha_b,
-                dt_b,
-                nsteps_b,
-                **FIRE2_DEFAULTS,
-            )
+        fire2_step_extended(
+            ext_pos,
+            ext_vel,
+            ext_forces,
+            ext_bidx,
+            alpha_b,
+            dt_b,
+            nsteps_b,
+            **FIRE2_DEFAULTS,
+        )
 
-            # Unpack
-            unpack_positions_with_cell(
-                wp.from_torch(ext_pos, dtype=vec_type),
-                wp.from_torch(pos_b, dtype=vec_type),
-                wp.from_torch(cell_b, dtype=mat_type),
-                atom_ptr=wp_atom_ptr,
-                ext_atom_ptr=wp_ext_atom_ptr,
-                device=wp_device,
-                batch_idx=wp_bidx,
-            )
-            unpack_velocities_with_cell(
-                wp.from_torch(ext_vel, dtype=vec_type),
-                wp.from_torch(vel_b, dtype=vec_type),
-                wp.from_torch(cell_vel_b, dtype=mat_type),
-                atom_ptr=wp_atom_ptr,
-                ext_atom_ptr=wp_ext_atom_ptr,
-                device=wp_device,
-                batch_idx=wp_bidx,
-            )
+        unpack_positions_with_cell(
+            wp.from_torch(ext_pos, dtype=vec_type),
+            wp.from_torch(pos_b, dtype=vec_type),
+            wp.from_torch(cell_b, dtype=mat_type),
+            atom_ptr=wp_atom_ptr,
+            ext_atom_ptr=wp_ext_atom_ptr,
+            device=wp_device,
+            batch_idx=wp_bidx,
+        )
+        unpack_velocities_with_cell(
+            wp.from_torch(ext_vel, dtype=vec_type),
+            wp.from_torch(vel_b, dtype=vec_type),
+            wp.from_torch(cell_vel_b, dtype=mat_type),
+            atom_ptr=wp_atom_ptr,
+            ext_atom_ptr=wp_ext_atom_ptr,
+            device=wp_device,
+            batch_idx=wp_bidx,
+        )
 
         torch.cuda.synchronize()
 
-        torch.testing.assert_close(pos_a, pos_b, atol=0, rtol=0)
-        torch.testing.assert_close(vel_a, vel_b, atol=0, rtol=0)
-        torch.testing.assert_close(cell_a, cell_b, atol=0, rtol=0)
-        torch.testing.assert_close(cell_vel_a, cell_vel_b, atol=0, rtol=0)
-        torch.testing.assert_close(alpha_a, alpha_b, atol=0, rtol=0)
-        torch.testing.assert_close(dt_a, dt_b, atol=0, rtol=0)
+        frac_before = _fractional_coordinates_np(pos_np, cell_np, batch_idx_np)
+        frac_after_coupled = _fractional_coordinates_np(
+            pos_a.cpu().numpy(), cell_a.cpu().numpy(), batch_idx_np
+        )
+        frac_after_extended = _fractional_coordinates_np(
+            pos_b.cpu().numpy(), cell_b.cpu().numpy(), batch_idx_np
+        )
+
+        np.testing.assert_allclose(
+            frac_after_coupled, frac_before, atol=1e-10, rtol=1e-10
+        )
+        assert not np.allclose(pos_a.cpu().numpy(), pos_b.cpu().numpy())
+        assert not np.allclose(frac_after_extended, frac_before)

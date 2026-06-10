@@ -24,6 +24,10 @@ This module provides three highly-fused kernels that implement a complete
 FIRE2 step in only **3 kernel launches**, minimizing Python-side and
 launch overhead.
 
+The public :func:`fire2_update` helper exposes only the reduction, adaptive
+parameter update, and velocity-mixing phase for callers that need a custom
+final apply step, such as coupled variable-cell optimization.
+
 FIRE2 ALGORITHM (Guenole et al., 2020)
 =======================================
 
@@ -76,6 +80,8 @@ import warp as wp
 
 from nvalchemiops.dynamics.utils.kernel_functions import compute_vf_vv_ff
 from nvalchemiops.segment_ops import compute_ept
+
+__all__ = ["fire2_step", "fire2_update"]
 
 # =============================================================================
 # Kernel 1: Triple inner-product reduction (deferred half-step)
@@ -251,6 +257,7 @@ def _fire2_fused_mix_maxnorm_kernel(
     alpha: wp.array(dtype=Any),
     nsteps_inc: wp.array(dtype=wp.int32),
     max_norm: wp.array(dtype=Any),
+    compute_max_norm: wp.bool,
     N: wp.int32,
     elems_per_thread: wp.int32,
     delaystep: wp.int32,
@@ -310,6 +317,9 @@ def _fire2_fused_mix_maxnorm_kernel(
         Consecutive positive-power step counter. Modified by first atom per segment.
     max_norm : wp.array, shape (M,), dtype float32/float64
         OUTPUT: Maximum step norm per segment. Zeroed internally before each use.
+    compute_max_norm : bool
+        If true, compute and write ``max_norm``. If false, skip the max-norm
+        reduction while still applying the FIRE2 velocity and state updates.
     N : int32
         Total number of atoms.
     elems_per_thread : int32
@@ -384,16 +394,19 @@ def _fire2_fused_mix_maxnorm_kernel(
     # --- Process first element: deferred halfstep + mix (algebraic combo) ---
     f_coeff = mix_a * dt_old + mix_b
     velocities[start] = mix_a * velocities[start] + f_coeff * forces[start]
-    if w_dec:
-        max_val = wp.length(type(_dt)(-0.5) * _dt * velocities[start])
-    else:
-        max_val = wp.length(_dt * velocities[start])
+    max_val = zero
+    if compute_max_norm:
+        if w_dec:
+            max_val = wp.length(type(_dt)(-0.5) * _dt * velocities[start])
+        else:
+            max_val = wp.length(_dt * velocities[start])
 
     for i in range(start + 1, end):
         s = batch_idx[i]
         if s != s_cur:
             # Flush max_norm for previous segment
-            wp.atomic_max(max_norm, s_cur, max_val)
+            if compute_max_norm:
+                wp.atomic_max(max_norm, s_cur, max_val)
             s_cur = s
 
             # --- Redundant param-update computation for new segment ---
@@ -432,13 +445,15 @@ def _fire2_fused_mix_maxnorm_kernel(
 
         # Deferred halfstep + mix (algebraic combo)
         velocities[i] = mix_a * velocities[i] + f_coeff * forces[i]
-        if w_dec:
-            norm = wp.length(type(_dt)(-0.5) * _dt * velocities[i])
-        else:
-            norm = wp.length(_dt * velocities[i])
-        max_val = wp.max(max_val, norm)
+        if compute_max_norm:
+            if w_dec:
+                norm = wp.length(type(_dt)(-0.5) * _dt * velocities[i])
+            else:
+                norm = wp.length(_dt * velocities[i])
+            max_val = wp.max(max_val, norm)
 
-    wp.atomic_max(max_norm, s_cur, max_val)
+    if compute_max_norm:
+        wp.atomic_max(max_norm, s_cur, max_val)
 
 
 # =============================================================================
@@ -584,6 +599,7 @@ for _t, _v in zip(_T, _V):
             wp.array(dtype=_t),  # alpha
             wp.array(dtype=wp.int32),  # nsteps_inc
             wp.array(dtype=_t),  # max_norm
+            wp.bool,  # compute_max_norm
             wp.int32,  # N
             wp.int32,  # elems_per_thread
             wp.int32,  # delaystep
@@ -653,7 +669,7 @@ def fire2_step(
     forces : wp.array, shape (N,), dtype vec3f/vec3d
         Forces on atoms (read-only).
     batch_idx : wp.array, shape (N,), dtype int32
-        Sorted system index per atom (required).
+        Sorted system index per atom. Required for non-empty inputs.
     alpha : wp.array, shape (M,), dtype float*
         FIRE2 mixing parameter.
     dt : wp.array, shape (M,), dtype float*
@@ -685,21 +701,152 @@ def fire2_step(
     ...            alpha, dt, nsteps_inc,
     ...            vf, v_sumsq, f_sumsq, max_norm)
     """
-    # --- Input validation ---
     N = positions.shape[0]
-
-    if batch_idx is None:
-        raise ValueError("batch_idx is required for fire2_step")
-
     if velocities.shape[0] != N:
         raise ValueError(
             f"velocities length {velocities.shape[0]} != positions length {N}"
         )
     if forces.shape[0] != N:
         raise ValueError(f"forces length {forces.shape[0]} != positions length {N}")
-    if batch_idx.shape[0] != N:
+    if batch_idx is not None and batch_idx.shape[0] != N:
         raise ValueError(
             f"batch_idx length {batch_idx.shape[0]} != positions length {N}"
+        )
+    if N == 0:
+        vf.zero_()
+        v_sumsq.zero_()
+        f_sumsq.zero_()
+        max_norm.zero_()
+        return
+    if batch_idx is None:
+        raise ValueError("batch_idx is required for fire2_step")
+
+    vec_dtype = positions.dtype
+    device = positions.device
+
+    fire2_update(
+        velocities=velocities,
+        forces=forces,
+        batch_idx=batch_idx,
+        alpha=alpha,
+        dt=dt,
+        nsteps_inc=nsteps_inc,
+        vf=vf,
+        v_sumsq=v_sumsq,
+        f_sumsq=f_sumsq,
+        max_norm=max_norm,
+        delaystep=delaystep,
+        dtgrow=dtgrow,
+        dtshrink=dtshrink,
+        alphashrink=alphashrink,
+        alpha0=alpha0,
+        tmax=tmax,
+        tmin=tmin,
+    )
+
+    # Kernel 3: recompute step + clamp + position update + velocity zeroing
+    wp.launch(
+        _fire2_clamp_apply_recompute_overloads[vec_dtype],
+        dim=N,
+        inputs=[
+            positions,
+            velocities,
+            dt,
+            batch_idx,
+            max_norm,
+            vf,  # vf holds v.f; uphill if <= 0
+            maxstep,
+        ],
+        device=device,
+    )
+
+
+def fire2_update(
+    velocities: wp.array,
+    forces: wp.array,
+    batch_idx: wp.array,
+    alpha: wp.array,
+    dt: wp.array,
+    nsteps_inc: wp.array,
+    vf: wp.array,
+    v_sumsq: wp.array,
+    f_sumsq: wp.array,
+    max_norm: wp.array,
+    *,
+    delaystep: int = 60,
+    dtgrow: float = 1.05,
+    dtshrink: float = 0.75,
+    alphashrink: float = 0.985,
+    alpha0: float = 0.09,
+    tmax: float = 0.08,
+    tmin: float = 0.005,
+    compute_max_norm: bool = True,
+) -> None:
+    """Run FIRE2 reduction, parameter update, and velocity mixing only.
+
+    This low-level helper updates ``velocities``, ``alpha``, ``dt``, and
+    ``nsteps_inc`` in-place, and refreshes ``vf``, ``v_sumsq``, ``f_sumsq``,
+    and, by default, ``max_norm``. It deliberately does not apply positions,
+    clamp the final displacement, or zero velocities on uphill systems.
+
+    Parameters
+    ----------
+    velocities : wp.array, shape (N,), dtype vec3f/vec3d
+        Generalized velocities, modified in-place with FIRE2 velocity mixing.
+    forces : wp.array, shape (N,), dtype vec3f/vec3d
+        Generalized forces. Read-only.
+    batch_idx : wp.array, shape (N,), dtype int32
+        Sorted system index for each generalized degree of freedom. Required
+        for non-empty inputs.
+    alpha : wp.array, shape (M,), dtype float32/float64
+        FIRE2 mixing parameter, modified in-place.
+    dt : wp.array, shape (M,), dtype float32/float64
+        Per-system timestep, modified in-place by FIRE2 growth/shrink rules.
+    nsteps_inc : wp.array, shape (M,), dtype int32
+        Consecutive positive-power step counter, modified in-place.
+    vf : wp.array, shape (M,), dtype float32/float64
+        Scratch buffer for per-system ``v . f`` power. Zeroed internally.
+    v_sumsq : wp.array, shape (M,), dtype float32/float64
+        Scratch buffer for per-system ``v . v`` after the half-step. Zeroed internally.
+    f_sumsq : wp.array, shape (M,), dtype float32/float64
+        Scratch buffer for per-system ``f . f``. Zeroed internally.
+    max_norm : wp.array, shape (M,), dtype float32/float64
+        Scratch buffer for the maximum raw final-step norm after mixing, using
+        ``dt * velocity`` downhill and ``-0.5 * dt * velocity`` uphill. Zeroed
+        internally when ``compute_max_norm`` is true. Custom final apply phases
+        may pass ``compute_max_norm=False`` and recompute this buffer for their
+        own displacement definition.
+    delaystep : int
+        Minimum positive-power steps before timestep growth.
+    dtgrow, dtshrink : float
+        Timestep growth/shrink factors.
+    alphashrink : float
+        Alpha decay factor after enough positive-power steps.
+    alpha0 : float
+        Alpha reset value for uphill systems.
+    tmax, tmin : float
+        Timestep bounds.
+    compute_max_norm : bool, default True
+        Whether to compute the extended-DOF maximum raw final-step norm into
+        ``max_norm``. Set to false when a custom final apply phase will
+        overwrite ``max_norm`` with a different physical displacement norm.
+
+    Notes
+    -----
+    Callers that use this helper directly must finish the FIRE2 step
+    themselves. For systems with ``vf <= 0``, the final apply phase must use
+    the uphill correction ``step = -0.5 * dt * velocity`` and zero the
+    corresponding velocities after applying the step. Downhill systems use
+    ``step = dt * velocity``. Any final ``maxstep`` clamp must be applied by
+    the caller and should scale ``dt`` consistently with the accepted step.
+    """
+    N = velocities.shape[0]
+
+    if forces.shape[0] != N:
+        raise ValueError(f"forces length {forces.shape[0]} != velocities length {N}")
+    if batch_idx is not None and batch_idx.shape[0] != N:
+        raise ValueError(
+            f"batch_idx length {batch_idx.shape[0]} != velocities length {N}"
         )
 
     M = alpha.shape[0]
@@ -708,16 +855,21 @@ def fire2_step(
     if nsteps_inc.shape[0] != M:
         raise ValueError(f"nsteps_inc length {nsteps_inc.shape[0]} != alpha length {M}")
 
-    vec_dtype = positions.dtype
-    device = positions.device
+    vec_dtype = velocities.dtype
+    device = velocities.device
 
     vf.zero_()
     v_sumsq.zero_()
     f_sumsq.zero_()
-    max_norm.zero_()
+    if compute_max_norm or N == 0:
+        max_norm.zero_()
+    if N == 0:
+        return
+    if batch_idx is None:
+        raise ValueError("batch_idx is required for FIRE2 updates")
+
     sm = max(device.sm_count, 1)
 
-    # Kernel 1: reduce only (no velocity write, deferred to fused kernel)
     ept1 = compute_ept(N, sm, True)
     dim1 = (N + ept1 - 1) // ept1
     wp.launch(
@@ -727,7 +879,6 @@ def fire2_step(
         device=device,
     )
 
-    # Kernel 2: param update + deferred halfstep + mix + maxnorm
     ept2 = compute_ept(N, sm, True)
     dim2 = (N + ept2 - 1) // ept2
     wp.launch(
@@ -744,6 +895,7 @@ def fire2_step(
             alpha,
             nsteps_inc,
             max_norm,
+            compute_max_norm,
             N,
             ept2,
             delaystep,
@@ -753,22 +905,6 @@ def fire2_step(
             alpha0,
             tmax,
             tmin,
-        ],
-        device=device,
-    )
-
-    # Kernel 3: recompute step + clamp + position update + velocity zeroing
-    wp.launch(
-        _fire2_clamp_apply_recompute_overloads[vec_dtype],
-        dim=N,
-        inputs=[
-            positions,
-            velocities,
-            dt,
-            batch_idx,
-            max_norm,
-            vf,  # vf holds v.f; uphill if <= 0
-            maxstep,
         ],
         device=device,
     )

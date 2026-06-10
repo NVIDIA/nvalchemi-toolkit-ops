@@ -395,7 +395,7 @@ for step in range(max_steps):
 Improved FIRE optimizer with adaptive damping and velocity mixing:
 
 ```python
-from nvalchemiops.dynamics.optimizers import fire2_step
+from nvalchemiops.dynamics.optimizers import fire2_step, fire2_update
 
 # FIRE2 with Warp arrays
 fire2_step(
@@ -403,6 +403,13 @@ fire2_step(
     batch_idx=batch_idx,  # Required for FIRE2
     alpha=alpha, dt=dt, nsteps_inc=nsteps_inc,
     vf=vf, v_sumsq=v_sumsq, f_sumsq=f_sumsq, max_norm=max_norm
+)
+
+# Mix/update only for custom final apply phases
+fire2_update(
+    velocities, forces, batch_idx,
+    alpha, dt, nsteps_inc,
+    vf, v_sumsq, f_sumsq, max_norm,
 )
 ```
 
@@ -421,15 +428,21 @@ fire2_step_coord(
 
 # Variable-cell optimization (coordinates + cell DOFs)
 fire2_step_coord_cell(
-    positions, velocities, forces, batch_idx,
-    cells, cell_velocities, cell_forces,
-    alpha, dt, nsteps_inc
+    positions, velocities, forces,
+    cell, cell_velocities, cell_force,
+    batch_idx,
+    alpha, dt, nsteps_inc,
+    cell_force_scale=1.0,
 )
 ```
 
 **Key Properties:**
 
 - Uses `batch_idx` for batched operations (required)
+- `fire2_update` performs FIRE2 reduction, adaptive parameter update, and velocity mixing without applying positions
+- `fire2_update(compute_max_norm=False)` skips extended-DOF max-norm reduction for custom final apply phases that recompute their own physical displacement norm
+- Applies coupled affine cell/coordinate updates for variable-cell optimization through `fire2_step_coord_cell`
+- Normalizes stress-derived cell forces by the number of atoms in each system; `cell_force_scale=1.0` is the default extra multiplier
 - Improved convergence compared to original FIRE
 - PyTorch adapters handle tensor conversion automatically
 

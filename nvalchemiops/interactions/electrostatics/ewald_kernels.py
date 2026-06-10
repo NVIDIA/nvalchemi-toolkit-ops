@@ -24,12 +24,13 @@ support both single-system and batched calculations via the batch_idx parameter.
 DTYPE FLEXIBILITY
 =================
 
-All kernels support both float32 and float64 input types via Warp's overload system:
+All public launchers support both float32 and float64 input types:
 - Input tensors (positions, charges, cell, alpha): float32 or float64
 - Accumulators (energies, structure factors): Always float64 for numerical stability
 - Forces: Match input positions dtype (float32 or float64)
 
-Use the `_*_overload` dictionaries to select the appropriate kernel based on dtype.
+Real-space and reciprocal-space launchers route through cached factory-backed
+kernels.
 
 MATHEMATICAL FORMULATION
 ========================
@@ -93,11 +94,8 @@ KERNEL ORGANIZATION
 ===================
 
 Real-Space Kernels:
-    - _ewald_real_space_energy_kernel: Single-system, neighbor list format
-    - _ewald_real_space_energy_forces_kernel: Single-system with forces
-    - _ewald_real_space_energy_neighbor_matrix_kernel: Neighbor matrix format
-    - _ewald_real_space_energy_forces_neighbor_matrix_kernel: Matrix with forces
-    - _batch_ewald_real_space_*: Batched versions of above
+    - ewald_real_space_* launchers: public low-level Warp launchers
+    - get_ewald_real_kernel: factory-selected single/batch CSR/matrix kernels
 
 Reciprocal-Space Kernels:
     - _ewald_reciprocal_space_energy_kernel_fill_structure_factors: Compute S(k)
@@ -113,9 +111,9 @@ Environment variables for performance tuning:
 
 ALCH_EWALD_BATCH_BLOCK_SIZE (default: 16)
     Block size for batched structure factor computation. Each thread processes
-    a block of atoms, reducing atomic contention. Benchmark results show:
-    - 16 is optimal for most scenarios (2-3x faster than atom-major)
-    - Atom-major (no blocking) only wins for very large atom counts (>100K atoms)
+    a block of atoms, reducing atomic contention.
+    - 16 is the default block size
+    - Larger values can be useful for workloads with fewer, larger systems
     - Tune this if you have unusual workloads (many small or few large systems)
 
 REFERENCES
@@ -134,16 +132,58 @@ import warp as wp
 
 from nvalchemiops.math import wp_erfc, wp_exp_kernel
 
+__all__ = [
+    "BATCH_BLOCK_SIZE",
+    "REAL_SPACE_TILED_BLOCK_DIM",
+    "batch_ewald_energy_corrections",
+    "batch_ewald_energy_corrections_backward",
+    "batch_ewald_energy_corrections_double_backward",
+    "batch_ewald_real_space_energy",
+    "batch_ewald_real_space_energy_forces",
+    "batch_ewald_real_space_energy_forces_charge_grad",
+    "batch_ewald_real_space_energy_forces_charge_grad_matrix",
+    "batch_ewald_real_space_energy_forces_matrix",
+    "batch_ewald_real_space_energy_matrix",
+    "batch_ewald_reciprocal_space_compute_energy",
+    "batch_ewald_reciprocal_space_energy_forces",
+    "batch_ewald_reciprocal_space_energy_forces_charge_grad",
+    "batch_ewald_reciprocal_space_fill_structure_factors",
+    "batch_ewald_subtract_self_energy",
+    "ewald_energy_corrections",
+    "ewald_energy_corrections_backward",
+    "ewald_energy_corrections_double_backward",
+    "ewald_real_space_energy",
+    "ewald_real_space_energy_forces",
+    "ewald_real_space_energy_forces_charge_grad",
+    "ewald_real_space_energy_forces_charge_grad_matrix",
+    "ewald_real_space_energy_forces_matrix",
+    "ewald_real_space_energy_matrix",
+    "ewald_reciprocal_space_compute_energy",
+    "ewald_reciprocal_space_energy_forces",
+    "ewald_reciprocal_space_energy_forces_charge_grad",
+    "ewald_reciprocal_space_fill_structure_factors",
+    "ewald_subtract_self_energy",
+]
+
 # Mathematical constants
 PI = math.pi
+SQRT_PI = math.sqrt(PI)
+TWO_OVER_SQRT_PI = 2.0 / SQRT_PI
 TWOPI = 2.0 * PI
 FOURPI = 4.0 * PI
-EIGHTPI = 8.0 * PI  # Used for half-space k-vector optimization (2x FOURPI)
+EIGHTPI = 8.0 * PI  # Half-space k-vector Green's function factor.
 
 # Block size for batch structure factor accumulation
-# Benchmark results show 16 is optimal for most cases (except very large atom counts)
+# Tunable via ALCH_EWALD_BATCH_BLOCK_SIZE.
 BATCH_BLOCK_SIZE = int(os.environ.get("ALCH_EWALD_BATCH_BLOCK_SIZE", 16))
 BATCH_BLOCK_SIZE = BATCH_BLOCK_SIZE if BATCH_BLOCK_SIZE > 0 else 16
+
+# Block size for block-per-atom tiled real-space neighbor-matrix kernels.
+# Each atom is handled by REAL_SPACE_TILED_BLOCK_DIM cooperating threads; the
+# per-thread accumulators are reduced via wp.tile_sum to a single block-local
+# result. On CPU warp clamps block_dim to 1 and the tile primitives degrade to
+# scalar passthrough.
+REAL_SPACE_TILED_BLOCK_DIM = 64
 
 
 ###########################################################################################
@@ -217,7 +257,7 @@ def _ewald_real_space_force_magnitude(
     wp.float64
         Force magnitude factor.
     """
-    two_over_sqrt_pi = wp.float64(2.0 / 1.7724538509055159)
+    two_over_sqrt_pi = wp.float64(TWO_OVER_SQRT_PI)
 
     prefactor = wp.float64(0.5) * qi * qj
     alpha_r = alpha * distance
@@ -260,1491 +300,6 @@ def _ewald_real_space_charge_grad_potential(
         Potential factor for charge gradient computation.
     """
     return wp.float64(0.5) * wp_erfc(alpha * distance) / distance
-
-
-###########################################################################################
-########################### Real-Space Kernels (dtype-flexible) ###########################
-###########################################################################################
-
-
-@wp.kernel
-def _ewald_real_space_energy_neighbor_matrix_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    neighbor_matrix: wp.array2d(dtype=wp.int32),
-    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
-    mask_value: wp.int32,
-    alpha: wp.array(dtype=Any),
-    pair_energies: wp.array(dtype=wp.float64),
-):
-    """Compute real-space Ewald energies using neighbor matrix format.
-
-    Each thread processes one atom and loops over all its neighbors in the
-    neighbor matrix. This 1D launch pattern is more efficient than 2D launch
-    as it reduces thread divergence and improves memory access patterns.
-    Invalid neighbors (marked with mask_value) are skipped. Pairs that are
-    too close (less than 1e-8 distance) are also skipped.
-
-    Launch Grid
-    -----------
-    dim = [N_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates.
-    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Atomic charges.
-    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix.
-    neighbor_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.int32
-        Neighbor indices. Entry [i, k] = j means atom j is the k-th neighbor of i.
-        Invalid entries contain mask_value.
-    unit_shifts_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.vec3i
-        Periodic image shifts for each neighbor pair.
-    mask_value : wp.int32
-        Value indicating invalid/padded neighbor entries.
-    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Ewald splitting parameter.
-    pair_energies : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-
-    Notes
-    -----
-    Energy is accumulated in a local register then written once, reducing atomic
-    contention. Internal computations use float64 for numerical stability.
-    """
-    atom_idx = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_idx])
-    pos_i = positions[atom_idx]
-    alpha_ = wp.float64(alpha[0])
-    cell_t = wp.transpose(cell[0])
-
-    # Accumulate energy in local register
-    energy_acc = wp.float64(0.0)
-    max_neighbors = neighbor_matrix.shape[1]
-
-    for neighbor_idx in range(max_neighbors):
-        j = neighbor_matrix[atom_idx, neighbor_idx]
-        if j == mask_value:
-            continue
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        # Compute periodic shift (in input precision, then cast)
-        shift_vec = unit_shifts_matrix[atom_idx, neighbor_idx]
-        periodic_shift = cell_t * type(pos_j)(
-            type(pos_j[0])(shift_vec[0]),
-            type(pos_j[0])(shift_vec[1]),
-            type(pos_j[0])(shift_vec[2]),
-        )
-
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
-            )
-
-    # Write accumulated energy once
-    wp.atomic_add(pair_energies, atom_idx, energy_acc)
-
-
-@wp.kernel
-def _ewald_real_space_energy_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    idx_j: wp.array(dtype=wp.int32),
-    neighbor_ptr: wp.array(dtype=wp.int32),
-    unit_shifts: wp.array(dtype=wp.vec3i),
-    alpha: wp.array(dtype=Any),
-    pair_energies: wp.array(dtype=wp.float64),
-):
-    """Compute real-space Ewald energies using neighbor list (CSR) format.
-
-    Each thread processes one atom and loops over its neighbors using CSR
-    pointers. This 1D launch pattern is more efficient than one-thread-per-pair
-    as it reduces atomic contention and allows local accumulation.
-    Pairs too close (less than 1e-8 distance) are skipped.
-
-    Launch Grid
-    -----------
-    dim = [num_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates.
-    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Atomic charges.
-    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix.
-    idx_j : wp.array, shape (M,), dtype=wp.int32
-        Target atom indices for each pair (flattened CSR data).
-    neighbor_ptr : wp.array, shape (N+1,), dtype=wp.int32
-        CSR row pointers. neighbor_ptr[i] to neighbor_ptr[i+1] gives the range
-        of neighbors for atom i in idx_j.
-    unit_shifts : wp.array, shape (M,), dtype=wp.vec3i
-        Periodic image shifts for each pair.
-    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Ewald splitting parameter.
-    pair_energies : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-
-    Notes
-    -----
-    Energy is accumulated in a local register then written once, reducing
-    atomic contention. Internal computations use float64 for numerical stability.
-    """
-    atom_i = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_i])
-    pos_i = positions[atom_i]
-    alpha_ = wp.float64(alpha[0])
-    cell_t = wp.transpose(cell[0])
-
-    # Accumulate energy in local register
-    energy_acc = wp.float64(0.0)
-
-    # Iterate over neighbors using CSR pointers
-    j_range_start = neighbor_ptr[atom_i]
-    j_range_end = neighbor_ptr[atom_i + 1]
-
-    for edge_idx in range(j_range_start, j_range_end):
-        j = idx_j[edge_idx]
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        # Compute periodic shift
-        shift_vec = unit_shifts[edge_idx]
-        periodic_shift = cell_t * type(pos_i)(
-            type(pos_i[0])(shift_vec[0]),
-            type(pos_i[0])(shift_vec[1]),
-            type(pos_i[0])(shift_vec[2]),
-        )
-
-        # Compute separation vector
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        # Compute real-space energy with erfc damping
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
-            )
-
-    # Write accumulated energy once
-    wp.atomic_add(pair_energies, atom_i, energy_acc)
-
-
-@wp.kernel
-def _ewald_real_space_energy_forces_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    idx_j: wp.array(dtype=wp.int32),
-    neighbor_ptr: wp.array(dtype=wp.int32),
-    unit_shifts: wp.array(dtype=wp.vec3i),
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy and forces using neighbor list (CSR) format.
-
-    Each thread processes one atom and loops over its neighbors using CSR
-    pointers. Energy and force on atom i are accumulated locally. Force on
-    atom j uses atomic_add. Pairs too close (less than 1e-8 distance) are skipped.
-
-    Launch Grid
-    -----------
-    dim = [num_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates.
-    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Atomic charges.
-    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix.
-    idx_j : wp.array, shape (M,), dtype=wp.int32
-        Target atom indices for each pair (flattened CSR data).
-    neighbor_ptr : wp.array, shape (N+1,), dtype=wp.int32
-        CSR row pointers. neighbor_ptr[i] to neighbor_ptr[i+1] gives the range
-        of neighbors for atom i in idx_j.
-    unit_shifts : wp.array, shape (M,), dtype=wp.vec3i
-        Periodic image shifts for each pair.
-    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom (matches positions dtype).
-    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-
-    Notes
-    -----
-    Energy accumulated locally then written once. Force on atom i accumulated
-    locally; force on atom j uses atomic_add (Newton's 3rd law).
-    """
-    atom_i = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_i])
-    pos_i = positions[atom_i]
-    alpha_ = wp.float64(alpha[0])
-    cell_t = wp.transpose(cell[0])
-
-    # Accumulators for energy and force on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    # Iterate over neighbors using CSR pointers
-    j_range_start = neighbor_ptr[atom_i]
-    j_range_end = neighbor_ptr[atom_i + 1]
-    for edge_idx in range(j_range_start, j_range_end):
-        j = idx_j[edge_idx]
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        # Apply periodic shift
-        shift_vec = unit_shifts[edge_idx]
-        periodic_shift = cell_t * type(pos_i)(
-            type(pos_i[0])(shift_vec[0]),
-            type(pos_i[0])(shift_vec[1]),
-            type(pos_i[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            # Compute damped Coulomb energy
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
-            )
-
-            # Compute force magnitude (in float64)
-            force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
-
-            # Apply force in positions dtype
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_i, energy_acc)
-    wp.atomic_add(atomic_forces, atom_i, force_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
-
-
-@wp.kernel
-def _ewald_real_space_energy_forces_neighbor_matrix_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    neighbor_matrix: wp.array2d(dtype=wp.int32),
-    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
-    mask_value: wp.int32,
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy and forces using neighbor matrix format.
-
-    Each thread processes one atom and loops over all its neighbors. This 1D
-    launch pattern is more efficient than 2D launch as it reduces thread
-    divergence and improves memory access patterns. Energy is accumulated in
-    a local register and written once. Force on atom j uses atomic_add.
-    Pairs too close (less than 1e-8 distance) or invalid are skipped.
-
-    Launch Grid
-    -----------
-    dim = [N_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates.
-    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Atomic charges.
-    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix.
-    neighbor_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.int32
-        Neighbor indices. Invalid entries contain mask_value.
-    unit_shifts_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.vec3i
-        Periodic image shifts for each neighbor pair.
-    mask_value : wp.int32
-        Value indicating invalid/padded neighbor entries.
-    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom (matches positions dtype).
-    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-
-    Notes
-    -----
-    Energy accumulated locally then written once. Forces on atom i accumulated
-    locally; forces on atom j use atomic_add (Newton's 3rd law).
-    """
-    atom_idx = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_idx])
-    pos_i = positions[atom_idx]
-    alpha_ = wp.float64(alpha[0])
-    cell_t = wp.transpose(cell[0])
-
-    # Accumulators for energy and force on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-    max_neighbors = neighbor_matrix.shape[1]
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    for neighbor_idx in range(max_neighbors):
-        j = neighbor_matrix[atom_idx, neighbor_idx]
-        if j == mask_value:
-            continue
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        shift_vec = unit_shifts_matrix[atom_idx, neighbor_idx]
-        periodic_shift = cell_t * type(pos_j)(
-            type(pos_j[0])(shift_vec[0]),
-            type(pos_j[0])(shift_vec[1]),
-            type(pos_j[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
-            )
-
-            force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_idx, energy_acc)
-    wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
-
-
-###########################################################################################
-#################### Real-Space Kernels with Charge Gradients #############################
-###########################################################################################
-
-
-@wp.kernel
-def _ewald_real_space_energy_forces_charge_grad_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    idx_j: wp.array(dtype=wp.int32),
-    neighbor_ptr: wp.array(dtype=wp.int32),
-    unit_shifts: wp.array(dtype=wp.vec3i),
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    charge_gradients: wp.array(dtype=wp.float64),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy, forces, AND charge gradients (neighbor list CSR).
-
-    Each thread processes one atom and loops over its neighbors using CSR pointers.
-    Energy, force, and charge gradient for atom i are accumulated locally. Forces
-    and charge gradients on atom j use atomic_add. Pairs too close are skipped.
-
-    Launch Grid
-    -----------
-    dim = [num_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates.
-    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Atomic charges.
-    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix.
-    idx_j : wp.array, shape (M,), dtype=wp.int32
-        Target atom indices for each pair (flattened CSR data).
-    neighbor_ptr : wp.array, shape (N+1,), dtype=wp.int32
-        CSR row pointers.
-    unit_shifts : wp.array, shape (M,), dtype=wp.vec3i
-        Periodic image shifts for each pair.
-    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom (matches positions dtype).
-    charge_gradients : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients dE/dq per atom.
-    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-
-    Notes
-    -----
-    Energy, force, charge gradient on atom i accumulated locally then written once.
-    Forces and charge gradients on atom j use atomic_add.
-    """
-    atom_i = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_i])
-    pos_i = positions[atom_i]
-    alpha_ = wp.float64(alpha[0])
-    cell_t = wp.transpose(cell[0])
-
-    # Accumulators for energy, force, and charge gradient on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-    cg_i_acc = wp.float64(0.0)
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    # Iterate over neighbors using CSR pointers
-    j_range_start = neighbor_ptr[atom_i]
-    j_range_end = neighbor_ptr[atom_i + 1]
-
-    for edge_idx in range(j_range_start, j_range_end):
-        j = idx_j[edge_idx]
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        # Apply periodic shift
-        shift_vec = unit_shifts[edge_idx]
-        periodic_shift = cell_t * type(pos_i)(
-            type(pos_i[0])(shift_vec[0]),
-            type(pos_i[0])(shift_vec[1]),
-            type(pos_i[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            # Compute damped Coulomb energy
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
-            )
-
-            # Compute force magnitude (in float64)
-            force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
-
-            # Apply force in positions dtype
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Compute charge gradients
-            potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
-            cg_i_acc += qj * potential
-            cg_j = qi * potential
-            wp.atomic_add(charge_gradients, j, cg_j)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_i, energy_acc)
-    wp.atomic_add(atomic_forces, atom_i, force_i_acc)
-    wp.atomic_add(charge_gradients, atom_i, cg_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
-
-
-@wp.kernel
-def _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    neighbor_matrix: wp.array2d(dtype=wp.int32),
-    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
-    mask_value: wp.int32,
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    charge_gradients: wp.array(dtype=wp.float64),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy, forces, AND charge gradients (neighbor matrix).
-
-    Each thread processes one atom and loops over all its neighbors. This 1D
-    launch pattern is more efficient than 2D launch. Energy and charge gradient
-    for atom i are accumulated locally and written once. Forces and charge
-    gradients on atom j use atomic_add.
-
-    Launch Grid
-    -----------
-    dim = [N_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates.
-    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Atomic charges.
-    cell : wp.array, shape (1, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrix.
-    neighbor_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.int32
-        Neighbor indices. Invalid entries contain mask_value.
-    unit_shifts_matrix : wp.array2d, shape (N, max_neighbors), dtype=wp.vec3i
-        Periodic image shifts for each neighbor pair.
-    mask_value : wp.int32
-        Value indicating invalid/padded neighbor entries.
-    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom (matches positions dtype).
-    charge_gradients : wp.array, shape (N,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients dE/dq per atom.
-    virial : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-    """
-    atom_idx = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_idx])
-    pos_i = positions[atom_idx]
-    alpha_ = wp.float64(alpha[0])
-    cell_t = wp.transpose(cell[0])
-
-    # Accumulators for energy, force, and charge gradient on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-    cg_i_acc = wp.float64(0.0)
-    max_neighbors = neighbor_matrix.shape[1]
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    for neighbor_idx in range(max_neighbors):
-        j = neighbor_matrix[atom_idx, neighbor_idx]
-        if j == mask_value:
-            continue
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        shift_vec = unit_shifts_matrix[atom_idx, neighbor_idx]
-        periodic_shift = cell_t * type(pos_j)(
-            type(pos_j[0])(shift_vec[0]),
-            type(pos_j[0])(shift_vec[1]),
-            type(pos_j[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, alpha_
-            )
-
-            force_mag = _ewald_real_space_force_magnitude(qi, qj, distance, alpha_)
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Compute charge gradients
-            potential = _ewald_real_space_charge_grad_potential(distance, alpha_)
-            cg_i_acc += qj * potential
-            cg_j = qi * potential
-            wp.atomic_add(charge_gradients, j, cg_j)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_idx, energy_acc)
-    wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
-    wp.atomic_add(charge_gradients, atom_idx, cg_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, 0, type(cell_t)(virial_acc))
-
-
-###########################################################################################
-########################### Batch Real-Space Kernels ######################################
-###########################################################################################
-
-
-@wp.kernel
-def _batch_ewald_real_space_energy_neighbor_matrix_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    batch_id: wp.array(dtype=wp.int32),
-    neighbor_matrix: wp.array2d(dtype=wp.int32),
-    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
-    mask_value: wp.int32,
-    alpha: wp.array(dtype=Any),
-    pair_energies: wp.array(dtype=wp.float64),
-):
-    """Compute real-space Ewald energies for batched systems (neighbor matrix).
-
-    Each thread processes one atom and loops over its neighbors. This 1D launch
-    pattern is more efficient than 2D launch. Per-system cell and alpha are
-    looked up using batch_id. Energy is accumulated locally and written once.
-
-    Launch Grid
-    -----------
-    dim = [N_total]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates for all systems concatenated.
-    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Atomic charges for all systems concatenated.
-    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrices for each system.
-    batch_id : wp.array, shape (N_total,), dtype=wp.int32
-        System index for each atom (0 to B-1).
-    neighbor_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.int32
-        Neighbor indices. Invalid entries contain mask_value.
-    unit_shifts_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.vec3i
-        Periodic image shifts for each neighbor pair.
-    mask_value : wp.int32
-        Value indicating invalid/padded neighbor entries.
-    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system Ewald splitting parameter.
-    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    """
-    atom_idx = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_idx])
-    pos_i = positions[atom_idx]
-    system_id = batch_id[atom_idx]
-    system_cell = cell[system_id]
-    system_alpha = wp.float64(alpha[system_id])
-    cell_t = wp.transpose(system_cell)
-
-    # Accumulate energy in local register
-    energy_acc = wp.float64(0.0)
-    max_neighbors = neighbor_matrix.shape[1]
-
-    for neighbor_idx in range(max_neighbors):
-        j = neighbor_matrix[atom_idx, neighbor_idx]
-        if j == mask_value:
-            continue
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        shift_vec = unit_shifts_matrix[atom_idx, neighbor_idx]
-        periodic_shift = cell_t * type(pos_j)(
-            type(pos_j[0])(shift_vec[0]),
-            type(pos_j[0])(shift_vec[1]),
-            type(pos_j[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, system_alpha
-            )
-
-    # Write accumulated energy once
-    wp.atomic_add(pair_energies, atom_idx, energy_acc)
-
-
-@wp.kernel
-def _batch_ewald_real_space_energy_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    batch_id: wp.array(dtype=wp.int32),
-    idx_j: wp.array(dtype=wp.int32),
-    neighbor_ptr: wp.array(dtype=wp.int32),
-    unit_shifts: wp.array(dtype=wp.vec3i),
-    alpha: wp.array(dtype=Any),
-    pair_energies: wp.array(dtype=wp.float64),
-):
-    """Compute real-space Ewald energies for batched systems (neighbor list CSR).
-
-    Each thread processes one atom and loops over its neighbors using CSR
-    pointers. Per-system cell and alpha are looked up using batch_id.
-    Energy is accumulated locally and written once.
-
-    Launch Grid
-    -----------
-    dim = [num_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates for all systems concatenated.
-    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Atomic charges for all systems concatenated.
-    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrices for each system.
-    batch_id : wp.array, shape (N_total,), dtype=wp.int32
-        System index for each atom (0 to B-1).
-    idx_j : wp.array, shape (M,), dtype=wp.int32
-        Target atom indices for each pair (flattened CSR data).
-    neighbor_ptr : wp.array, shape (N_total+1,), dtype=wp.int32
-        CSR row pointers.
-    unit_shifts : wp.array, shape (M,), dtype=wp.vec3i
-        Periodic image shifts for each pair.
-    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system Ewald splitting parameter.
-    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    """
-    atom_i = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_i])
-    pos_i = positions[atom_i]
-    system_id = batch_id[atom_i]
-    system_cell = cell[system_id]
-    system_alpha = wp.float64(alpha[system_id])
-    cell_t = wp.transpose(system_cell)
-
-    # Accumulate energy in local register
-    energy_acc = wp.float64(0.0)
-
-    # Iterate over neighbors using CSR pointers
-    j_range_start = neighbor_ptr[atom_i]
-    j_range_end = neighbor_ptr[atom_i + 1]
-
-    for edge_idx in range(j_range_start, j_range_end):
-        j = idx_j[edge_idx]
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        # Convert unit shifts to Cartesian using system cell
-        shift_vec = unit_shifts[edge_idx]
-        periodic_shift = cell_t * type(pos_i)(
-            type(pos_i[0])(shift_vec[0]),
-            type(pos_i[0])(shift_vec[1]),
-            type(pos_i[0])(shift_vec[2]),
-        )
-
-        # Compute separation vector
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        # Compute real-space energy with erfc damping
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, system_alpha
-            )
-
-    # Write accumulated energy once
-    wp.atomic_add(pair_energies, atom_i, energy_acc)
-
-
-@wp.kernel
-def _batch_ewald_real_space_energy_forces_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    batch_id: wp.array(dtype=wp.int32),
-    idx_j: wp.array(dtype=wp.int32),
-    neighbor_ptr: wp.array(dtype=wp.int32),
-    unit_shifts: wp.array(dtype=wp.vec3i),
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy and forces for batched systems (neighbor list CSR).
-
-    Each thread processes one atom and loops over its neighbors using CSR
-    pointers. Energy and force on atom i are accumulated locally. Forces on
-    atom j use atomic_add.
-
-    Launch Grid
-    -----------
-    dim = [num_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates for all systems concatenated.
-    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Atomic charges for all systems concatenated.
-    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrices for each system.
-    batch_id : wp.array, shape (N_total,), dtype=wp.int32
-        System index for each atom (0 to B-1).
-    idx_j : wp.array, shape (M,), dtype=wp.int32
-        Target atom indices for each pair (flattened CSR data).
-    neighbor_ptr : wp.array, shape (N_total+1,), dtype=wp.int32
-        CSR row pointers.
-    unit_shifts : wp.array, shape (M,), dtype=wp.vec3i
-        Periodic image shifts for each pair.
-    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom.
-    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-    """
-    atom_i = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_i])
-    pos_i = positions[atom_i]
-    system_id = batch_id[atom_i]
-    system_cell = cell[system_id]
-    system_alpha = wp.float64(alpha[system_id])
-    cell_t = wp.transpose(system_cell)
-
-    # Accumulators for energy and force on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    # Iterate over neighbors using CSR pointers
-    j_range_start = neighbor_ptr[atom_i]
-    j_range_end = neighbor_ptr[atom_i + 1]
-
-    for edge_idx in range(j_range_start, j_range_end):
-        j = idx_j[edge_idx]
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        # Apply periodic shift using system cell
-        shift_vec = unit_shifts[edge_idx]
-        periodic_shift = cell_t * type(pos_i)(
-            type(pos_i[0])(shift_vec[0]),
-            type(pos_i[0])(shift_vec[1]),
-            type(pos_i[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            # Compute damped Coulomb energy
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, system_alpha
-            )
-
-            force_mag = _ewald_real_space_force_magnitude(
-                qi, qj, distance, system_alpha
-            )
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_i, energy_acc)
-    wp.atomic_add(atomic_forces, atom_i, force_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
-
-
-@wp.kernel
-def _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    batch_id: wp.array(dtype=wp.int32),
-    neighbor_matrix: wp.array2d(dtype=wp.int32),
-    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
-    mask_value: wp.int32,
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy and forces for batched systems (neighbor matrix).
-
-    Each thread processes one atom and loops over its neighbors. This 1D launch
-    pattern is more efficient than 2D launch. Energy and force on atom i are
-    accumulated locally. Forces on atom j use atomic_add.
-
-    Launch Grid
-    -----------
-    dim = [N_total]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates for all systems concatenated.
-    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Atomic charges for all systems concatenated.
-    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrices for each system.
-    batch_id : wp.array, shape (N_total,), dtype=wp.int32
-        System index for each atom (0 to B-1).
-    neighbor_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.int32
-        Neighbor indices. Invalid entries contain mask_value.
-    unit_shifts_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.vec3i
-        Periodic image shifts for each neighbor pair.
-    mask_value : wp.int32
-        Value indicating invalid/padded neighbor entries.
-    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom.
-    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-    """
-    atom_idx = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_idx])
-    pos_i = positions[atom_idx]
-    system_id = batch_id[atom_idx]
-    system_cell = cell[system_id]
-    system_alpha = wp.float64(alpha[system_id])
-    cell_t = wp.transpose(system_cell)
-
-    # Accumulators for energy and force on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-    max_neighbors = neighbor_matrix.shape[1]
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    for neighbor_idx in range(max_neighbors):
-        j = neighbor_matrix[atom_idx, neighbor_idx]
-        if j == mask_value:
-            continue
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        shift_vec = unit_shifts_matrix[atom_idx, neighbor_idx]
-        periodic_shift = cell_t * type(pos_j)(
-            type(pos_j[0])(shift_vec[0]),
-            type(pos_j[0])(shift_vec[1]),
-            type(pos_j[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, system_alpha
-            )
-
-            force_mag = _ewald_real_space_force_magnitude(
-                qi, qj, distance, system_alpha
-            )
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_idx, energy_acc)
-    wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
-
-
-###########################################################################################
-#################### Batch Real-Space Kernels with Charge Gradients #######################
-###########################################################################################
-
-
-@wp.kernel
-def _batch_ewald_real_space_energy_forces_charge_grad_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    batch_id: wp.array(dtype=wp.int32),
-    idx_j: wp.array(dtype=wp.int32),
-    neighbor_ptr: wp.array(dtype=wp.int32),
-    unit_shifts: wp.array(dtype=wp.vec3i),
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    charge_gradients: wp.array(dtype=wp.float64),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy, forces, AND charge gradients (batch, CSR).
-
-    Each thread processes one atom and loops over its neighbors using CSR
-    pointers. Energy, force, and charge gradient for atom i are accumulated
-    locally. Forces and charge gradients on atom j use atomic_add.
-
-    Launch Grid
-    -----------
-    dim = [num_atoms]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates for all systems concatenated.
-    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Atomic charges for all systems concatenated.
-    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrices for each system.
-    batch_id : wp.array, shape (N_total,), dtype=wp.int32
-        System index for each atom (0 to B-1).
-    idx_j : wp.array, shape (M,), dtype=wp.int32
-        Target atom indices for each pair (flattened CSR data).
-    neighbor_ptr : wp.array, shape (N_total+1,), dtype=wp.int32
-        CSR row pointers.
-    unit_shifts : wp.array, shape (M,), dtype=wp.vec3i
-        Periodic image shifts for each pair.
-    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom.
-    charge_gradients : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients dE/dq per atom.
-    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-    """
-    atom_i = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_i])
-    pos_i = positions[atom_i]
-    system_id = batch_id[atom_i]
-    system_cell = cell[system_id]
-    system_alpha = wp.float64(alpha[system_id])
-    cell_t = wp.transpose(system_cell)
-
-    # Accumulators for energy, force, and charge gradient on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-    cg_i_acc = wp.float64(0.0)
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    # Iterate over neighbors using CSR pointers
-    j_range_start = neighbor_ptr[atom_i]
-    j_range_end = neighbor_ptr[atom_i + 1]
-
-    for edge_idx in range(j_range_start, j_range_end):
-        j = idx_j[edge_idx]
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        # Apply periodic shift using system cell
-        shift_vec = unit_shifts[edge_idx]
-        periodic_shift = cell_t * type(pos_i)(
-            type(pos_i[0])(shift_vec[0]),
-            type(pos_i[0])(shift_vec[1]),
-            type(pos_i[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            # Compute damped Coulomb energy
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, system_alpha
-            )
-
-            force_mag = _ewald_real_space_force_magnitude(
-                qi, qj, distance, system_alpha
-            )
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Compute charge gradients
-            potential = _ewald_real_space_charge_grad_potential(distance, system_alpha)
-            cg_i_acc += qj * potential
-            cg_j = qi * potential
-            wp.atomic_add(charge_gradients, j, cg_j)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_i, energy_acc)
-    wp.atomic_add(atomic_forces, atom_i, force_i_acc)
-    wp.atomic_add(charge_gradients, atom_i, cg_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
-
-
-@wp.kernel
-def _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel(
-    positions: wp.array(dtype=Any),
-    charges: wp.array(dtype=Any),
-    cell: wp.array(dtype=Any),
-    batch_id: wp.array(dtype=wp.int32),
-    neighbor_matrix: wp.array2d(dtype=wp.int32),
-    unit_shifts_matrix: wp.array2d(dtype=wp.vec3i),
-    mask_value: wp.int32,
-    alpha: wp.array(dtype=Any),
-    compute_virial: bool,
-    pair_energies: wp.array(dtype=wp.float64),
-    atomic_forces: wp.array(dtype=Any),
-    charge_gradients: wp.array(dtype=wp.float64),
-    virial: wp.array(dtype=Any),
-):
-    """Compute real-space Ewald energy, forces, AND charge gradients for batched systems.
-
-    Each thread processes one atom and loops over its neighbors. This 1D launch
-    pattern is more efficient than 2D launch. Energy, force, and charge gradient
-    for atom i are accumulated locally. Forces and charge gradients on atom j
-    use atomic_add.
-
-    Launch Grid
-    -----------
-    dim = [N_total]
-
-    Parameters
-    ----------
-    positions : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        Atomic coordinates for all systems concatenated.
-    charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Atomic charges for all systems concatenated.
-    cell : wp.array, shape (B, 3, 3), dtype=wp.mat33f or wp.mat33d
-        Unit cell matrices for each system.
-    batch_id : wp.array, shape (N_total,), dtype=wp.int32
-        System index for each atom (0 to B-1).
-    neighbor_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.int32
-        Neighbor indices. Invalid entries contain mask_value.
-    unit_shifts_matrix : wp.array2d, shape (N_total, max_neighbors), dtype=wp.vec3i
-        Periodic image shifts for each neighbor pair.
-    mask_value : wp.int32
-        Value indicating invalid/padded neighbor entries.
-    alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system Ewald splitting parameter.
-    compute_virial : bool
-        Whether to compute the virial tensor.
-    pair_energies : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated real-space energy per atom.
-    atomic_forces : wp.array, shape (N_total,), dtype=wp.vec3f or wp.vec3d
-        OUTPUT: Accumulated forces per atom.
-    charge_gradients : wp.array, shape (N_total,), dtype=wp.float64
-        OUTPUT: Accumulated charge gradients dE/dq per atom.
-    virial : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
-        OUTPUT: Accumulated virial tensor per system (if compute_virial=True).
-    """
-    atom_idx = wp.tid()
-
-    # Load atom i data once
-    qi = wp.float64(charges[atom_idx])
-    pos_i = positions[atom_idx]
-    system_id = batch_id[atom_idx]
-    system_cell = cell[system_id]
-    system_alpha = wp.float64(alpha[system_id])
-    cell_t = wp.transpose(system_cell)
-
-    # Accumulators for energy, force, and charge gradient on atom i
-    energy_acc = wp.float64(0.0)
-    force_i_acc = type(pos_i)(
-        type(pos_i[0])(0.0), type(pos_i[0])(0.0), type(pos_i[0])(0.0)
-    )
-    cg_i_acc = wp.float64(0.0)
-    max_neighbors = neighbor_matrix.shape[1]
-
-    # Initialize virial accumulator
-    if compute_virial:
-        virial_acc = wp.mat33d()
-
-    for neighbor_idx in range(max_neighbors):
-        j = neighbor_matrix[atom_idx, neighbor_idx]
-        if j == mask_value:
-            continue
-
-        qj = wp.float64(charges[j])
-        pos_j = positions[j]
-
-        shift_vec = unit_shifts_matrix[atom_idx, neighbor_idx]
-        periodic_shift = cell_t * type(pos_j)(
-            type(pos_j[0])(shift_vec[0]),
-            type(pos_j[0])(shift_vec[1]),
-            type(pos_j[0])(shift_vec[2]),
-        )
-        separation_vector = pos_j - pos_i + periodic_shift
-        distance = wp.float64(wp.length(separation_vector))
-
-        if distance > wp.float64(1e-8):
-            energy_acc += _ewald_real_space_energy_kernel_compute_energy(
-                qi, qj, distance, system_alpha
-            )
-
-            force_mag = _ewald_real_space_force_magnitude(
-                qi, qj, distance, system_alpha
-            )
-            force = type(pos_i)(
-                type(pos_i[0])(force_mag) * separation_vector[0],
-                type(pos_i[0])(force_mag) * separation_vector[1],
-                type(pos_i[0])(force_mag) * separation_vector[2],
-            )
-            force_i_acc -= force
-            wp.atomic_add(atomic_forces, j, force)
-
-            # Compute charge gradients
-            potential = _ewald_real_space_charge_grad_potential(distance, system_alpha)
-            cg_i_acc += qj * potential
-            cg_j = qi * potential
-            wp.atomic_add(charge_gradients, j, cg_j)
-
-            # Accumulate virial if requested
-            if compute_virial:
-                virial_acc += wp.mat33d(
-                    wp.outer(
-                        wp.vec3d(
-                            wp.float64(separation_vector[0]),
-                            wp.float64(separation_vector[1]),
-                            wp.float64(separation_vector[2]),
-                        ),
-                        wp.vec3d(
-                            wp.float64(force[0]),
-                            wp.float64(force[1]),
-                            wp.float64(force[2]),
-                        ),
-                    )
-                )
-
-    # Write accumulated values once
-    wp.atomic_add(pair_energies, atom_idx, energy_acc)
-    wp.atomic_add(atomic_forces, atom_idx, force_i_acc)
-    wp.atomic_add(charge_gradients, atom_idx, cg_i_acc)
-
-    # Virial contribution: force already includes 0.5 factor for full-NL pair counting,
-    # so virial_acc = sum_{i<j} outer(r_ij, F_pair) = W = -dE/dε (no extra scaling).
-    if compute_virial:
-        wp.atomic_add(virial, system_id, type(cell_t)(virial_acc))
 
 
 ###########################################################################################
@@ -1802,7 +357,7 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         Ewald splitting parameter.
     total_charge : wp.array, shape (1,), dtype=wp.float64
         OUTPUT: Accumulated total charge divided by volume (Q/V) for
-        background correction. Only thread 1 accumulates this.
+        background correction. Only the first k-vector thread accumulates this.
     cos_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
         OUTPUT: :math:`\\cos(k \\cdot r_i)` for each (k, atom) pair.
     sin_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
@@ -1816,10 +371,10 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     -----
     - K-major iteration avoids atomics (each thread owns its k output).
     - k=0 is skipped (early return) to avoid division by zero in G(k).
-    - Thread 1 accumulates total_charge as Q/V for background correction.
+    - Thread 0 accumulates total_charge as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
     - cos_k_dot_r and sin_k_dot_r store unweighted phases for charge gradient computation.
-    - Half-space k-vectors with 8π Green's function give ~2x speedup.
+    - Half-space k-vectors use the corresponding 8π Green's function factor.
     """
     k_idx = wp.tid()
     num_atoms = positions.shape[0]
@@ -1829,14 +384,22 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     volume = wp.float64(wp.abs(wp.determinant(cell[0])))
 
     k_vector = k_vectors[k_idx]
-    # Cast k_vector components to float64 for precision
     kx = wp.float64(k_vector[0])
     ky = wp.float64(k_vector[1])
     kz = wp.float64(k_vector[2])
     k_squared = kx * kx + ky * ky + kz * kz
 
-    # Skip k=0 (would cause division by zero)
     if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            total_charge_accum = wp.float64(0.0)
+            for atom_idx in range(num_atoms):
+                total_charge_accum += wp.float64(charges[atom_idx]) / volume
+            total_charge[0] = total_charge_accum
+        for atom_idx in range(num_atoms):
+            cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
+            sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
+        real_structure_factors[k_idx] = wp.float64(0.0)
+        imag_structure_factors[k_idx] = wp.float64(0.0)
         return
 
     # Compute Green's function: (8*pi/V) * exp(-k^2/(4*alpha^2)) / k^2
@@ -1845,17 +408,17 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     # Accumulate structure factors in registers (no atomics!)
     real_sum = wp.float64(0.0)
     imag_sum = wp.float64(0.0)
+    total_charge_accum = wp.float64(0.0)
 
     for atom_idx in range(num_atoms):
         position = positions[atom_idx]
         charge = wp.float64(charges[atom_idx])
 
-        # Thread 1 accumulates total charge for background correction
-        if k_idx == 1:
-            tc = charge / volume
-            wp.atomic_add(total_charge, 0, tc)
+        # Thread 0 accumulates total charge for background correction. This
+        # keeps the correction valid for one-k-vector launches.
+        if k_idx == 0:
+            total_charge_accum += charge / volume
 
-        # Compute k*r in float64
         k_dot_r = (
             kx * wp.float64(position[0])
             + ky * wp.float64(position[1])
@@ -1872,9 +435,125 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         real_sum += charge * cos_kr * green_function
         imag_sum += charge * sin_kr * green_function
 
-    # Write final structure factors (no atomics needed)
+    if k_idx == 0:
+        total_charge[0] = total_charge_accum
     real_structure_factors[k_idx] = real_sum
     imag_structure_factors[k_idx] = imag_sum
+
+
+@wp.kernel
+def _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array(dtype=Any),
+    cell: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charge: wp.array(dtype=wp.float64),
+    cos_k_dot_r: wp.array2d(dtype=wp.float64),
+    sin_k_dot_r: wp.array2d(dtype=wp.float64),
+    real_structure_factors: wp.array(dtype=wp.float64),
+    imag_structure_factors: wp.array(dtype=wp.float64),
+    cellgrad_cache: wp.array2d(dtype=wp.float64),
+):
+    """Forward fill + the un-weighted cell-grad reduction (single system).
+
+    Byte-identical to ``_ewald_reciprocal_space_energy_kernel_fill_structure_factors``
+    for all existing outputs; additionally accumulates, in the SAME atom loop, the
+    un-weighted per-``k`` sums consumed by the O(K) ``kspace`` backward
+    (``ewald_recip_factory._make_backward_kspace_from_cache_kernel``):
+
+      cellgrad_cache[k] = [A, B, Ra_x, Ra_y, Ra_z, Rb_x, Rb_y, Rb_z]
+
+    with ``A = sum_i q_i cos(k.r_i)``, ``B = sum_i q_i sin(k.r_i)``,
+    ``Ra = sum_i q_i cos(k.r_i) r_i``, ``Rb = sum_i q_i sin(k.r_i) r_i`` (all
+    un-weighted -- the Green's function ``g_k`` is applied in the consume kernel).
+    """
+    k_idx = wp.tid()
+    num_atoms = positions.shape[0]
+
+    alpha_ = wp.float64(alpha[0])
+    exp_factor = wp.float64(0.25) / (alpha_ * alpha_)
+    volume = wp.float64(wp.abs(wp.determinant(cell[0])))
+
+    k_vector = k_vectors[k_idx]
+    kx = wp.float64(k_vector[0])
+    ky = wp.float64(k_vector[1])
+    kz = wp.float64(k_vector[2])
+    k_squared = kx * kx + ky * ky + kz * kz
+
+    if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            total_charge_accum = wp.float64(0.0)
+            for atom_idx in range(num_atoms):
+                total_charge_accum += wp.float64(charges[atom_idx]) / volume
+            total_charge[0] = total_charge_accum
+        for atom_idx in range(num_atoms):
+            cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
+            sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
+        real_structure_factors[k_idx] = wp.float64(0.0)
+        imag_structure_factors[k_idx] = wp.float64(0.0)
+        for col in range(8):
+            cellgrad_cache[k_idx, col] = wp.float64(0.0)
+        return
+
+    green_function = wp_exp_kernel(k_squared, exp_factor) * wp.float64(EIGHTPI) / volume
+
+    real_sum = wp.float64(0.0)
+    imag_sum = wp.float64(0.0)
+    a_sum = wp.float64(0.0)
+    b_sum = wp.float64(0.0)
+    ra_x = wp.float64(0.0)
+    ra_y = wp.float64(0.0)
+    ra_z = wp.float64(0.0)
+    rb_x = wp.float64(0.0)
+    rb_y = wp.float64(0.0)
+    rb_z = wp.float64(0.0)
+    total_charge_accum = wp.float64(0.0)
+
+    for atom_idx in range(num_atoms):
+        position = positions[atom_idx]
+        charge = wp.float64(charges[atom_idx])
+
+        if k_idx == 0:
+            total_charge_accum += charge / volume
+
+        rx = wp.float64(position[0])
+        ry = wp.float64(position[1])
+        rz = wp.float64(position[2])
+        k_dot_r = kx * rx + ky * ry + kz * rz
+        cos_kr = wp.cos(k_dot_r)
+        sin_kr = wp.sin(k_dot_r)
+
+        cos_k_dot_r[k_idx, atom_idx] = cos_kr
+        sin_k_dot_r[k_idx, atom_idx] = sin_kr
+
+        real_sum += charge * cos_kr * green_function
+        imag_sum += charge * sin_kr * green_function
+
+        # Un-weighted cell-grad reduction (marginal extra FMAs in this loop).
+        qc = charge * cos_kr
+        qs = charge * sin_kr
+        a_sum += qc
+        b_sum += qs
+        ra_x += qc * rx
+        ra_y += qc * ry
+        ra_z += qc * rz
+        rb_x += qs * rx
+        rb_y += qs * ry
+        rb_z += qs * rz
+
+    real_structure_factors[k_idx] = real_sum
+    imag_structure_factors[k_idx] = imag_sum
+    if k_idx == 0:
+        total_charge[0] = total_charge_accum
+    cellgrad_cache[k_idx, 0] = a_sum
+    cellgrad_cache[k_idx, 1] = b_sum
+    cellgrad_cache[k_idx, 2] = ra_x
+    cellgrad_cache[k_idx, 3] = ra_y
+    cellgrad_cache[k_idx, 4] = ra_z
+    cellgrad_cache[k_idx, 5] = rb_x
+    cellgrad_cache[k_idx, 6] = rb_y
+    cellgrad_cache[k_idx, 7] = rb_z
 
 
 @wp.kernel
@@ -1944,7 +623,6 @@ def _ewald_reciprocal_space_energy_kernel_compute_energy(
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
 
-    # Write final energy: E_i = (1/2) * q_i * phi_i (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
 
@@ -2087,10 +765,16 @@ def _ewald_reciprocal_space_energy_forces_kernel(
     """
     atom_idx = wp.tid()
     num_k = real_structure_factors.shape[0]
-    charge = wp.float64(charges[atom_idx])
+    if num_k == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+        )
+        return
 
-    # Get the zero vector in the correct type
-    k0 = k_vectors[0]
+    charge = wp.float64(charges[atom_idx])
 
     # Accumulate in registers (no atomics!)
     local_potential = wp.float64(0.0)
@@ -2102,27 +786,23 @@ def _ewald_reciprocal_space_energy_forces_kernel(
         cos_kr = charge * cos_k_dot_r[k_idx, atom_idx]
         sin_kr = charge * sin_k_dot_r[k_idx, atom_idx]
 
-        # Load precomputed structure factors (already include green function)
         s_real = real_structure_factors[k_idx]
         s_imag = imag_structure_factors[k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += phase_sum
 
-        # Force contribution
         force_scalar = s_real * sin_kr - s_imag * cos_kr
         k_vec = k_vectors[k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results with charge multiplication (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
-    atomic_forces[atom_idx] = type(k0)(
-        type(k0[0])(local_force_x),
-        type(k0[0])(local_force_y),
-        type(k0[0])(local_force_z),
+    atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+        type(atomic_forces[atom_idx][0])(local_force_x),
+        type(atomic_forces[atom_idx][0])(local_force_y),
+        type(atomic_forces[atom_idx][0])(local_force_z),
     )
 
 
@@ -2184,10 +864,17 @@ def _ewald_reciprocal_space_energy_forces_charge_grad_kernel(
     """
     atom_idx = wp.tid()
     num_k = real_structure_factors.shape[0]
-    charge = wp.float64(charges[atom_idx])
+    if num_k == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+        )
+        charge_gradients[atom_idx] = wp.float64(0.0)
+        return
 
-    # Get the zero vector in the correct type
-    k0 = k_vectors[0]
+    charge = wp.float64(charges[atom_idx])
 
     # Accumulate in registers (no atomics!)
     local_potential = wp.float64(0.0)
@@ -2200,34 +887,27 @@ def _ewald_reciprocal_space_energy_forces_charge_grad_kernel(
         cos_kr = cos_k_dot_r[k_idx, atom_idx]
         sin_kr = sin_k_dot_r[k_idx, atom_idx]
 
-        # Load precomputed structure factors (already include green function)
         s_real = real_structure_factors[k_idx]
         s_imag = imag_structure_factors[k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
         local_potential_uncharged += phase_sum
 
-        # Force contribution
         force_scalar = charge * (s_real * sin_kr - s_imag * cos_kr)
         k_vec = k_vectors[k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results (no atomics needed)
-    # Energy: E_i = (1/2) * q_i * φ_i
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
-    # Forces
-    atomic_forces[atom_idx] = type(k0)(
-        type(k0[0])(local_force_x),
-        type(k0[0])(local_force_y),
-        type(k0[0])(local_force_z),
+    atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+        type(atomic_forces[atom_idx][0])(local_force_x),
+        type(atomic_forces[atom_idx][0])(local_force_y),
+        type(atomic_forces[atom_idx][0])(local_force_z),
     )
 
-    # Charge gradient
     # Self-energy and background corrections applied in higher-level code
     charge_gradients[atom_idx] = local_potential_uncharged
 
@@ -2306,7 +986,6 @@ def _ewald_reciprocal_space_virial_kernel(
     # so W_ab(k) = E(k) * [δ_ab - 2 k_a k_b / k² (1 + k²/(4α²))].
     k_factor = wp.float64(2.0) * (wp.float64(1.0) + k_sq * exp_factor) / k_sq
 
-    # Build 3x3 virial contribution: W_ab = E_k * (δ_ab - k_factor * k_a * k_b)
     w00 = energy_k * (wp.float64(1.0) - k_factor * kx * kx)
     w01 = energy_k * (-k_factor * kx * ky)
     w02 = energy_k * (-k_factor * kx * kz)
@@ -2317,8 +996,6 @@ def _ewald_reciprocal_space_virial_kernel(
     w21 = energy_k * (-k_factor * kz * ky)
     w22 = energy_k * (wp.float64(1.0) - k_factor * kz * kz)
 
-    # Cast to virial element type (mat33f or mat33d, matching input precision)
-    # Use type() inline as constructor (Warp resolves at compile time)
     _virial_ref = virial[0]
     virial_k = type(_virial_ref)(
         type(k_vec[0])(w00),
@@ -2397,7 +1074,6 @@ def _batch_ewald_reciprocal_space_virial_kernel(
     # so W_ab(k) = E(k) * [δ_ab - 2 k_a k_b / k² (1 + k²/(4α²))].
     k_factor = wp.float64(2.0) * (wp.float64(1.0) + k_sq * exp_factor) / k_sq
 
-    # Build 3x3 virial contribution: W_ab = E_k * (δ_ab - k_factor * k_a * k_b)
     w00 = energy_k * (wp.float64(1.0) - k_factor * kx * kx)
     w01 = energy_k * (-k_factor * kx * ky)
     w02 = energy_k * (-k_factor * kx * kz)
@@ -2408,8 +1084,6 @@ def _batch_ewald_reciprocal_space_virial_kernel(
     w21 = energy_k * (-k_factor * kz * ky)
     w22 = energy_k * (wp.float64(1.0) - k_factor * kz * kz)
 
-    # Cast to virial element type (mat33f or mat33d, matching input precision)
-    # Use type() inline as constructor (Warp resolves at compile time)
     _virial_ref = virial[system_id]
     virial_k = type(_virial_ref)(
         type(k_vec[0])(w00),
@@ -2452,7 +1126,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     atom-major iteration while maintaining parallelism.
 
     The block size is controlled by ALCH_EWALD_BATCH_BLOCK_SIZE environment variable
-    (default: 16, which benchmarks show is optimal for most scenarios).
+    (default: 16).
 
     For each system s and atom i in that system:
 
@@ -2502,12 +1176,12 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     -----
     - Blocked iteration reduces atomic contention vs atom-major.
     - Each block computes partial sums in registers before one atomic add.
-    - BATCH_BLOCK_SIZE=16 is optimal for most cases (set via environment variable ALCH_EWALD_BATCH_BLOCK_SIZE).
+    - BATCH_BLOCK_SIZE is set via ALCH_EWALD_BATCH_BLOCK_SIZE.
     - k=0 causes early return (would cause division by zero in G(k)).
     - Blocks beyond the system's atoms cause early return.
-    - Thread 1 accumulates total_charges as Q/V for background correction.
+    - Thread 0 accumulates total_charges as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
-    - Half-space k-vectors with 8π Green's function give ~2x speedup.
+    - Half-space k-vectors use the corresponding 8π Green's function factor.
     """
     k_idx, system_id, block_idx = wp.tid()
 
@@ -2517,11 +1191,9 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     a_start = atom_start[system_id]
     a_end = atom_end[system_id]
 
-    # Compute atom range for this block
     block_start = a_start + block_idx * BATCH_BLOCK_SIZE
     block_end = wp.min(block_start + BATCH_BLOCK_SIZE, a_end)
 
-    # Skip if this block is beyond the system's atoms
     if block_start >= a_end:
         return
 
@@ -2534,8 +1206,15 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     kz = wp.float64(k_vector[2])
     k_squared = kx * kx + ky * ky + kz * kz
 
-    # Skip k=0 (would cause division by zero)
     if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            local_charge = wp.float64(0.0)
+            for atom_idx in range(block_start, block_end):
+                local_charge += wp.float64(charges[atom_idx]) / volume
+            wp.atomic_add(total_charges, system_id, local_charge)
+        for atom_idx in range(block_start, block_end):
+            cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
+            sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
         return
 
     # Compute Green's function: (4*pi/V) * exp(-k^2/(4*alpha^2)) / k^2
@@ -2550,11 +1229,10 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         position = positions[atom_idx]
         charge = wp.float64(charges[atom_idx])
 
-        # Only first k-thread per block accumulates total charge
-        if k_idx == 1:
+        # Only first k-thread per block accumulates total charge.
+        if k_idx == 0:
             local_charge += charge / volume
 
-        # Compute cos(k*r) and sin(k*r) weighted by charge
         k_dot_r = (
             kx * wp.float64(position[0])
             + ky * wp.float64(position[1])
@@ -2575,7 +1253,132 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     wp.atomic_add(real_structure_factors, system_id, k_idx, local_real)
     wp.atomic_add(imag_structure_factors, system_id, k_idx, local_imag)
 
-    if k_idx == 1:
+    if k_idx == 0:
+        wp.atomic_add(total_charges, system_id, local_charge)
+
+
+@wp.kernel
+def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad(
+    positions: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    k_vectors: wp.array2d(dtype=Any),
+    cell: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    atom_start: wp.array(dtype=wp.int32),
+    atom_end: wp.array(dtype=wp.int32),
+    total_charges: wp.array(dtype=wp.float64),
+    cos_k_dot_r: wp.array2d(dtype=wp.float64),
+    sin_k_dot_r: wp.array2d(dtype=wp.float64),
+    real_structure_factors: wp.array2d(dtype=wp.float64),
+    imag_structure_factors: wp.array2d(dtype=wp.float64),
+    cellgrad_cache: wp.array2d(dtype=wp.float64),
+):
+    """Compute batched structure factors plus first-order cell-gradient sums.
+
+    Thread launch
+    -------------
+    ``dim = (K, B, max_blocks_per_system)``. Each thread owns one
+    ``(k-vector, system, atom block)`` partial reduction.
+
+    Modifies
+    --------
+    ``total_charges``, ``cos_k_dot_r``, ``sin_k_dot_r``,
+    ``real_structure_factors``, ``imag_structure_factors``, and
+    ``cellgrad_cache``. The cache layout is ``row = system_id * K + k_idx`` with
+    columns ``[A, B, Ra_x, Ra_y, Ra_z, Rb_x, Rb_y, Rb_z]``.
+    """
+    k_idx, system_id, block_idx = wp.tid()
+
+    system_cell = cell[system_id]
+    system_alpha = wp.float64(alpha[system_id])
+
+    a_start = atom_start[system_id]
+    a_end = atom_end[system_id]
+
+    block_start = a_start + block_idx * BATCH_BLOCK_SIZE
+    block_end = wp.min(block_start + BATCH_BLOCK_SIZE, a_end)
+    if block_start >= a_end:
+        return
+
+    exp_factor = wp.float64(0.25) / (system_alpha * system_alpha)
+    volume = wp.float64(wp.abs(wp.determinant(system_cell)))
+
+    k_vector = k_vectors[system_id, k_idx]
+    kx = wp.float64(k_vector[0])
+    ky = wp.float64(k_vector[1])
+    kz = wp.float64(k_vector[2])
+    k_squared = kx * kx + ky * ky + kz * kz
+
+    if k_squared < wp.float64(1e-10):
+        if k_idx == 0:
+            local_charge = wp.float64(0.0)
+            for atom_idx in range(block_start, block_end):
+                local_charge += wp.float64(charges[atom_idx]) / volume
+            wp.atomic_add(total_charges, system_id, local_charge)
+        for atom_idx in range(block_start, block_end):
+            cos_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
+            sin_k_dot_r[k_idx, atom_idx] = wp.float64(0.0)
+        return
+
+    green_function = wp_exp_kernel(k_squared, exp_factor) * wp.float64(EIGHTPI) / volume
+
+    local_real = wp.float64(0.0)
+    local_imag = wp.float64(0.0)
+    local_charge = wp.float64(0.0)
+    local_a = wp.float64(0.0)
+    local_b = wp.float64(0.0)
+    local_ra_x = wp.float64(0.0)
+    local_ra_y = wp.float64(0.0)
+    local_ra_z = wp.float64(0.0)
+    local_rb_x = wp.float64(0.0)
+    local_rb_y = wp.float64(0.0)
+    local_rb_z = wp.float64(0.0)
+
+    for atom_idx in range(block_start, block_end):
+        position = positions[atom_idx]
+        charge = wp.float64(charges[atom_idx])
+
+        if k_idx == 0:
+            local_charge += charge / volume
+
+        rx = wp.float64(position[0])
+        ry = wp.float64(position[1])
+        rz = wp.float64(position[2])
+        k_dot_r = kx * rx + ky * ry + kz * rz
+        cos_kr = wp.cos(k_dot_r)
+        sin_kr = wp.sin(k_dot_r)
+
+        cos_k_dot_r[k_idx, atom_idx] = cos_kr
+        sin_k_dot_r[k_idx, atom_idx] = sin_kr
+
+        local_real += charge * cos_kr * green_function
+        local_imag += charge * sin_kr * green_function
+
+        qc = charge * cos_kr
+        qs = charge * sin_kr
+        local_a += qc
+        local_b += qs
+        local_ra_x += qc * rx
+        local_ra_y += qc * ry
+        local_ra_z += qc * rz
+        local_rb_x += qs * rx
+        local_rb_y += qs * ry
+        local_rb_z += qs * rz
+
+    wp.atomic_add(real_structure_factors, system_id, k_idx, local_real)
+    wp.atomic_add(imag_structure_factors, system_id, k_idx, local_imag)
+
+    row = system_id * k_vectors.shape[1] + k_idx
+    wp.atomic_add(cellgrad_cache, row, 0, local_a)
+    wp.atomic_add(cellgrad_cache, row, 1, local_b)
+    wp.atomic_add(cellgrad_cache, row, 2, local_ra_x)
+    wp.atomic_add(cellgrad_cache, row, 3, local_ra_y)
+    wp.atomic_add(cellgrad_cache, row, 4, local_ra_z)
+    wp.atomic_add(cellgrad_cache, row, 5, local_rb_x)
+    wp.atomic_add(cellgrad_cache, row, 6, local_rb_y)
+    wp.atomic_add(cellgrad_cache, row, 7, local_rb_z)
+
+    if k_idx == 0:
         wp.atomic_add(total_charges, system_id, local_charge)
 
 
@@ -2650,7 +1453,6 @@ def _batch_ewald_reciprocal_space_energy_kernel_compute_energy(
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
 
-    # Write final energy: E_i = (1/2) * q_i * phi_i (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
 
@@ -2728,6 +1530,323 @@ def _batch_ewald_subtract_self_energy_kernel(
     energy_out[atom_index] = energy_in[atom_index] - self_energy - neutralization_energy
 
 
+###########################################################################################
+########################### Ewald Correction Autograd Kernels ##############################
+###########################################################################################
+
+
+@wp.kernel
+def _ewald_energy_corrections_kernel(
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    volume: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charge: wp.array(dtype=Any),
+    corrected_energies: wp.array(dtype=Any),
+):
+    """Apply Ewald reciprocal self/background corrections.
+
+    Thread launch
+    -------------
+    One thread per atom.
+
+    Modifies
+    --------
+    corrected_energies
+        Per-atom corrected reciprocal energies.
+    """
+    i = wp.tid()
+    q = charges[i]
+    r = raw_energies[i]
+    v = volume[0]
+    a = alpha[0]
+    qtot = total_charge[0]
+
+    pi = type(q)(PI)
+    two = type(q)(2.0)
+    self_contrib = a * q * q / wp.sqrt(pi)
+    background_contrib = pi * q * qtot / (two * a * a * v)
+    corrected_energies[i] = r - self_contrib - background_contrib
+
+
+@wp.kernel
+def _batch_ewald_energy_corrections_kernel(
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    volumes: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charges: wp.array(dtype=Any),
+    corrected_energies: wp.array(dtype=Any),
+):
+    """Batched Ewald reciprocal self/background corrections.
+
+    Thread launch
+    -------------
+    One thread per atom.
+
+    Modifies
+    --------
+    corrected_energies
+        Per-atom corrected reciprocal energies.
+    """
+    i = wp.tid()
+    s = batch_idx[i]
+    q = charges[i]
+    r = raw_energies[i]
+    v = volumes[s]
+    a = alpha[s]
+    qtot = total_charges[s]
+
+    pi = type(q)(PI)
+    two = type(q)(2.0)
+    self_contrib = a * q * q / wp.sqrt(pi)
+    background_contrib = pi * q * qtot / (two * a * a * v)
+    corrected_energies[i] = r - self_contrib - background_contrib
+
+
+@wp.kernel
+def _ewald_energy_corrections_backward_kernel(
+    grad_E: wp.array(dtype=Any),
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    volume: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charge: wp.array(dtype=Any),
+    grad_raw: wp.array(dtype=Any),
+    grad_charges: wp.array(dtype=Any),
+    grad_volume: wp.array(dtype=Any),
+    grad_alpha: wp.array(dtype=Any),
+    grad_total_charge: wp.array(dtype=Any),
+):
+    """Single-system backward for Ewald reciprocal corrections."""
+    i = wp.tid()
+    g = grad_E[i]
+    q = charges[i]
+    a = alpha[0]
+    v = volume[0]
+    qtot = total_charge[0]
+
+    pi = type(g)(PI)
+    two = type(g)(2.0)
+    sqrt_pi = wp.sqrt(pi)
+    c2 = pi / (two * a * a * v)
+
+    grad_raw[i] = g
+    grad_charges[i] = g * (-two * a * q / sqrt_pi - c2 * qtot)
+
+    d_alpha = g * (-(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v))
+    wp.atomic_add(grad_alpha, 0, d_alpha)
+
+    d_volume = g * pi * q * qtot / (two * a * a * v * v)
+    wp.atomic_add(grad_volume, 0, d_volume)
+
+    d_qtot = -g * c2 * q
+    wp.atomic_add(grad_total_charge, 0, d_qtot)
+
+
+@wp.kernel
+def _batch_ewald_energy_corrections_backward_kernel(
+    grad_E: wp.array(dtype=Any),
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    volumes: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charges: wp.array(dtype=Any),
+    grad_raw: wp.array(dtype=Any),
+    grad_charges: wp.array(dtype=Any),
+    grad_volumes: wp.array(dtype=Any),
+    grad_alpha: wp.array(dtype=Any),
+    grad_total_charges: wp.array(dtype=Any),
+):
+    """Batched backward for Ewald reciprocal corrections."""
+    i = wp.tid()
+    s = batch_idx[i]
+    g = grad_E[i]
+    q = charges[i]
+    a = alpha[s]
+    v = volumes[s]
+    qtot = total_charges[s]
+
+    pi = type(g)(PI)
+    two = type(g)(2.0)
+    sqrt_pi = wp.sqrt(pi)
+    c2 = pi / (two * a * a * v)
+
+    grad_raw[i] = g
+    grad_charges[i] = g * (-two * a * q / sqrt_pi - c2 * qtot)
+
+    d_alpha = g * (-(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v))
+    wp.atomic_add(grad_alpha, s, d_alpha)
+
+    d_volume = g * pi * q * qtot / (two * a * a * v * v)
+    wp.atomic_add(grad_volumes, s, d_volume)
+
+    d_qtot = -g * c2 * q
+    wp.atomic_add(grad_total_charges, s, d_qtot)
+
+
+@wp.kernel
+def _ewald_energy_corrections_double_backward_kernel(
+    h_raw: wp.array(dtype=Any),
+    h_chg: wp.array(dtype=Any),
+    h_vol: wp.array(dtype=Any),
+    h_alpha: wp.array(dtype=Any),
+    h_qtot: wp.array(dtype=Any),
+    grad_E: wp.array(dtype=Any),
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    volume: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charge: wp.array(dtype=Any),
+    grad_grad_E: wp.array(dtype=Any),
+    grad_raw: wp.array(dtype=Any),
+    grad_charges: wp.array(dtype=Any),
+    grad_volume: wp.array(dtype=Any),
+    grad_alpha: wp.array(dtype=Any),
+    grad_total_charge: wp.array(dtype=Any),
+):
+    """Single-system double-backward for Ewald reciprocal corrections."""
+    i = wp.tid()
+    g_i = grad_E[i]
+    q = charges[i]
+    a = alpha[0]
+    v = volume[0]
+    qtot = total_charge[0]
+    hr = h_raw[i]
+    hc = h_chg[i]
+    hv = h_vol[0]
+    ha = h_alpha[0]
+    hq = h_qtot[0]
+
+    pi = type(g_i)(PI)
+    two = type(g_i)(2.0)
+    three = type(g_i)(3.0)
+    sqrt_pi = wp.sqrt(pi)
+    c1 = a / sqrt_pi
+    c2 = pi / (two * a * a * v)
+    c_i = -two * c1 * q - c2 * qtot
+    a_i = -(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v)
+    b_i = pi * q * qtot / (two * a * a * v * v)
+    d_i = -pi * q / (two * a * a * v)
+
+    grad_grad_E[i] = hr + hc * c_i + ha * a_i + hv * b_i + hq * d_i
+    grad_raw[i] = type(g_i)(0.0)
+
+    grad_charges[i] = g_i * (
+        hc * (-two * c1)
+        + ha * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + hv * (pi * qtot / (two * a * a * v * v))
+        + hq * (-pi / (two * a * a * v))
+    )
+
+    g_q = g_i * q
+    dV_atom = (
+        hc * g_i * qtot * pi / (two * a * a * v * v)
+        + ha * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hv * (-pi * qtot / (a * a * v * v * v)) * g_q
+        + hq * (pi / (two * a * a * v * v)) * g_q
+    )
+    wp.atomic_add(grad_volume, 0, dV_atom)
+
+    dA_atom = (
+        hc * g_i * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + ha * (-three * pi * qtot / (a * a * a * a * v)) * g_q
+        + hv * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hq * (pi / (a * a * a * v)) * g_q
+    )
+    wp.atomic_add(grad_alpha, 0, dA_atom)
+
+    dQ_atom = (
+        hc * g_i * (-pi / (two * a * a * v))
+        + ha * (pi / (a * a * a * v)) * g_q
+        + hv * (pi / (two * a * a * v * v)) * g_q
+    )
+    wp.atomic_add(grad_total_charge, 0, dQ_atom)
+
+
+@wp.kernel
+def _batch_ewald_energy_corrections_double_backward_kernel(
+    h_raw: wp.array(dtype=Any),
+    h_chg: wp.array(dtype=Any),
+    h_vol: wp.array(dtype=Any),
+    h_alpha: wp.array(dtype=Any),
+    h_qtot: wp.array(dtype=Any),
+    grad_E: wp.array(dtype=Any),
+    raw_energies: wp.array(dtype=Any),
+    charges: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    volumes: wp.array(dtype=Any),
+    alpha: wp.array(dtype=Any),
+    total_charges: wp.array(dtype=Any),
+    grad_grad_E: wp.array(dtype=Any),
+    grad_raw: wp.array(dtype=Any),
+    grad_charges: wp.array(dtype=Any),
+    grad_volumes: wp.array(dtype=Any),
+    grad_alpha: wp.array(dtype=Any),
+    grad_total_charges: wp.array(dtype=Any),
+):
+    """Batched double-backward for Ewald reciprocal corrections."""
+    i = wp.tid()
+    s = batch_idx[i]
+    g_i = grad_E[i]
+    q = charges[i]
+    a = alpha[s]
+    v = volumes[s]
+    qtot = total_charges[s]
+    hr = h_raw[i]
+    hc = h_chg[i]
+    hv = h_vol[s]
+    ha = h_alpha[s]
+    hq = h_qtot[s]
+
+    pi = type(g_i)(PI)
+    two = type(g_i)(2.0)
+    three = type(g_i)(3.0)
+    sqrt_pi = wp.sqrt(pi)
+    c1 = a / sqrt_pi
+    c2 = pi / (two * a * a * v)
+    c_i = -two * c1 * q - c2 * qtot
+    a_i = -(q * q) / sqrt_pi + pi * q * qtot / (a * a * a * v)
+    b_i = pi * q * qtot / (two * a * a * v * v)
+    d_i = -pi * q / (two * a * a * v)
+
+    grad_grad_E[i] = hr + hc * c_i + ha * a_i + hv * b_i + hq * d_i
+    grad_raw[i] = type(g_i)(0.0)
+
+    grad_charges[i] = g_i * (
+        hc * (-two * c1)
+        + ha * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + hv * (pi * qtot / (two * a * a * v * v))
+        + hq * (-pi / (two * a * a * v))
+    )
+
+    g_q = g_i * q
+    dV_atom = (
+        hc * g_i * qtot * pi / (two * a * a * v * v)
+        + ha * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hv * (-pi * qtot / (a * a * v * v * v)) * g_q
+        + hq * (pi / (two * a * a * v * v)) * g_q
+    )
+    wp.atomic_add(grad_volumes, s, dV_atom)
+
+    dA_atom = (
+        hc * g_i * (-two * q / sqrt_pi + pi * qtot / (a * a * a * v))
+        + ha * (-three * pi * qtot / (a * a * a * a * v)) * g_q
+        + hv * (-pi * qtot / (a * a * a * v * v)) * g_q
+        + hq * (pi / (a * a * a * v)) * g_q
+    )
+    wp.atomic_add(grad_alpha, s, dA_atom)
+
+    dQ_atom = (
+        hc * g_i * (-pi / (two * a * a * v))
+        + ha * (pi / (a * a * a * v)) * g_q
+        + hv * (pi / (two * a * a * v * v)) * g_q
+    )
+    wp.atomic_add(grad_total_charges, s, dQ_atom)
+
+
 @wp.kernel
 def _batch_ewald_reciprocal_space_energy_forces_kernel(
     charges: wp.array(dtype=Any),
@@ -2792,12 +1911,17 @@ def _batch_ewald_reciprocal_space_energy_forces_kernel(
     """
     atom_idx = wp.tid()
     num_k = real_structure_factors.shape[1]
-    charge = wp.float64(charges[atom_idx])
-
     system_id = batch_id[atom_idx]
+    if num_k == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+        )
+        return
 
-    # Get the zero vector in the correct type
-    k0 = k_vectors[system_id, 0]
+    charge = wp.float64(charges[atom_idx])
 
     # Accumulate in registers (no atomics!)
     local_potential = wp.float64(0.0)
@@ -2813,23 +1937,20 @@ def _batch_ewald_reciprocal_space_energy_forces_kernel(
         s_real = real_structure_factors[system_id, k_idx]
         s_imag = imag_structure_factors[system_id, k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += phase_sum
 
-        # Force contribution
         force_scalar = s_real * sin_kr - s_imag * cos_kr
         k_vec = k_vectors[system_id, k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results with charge multiplication (no atomics needed)
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
-    atomic_forces[atom_idx] = type(k0)(
-        type(k0[0])(local_force_x),
-        type(k0[0])(local_force_y),
-        type(k0[0])(local_force_z),
+    atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+        type(atomic_forces[atom_idx][0])(local_force_x),
+        type(atomic_forces[atom_idx][0])(local_force_y),
+        type(atomic_forces[atom_idx][0])(local_force_z),
     )
 
 
@@ -2892,12 +2013,18 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel(
     """
     atom_idx = wp.tid()
     num_k = real_structure_factors.shape[1]
-    charge = wp.float64(charges[atom_idx])
-
     system_id = batch_id[atom_idx]
+    if num_k == 0:
+        reciprocal_energies[atom_idx] = wp.float64(0.0)
+        atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+            type(atomic_forces[atom_idx][0])(0.0),
+        )
+        charge_gradients[atom_idx] = wp.float64(0.0)
+        return
 
-    # Get the zero vector in the correct type
-    k0 = k_vectors[system_id, 0]
+    charge = wp.float64(charges[atom_idx])
 
     # Accumulate in registers (no atomics!)
     local_potential = wp.float64(0.0)
@@ -2914,30 +2041,24 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel(
         s_real = real_structure_factors[system_id, k_idx]
         s_imag = imag_structure_factors[system_id, k_idx]
 
-        # Potential contribution
         phase_sum = s_real * cos_kr + s_imag * sin_kr
         local_potential += charge * phase_sum
         local_potential_uncharged += phase_sum
 
-        # Force contribution
         force_scalar = charge * (s_real * sin_kr - s_imag * cos_kr)
         k_vec = k_vectors[system_id, k_idx]
         local_force_x += force_scalar * wp.float64(k_vec[0])
         local_force_y += force_scalar * wp.float64(k_vec[1])
         local_force_z += force_scalar * wp.float64(k_vec[2])
 
-    # Write final results (no atomics needed)
-    # Energy
     reciprocal_energies[atom_idx] = wp.float64(0.5) * local_potential
 
-    # Forces
-    atomic_forces[atom_idx] = type(k0)(
-        type(k0[0])(local_force_x),
-        type(k0[0])(local_force_y),
-        type(k0[0])(local_force_z),
+    atomic_forces[atom_idx] = type(atomic_forces[atom_idx])(
+        type(atomic_forces[atom_idx][0])(local_force_x),
+        type(atomic_forces[atom_idx][0])(local_force_y),
+        type(atomic_forces[atom_idx][0])(local_force_z),
     )
 
-    # Charge gradient
     # Self-energy and background corrections applied in higher-level code
     charge_gradients[atom_idx] = local_potential_uncharged
 
@@ -2945,6 +2066,119 @@ def _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel(
 ###########################################################################################
 ########################### Warp Launchers (Framework-Agnostic) ############################
 ###########################################################################################
+
+
+def _launch_ewald_real_forward_factory(
+    positions: wp.array,
+    charges: wp.array,
+    cell: wp.array,
+    alpha: wp.array,
+    pair_energies: wp.array,
+    wp_dtype: type,
+    device: str | None,
+    *,
+    batched: bool,
+    neighbor_input: str,
+    batch_id: wp.array | None = None,
+    idx_j: wp.array | None = None,
+    neighbor_ptr: wp.array | None = None,
+    unit_shifts: wp.array | None = None,
+    neighbor_matrix: wp.array | None = None,
+    unit_shifts_matrix: wp.array | None = None,
+    mask_value: int = 0,
+    atomic_forces: wp.array | None = None,
+    charge_gradients: wp.array | None = None,
+    virial: wp.array | None = None,
+    compute_virial: bool = False,
+) -> None:
+    """Launch the factory-backed Ewald real forward kernel."""
+    if device is None:
+        device = str(positions.device)
+
+    if compute_virial and atomic_forces is None:
+        raise ValueError("atomic_forces is required when compute_virial=True")
+
+    from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
+    from nvalchemiops.interactions.electrostatics.ewald_real_factory import (
+        alloc_ewald_real_sentinels,
+        get_ewald_real_kernel,
+    )
+
+    if charge_gradients is not None:
+        deriv_state = _DerivState.E_F_dQ
+    elif atomic_forces is not None:
+        deriv_state = _DerivState.E_F
+    else:
+        deriv_state = _DerivState.E
+
+    sentinels = alloc_ewald_real_sentinels(wp_dtype, device)
+    kernel = get_ewald_real_kernel(
+        wp_dtype,
+        batched=batched,
+        neighbor_input=neighbor_input,
+        deriv_state=deriv_state,
+        cell_grad=compute_virial,
+        tiled=neighbor_input == "matrix",
+    )
+
+    batch_arg = batch_id if batched else sentinels["batch_id"]
+    if neighbor_input == "matrix":
+        if neighbor_matrix is None or unit_shifts_matrix is None:
+            raise ValueError(
+                "neighbor_matrix and unit_shifts_matrix are required for matrix input"
+            )
+        launch_dim = int(neighbor_matrix.shape[0])
+        idx_arg = sentinels["idx_j"]
+        ptr_arg = sentinels["neighbor_ptr"]
+        shifts_arg = sentinels["unit_shifts"]
+        matrix_arg = neighbor_matrix
+        matrix_shifts_arg = unit_shifts_matrix
+    else:
+        if idx_j is None or neighbor_ptr is None or unit_shifts is None:
+            raise ValueError(
+                "idx_j, neighbor_ptr, and unit_shifts are required for CSR input"
+            )
+        launch_dim = int(positions.shape[0])
+        idx_arg = idx_j
+        ptr_arg = neighbor_ptr
+        shifts_arg = unit_shifts
+        matrix_arg = sentinels["neighbor_matrix"]
+        matrix_shifts_arg = sentinels["unit_shifts_matrix"]
+
+    launch_inputs = [
+        positions,
+        charges,
+        cell,
+        batch_arg,
+        idx_arg,
+        ptr_arg,
+        shifts_arg,
+        matrix_arg,
+        matrix_shifts_arg,
+        wp.int32(mask_value),
+        alpha,
+        pair_energies,
+        atomic_forces if atomic_forces is not None else sentinels["atomic_forces"],
+        charge_gradients
+        if charge_gradients is not None
+        else sentinels["charge_gradients"],
+        virial if compute_virial else sentinels["virial"],
+    ]
+    if neighbor_input == "matrix":
+        wp.launch_tiled(
+            kernel=kernel,
+            dim=launch_dim,
+            inputs=launch_inputs,
+            block_dim=REAL_SPACE_TILED_BLOCK_DIM,
+            device=device,
+        )
+    else:
+        wp.launch(
+            kernel=kernel,
+            dim=launch_dim,
+            inputs=launch_inputs,
+            device=device,
+        )
 
 
 def ewald_real_space_energy(
@@ -2986,24 +2220,19 @@ def ewald_real_space_energy(
     device : str, optional
         Warp device. If None, inferred from positions.
     """
-    num_atoms = positions.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _ewald_real_space_energy_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            idx_j,
-            neighbor_ptr,
-            unit_shifts,
-            alpha,
-            pair_energies,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=False,
+        neighbor_input="list",
+        idx_j=idx_j,
+        neighbor_ptr=neighbor_ptr,
+        unit_shifts=unit_shifts,
     )
 
 
@@ -3054,27 +2283,22 @@ def ewald_real_space_energy_forces(
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
     """
-    num_atoms = positions.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _ewald_real_space_energy_forces_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            idx_j,
-            neighbor_ptr,
-            unit_shifts,
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=False,
+        neighbor_input="list",
+        idx_j=idx_j,
+        neighbor_ptr=neighbor_ptr,
+        unit_shifts=unit_shifts,
+        atomic_forces=atomic_forces,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
@@ -3115,24 +2339,19 @@ def ewald_real_space_energy_matrix(
     device : str, optional
         Warp device.
     """
-    num_atoms = neighbor_matrix.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _ewald_real_space_energy_neighbor_matrix_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            neighbor_matrix,
-            unit_shifts_matrix,
-            wp.int32(mask_value),
-            alpha,
-            pair_energies,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=False,
+        neighbor_input="matrix",
+        neighbor_matrix=neighbor_matrix,
+        unit_shifts_matrix=unit_shifts_matrix,
+        mask_value=mask_value,
     )
 
 
@@ -3182,27 +2401,22 @@ def ewald_real_space_energy_forces_matrix(
     virial : wp.array, optional
         OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
-    num_atoms = neighbor_matrix.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            neighbor_matrix,
-            unit_shifts_matrix,
-            wp.int32(mask_value),
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=False,
+        neighbor_input="matrix",
+        neighbor_matrix=neighbor_matrix,
+        unit_shifts_matrix=unit_shifts_matrix,
+        mask_value=mask_value,
+        atomic_forces=atomic_forces,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
@@ -3255,28 +2469,23 @@ def ewald_real_space_energy_forces_charge_grad(
     virial : wp.array, optional
         OUTPUT: Virial tensor. Must be pre-allocated by caller.
     """
-    num_atoms = positions.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _ewald_real_space_energy_forces_charge_grad_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            idx_j,
-            neighbor_ptr,
-            unit_shifts,
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            charge_gradients,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=False,
+        neighbor_input="list",
+        idx_j=idx_j,
+        neighbor_ptr=neighbor_ptr,
+        unit_shifts=unit_shifts,
+        atomic_forces=atomic_forces,
+        charge_gradients=charge_gradients,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
@@ -3330,30 +2539,23 @@ def ewald_real_space_energy_forces_charge_grad_matrix(
     compute_virial : bool, optional
         Whether to compute the virial tensor. Default False.
     """
-    num_atoms = neighbor_matrix.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
-            wp_dtype
-        ],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            neighbor_matrix,
-            unit_shifts_matrix,
-            wp.int32(mask_value),
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            charge_gradients,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=False,
+        neighbor_input="matrix",
+        neighbor_matrix=neighbor_matrix,
+        unit_shifts_matrix=unit_shifts_matrix,
+        mask_value=mask_value,
+        atomic_forces=atomic_forces,
+        charge_gradients=charge_gradients,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
@@ -3400,25 +2602,20 @@ def batch_ewald_real_space_energy(
     device : str, optional
         Warp device.
     """
-    num_atoms = positions.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _batch_ewald_real_space_energy_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            batch_id,
-            idx_j,
-            neighbor_ptr,
-            unit_shifts,
-            alpha,
-            pair_energies,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=True,
+        neighbor_input="list",
+        batch_id=batch_id,
+        idx_j=idx_j,
+        neighbor_ptr=neighbor_ptr,
+        unit_shifts=unit_shifts,
     )
 
 
@@ -3471,28 +2668,23 @@ def batch_ewald_real_space_energy_forces(
     virial : wp.array, optional
         OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
-    num_atoms = positions.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _batch_ewald_real_space_energy_forces_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            batch_id,
-            idx_j,
-            neighbor_ptr,
-            unit_shifts,
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=True,
+        neighbor_input="list",
+        batch_id=batch_id,
+        idx_j=idx_j,
+        neighbor_ptr=neighbor_ptr,
+        unit_shifts=unit_shifts,
+        atomic_forces=atomic_forces,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
@@ -3536,25 +2728,20 @@ def batch_ewald_real_space_energy_matrix(
     device : str, optional
         Warp device.
     """
-    num_atoms = neighbor_matrix.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _batch_ewald_real_space_energy_neighbor_matrix_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            batch_id,
-            neighbor_matrix,
-            unit_shifts_matrix,
-            wp.int32(mask_value),
-            alpha,
-            pair_energies,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=True,
+        neighbor_input="matrix",
+        batch_id=batch_id,
+        neighbor_matrix=neighbor_matrix,
+        unit_shifts_matrix=unit_shifts_matrix,
+        mask_value=mask_value,
     )
 
 
@@ -3607,28 +2794,23 @@ def batch_ewald_real_space_energy_forces_matrix(
     virial : wp.array, optional
         OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
-    num_atoms = neighbor_matrix.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            batch_id,
-            neighbor_matrix,
-            unit_shifts_matrix,
-            wp.int32(mask_value),
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=True,
+        neighbor_input="matrix",
+        batch_id=batch_id,
+        neighbor_matrix=neighbor_matrix,
+        unit_shifts_matrix=unit_shifts_matrix,
+        mask_value=mask_value,
+        atomic_forces=atomic_forces,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
@@ -3684,29 +2866,24 @@ def batch_ewald_real_space_energy_forces_charge_grad(
     virial : wp.array, optional
         OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
-    num_atoms = positions.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _batch_ewald_real_space_energy_forces_charge_grad_kernel_overload[wp_dtype],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            batch_id,
-            idx_j,
-            neighbor_ptr,
-            unit_shifts,
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            charge_gradients,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=True,
+        neighbor_input="list",
+        batch_id=batch_id,
+        idx_j=idx_j,
+        neighbor_ptr=neighbor_ptr,
+        unit_shifts=unit_shifts,
+        atomic_forces=atomic_forces,
+        charge_gradients=charge_gradients,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
@@ -3762,35 +2939,44 @@ def batch_ewald_real_space_energy_forces_charge_grad_matrix(
     virial : wp.array, optional
         OUTPUT: Virial tensor, shape (B,). If None, a dummy array is created.
     """
-    num_atoms = neighbor_matrix.shape[0]
-    if device is None:
-        device = str(positions.device)
-
-    wp.launch(
-        _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
-            wp_dtype
-        ],
-        dim=num_atoms,
-        inputs=[
-            positions,
-            charges,
-            cell,
-            batch_id,
-            neighbor_matrix,
-            unit_shifts_matrix,
-            wp.int32(mask_value),
-            alpha,
-            compute_virial,
-            pair_energies,
-            atomic_forces,
-            charge_gradients,
-            virial,
-        ],
-        device=device,
+    _launch_ewald_real_forward_factory(
+        positions,
+        charges,
+        cell,
+        alpha,
+        pair_energies,
+        wp_dtype,
+        device,
+        batched=True,
+        neighbor_input="matrix",
+        batch_id=batch_id,
+        neighbor_matrix=neighbor_matrix,
+        unit_shifts_matrix=unit_shifts_matrix,
+        mask_value=mask_value,
+        atomic_forces=atomic_forces,
+        charge_gradients=charge_gradients,
+        virial=virial,
+        compute_virial=compute_virial,
     )
 
 
 # ==================== Reciprocal-Space Launchers ====================
+
+
+def _get_ewald_recip_component_factory_kernel(
+    wp_dtype: type,
+    *,
+    component: str,
+    batched: bool = False,
+) -> wp.Kernel:
+    """Return an Ewald reciprocal factory kernel without a module import cycle."""
+    from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
+        get_ewald_recip_component_kernel,
+    )
+
+    return get_ewald_recip_component_kernel(
+        wp_dtype, component=component, batched=batched
+    )
 
 
 def ewald_reciprocal_space_fill_structure_factors(
@@ -3841,7 +3027,7 @@ def ewald_reciprocal_space_fill_structure_factors(
         device = str(positions.device)
 
     wp.launch(
-        _ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(wp_dtype, component="fill"),
         dim=num_k,
         inputs=[
             positions,
@@ -3895,7 +3081,7 @@ def ewald_reciprocal_space_compute_energy(
         device = str(charges.device)
 
     wp.launch(
-        _ewald_reciprocal_space_energy_kernel_compute_energy_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(wp_dtype, component="compute_energy"),
         dim=num_atoms,
         inputs=[
             charges,
@@ -3942,9 +3128,120 @@ def ewald_subtract_self_energy(
         device = str(charges.device)
 
     wp.launch(
-        _ewald_subtract_self_energy_kernel_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(wp_dtype, component="subtract_self"),
         dim=num_atoms,
         inputs=[charges, alpha, total_charge, energy_in, energy_out],
+        device=device,
+    )
+
+
+def ewald_energy_corrections(
+    raw_energies: wp.array,
+    charges: wp.array,
+    volume: wp.array,
+    alpha: wp.array,
+    total_charge: wp.array,
+    corrected_energies: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Launch single-system differentiable Ewald reciprocal corrections."""
+    num_atoms = raw_energies.shape[0]
+    if device is None:
+        device = str(raw_energies.device)
+
+    wp.launch(
+        _get_ewald_recip_component_factory_kernel(wp_dtype, component="corrections"),
+        dim=num_atoms,
+        inputs=[raw_energies, charges, volume, alpha, total_charge],
+        outputs=[corrected_energies],
+        device=device,
+    )
+
+
+def ewald_energy_corrections_backward(
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    volume: wp.array,
+    alpha: wp.array,
+    total_charge: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volume: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charge: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Launch single-system Ewald reciprocal correction backward."""
+    num_atoms = raw_energies.shape[0]
+    if device is None:
+        device = str(raw_energies.device)
+
+    wp.launch(
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="corrections_backward"
+        ),
+        dim=num_atoms,
+        inputs=[grad_E, raw_energies, charges, volume, alpha, total_charge],
+        outputs=[grad_raw, grad_charges, grad_volume, grad_alpha, grad_total_charge],
+        device=device,
+    )
+
+
+def ewald_energy_corrections_double_backward(
+    h_raw: wp.array,
+    h_chg: wp.array,
+    h_vol: wp.array,
+    h_alpha: wp.array,
+    h_qtot: wp.array,
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    volume: wp.array,
+    alpha: wp.array,
+    total_charge: wp.array,
+    grad_grad_E: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volume: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charge: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Launch single-system Ewald reciprocal correction double-backward."""
+    num_atoms = raw_energies.shape[0]
+    if device is None:
+        device = str(raw_energies.device)
+
+    wp.launch(
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="corrections_double_backward"
+        ),
+        dim=num_atoms,
+        inputs=[
+            h_raw,
+            h_chg,
+            h_vol,
+            h_alpha,
+            h_qtot,
+            grad_E,
+            raw_energies,
+            charges,
+            volume,
+            alpha,
+            total_charge,
+        ],
+        outputs=[
+            grad_grad_E,
+            grad_raw,
+            grad_charges,
+            grad_volume,
+            grad_alpha,
+            grad_total_charge,
+        ],
         device=device,
     )
 
@@ -3991,7 +3288,9 @@ def ewald_reciprocal_space_energy_forces(
         device = str(charges.device)
 
     wp.launch(
-        _ewald_reciprocal_space_energy_forces_kernel_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="compute_energy_forces"
+        ),
         dim=num_atoms,
         inputs=[
             charges,
@@ -4052,7 +3351,9 @@ def ewald_reciprocal_space_energy_forces_charge_grad(
         device = str(charges.device)
 
     wp.launch(
-        _ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="compute_energy_forces_charge_grad"
+        ),
         dim=num_atoms,
         inputs=[
             charges,
@@ -4134,9 +3435,9 @@ def batch_ewald_reciprocal_space_fill_structure_factors(
         device = str(positions.device)
 
     wp.launch(
-        _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload[
-            wp_dtype
-        ],
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="fill", batched=True
+        ),
         dim=(num_k, num_systems, max_blocks_per_system),
         inputs=[
             positions,
@@ -4195,7 +3496,9 @@ def batch_ewald_reciprocal_space_compute_energy(
         device = str(charges.device)
 
     wp.launch(
-        _batch_ewald_reciprocal_space_energy_kernel_compute_energy_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="compute_energy", batched=True
+        ),
         dim=num_atoms,
         inputs=[
             charges,
@@ -4246,9 +3549,136 @@ def batch_ewald_subtract_self_energy(
         device = str(charges.device)
 
     wp.launch(
-        _batch_ewald_subtract_self_energy_kernel_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="subtract_self", batched=True
+        ),
         dim=num_atoms,
         inputs=[charges, batch_idx, alpha, total_charges, energy_in, energy_out],
+        device=device,
+    )
+
+
+def batch_ewald_energy_corrections(
+    raw_energies: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    volumes: wp.array,
+    alpha: wp.array,
+    total_charges: wp.array,
+    corrected_energies: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Launch batched differentiable Ewald reciprocal corrections."""
+    num_atoms = raw_energies.shape[0]
+    if device is None:
+        device = str(raw_energies.device)
+
+    wp.launch(
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="corrections", batched=True
+        ),
+        dim=num_atoms,
+        inputs=[raw_energies, charges, batch_idx, volumes, alpha, total_charges],
+        outputs=[corrected_energies],
+        device=device,
+    )
+
+
+def batch_ewald_energy_corrections_backward(
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    volumes: wp.array,
+    alpha: wp.array,
+    total_charges: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volumes: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charges: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Launch batched Ewald reciprocal correction backward."""
+    num_atoms = raw_energies.shape[0]
+    if device is None:
+        device = str(raw_energies.device)
+
+    wp.launch(
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="corrections_backward", batched=True
+        ),
+        dim=num_atoms,
+        inputs=[
+            grad_E,
+            raw_energies,
+            charges,
+            batch_idx,
+            volumes,
+            alpha,
+            total_charges,
+        ],
+        outputs=[grad_raw, grad_charges, grad_volumes, grad_alpha, grad_total_charges],
+        device=device,
+    )
+
+
+def batch_ewald_energy_corrections_double_backward(
+    h_raw: wp.array,
+    h_chg: wp.array,
+    h_vol: wp.array,
+    h_alpha: wp.array,
+    h_qtot: wp.array,
+    grad_E: wp.array,
+    raw_energies: wp.array,
+    charges: wp.array,
+    batch_idx: wp.array,
+    volumes: wp.array,
+    alpha: wp.array,
+    total_charges: wp.array,
+    grad_grad_E: wp.array,
+    grad_raw: wp.array,
+    grad_charges: wp.array,
+    grad_volumes: wp.array,
+    grad_alpha: wp.array,
+    grad_total_charges: wp.array,
+    wp_dtype: type,
+    device: str | None = None,
+) -> None:
+    """Launch batched Ewald reciprocal correction double-backward."""
+    num_atoms = raw_energies.shape[0]
+    if device is None:
+        device = str(raw_energies.device)
+
+    wp.launch(
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="corrections_double_backward", batched=True
+        ),
+        dim=num_atoms,
+        inputs=[
+            h_raw,
+            h_chg,
+            h_vol,
+            h_alpha,
+            h_qtot,
+            grad_E,
+            raw_energies,
+            charges,
+            batch_idx,
+            volumes,
+            alpha,
+            total_charges,
+        ],
+        outputs=[
+            grad_grad_E,
+            grad_raw,
+            grad_charges,
+            grad_volumes,
+            grad_alpha,
+            grad_total_charges,
+        ],
         device=device,
     )
 
@@ -4298,7 +3728,9 @@ def batch_ewald_reciprocal_space_energy_forces(
         device = str(charges.device)
 
     wp.launch(
-        _batch_ewald_reciprocal_space_energy_forces_kernel_overload[wp_dtype],
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="compute_energy_forces", batched=True
+        ),
         dim=num_atoms,
         inputs=[
             charges,
@@ -4363,9 +3795,9 @@ def batch_ewald_reciprocal_space_energy_forces_charge_grad(
         device = str(charges.device)
 
     wp.launch(
-        _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload[
-            wp_dtype
-        ],
+        _get_ewald_recip_component_factory_kernel(
+            wp_dtype, component="compute_energy_forces_charge_grad", batched=True
+        ),
         dim=num_atoms,
         inputs=[
             charges,
@@ -4386,440 +3818,3 @@ def batch_ewald_reciprocal_space_energy_forces_charge_grad(
 ###########################################################################################
 ########################### Kernel Overloads (float32/float64) ############################
 ###########################################################################################
-
-# Type aliases for clarity
-_T = [wp.float32, wp.float64]
-_V = [wp.vec3f, wp.vec3d]
-_M = [wp.mat33f, wp.mat33d]
-
-# Dictionaries to store overloads, keyed by scalar type (wp.float32 or wp.float64)
-# Real-space single-system kernels
-_ewald_real_space_energy_kernel_overload = {}
-_ewald_real_space_energy_forces_kernel_overload = {}
-_ewald_real_space_energy_neighbor_matrix_kernel_overload = {}
-_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload = {}
-
-# Real-space single-system kernels with charge gradients
-_ewald_real_space_energy_forces_charge_grad_kernel_overload = {}
-_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload = {}
-
-# Real-space batch kernels
-_batch_ewald_real_space_energy_kernel_overload = {}
-_batch_ewald_real_space_energy_forces_kernel_overload = {}
-_batch_ewald_real_space_energy_neighbor_matrix_kernel_overload = {}
-_batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload = {}
-
-# Real-space batch kernels with charge gradients
-_batch_ewald_real_space_energy_forces_charge_grad_kernel_overload = {}
-_batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload = {}
-
-# Reciprocal-space single-system kernels
-_ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload = {}
-_ewald_reciprocal_space_energy_kernel_compute_energy_overload = {}
-_ewald_reciprocal_space_energy_forces_kernel_overload = {}
-_ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload = {}
-_ewald_subtract_self_energy_kernel_overload = {}
-_ewald_reciprocal_space_virial_kernel_overload = {}
-
-# Reciprocal-space batch kernels
-_batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload = {}
-_batch_ewald_reciprocal_space_energy_kernel_compute_energy_overload = {}
-_batch_ewald_reciprocal_space_energy_forces_kernel_overload = {}
-_batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload = {}
-_batch_ewald_subtract_self_energy_kernel_overload = {}
-_batch_ewald_reciprocal_space_virial_kernel_overload = {}
-
-for t, v, m in zip(_T, _V, _M):
-    # ==================== Real-space single-system kernels ====================
-
-    _ewald_real_space_energy_kernel_overload[t] = wp.overload(
-        _ewald_real_space_energy_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # idx_i
-            wp.array(dtype=wp.int32),  # idx_j
-            wp.array(dtype=wp.vec3i),  # unit_shifts
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # pair_energies (always float64)
-        ],
-    )
-
-    _ewald_real_space_energy_forces_kernel_overload[t] = wp.overload(
-        _ewald_real_space_energy_forces_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # idx_j
-            wp.array(dtype=wp.int32),  # neighbor_ptr
-            wp.array(dtype=wp.vec3i),  # unit_shifts
-            wp.array(dtype=t),  # alpha
-            wp.bool,  # compute_virial
-            wp.array(dtype=wp.float64),  # pair_energies
-            wp.array(dtype=v),  # atomic_forces (matches positions dtype)
-            wp.array(dtype=m),  # virial
-        ],
-    )
-
-    _ewald_real_space_energy_neighbor_matrix_kernel_overload[t] = wp.overload(
-        _ewald_real_space_energy_neighbor_matrix_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array2d(dtype=wp.int32),  # neighbor_matrix
-            wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
-            wp.int32,  # mask_value
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # pair_energies
-        ],
-    )
-
-    _ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[t] = wp.overload(
-        _ewald_real_space_energy_forces_neighbor_matrix_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array2d(dtype=wp.int32),  # neighbor_matrix
-            wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
-            wp.int32,  # mask_value
-            wp.array(dtype=t),  # alpha
-            wp.bool,  # compute_virial
-            wp.array(dtype=wp.float64),  # pair_energies
-            wp.array(dtype=v),  # atomic_forces
-            wp.array(dtype=m),  # virial
-        ],
-    )
-
-    # ==================== Real-space single-system kernels with charge gradients ====================
-
-    _ewald_real_space_energy_forces_charge_grad_kernel_overload[t] = wp.overload(
-        _ewald_real_space_energy_forces_charge_grad_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # idx_j
-            wp.array(dtype=wp.int32),  # neighbor_ptr
-            wp.array(dtype=wp.vec3i),  # unit_shifts
-            wp.array(dtype=t),  # alpha
-            wp.bool,  # compute_virial
-            wp.array(dtype=wp.float64),  # pair_energies
-            wp.array(dtype=v),  # atomic_forces
-            wp.array(dtype=wp.float64),  # charge_gradients
-            wp.array(dtype=m),  # virial
-        ],
-    )
-
-    _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[t] = (
-        wp.overload(
-            _ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel,
-            [
-                wp.array(dtype=v),  # positions
-                wp.array(dtype=t),  # charges
-                wp.array(dtype=m),  # cell
-                wp.array2d(dtype=wp.int32),  # neighbor_matrix
-                wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
-                wp.int32,  # mask_value
-                wp.array(dtype=t),  # alpha
-                wp.bool,  # compute_virial
-                wp.array(dtype=wp.float64),  # pair_energies
-                wp.array(dtype=v),  # atomic_forces
-                wp.array(dtype=wp.float64),  # charge_gradients
-                wp.array(dtype=m),  # virial
-            ],
-        )
-    )
-
-    # ==================== Real-space batch kernels ====================
-
-    _batch_ewald_real_space_energy_kernel_overload[t] = wp.overload(
-        _batch_ewald_real_space_energy_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # batch_id
-            wp.array(dtype=wp.int32),  # idx_i
-            wp.array(dtype=wp.int32),  # idx_j
-            wp.array(dtype=wp.vec3i),  # unit_shifts
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # pair_energies
-        ],
-    )
-
-    _batch_ewald_real_space_energy_forces_kernel_overload[t] = wp.overload(
-        _batch_ewald_real_space_energy_forces_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # batch_id
-            wp.array(dtype=wp.int32),  # idx_j
-            wp.array(dtype=wp.int32),  # neighbor_ptr
-            wp.array(dtype=wp.vec3i),  # unit_shifts
-            wp.array(dtype=t),  # alpha
-            wp.bool,  # compute_virial
-            wp.array(dtype=wp.float64),  # pair_energies
-            wp.array(dtype=v),  # atomic_forces
-            wp.array(dtype=m),  # virial
-        ],
-    )
-
-    _batch_ewald_real_space_energy_neighbor_matrix_kernel_overload[t] = wp.overload(
-        _batch_ewald_real_space_energy_neighbor_matrix_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # batch_id
-            wp.array2d(dtype=wp.int32),  # neighbor_matrix
-            wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
-            wp.int32,  # mask_value
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # pair_energies
-        ],
-    )
-
-    _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel_overload[t] = (
-        wp.overload(
-            _batch_ewald_real_space_energy_forces_neighbor_matrix_kernel,
-            [
-                wp.array(dtype=v),  # positions
-                wp.array(dtype=t),  # charges
-                wp.array(dtype=m),  # cell
-                wp.array(dtype=wp.int32),  # batch_id
-                wp.array2d(dtype=wp.int32),  # neighbor_matrix
-                wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
-                wp.int32,  # mask_value
-                wp.array(dtype=t),  # alpha
-                wp.bool,  # compute_virial
-                wp.array(dtype=wp.float64),  # pair_energies
-                wp.array(dtype=v),  # atomic_forces
-                wp.array(dtype=m),  # virial
-            ],
-        )
-    )
-
-    # ==================== Real-space batch kernels with charge gradients ====================
-
-    _batch_ewald_real_space_energy_forces_charge_grad_kernel_overload[t] = wp.overload(
-        _batch_ewald_real_space_energy_forces_charge_grad_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # batch_id
-            wp.array(dtype=wp.int32),  # idx_j
-            wp.array(dtype=wp.int32),  # neighbor_ptr
-            wp.array(dtype=wp.vec3i),  # unit_shifts
-            wp.array(dtype=t),  # alpha
-            wp.bool,  # compute_virial
-            wp.array(dtype=wp.float64),  # pair_energies
-            wp.array(dtype=v),  # atomic_forces
-            wp.array(dtype=wp.float64),  # charge_gradients
-            wp.array(dtype=m),  # virial
-        ],
-    )
-
-    _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel_overload[
-        t
-    ] = wp.overload(
-        _batch_ewald_real_space_energy_forces_charge_grad_neighbor_matrix_kernel,
-        [
-            wp.array(dtype=v),  # positions
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=m),  # cell
-            wp.array(dtype=wp.int32),  # batch_id
-            wp.array2d(dtype=wp.int32),  # neighbor_matrix
-            wp.array2d(dtype=wp.vec3i),  # unit_shifts_matrix
-            wp.int32,  # mask_value
-            wp.array(dtype=t),  # alpha
-            wp.bool,  # compute_virial
-            wp.array(dtype=wp.float64),  # pair_energies
-            wp.array(dtype=v),  # atomic_forces
-            wp.array(dtype=wp.float64),  # charge_gradients
-            wp.array(dtype=m),  # virial
-        ],
-    )
-
-    # ==================== Reciprocal-space single-system kernels ====================
-
-    _ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload[t] = (
-        wp.overload(
-            _ewald_reciprocal_space_energy_kernel_fill_structure_factors,
-            [
-                wp.array(dtype=v),  # positions
-                wp.array(dtype=t),  # charges
-                wp.array(dtype=v),  # k_vectors
-                wp.array(dtype=m),  # cell
-                wp.array(dtype=t),  # alpha
-                wp.array(dtype=wp.float64),  # total_charge
-                wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-                wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-                wp.array(dtype=wp.float64),  # real_structure_factors
-                wp.array(dtype=wp.float64),  # imag_structure_factors
-            ],
-        )
-    )
-
-    _ewald_reciprocal_space_energy_kernel_compute_energy_overload[t] = wp.overload(
-        _ewald_reciprocal_space_energy_kernel_compute_energy,
-        [
-            wp.array(dtype=t),  # charges
-            wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-            wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-            wp.array(dtype=wp.float64),  # real_structure_factors
-            wp.array(dtype=wp.float64),  # imag_structure_factors
-            wp.array(dtype=wp.float64),  # reciprocal_energies
-        ],
-    )
-
-    _ewald_reciprocal_space_energy_forces_kernel_overload[t] = wp.overload(
-        _ewald_reciprocal_space_energy_forces_kernel,
-        [
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=v),  # k_vectors
-            wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-            wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-            wp.array(dtype=wp.float64),  # real_structure_factors
-            wp.array(dtype=wp.float64),  # imag_structure_factors
-            wp.array(dtype=wp.float64),  # reciprocal_energies
-            wp.array(dtype=v),  # atomic_forces
-        ],
-    )
-
-    _ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload[t] = wp.overload(
-        _ewald_reciprocal_space_energy_forces_charge_grad_kernel,
-        [
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=v),  # k_vectors
-            wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-            wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-            wp.array(dtype=wp.float64),  # real_structure_factors
-            wp.array(dtype=wp.float64),  # imag_structure_factors
-            wp.array(dtype=wp.float64),  # reciprocal_energies
-            wp.array(dtype=v),  # atomic_forces
-            wp.array(dtype=wp.float64),  # charge_gradients
-        ],
-    )
-
-    _ewald_subtract_self_energy_kernel_overload[t] = wp.overload(
-        _ewald_subtract_self_energy_kernel,
-        [
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # total_charge
-            wp.array(dtype=wp.float64),  # energy_in
-            wp.array(dtype=wp.float64),  # energy_out
-        ],
-    )
-
-    _ewald_reciprocal_space_virial_kernel_overload[t] = wp.overload(
-        _ewald_reciprocal_space_virial_kernel,
-        [
-            wp.array(dtype=v),  # k_vectors
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # volume
-            wp.array(dtype=wp.float64),  # real_structure_factors
-            wp.array(dtype=wp.float64),  # imag_structure_factors
-            wp.array(dtype=m),  # virial
-        ],
-    )
-
-    # ==================== Reciprocal-space batch kernels ====================
-
-    _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_overload[t] = (
-        wp.overload(
-            _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors,
-            [
-                wp.array(dtype=v),  # positions
-                wp.array(dtype=t),  # charges
-                wp.array2d(dtype=v),  # k_vectors (B, K)
-                wp.array(dtype=m),  # cell
-                wp.array(dtype=t),  # alpha
-                wp.array(dtype=wp.int32),  # atom_start
-                wp.array(dtype=wp.int32),  # atom_end
-                wp.array(dtype=wp.float64),  # total_charges
-                wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-                wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-                wp.array2d(dtype=wp.float64),  # real_structure_factors
-                wp.array2d(dtype=wp.float64),  # imag_structure_factors
-            ],
-        )
-    )
-
-    _batch_ewald_reciprocal_space_energy_kernel_compute_energy_overload[t] = (
-        wp.overload(
-            _batch_ewald_reciprocal_space_energy_kernel_compute_energy,
-            [
-                wp.array(dtype=t),  # charges
-                wp.array(dtype=wp.int32),  # batch_id
-                wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-                wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-                wp.array2d(dtype=wp.float64),  # real_structure_factors
-                wp.array2d(dtype=wp.float64),  # imag_structure_factors
-                wp.array(dtype=wp.float64),  # reciprocal_energies
-            ],
-        )
-    )
-
-    _batch_ewald_reciprocal_space_energy_forces_kernel_overload[t] = wp.overload(
-        _batch_ewald_reciprocal_space_energy_forces_kernel,
-        [
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=wp.int32),  # batch_id
-            wp.array2d(dtype=v),  # k_vectors (B, K)
-            wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-            wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-            wp.array2d(dtype=wp.float64),  # real_structure_factors
-            wp.array2d(dtype=wp.float64),  # imag_structure_factors
-            wp.array(dtype=wp.float64),  # reciprocal_energies
-            wp.array(dtype=v),  # atomic_forces
-        ],
-    )
-
-    _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel_overload[t] = (
-        wp.overload(
-            _batch_ewald_reciprocal_space_energy_forces_charge_grad_kernel,
-            [
-                wp.array(dtype=t),  # charges
-                wp.array(dtype=wp.int32),  # batch_id
-                wp.array2d(dtype=v),  # k_vectors (B, K)
-                wp.array2d(dtype=wp.float64),  # cos_k_dot_r
-                wp.array2d(dtype=wp.float64),  # sin_k_dot_r
-                wp.array2d(dtype=wp.float64),  # real_structure_factors
-                wp.array2d(dtype=wp.float64),  # imag_structure_factors
-                wp.array(dtype=wp.float64),  # reciprocal_energies
-                wp.array(dtype=v),  # atomic_forces
-                wp.array(dtype=wp.float64),  # charge_gradients
-            ],
-        )
-    )
-
-    _batch_ewald_subtract_self_energy_kernel_overload[t] = wp.overload(
-        _batch_ewald_subtract_self_energy_kernel,
-        [
-            wp.array(dtype=t),  # charges
-            wp.array(dtype=wp.int32),  # batch_idx
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # total_charges
-            wp.array(dtype=wp.float64),  # energy_in
-            wp.array(dtype=wp.float64),  # energy_out
-        ],
-    )
-
-    _batch_ewald_reciprocal_space_virial_kernel_overload[t] = wp.overload(
-        _batch_ewald_reciprocal_space_virial_kernel,
-        [
-            wp.array2d(dtype=v),  # k_vectors (B, K)
-            wp.array(dtype=t),  # alpha
-            wp.array(dtype=wp.float64),  # volume
-            wp.array2d(dtype=wp.float64),  # real_structure_factors
-            wp.array2d(dtype=wp.float64),  # imag_structure_factors
-            wp.array(dtype=m),  # virial
-        ],
-    )

@@ -119,8 +119,8 @@ def dsf_reference(
         )
         deform = torch.eye(3, dtype=dtype, device=device).unsqueeze(0) + strain
         deform_per_atom = deform[batch_idx]  # (N, 3, 3)
-        pos_c = torch.bmm(pos.unsqueeze(1), deform_per_atom.transpose(1, 2)).squeeze(1)
-        cell_c = torch.bmm(cell.to(dtype=dtype), deform.transpose(1, 2))
+        pos_c = torch.einsum("ni,nij->nj", pos, deform_per_atom)
+        cell_c = torch.einsum("bij,bjk->bik", cell.to(dtype=dtype), deform)
         grad_targets.append(strain)
     else:
         pos_c = pos

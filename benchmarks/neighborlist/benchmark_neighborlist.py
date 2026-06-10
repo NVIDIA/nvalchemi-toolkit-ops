@@ -19,16 +19,26 @@ Neighbor List Scaling Benchmarks
 =================================
 
 CLI tool to benchmark neighbor list algorithms and generate CSV files
-for documentation. Supports multiple backends (torch, jax) with results
-saved using GPU-specific naming:
-`neighbor_list_benchmark_<method>_<backend>_<gpu_sku>.csv`
+for documentation.  Supports the ``torch`` and ``jax`` backends.
+
+Results are saved per-method as
+``neighbor_list_benchmark_<method>_<backend>_<gpu_sku>.csv``.
 
 Usage:
     python benchmark_neighborlist.py --config benchmark_config.yaml --backend torch
     python benchmark_neighborlist.py --config benchmark_config.yaml --backend jax
 
 The config file specifies which methods to benchmark and their parameters.
-Results are saved per-method to allow selective benchmarking.
+``parameters.cutoff`` accepts either a single float or a list of floats;
+each cutoff is swept across the method's ``(atom_counts × batch_sizes)``
+grid and stamped into the output rows.  ``cluster_tile`` and
+``batch_cluster_tile`` are recognized as explicit ``method=`` values
+alongside the cell_list / naive families.
+
+A per-cutoff memory cap prevents OOM at high cutoffs (e.g. cutoff=20
+at 524k atoms wants ~56 GB of output buffers).  Skipped cells are
+reported in the per-method log; the surviving cells still time
+normally.
 """
 
 import argparse
@@ -48,13 +58,21 @@ from benchmarks.utils import BackendType, BenchmarkTimer
 # Guarded torch imports
 try:
     import torch
+    import warp as wp
 
+    # End-to-end torch entry point (used by ``--backend torch``).
     from nvalchemiops.torch.neighbors import neighbor_list as torch_neighbor_list
     from nvalchemiops.torch.neighbors.batch_cell_list import (
         estimate_batch_cell_list_sizes as torch_estimate_batch_cell_list_sizes,
     )
+    from nvalchemiops.torch.neighbors.batch_cluster_tile import (
+        allocate_batch_cluster_tile_list as torch_allocate_batch_tile_neighbor_list,
+    )
     from nvalchemiops.torch.neighbors.cell_list import (
         estimate_cell_list_sizes as torch_estimate_cell_list_sizes,
+    )
+    from nvalchemiops.torch.neighbors.cluster_tile import (
+        allocate_cluster_tile_list as torch_allocate_tile_neighbor_list,
     )
     from nvalchemiops.torch.neighbors.neighbor_utils import (
         allocate_cell_list as torch_allocate_cell_list,
@@ -70,12 +88,15 @@ try:
 except ImportError:
     TORCH_AVAILABLE = False
     torch = None  # type: ignore
+    wp = None  # type: ignore
     torch_neighbor_list = None  # type: ignore
     torch_estimate_batch_cell_list_sizes = None  # type: ignore
     torch_estimate_cell_list_sizes = None  # type: ignore
     torch_allocate_cell_list = None  # type: ignore
     torch_compute_naive_num_shifts = None  # type: ignore
     torch_estimate_max_neighbors = None  # type: ignore
+    torch_allocate_tile_neighbor_list = None  # type: ignore
+    torch_allocate_batch_tile_neighbor_list = None  # type: ignore
 
 # Guarded JAX imports
 try:
@@ -209,6 +230,74 @@ def validate_config(config: dict) -> None:
             or "batch_sizes" not in method_config
         ):
             raise ValueError(f"Method config missing required keys: {method_config}")
+
+
+def _normalize_cutoffs(raw) -> list[float]:
+    """Accept a single float or a list of floats; return a list of floats.
+
+    Lets users keep legacy ``parameters.cutoff: 5.0`` configs working while
+    new configs can sweep ``parameters.cutoff: [6, 8, 10, 12, 16, 20]``.
+    """
+    if isinstance(raw, (list, tuple)):
+        cutoffs = [float(c) for c in raw]
+    else:
+        cutoffs = [float(raw)]
+    if not cutoffs:
+        raise ValueError("parameters.cutoff must contain at least one value")
+    for c in cutoffs:
+        if c <= 0:
+            raise ValueError(f"cutoff must be positive; got {c}")
+    return cutoffs
+
+
+def _resolve_method_backends(
+    method_config: dict,
+    params: dict,
+    cli_backend: str | None,
+) -> list[str]:
+    """Return the backend list to run for one method.
+
+    Priority (highest first):
+
+    1. CLI ``--backend`` (forces a single backend, overrides YAML).
+    2. Per-method ``backends:`` in the YAML.
+    3. ``parameters.backends:`` in the YAML (applies to all methods).
+    4. Fallback default ``["torch"]``.
+
+    Lets callers control backend selection from the config file (the
+    common case) and override per-run from the CLI (one-off testing).
+    """
+    if cli_backend is not None:
+        return [cli_backend]
+    if "backends" in method_config:
+        return [str(b) for b in method_config["backends"]]
+    if "backends" in params:
+        return [str(b) for b in params["backends"]]
+    return ["torch"]
+
+
+def _cutoff_atoms_cap(
+    cutoff: float,
+    *,
+    bytes_budget: int = 7_000_000_000,
+    hard_ceiling: int = 1_048_576,
+) -> int:
+    """Memory-aware total_atoms cap for one cutoff.
+
+    ``neighbor_matrix + neighbor_matrix_shifts`` together use
+    ``total_atoms * max_neighbors(cutoff) * 16 bytes``; this can explode
+    at large cutoff (e.g. cutoff=20 at total=524288 wants ~56 GB).
+    Budget ~7 GB per (nm + nms) allocation pair (16 B / entry); clamp to
+    ``[32, hard_ceiling]``; round down to a multiple of 32 for kernel
+    alignment.  Lifted from ``benchmark_batch_speed_of_light.py``.
+    """
+    if not TORCH_AVAILABLE:
+        return hard_ceiling
+    max_nb = torch_estimate_max_neighbors(float(cutoff))
+    cap = bytes_budget // (max_nb * 16)
+    cap = min(cap, hard_ceiling)
+    cap = max(cap - (cap % 32), 32)
+    return int(cap)
 
 
 def create_crystal_system_numpy(
@@ -578,6 +667,49 @@ def prepare_inputs(
             inputs["atoms_per_cell_count"] = cell_list_cache[4]
             inputs["cell_atom_start_indices"] = cell_list_cache[5]
             inputs["cell_atom_list"] = cell_list_cache[6]
+        elif "cluster_tile" in method:
+            # Pre-allocate the 19 scratch buffers consumed by
+            # ``batch_cluster_tile_list`` so the timed region only
+            # measures Morton-sort + Warp launches + the conv kernel,
+            # not the per-step scratch malloc.  Mirrors the cell_list
+            # pre-allocation block above.  ``batch_ptr`` is required
+            # to size ngroup_padded / max_tiles; the dispatcher also
+            # uses it directly when both ``batch_idx`` and ``batch_ptr``
+            # are present (skipping ``prepare_batch_idx_ptr``).
+            match backend:
+                case "torch":
+                    inputs["batch_ptr"] = batch_ptr
+                    tile_cache = torch_allocate_batch_tile_neighbor_list(
+                        batch_ptr,
+                        device,
+                        dtype=getattr(torch, dtype_str),
+                    )
+                    (
+                        inputs["sorted_atom_index"],
+                        inputs["sort_inv"],
+                        inputs["sorted_pos_x"],
+                        inputs["sorted_pos_y"],
+                        inputs["sorted_pos_z"],
+                        inputs["batch_idx_sorted"],
+                        inputs["batch_ptr_padded"],
+                        inputs["group_system"],
+                        inputs["group_ptr"],
+                        inputs["group_ctr_x"],
+                        inputs["group_ctr_y"],
+                        inputs["group_ctr_z"],
+                        inputs["group_ext_x"],
+                        inputs["group_ext_y"],
+                        inputs["group_ext_z"],
+                        inputs["num_tiles"],
+                        inputs["tile_row_group"],
+                        inputs["tile_col_group"],
+                        inputs["tile_system"],
+                    ) = tile_cache
+                case "jax":
+                    # No JAX implementation of cluster_tile; nothing to
+                    # pre-allocate.  ``_resolve_method_backends`` should
+                    # already restrict cluster_tile runs to ``[torch]``.
+                    pass
 
         return inputs
 
@@ -701,6 +833,37 @@ def prepare_inputs(
             inputs["atoms_per_cell_count"] = cell_list_cache[4]
             inputs["cell_atom_start_indices"] = cell_list_cache[5]
             inputs["cell_atom_list"] = cell_list_cache[6]
+        elif "cluster_tile" in method:
+            # Pre-allocate the 14 scratch buffers consumed by
+            # ``cluster_tile_list`` so the timed region only measures
+            # the Morton sort + warp launches + conv kernel, not the
+            # per-step scratch malloc.  Mirrors the cell_list block
+            # above.
+            match backend:
+                case "torch":
+                    tile_cache = torch_allocate_tile_neighbor_list(
+                        total_atoms_actual,
+                        device,
+                        dtype=getattr(torch, dtype_str),
+                    )
+                    (
+                        inputs["sorted_atom_index"],
+                        inputs["morton_codes"],
+                        inputs["sorted_pos_x"],
+                        inputs["sorted_pos_y"],
+                        inputs["sorted_pos_z"],
+                        inputs["group_ctr_x"],
+                        inputs["group_ctr_y"],
+                        inputs["group_ctr_z"],
+                        inputs["group_ext_x"],
+                        inputs["group_ext_y"],
+                        inputs["group_ext_z"],
+                        inputs["num_tiles"],
+                        inputs["tile_row_group"],
+                        inputs["tile_col_group"],
+                    ) = tile_cache
+                case "jax":
+                    pass
 
         return inputs
 
@@ -715,8 +878,29 @@ def run_single_benchmark(
     dtype_str,
     backend: BackendType = "torch",
     wrap_positions: bool = True,
+    method_override: str | None = None,
+    extra_kwargs: dict | None = None,
 ):
-    """Run a single benchmark configuration."""
+    """Run a single benchmark configuration.
+
+    Parameters
+    ----------
+    method : str
+        Label for this run.  Used for ``prepare_inputs`` substring routing
+        (so ``"cell_list_atom_centric"`` still triggers cell_list scratch
+        allocation) and for CSV filenames / log lines.
+    method_override : str, optional
+        If supplied, replaces ``inputs["method"]`` so the actual
+        ``torch_neighbor_list(method=...)`` dispatch sees the canonical
+        family name (e.g. ``"cell_list"``) while the label keeps the
+        variant suffix.  Lets users time
+        ``cell_list_atom_centric`` vs ``cell_list_pair_centric``
+        separately via the YAML config.
+    extra_kwargs : dict, optional
+        Additional kwargs merged into ``inputs`` before the call —
+        typically ``{"algorithm": "atom_centric"}`` etc. from the
+        YAML ``kwargs:`` field.
+    """
     # Prepare inputs (includes pre-allocated tensors)
     inputs = prepare_inputs(
         method,
@@ -728,6 +912,15 @@ def run_single_benchmark(
         backend,
         wrap_positions=wrap_positions,
     )
+
+    # Replace the substring-routed label with the canonical method name
+    # for the actual torch_neighbor_list dispatch.
+    if method_override is not None:
+        inputs["method"] = method_override
+
+    # Forward YAML ``kwargs:`` (e.g. ``algorithm: atom_centric``).
+    if extra_kwargs:
+        inputs.update(extra_kwargs)
 
     # Dispatch to correct backend and time the neighbor list construction
     match backend:
@@ -856,6 +1049,7 @@ def run_single_benchmark(
             "median_time_ms": float("inf"),
             "success": False,
             "error_type": timing_results.get("error_type", "Unknown"),
+            "error": timing_results.get("error"),
             "peak_memory_mb": timing_results.get("peak_memory_mb"),
         }
 
@@ -894,109 +1088,160 @@ def run_single_benchmark(
 def run_benchmarks_for_method(
     method_config: dict,
     gpu_sku: str,
-    cutoff: float,
+    cutoffs: list[float],
     device: str,
     dtype_str: str,
     timer: BenchmarkTimer,
     output_dir: Path,
     backend: BackendType = "torch",
 ) -> None:
-    """Run benchmarks for a single method and save results."""
+    """Run benchmarks for a single method across the (atoms, batch, cutoff) grid.
+
+    One output CSV per method spans all cutoffs; each row is stamped
+    with the cutoff that produced it.  Per-cutoff memory caps skip
+    cells that would OOM at large cutoffs (see ``_cutoff_atoms_cap``).
+    """
     method = method_config["name"]
     atom_counts = method_config["atom_counts"]
     batch_sizes = method_config["batch_sizes"]
     wrap_positions = method_config.get("wrap_positions", True)
+    # Optional indirection: the YAML ``name:`` is the label used for
+    # CSV filenames and log lines; ``method:`` is the canonical
+    # ``torch_neighbor_list(method=...)`` arg (defaults to the
+    # label).  ``kwargs:`` is forwarded as extra kwargs (typically
+    # ``algorithm: atom_centric|pair_centric|auto``).  Lets users
+    # label intra-family variants distinctly in the same run:
+    #
+    #     - name: cell_list_atom_centric
+    #       method: cell_list
+    #       kwargs: {algorithm: atom_centric}
+    method_override = method_config.get("method")
+    extra_kwargs = method_config.get("kwargs", {}) or {}
     is_batch_method = "batch" in method
 
     print(f"\n{'=' * 70}")
     print(f"Benchmarking: {method}")
+    if method_override and method_override != method:
+        print(f"  (routed to method={method_override}, kwargs={extra_kwargs})")
+    elif extra_kwargs:
+        print(f"  (extra kwargs: {extra_kwargs})")
     print(f"{'=' * 70}")
 
     all_results = []
 
-    for atoms in atom_counts:
-        for batch_size in batch_sizes:
-            # Pre-validate configuration for batch methods
-            if is_batch_method:
-                atoms_per_system = atoms
-                total_atoms = atoms_per_system * batch_size
+    for cutoff in cutoffs:
+        cap = _cutoff_atoms_cap(cutoff)
+        print(f"\n--- cutoff = {cutoff} Å  (total_atoms cap = {cap:,}) ---")
+        # Track whether we already broke out of the (atoms, batch) loop
+        # because of OOM / Timeout — keep the outer cutoff loop going.
+        for atoms in atom_counts:
+            broke = False
+            for batch_size in batch_sizes:
+                # Pre-validate configuration for batch methods
+                if is_batch_method:
+                    atoms_per_system = atoms
+                    total_atoms = atoms_per_system * batch_size
 
-                if atoms_per_system < 1:
-                    # Skip invalid configuration silently
-                    continue
-            else:
-                atoms_per_system = atoms
-                total_atoms = atoms_per_system
-
-            try:
-                result = run_single_benchmark(
-                    method,
-                    atoms_per_system,
-                    batch_size,
-                    timer,
-                    cutoff,
-                    device,
-                    dtype_str,
-                    backend,
-                    wrap_positions=wrap_positions,
-                )
-                result["method"] = method.replace("_", "-")
-                error_type = (
-                    None if "error_type" not in result else result.pop("error_type")
-                )
-                all_results.append(result)
-
-                if result.get("success", True):
-                    # Successful benchmark
-                    atoms_str = f"{result['total_atoms']:,}"
-                    time_str = f"{result['median_time_ms']:.1f}"
-                    neighbors_str = f"{result['total_neighbors']:,}"
-
-                    print(
-                        f"  {atoms_str:>8} atoms, batch={batch_size:2d}: "
-                        f"{time_str:>8} ms, {neighbors_str:>10} neighbors"
-                    )
+                    if atoms_per_system < 1:
+                        # Skip invalid configuration silently
+                        continue
                 else:
-                    # Failed benchmark
-                    atoms_str = f"{result['total_atoms']:,}"
+                    atoms_per_system = atoms
+                    total_atoms = atoms_per_system
 
+                # Memory cap for this cutoff.
+                if total_atoms > cap:
                     print(
-                        f"  {atoms_str:>8} atoms, batch={batch_size:2d}: FAILED ({error_type})"
+                        f"  {total_atoms:>8,} atoms, batch={batch_size:2d}: "
+                        f"SKIPPED - exceeds cutoff={cutoff:g} cap ({cap:,})"
                     )
-                    if error_type in ["OOM", "Timeout"]:
-                        print("    └─ Skipping larger systems for this method")
+                    continue
+
+                try:
+                    result = run_single_benchmark(
+                        method,
+                        atoms_per_system,
+                        batch_size,
+                        timer,
+                        cutoff,
+                        device,
+                        dtype_str,
+                        backend,
+                        wrap_positions=wrap_positions,
+                        method_override=method_override,
+                        extra_kwargs=extra_kwargs,
+                    )
+                    result["method"] = method.replace("_", "-")
+                    result["cutoff"] = float(cutoff)
+                    error_type = (
+                        None if "error_type" not in result else result.pop("error_type")
+                    )
+                    error_msg = result.pop("error", None)
+                    all_results.append(result)
+
+                    if result.get("success", True):
+                        # Successful benchmark
+                        atoms_str = f"{result['total_atoms']:,}"
+                        time_str = f"{result['median_time_ms']:.1f}"
+                        neighbors_str = f"{result['total_neighbors']:,}"
+
+                        print(
+                            f"  {atoms_str:>8} atoms, batch={batch_size:2d}: "
+                            f"{time_str:>8} ms, {neighbors_str:>10} neighbors"
+                        )
+                    else:
+                        # Failed benchmark
+                        atoms_str = f"{result['total_atoms']:,}"
+
+                        print(
+                            f"  {atoms_str:>8} atoms, batch={batch_size:2d}: "
+                            f"FAILED ({error_type})"
+                        )
+                        if error_msg:
+                            print(f"    └─ {error_msg}")
+                        if error_type in ["OOM", "Timeout"]:
+                            print("    └─ Skipping larger systems for this cutoff")
+                            broke = True
+                            break
+
+                except ValueError as e:
+                    # Handle configuration errors
+                    print(
+                        f"  {total_atoms:>8} atoms, batch={batch_size:2d}: "
+                        f"SKIPPED - {str(e)}"
+                    )
+                    continue
+                except Exception as e:
+                    # Print full traceback for debugging
+                    print(
+                        f"  {total_atoms:>8} atoms, batch={batch_size:2d}: "
+                        f"EXCEPTION - {type(e).__name__}: {e}"
+                    )
+                    print("\nFULL TRACEBACK:")
+                    traceback.print_exc()
+
+                    # Add failed result
+                    all_results.append(
+                        {
+                            "method": method.replace("_", "-"),
+                            "total_atoms": total_atoms,
+                            "atoms_per_system": atoms_per_system,
+                            "total_neighbors": 0,
+                            "batch_size": batch_size,
+                            "cutoff": float(cutoff),
+                            "median_time_ms": float("inf"),
+                        }
+                    )
+
+                    # Break on critical errors
+                    if isinstance(e, (IndexError, KeyError, RuntimeError)):
+                        print("  Critical error - skipping remaining configurations")
+                        broke = True
                         break
-
-            except ValueError as e:
-                # Handle configuration errors
-                print(
-                    f"  {total_atoms:>8} atoms, batch={batch_size:2d}: SKIPPED - {str(e)}"
-                )
-                continue
-            except Exception as e:
-                # Print full traceback for debugging
-                print(
-                    f"  {total_atoms:>8} atoms, batch={batch_size:2d}: EXCEPTION - {type(e).__name__}: {e}"
-                )
-                print("\nFULL TRACEBACK:")
-                traceback.print_exc()
-
-                # Add failed result
-                all_results.append(
-                    {
-                        "method": method.replace("_", "-"),
-                        "total_atoms": total_atoms,
-                        "atoms_per_system": atoms_per_system,
-                        "total_neighbors": 0,
-                        "batch_size": batch_size,
-                        "median_time_ms": float("inf"),
-                    }
-                )
-
-                # Break on critical errors
-                if isinstance(e, (IndexError, KeyError, RuntimeError)):
-                    print("  Critical error - skipping remaining configurations")
-                    break
+            if broke:
+                # OOM at this (atoms, _) — don't try larger ``atoms`` at this
+                # same cutoff (they would also OOM).  Move on to next cutoff.
+                break
 
     # Save results to CSV with GPU-specific name
     if all_results:
@@ -1041,8 +1286,14 @@ def main():
         "--backend",
         type=str,
         choices=["torch", "jax"],
-        default="torch",
-        help="Backend to use for benchmarking (default: torch)",
+        default=None,
+        help=(
+            "Force a single backend for this run, overriding the YAML.  "
+            "If omitted, the bench reads the per-method ``backends:`` list "
+            "from the YAML (falling back to ``parameters.backends`` then to "
+            "``[torch]``).  Useful for one-off testing without editing the "
+            "config."
+        ),
     )
     parser.add_argument(
         "--gpu-sku",
@@ -1052,78 +1303,103 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate backend availability
-    _check_backend_available(args.backend)
-
-    # Load and validate config
+    # Load and validate config (backends are resolved per-method below).
     config = load_config(args.config)
     validate_config(config)
 
     # Get parameters
     params = config["parameters"]
-    cutoff = float(params["cutoff"])
+    cutoffs = _normalize_cutoffs(params["cutoff"])
     warmup = int(params["warmup_iterations"])
     timing = int(params["timing_iterations"])
     dtype_str = params["dtype"]
-
-    # Resolve backend type
-    backend_type: BackendType = args.backend
-
-    # Backend-specific setup
-    device = "cpu"  # Default
-    match backend_type:
-        case "torch":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        case "jax":
-            try:
-                if any(d.platform == "gpu" for d in jax.local_devices()):
-                    device = "gpu"
-            except Exception:  # noqa: S110
-                pass
-
-    # Get GPU SKU
-    gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku(backend_type)
 
     # Create output directory
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize timer
-    timer = BenchmarkTimer(warmup_runs=warmup, timing_runs=timing, backend=backend_type)
-
-    # Print configuration
-    print("=" * 70)
-    print("NEIGHBOR LIST BENCHMARK")
-    print("=" * 70)
-    print(f"Backend: {args.backend}")
-    print(f"Device: {device}")
-    print(f"GPU SKU: {gpu_sku}")
-    print(f"Cutoff: {cutoff} Å")
-    print(f"Dtype: {dtype_str}")
-    print(f"Warmup iterations: {warmup}")
-    print(f"Timing iterations: {timing}")
-    print(f"Output directory: {output_dir}")
-
     # Filter methods if specified
     methods_to_run = config["methods"]
     if args.methods:
         methods_to_run = [m for m in methods_to_run if m["name"] in args.methods]
+
+    # Print configuration banner.  Backend selection per method is
+    # resolved below (CLI > per-method YAML > parameters.backends >
+    # [torch]).
+    print("=" * 70)
+    print("NEIGHBOR LIST BENCHMARK")
+    print("=" * 70)
+    if args.backend is not None:
+        print(f"CLI --backend override: {args.backend}")
+    print(f"YAML parameters.backends: {params.get('backends', '(unset)')}")
+    print(f"Cutoffs: {cutoffs} Å")
+    print(f"Dtype: {dtype_str}")
+    print(f"Warmup iterations: {warmup}")
+    print(f"Timing iterations: {timing}")
+    print(f"Output directory: {output_dir}")
+    if args.methods:
         print(f"Running methods: {[m['name'] for m in methods_to_run]}")
     else:
         print(f"Running all {len(methods_to_run)} methods from config")
 
-    # Run benchmarks for each method
-    for method_config in methods_to_run:
-        run_benchmarks_for_method(
-            method_config,
-            gpu_sku,
-            cutoff,
-            device,
-            dtype_str,
-            timer,
-            output_dir,
-            backend_type,
+    # Resolve the union of backends across all methods so we can
+    # validate availability up front and only create one timer /
+    # device / gpu_sku per backend.
+    all_backends_used = sorted(
+        {
+            b
+            for m in methods_to_run
+            for b in _resolve_method_backends(m, params, args.backend)
+        }
+    )
+    for backend in all_backends_used:
+        _check_backend_available(backend)
+
+    # Per-backend setup: device, GPU SKU, timer.  Build once per backend
+    # so we don't reinitialize on every method.
+    backend_state: dict[str, dict] = {}
+    for backend in all_backends_used:
+        device = "cpu"  # Default
+        match backend:
+            case "torch":
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            case "jax":
+                try:
+                    if any(d.platform == "gpu" for d in jax.local_devices()):
+                        device = "gpu"
+                except Exception:  # noqa: S110
+                    pass
+        gpu_sku = args.gpu_sku if args.gpu_sku else get_gpu_sku(backend)
+        timer = BenchmarkTimer(
+            warmup_runs=warmup,
+            timing_runs=timing,
+            backend=backend,
         )
+        backend_state[backend] = {
+            "device": device,
+            "gpu_sku": gpu_sku,
+            "timer": timer,
+        }
+        print(f"[backend={backend}] device={device}  gpu_sku={gpu_sku}")
+
+    # Run benchmarks for each (method, backend) pair.  ``cutoffs`` is
+    # swept inside ``run_benchmarks_for_method`` so each (method,
+    # backend) gets a single CSV spanning all cutoffs (and rows are
+    # stamped with their cutoff).
+    for method_config in methods_to_run:
+        method_backends = _resolve_method_backends(method_config, params, args.backend)
+        for backend in method_backends:
+            state = backend_state[backend]
+            run_benchmarks_for_method(
+                method_config,
+                state["gpu_sku"],
+                cutoffs,
+                state["device"],
+                dtype_str,
+                state["timer"],
+                output_dir,
+                backend,
+            )
 
     print("\n" + "=" * 70)
     print("BENCHMARK COMPLETE")

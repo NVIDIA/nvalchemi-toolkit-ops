@@ -536,20 +536,65 @@ def assert_neighbor_matrix_equal(
             f"Shifts shapes differ: {shifts1.shape} vs {shifts2.shape}"
         )
 
-    # Compare neighbor matrices
+    # Compare neighbor matrices.  The cell_list / naive paths use an
+    # always-write-shifts contract: only the active range
+    # ``[0, num_neighbors[i])`` of ``neighbor_matrix_shifts`` is written by
+    # the kernel; the tail is left at whatever ``torch.empty`` happened to
+    # return (PyTorch's caching allocator may recycle a buffer that held
+    # values from a prior unrelated allocation, so the tail content differs
+    # call-to-call).  Compare only the active range.
     torch.testing.assert_close(num_neighbors1, num_neighbors2)
-    # test neighbor matricies by row
+    nn = num_neighbors1
     for i in range(neighbor_matrix1.shape[0]):
-        # sort the rows
+        n_active = int(nn[i].item())
         row1 = neighbor_matrix1[i]
         row1_sorted, indices1 = torch.sort(row1, dim=0)
         row2 = neighbor_matrix2[i]
         row2_sorted, indices2 = torch.sort(row2, dim=0)
         assert torch.equal(row1_sorted, row2_sorted), f"Row {i} mismatch"
 
-        if shifts1 is not None:
-            shifts1_sorted = shifts1[i][indices1]
-            shifts2_sorted = shifts2[i][indices2]
-            assert torch.equal(shifts1_sorted, shifts2_sorted), (
-                f"Row {i} shifts mismatch"
+        if shifts1 is not None and n_active > 0:
+            # Only the first ``n_active`` slots (by neighbor index) carry
+            # real shifts; sort the (atom_idx, shift) pairs lex-style so
+            # the comparison is invariant to column ordering inside the
+            # active range.
+            active1 = neighbor_matrix1[i, :n_active]
+            active2 = neighbor_matrix2[i, :n_active]
+            shifts_active1 = shifts1[i, :n_active]
+            shifts_active2 = shifts2[i, :n_active]
+            order1 = torch.argsort(active1, stable=True)
+            order2 = torch.argsort(active2, stable=True)
+            assert torch.equal(active1[order1], active2[order2]), (
+                f"Row {i} active-neighbor mismatch"
             )
+            assert torch.equal(shifts_active1[order1], shifts_active2[order2]), (
+                f"Row {i} shifts mismatch in active range"
+            )
+
+
+def neighbor_matrix_row_set(
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+) -> set:
+    """Order-independent set representation of a per-atom neighbor matrix.
+
+    Returns ``{(i, frozenset(neighbors_of_i))}`` so callers can compare
+    atom-centric vs pair-centric outputs (or any other producer whose
+    per-row ordering is non-deterministic) without depending on column
+    ordering.
+
+    Parameters
+    ----------
+    neighbor_matrix : torch.Tensor, shape (total_atoms, max_neighbors), dtype=int32
+    num_neighbors : torch.Tensor, shape (total_atoms,), dtype=int32
+
+    Returns
+    -------
+    set[tuple[int, frozenset[int]]]
+    """
+    out = set()
+    for i in range(neighbor_matrix.shape[0]):
+        n = int(num_neighbors[i].item())
+        if n > 0:
+            out.add((i, frozenset(int(x) for x in neighbor_matrix[i, :n].tolist())))
+    return out

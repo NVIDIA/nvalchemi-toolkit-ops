@@ -127,6 +127,7 @@ FIRE2
 Improved FIRE optimizer with adaptive damping and velocity mixing.
 
 .. autofunction:: nvalchemiops.dynamics.optimizers.fire2.fire2_step
+.. autofunction:: nvalchemiops.dynamics.optimizers.fire2.fire2_update
 
 Thermostat Utilities
 --------------------

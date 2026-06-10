@@ -33,6 +33,24 @@ from ...test_utils import (
 from .conftest import requires_vesin
 
 
+def _active_neighbor_shift_rows(
+    neighbor_matrix: torch.Tensor,
+    shifts: torch.Tensor,
+    counts: torch.Tensor,
+    atom_index: int,
+) -> list[tuple[int, int, int, int]]:
+    """Return sorted active ``(neighbor, sx, sy, sz)`` rows for one atom."""
+    count = int(counts[atom_index].item())
+    rows = torch.cat(
+        (
+            neighbor_matrix[atom_index, :count].unsqueeze(1),
+            shifts[atom_index, :count],
+        ),
+        dim=1,
+    )
+    return sorted(tuple(row) for row in rows.detach().cpu().tolist())
+
+
 class TestNaiveDualCutoffCorrectness:
     """Test correctness of naive dual cutoff neighbor list against reference."""
 
@@ -653,3 +671,277 @@ class TestNaiveDualCutoffSelectiveRebuildFlags:
         assert torch.equal(nn2_sel, nn2_ref), (
             "nn2 should match full rebuild when flag=True"
         )
+
+    def test_no_rebuild_preserves_pbc_shift_data(self, device, dtype):
+        """Flag=False preserves PBC neighbor and shift buffers."""
+        positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 15
+        max_neighbors2 = 25
+
+        nm1, nn1, shifts1, nm2, nn2, shifts2 = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            pbc=pbc,
+            cell=cell,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+        )
+        saved = (
+            nm1.clone(),
+            nn1.clone(),
+            shifts1.clone(),
+            nm2.clone(),
+            nn2.clone(),
+            shifts2.clone(),
+        )
+
+        rebuild_flags = torch.zeros(1, dtype=torch.bool, device=device)
+        out = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            pbc=pbc,
+            cell=cell,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1,
+            neighbor_matrix2=nm2,
+            neighbor_matrix_shifts1=shifts1,
+            neighbor_matrix_shifts2=shifts2,
+            num_neighbors1=nn1,
+            num_neighbors2=nn2,
+            rebuild_flags=rebuild_flags,
+        )
+
+        for result, expected in zip(out, saved):
+            assert torch.equal(result, expected)
+
+    def test_rebuild_updates_pbc_shift_data(self, device, dtype):
+        """Flag=True rebuilds PBC neighbor and shift buffers."""
+        positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        max_neighbors1 = 15
+        max_neighbors2 = 25
+
+        reference = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            pbc=pbc,
+            cell=cell,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+        )
+
+        total_atoms = positions.shape[0]
+        nm1 = torch.full(
+            (total_atoms, max_neighbors1), 99, dtype=torch.int32, device=device
+        )
+        nm2 = torch.full(
+            (total_atoms, max_neighbors2), 99, dtype=torch.int32, device=device
+        )
+        shifts1 = torch.full(
+            (total_atoms, max_neighbors1, 3), 7, dtype=torch.int32, device=device
+        )
+        shifts2 = torch.full(
+            (total_atoms, max_neighbors2, 3), 7, dtype=torch.int32, device=device
+        )
+        nn1 = torch.full((total_atoms,), 99, dtype=torch.int32, device=device)
+        nn2 = torch.full((total_atoms,), 99, dtype=torch.int32, device=device)
+
+        rebuild_flags = torch.ones(1, dtype=torch.bool, device=device)
+        out = naive_neighbor_list_dual_cutoff(
+            positions,
+            cutoff1,
+            cutoff2,
+            pbc=pbc,
+            cell=cell,
+            max_neighbors1=max_neighbors1,
+            max_neighbors2=max_neighbors2,
+            neighbor_matrix1=nm1,
+            neighbor_matrix2=nm2,
+            neighbor_matrix_shifts1=shifts1,
+            neighbor_matrix_shifts2=shifts2,
+            num_neighbors1=nn1,
+            num_neighbors2=nn2,
+            rebuild_flags=rebuild_flags,
+        )
+
+        out_nm1, out_nn1, out_shifts1, out_nm2, out_nn2, out_shifts2 = out
+        ref_nm1, ref_nn1, ref_shifts1, ref_nm2, ref_nn2, ref_shifts2 = reference
+        assert torch.equal(out_nn1, ref_nn1)
+        assert torch.equal(out_nn2, ref_nn2)
+        for atom_index in range(total_atoms):
+            assert _active_neighbor_shift_rows(
+                out_nm1, out_shifts1, ref_nn1, atom_index
+            ) == _active_neighbor_shift_rows(ref_nm1, ref_shifts1, ref_nn1, atom_index)
+            assert _active_neighbor_shift_rows(
+                out_nm2, out_shifts2, ref_nn2, atom_index
+            ) == _active_neighbor_shift_rows(ref_nm2, ref_shifts2, ref_nn2, atom_index)
+
+
+class TestNaiveDualCutoffCompile:
+    """Torch compile coverage for explicit-buffer dual-cutoff naive paths."""
+
+    @pytest.mark.slow
+    def test_compile_no_pbc_explicit_buffers(self, device, dtype):
+        """Compile the no-PBC dual-cutoff runtime with explicit outputs."""
+        positions, _, _ = create_simple_cubic_system(dtype=dtype, device=device)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors1 = 15
+        max_neighbors2 = 25
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors1),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.full(
+                    (fill_value, max_neighbors2),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+            )
+
+        def run(pos, nm1, nn1, nm2, nn2):
+            return naive_neighbor_list_dual_cutoff(
+                pos,
+                cutoff1,
+                cutoff2,
+                fill_value=fill_value,
+                neighbor_matrix1=nm1,
+                neighbor_matrix2=nm2,
+                num_neighbors1=nn1,
+                num_neighbors2=nn2,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        for result, expected in zip(compiled, eager):
+            assert torch.equal(result, expected)
+
+    @pytest.mark.slow
+    def test_compile_pbc_explicit_buffers(self, device, dtype):
+        """Compile the PBC dual-cutoff runtime with prepared shift metadata."""
+        positions, cell, pbc = create_simple_cubic_system(dtype=dtype, device=device)
+        cell = cell.reshape(1, 3, 3)
+        pbc = pbc.reshape(1, 3)
+        cutoff1 = 1.0
+        cutoff2 = 1.5
+        fill_value = positions.shape[0]
+        max_neighbors1 = 15
+        max_neighbors2 = 25
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell, cutoff2, pbc
+        )
+
+        def alloc_outputs():
+            return (
+                torch.full(
+                    (fill_value, max_neighbors1),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors1, 3), dtype=torch.int32, device=device
+                ),
+                torch.full(
+                    (fill_value, max_neighbors2),
+                    fill_value,
+                    dtype=torch.int32,
+                    device=device,
+                ),
+                torch.zeros(fill_value, dtype=torch.int32, device=device),
+                torch.zeros(
+                    (fill_value, max_neighbors2, 3), dtype=torch.int32, device=device
+                ),
+                torch.empty_like(positions),
+                torch.empty((fill_value, 3), dtype=torch.int32, device=device),
+                torch.empty_like(cell),
+            )
+
+        def run(
+            pos,
+            nm1,
+            nn1,
+            shifts1,
+            nm2,
+            nn2,
+            shifts2,
+            wrapped,
+            offsets,
+            inv_cell,
+        ):
+            return naive_neighbor_list_dual_cutoff(
+                pos,
+                cutoff1,
+                cutoff2,
+                pbc=pbc,
+                cell=cell,
+                fill_value=fill_value,
+                neighbor_matrix1=nm1,
+                neighbor_matrix2=nm2,
+                neighbor_matrix_shifts1=shifts1,
+                neighbor_matrix_shifts2=shifts2,
+                num_neighbors1=nn1,
+                num_neighbors2=nn2,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                positions_wrapped_buffer=wrapped,
+                per_atom_cell_offsets_buffer=offsets,
+                inv_cell_buffer=inv_cell,
+            )
+
+        eager = run(positions, *alloc_outputs())
+        compiled = torch.compile(run)(positions, *alloc_outputs())
+
+        (
+            compiled_nm1,
+            compiled_nn1,
+            compiled_shifts1,
+            compiled_nm2,
+            compiled_nn2,
+            compiled_shifts2,
+        ) = compiled
+        eager_nm1, eager_nn1, eager_shifts1, eager_nm2, eager_nn2, eager_shifts2 = eager
+        assert torch.equal(compiled_nn1, eager_nn1)
+        assert torch.equal(compiled_nn2, eager_nn2)
+        for atom_index in range(fill_value):
+            assert _active_neighbor_shift_rows(
+                compiled_nm1,
+                compiled_shifts1,
+                compiled_nn1,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_nm1,
+                eager_shifts1,
+                eager_nn1,
+                atom_index,
+            )
+            assert _active_neighbor_shift_rows(
+                compiled_nm2,
+                compiled_shifts2,
+                compiled_nn2,
+                atom_index,
+            ) == _active_neighbor_shift_rows(
+                eager_nm2,
+                eager_shifts2,
+                eager_nn2,
+                atom_index,
+            )

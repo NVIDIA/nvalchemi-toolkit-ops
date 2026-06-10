@@ -217,6 +217,7 @@ class BenchmarkTimer:
         self._torch = None
         self._jax = None
         self._cudart = None
+        self._nvtx = None
         self.is_cuda = False
 
         match backend:
@@ -227,6 +228,7 @@ class BenchmarkTimer:
 
                     self._torch = _torch
                     self._cudart = _cudart
+                    self._nvtx = _torch.cuda.nvtx
                 except ImportError as e:
                     raise ImportError(
                         "torch backend requires PyTorch. Run `uv sync --extra torch"
@@ -255,6 +257,20 @@ class BenchmarkTimer:
                     self.is_cuda = any(d.platform == "gpu" for d in devices)
                 except Exception:
                     self.is_cuda = False
+
+                # Optional: borrow torch's cudart/nvtx for nsys profiler-bracket
+                # support. The driver-level cudaProfilerStart/Stop is framework-
+                # agnostic, so using torch's binding here is safe even when JAX
+                # owns the runtime. Falls back silently if torch isn't installed.
+                if self.is_cuda:
+                    try:
+                        import torch as _torch_for_profiler
+                        from torch.cuda import cudart as _cudart_for_jax
+
+                        self._cudart = _cudart_for_jax
+                        self._nvtx = _torch_for_profiler.cuda.nvtx
+                    except ImportError:
+                        pass
 
             case "warp":
                 raise NotImplementedError(
@@ -306,7 +322,15 @@ class BenchmarkTimer:
         return None
 
     def clear_memory(self):
-        """Clear GPU memory caches and reset peak memory stats."""
+        """Clear GPU memory caches and reset peak memory stats.
+
+        Use for OOM recovery only — ``empty_cache()`` releases the torch
+        caching-allocator pool back to the driver, so the next call has
+        to re-allocate everything via cudaMallocAsync. Calling this
+        between warmup and timing iters poisons the first timed iter
+        with that realloc cost. Use ``reset_peak_memory_stats`` instead
+        when you only want a clean peak-memory baseline.
+        """
         match self.backend:
             case "torch":
                 if self.is_cuda:
@@ -314,6 +338,15 @@ class BenchmarkTimer:
                     self._torch.cuda.reset_peak_memory_stats()
             case "jax":
                 pass  # JAX manages memory automatically
+
+    def reset_peak_stats(self):
+        """Reset peak-memory tracking without releasing cached memory."""
+        match self.backend:
+            case "torch":
+                if self.is_cuda:
+                    self._torch.cuda.reset_peak_memory_stats()
+            case "jax":
+                pass
 
     def _get_oom_exception_type(self) -> type:
         """Return the OOM exception class for the current backend.
@@ -366,6 +399,9 @@ class BenchmarkTimer:
         compile_ms: float | None = None
 
         try:
+            # Clear allocator state before warmup so timing runs reuse warmed caches.
+            self.clear_memory()
+
             # Warmup runs with timeout (timed to capture compile overhead)
             warmup_start = time.perf_counter()
             with timeout(self.timeout_seconds):
@@ -398,15 +434,22 @@ class BenchmarkTimer:
                         }
             compile_ms = (time.perf_counter() - warmup_start) * 1000.0
 
-            # Reset peak memory stats before timing runs
-            self.clear_memory()
+            # Reset peak stats but keep the caching allocator warm so iter_0
+            # doesn't re-allocate every workspace the warmups already paid.
+            self.reset_peak_stats()
 
             # Timing runs
             times = []
             last_result = None
+            start_event = None
+            end_event = None
+            if self.backend == "torch" and self.is_cuda:
+                start_event = self._torch.cuda.Event(enable_timing=True)
+                end_event = self._torch.cuda.Event(enable_timing=True)
 
-            # Start profiler (torch backend only)
-            if self.backend == "torch" and self._cudart is not None:
+            # Bracket only the timing iterations so nsys
+            # --capture-range=cudaProfilerApi drops startup noise.
+            if self._cudart is not None:
                 self._cudart().cudaProfilerStart()
 
             for i in range(self.timing_runs):
@@ -416,16 +459,18 @@ class BenchmarkTimer:
                             case "torch":
                                 if self.is_cuda:
                                     self._torch.cuda.synchronize()
-                                    start_event = self._torch.cuda.Event(
-                                        enable_timing=True
-                                    )
-                                    end_event = self._torch.cuda.Event(
-                                        enable_timing=True
-                                    )
+                                    if start_event is None or end_event is None:
+                                        raise RuntimeError(
+                                            "CUDA events were not initialized"
+                                        )
 
-                                    start_event.record()
-                                    last_result = func(*args, **kwargs)
-                                    end_event.record()
+                                    self._torch.cuda.nvtx.range_push(f"timed_iter_{i}")
+                                    try:
+                                        start_event.record()
+                                        last_result = func(*args, **kwargs)
+                                        end_event.record()
+                                    finally:
+                                        self._torch.cuda.nvtx.range_pop()
 
                                     self._torch.cuda.synchronize()
                                     elapsed_time = start_event.elapsed_time(
@@ -441,11 +486,22 @@ class BenchmarkTimer:
                                     )  # Convert to ms
 
                             case "jax":
-                                start_time = time.perf_counter()
-                                result = func(*args, **kwargs)
-                                # Block until computation is complete
-                                self._jax.block_until_ready(result)
-                                end_time = time.perf_counter()
+                                # nvtx range so nsys can attribute kernels per
+                                # iteration (mirrors torch path).
+                                use_nvtx = self._cudart is not None and hasattr(
+                                    self, "_nvtx"
+                                )
+                                if use_nvtx:
+                                    self._nvtx.range_push(f"timed_iter_{i}")
+                                try:
+                                    start_time = time.perf_counter()
+                                    result = func(*args, **kwargs)
+                                    # Block until computation is complete
+                                    self._jax.block_until_ready(result)
+                                    end_time = time.perf_counter()
+                                finally:
+                                    if use_nvtx:
+                                        self._nvtx.range_pop()
                                 last_result = result
                                 times.append(
                                     (end_time - start_time) * 1000.0
@@ -453,8 +509,8 @@ class BenchmarkTimer:
 
                 except oom_exception:
                     self.clear_memory()
-                    # Stop profiler (torch backend only)
-                    if self.backend == "torch" and self._cudart is not None:
+                    # Stop profiler (whichever backend started it).
+                    if self._cudart is not None:
                         self._cudart().cudaProfilerStop()
                     return {
                         "median": None,
@@ -467,8 +523,8 @@ class BenchmarkTimer:
                         "last_result": None,
                     }
                 except TimeoutError as e:
-                    # Stop profiler (torch backend only)
-                    if self.backend == "torch" and self._cudart is not None:
+                    # Stop profiler (whichever backend started it).
+                    if self._cudart is not None:
                         self._cudart().cudaProfilerStop()
                     return {
                         "median": None,
@@ -481,8 +537,8 @@ class BenchmarkTimer:
                         "last_result": None,
                     }
                 except Exception as e:
-                    # Stop profiler (torch backend only)
-                    if self.backend == "torch" and self._cudart is not None:
+                    # Stop profiler (whichever backend started it).
+                    if self._cudart is not None:
                         self._cudart().cudaProfilerStop()
                     return {
                         "median": None,
@@ -495,8 +551,8 @@ class BenchmarkTimer:
                         "last_result": None,
                     }
 
-            # Stop profiler (torch backend only)
-            if self.backend == "torch" and self._cudart is not None:
+            # Stop profiler (whichever backend started it).
+            if self._cudart is not None:
                 self._cudart().cudaProfilerStop()
 
             # Get peak memory usage

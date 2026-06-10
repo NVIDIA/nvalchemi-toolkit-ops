@@ -36,6 +36,9 @@ The Ewald energy is decomposed as:
 .. math::
     E_{\\text{total}} = E_{\\text{real}} + E_{\\text{reciprocal}} - E_{\\text{self}}
 
+For this neutral-system example the uniform-background correction is zero. It
+is included by the API for non-neutral periodic systems.
+
 .. important::
     This script is intended as an API demonstration. Do not use this script
     for performance benchmarking; refer to the `benchmarks` folder instead.
@@ -48,6 +51,8 @@ The Ewald energy is decomposed as:
 # that handle both single-system and batched calculations.
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import torch
@@ -72,6 +77,18 @@ if torch.cuda.is_available():
 else:
     device = torch.device("cpu")
     print("Using CPU")
+
+
+def _legacy_direct_output_call(function, *args, **kwargs):
+    """Call a deprecated direct-output path used for explicit migration checks."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            message="The direct-output flags.*",
+        )
+        return function(*args, **kwargs)
+
 
 # %%
 # Create a NaCl Crystal System
@@ -129,7 +146,7 @@ positions, charges, cell, pbc = create_nacl_system(n_cells=2)
 
 print(f"System: {len(positions)} atoms NaCl crystal")
 print(f"Cell size: {cell[0, 0, 0]:.2f} Å")
-print(f"Total charge: {charges.sum().item():.1f} (should be 0 for neutral)")
+print(f"Total charge: {charges.sum().item():.1f} (constructed neutral system)")
 
 # %%
 # Estimate optimal parameters for target accuracy:
@@ -152,16 +169,17 @@ neighbor_list, neighbor_ptr, neighbor_shifts = neighbor_list_fn(
     return_neighbor_list=True,
 )
 
-energies, forces = ewald_summation(
-    positions=positions,
+positions_grad = positions.detach().clone().requires_grad_(True)
+energies = ewald_summation(
+    positions=positions_grad,
     charges=charges,
     cell=cell,
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
     accuracy=1e-6,  # Parameters estimated automatically
-    compute_forces=True,
 )
+forces = -torch.autograd.grad(energies.sum(), positions_grad)[0]
 
 total_energy = energies.sum().item()
 print("\nEwald Summation Results:")
@@ -259,7 +277,7 @@ for acc in accuracies:
 
     # Generate k-vectors for counting
     k_vectors = generate_k_vectors_ewald_summation(
-        cell, params_acc.reciprocal_space_cutoff
+        cell.detach(), params_acc.reciprocal_space_cutoff
     )
     num_kvec = k_vectors.shape[1]
 
@@ -301,7 +319,7 @@ positions_4, charges_4, cell_4, pbc_4 = create_nacl_system(n_cells=4)
 
 params_4 = estimate_ewald_parameters(positions_4, cell_4, accuracy=1e-4)
 k_vectors_4 = generate_k_vectors_ewald_summation(
-    cell_4, params_4.reciprocal_space_cutoff
+    cell_4.detach(), params_4.reciprocal_space_cutoff
 )
 
 neighbor_list_4, neighbor_ptr_4, neighbor_shifts_4 = neighbor_list_fn(
@@ -346,11 +364,11 @@ print(f"  Reciprocal-space: {recip_energy.sum().item():.6f}")
 print(f"  Total: {(real_energy.sum() + recip_energy.sum()).item():.6f}")
 
 # %%
-# Charge Gradients for ML Potentials
-# ----------------------------------
-# The Ewald functions support computing analytical charge gradients (∂E/∂q_i),
-# which are useful for training machine learning potentials that predict charges.
-# The charge gradient represents the electrostatic potential at each atom.
+# Legacy Direct Charge-Gradient Outputs
+# -------------------------------------
+# Component charge-gradient outputs remain available for compatibility and
+# migration checks. New differentiable training code should prefer the energy
+# autograd recipe verified below.
 
 print("\nCharge Gradients:")
 
@@ -394,12 +412,13 @@ print(
 )
 
 # %%
-# Full Ewald with charge gradients in one call:
+# Full Ewald legacy charge-gradient output in one call:
 #
-# Instead of calling the components separately, ``ewald_summation`` now supports
-# ``compute_charge_gradients`` directly — matching ``particle_mesh_ewald``.
+# This direct-output flag remains functional for compatibility; use
+# ``torch.autograd.grad`` on the scalar energy for new training code.
 
-energies_full, forces_full, charge_grads_full = ewald_summation(
+energies_full, forces_full, charge_grads_full = _legacy_direct_output_call(
+    ewald_summation,
     positions=positions_4,
     charges=charges_4,
     cell=cell_4,
@@ -420,7 +439,7 @@ component_diff = (charge_grads_full - total_charge_grads).abs().max().item()
 print(f"  Unified vs component charge gradient max diff: {component_diff:.2e}")
 
 # %%
-# Verify charge gradients against autograd:
+# Verify legacy direct charge gradients against the training autograd recipe:
 
 charges_4.requires_grad_(True)
 energies_total = ewald_summation(
@@ -438,7 +457,7 @@ autograd_charge_grads = charges_4.grad.clone()
 charges_4.requires_grad_(False)
 charges_4.grad = None
 
-# Compare explicit vs autograd charge gradients
+# Compare legacy direct vs autograd charge gradients
 charge_grad_diff = (charge_grads_full - autograd_charge_grads).abs().max().item()
 print(f"  Explicit vs Autograd charge gradient max diff: {charge_grad_diff:.2e}")
 
@@ -482,7 +501,7 @@ params_batch = estimate_ewald_parameters(
 )
 
 print(f"\nTotal atoms: {len(positions_batch)}")
-print(f"Per-system alphas: {params_batch.alpha.tolist()}")
+print(f"Estimated alphas: {params_batch.alpha.tolist()}")
 print(f"Real-space cutoff: {params_batch.real_space_cutoff.max().item():.2f} Å")
 print(f"K-space cutoff: {params_batch.reciprocal_space_cutoff.max().item():.2f} Å⁻¹")
 
@@ -501,7 +520,8 @@ neighbor_matrix_batch, _, neighbor_matrix_shifts_batch = neighbor_list_fn(
     return_neighbor_list=False,
 )
 
-energies_batch, forces_batch = ewald_summation(
+energies_batch, forces_batch = _legacy_direct_output_call(
+    ewald_summation,
     positions=positions_batch,
     charges=charges_batch,
     cell=cells_batch,
@@ -519,6 +539,25 @@ for i in range(n_systems):
     sys_energy = energies_batch[mask].sum().item()
     max_force = torch.norm(forces_batch[mask], dim=1).max().item()
     print(f"  System {i}: {n_atoms} atoms, E={sys_energy:.4f}, |F|_max={max_force:.4f}")
+
+# %%
+# Preferred training recipe: derive batched forces from the scalar energy.
+
+positions_batch_ag = positions_batch.detach().clone().requires_grad_(True)
+energies_batch_ag = ewald_summation(
+    positions=positions_batch_ag,
+    charges=charges_batch,
+    cell=cells_batch,
+    batch_idx=batch_idx,
+    neighbor_matrix=neighbor_matrix_batch,
+    neighbor_matrix_shifts=neighbor_matrix_shifts_batch,
+    accuracy=1e-5,
+)
+forces_batch_ag = -torch.autograd.grad(energies_batch_ag.sum(), positions_batch_ag)[0]
+
+print("\nBatched energy-autograd forces:")
+print(f"  Total energy: {energies_batch_ag.sum().item():.4f}")
+print(f"  Max force magnitude: {torch.norm(forces_batch_ag, dim=1).max().item():.4f}")
 
 # %%
 # Verify batch vs individual calculations:

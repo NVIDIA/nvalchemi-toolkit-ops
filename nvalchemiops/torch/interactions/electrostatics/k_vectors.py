@@ -61,6 +61,7 @@ def _generate_miller_indices(
 def generate_k_vectors_ewald_summation(
     cell: torch.Tensor,
     k_cutoff: float | torch.Tensor,
+    miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Generate reciprocal lattice vectors for Ewald summation (half-space).
 
@@ -112,6 +113,13 @@ def generate_k_vectors_ewald_summation(
         Maximum magnitude of k-vectors to include (:math:`|\\mathbf{k}| \\leq k_{\\text{cutoff}}`).
         Typical values: 8-12 :math:`\\text{\\AA}^{-1}` for molecular systems.
         Higher values increase accuracy but also computational cost.
+    miller_bounds : tuple[int, int, int] or torch.Tensor, optional
+        Precomputed Miller-index half-bounds as returned by
+        :func:`_generate_miller_indices`. Supplying Python integer bounds skips
+        the device-to-host synchronization needed to derive FFT range sizes from
+        ``cell`` and ``k_cutoff`` inside tight regenerated-k-vector loops. Tensor
+        bounds are accepted for convenience but are read back to Python integers
+        during setup.
 
     Returns
     -------
@@ -154,7 +162,18 @@ def generate_k_vectors_ewald_summation(
     device = cell.device
     dtype = cell.dtype
 
-    max_h, max_k, max_l = 2 * _generate_miller_indices(cell, k_cutoff) + 1
+    if miller_bounds is None:
+        max_h, max_k, max_l = 2 * _generate_miller_indices(cell, k_cutoff) + 1
+    else:
+        if isinstance(miller_bounds, torch.Tensor):
+            if miller_bounds.numel() != 3:
+                raise ValueError("miller_bounds tensor must contain exactly 3 values")
+            bounds = tuple(int(v) for v in miller_bounds.reshape(3).tolist())
+        else:
+            if len(miller_bounds) != 3:
+                raise ValueError("miller_bounds must contain exactly 3 values")
+            bounds = tuple(int(v) for v in miller_bounds)
+        max_h, max_k, max_l = (2 * bounds[0] + 1, 2 * bounds[1] + 1, 2 * bounds[2] + 1)
 
     # Generate all combinations of Miller indices
     h_range = torch.fft.fftfreq(max_h, device=device, dtype=dtype) * max_h

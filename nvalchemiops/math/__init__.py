@@ -118,8 +118,11 @@ __all__ = [
     "gto_fourier_l2_real",
     "gto_integral_l0",
     "gto_self_overlap",
-    "eval_gto_density_pytorch",
-    "eval_gto_fourier_pytorch",
+    # Solid harmonics (Warp primitives; host-side wrappers live in nvalchemiops.torch.math)
+    "regular_solid_harmonic_l0",
+    "regular_solid_harmonic_l1",
+    "irregular_solid_harmonic_l0",
+    "irregular_solid_harmonic_l1",
     # B-spline Warp functions (@wp.func)
     "bspline_weight",
     "bspline_derivative",
@@ -140,9 +143,6 @@ __all__ = [
 ]
 
 from nvalchemiops.math.gto import (
-    # PyTorch wrappers
-    eval_gto_density_pytorch,
-    eval_gto_fourier_pytorch,
     gto_density_all,
     # Real-space densities
     gto_density_l0,
@@ -160,6 +160,12 @@ from nvalchemiops.math.gto import (
     # Normalization and Gaussian factor
     gto_normalization,
     gto_self_overlap,
+)
+from nvalchemiops.math.solid_harmonics import (
+    irregular_solid_harmonic_l0,
+    irregular_solid_harmonic_l1,
+    regular_solid_harmonic_l0,
+    regular_solid_harmonic_l1,
 )
 from nvalchemiops.math.spline import (
     # Warp launchers

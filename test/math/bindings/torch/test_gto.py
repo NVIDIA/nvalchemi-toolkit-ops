@@ -14,14 +14,19 @@
 # limitations under the License.
 
 """
-Test Suite for Gaussian Type Orbital (GTO) Basis Functions
-==========================================================
+Test Suite for Gaussian Type Orbital (GTO) PyTorch bindings
+===========================================================
 
-This module tests the Warp implementation of GTO basis functions including:
-1. Real-space density functions
-2. Fourier transforms
-3. Normalization and integral properties
-4. Gradient correctness
+Exercises the host-side PyTorch wrappers and normalization scaffolding in
+:mod:`nvalchemiops.torch.math.gto`, which drive the Warp ``@wp.kernel``
+evaluators defined in :mod:`nvalchemiops.math.gto`.
+
+Contents:
+
+1. Real-space density evaluators (:func:`eval_gto_density_pytorch`)
+2. Fourier-transform evaluators (:func:`eval_gto_fourier_pytorch`)
+3. GTO normalization conventions (:class:`NormMode`, :func:`inv_cl`,
+   :func:`inv_cl_table`)
 
 Mathematical Reference
 ----------------------
@@ -40,9 +45,12 @@ import math
 import pytest
 import torch
 
-from nvalchemiops.math.gto import (
+from nvalchemiops.torch.math.gto import (
+    NormMode,
     eval_gto_density_pytorch,
     eval_gto_fourier_pytorch,
+    inv_cl,
+    inv_cl_table,
 )
 
 # =============================================================================
@@ -569,6 +577,141 @@ class TestGTOEdgeCases:
                 positions[i : i + 1], sigma=sigma, L_max=2, device=device
             )
             torch.testing.assert_close(batch_output[i : i + 1], single_output)
+
+
+# =============================================================================
+# Normalization Mode Tests
+# =============================================================================
+
+
+def _reference_get_cl_sigma(L: int, sigma: float, normalize: str) -> float:
+    """Direct transcription of the customer ``get_Cl_sigma`` reference formula.
+
+    Kept inline as a golden reference so the test has no external dependency.
+    """
+    if normalize == "none":
+        return 1.0
+    if normalize == "multipoles":
+        l_dep = (
+            (4.0 * math.pi / (2 * L + 1)) ** 0.5
+            * 2 ** ((2 * L + 1) / 2)
+            * math.gamma((2 * L + 3) / 2)
+        )
+        return 1.0 / (l_dep * sigma ** (2 * L + 3))
+    if normalize == "receiver":
+        l_dep = 2 ** ((L + 1) / 2) * math.gamma((L + 3) / 2)
+        return 1.0 / (l_dep * sigma ** (L + 3))
+    raise ValueError(normalize)
+
+
+class TestNormMode:
+    """Tests for :class:`NormMode` and the :func:`inv_cl` family."""
+
+    def test_enum_values_stable(self):
+        """Underlying int values must stay stable — they will be passed into Warp kernels."""
+        assert int(NormMode.MULTIPOLES) == 0
+        assert int(NormMode.RECEIVER) == 1
+        assert int(NormMode.NONE) == 2
+
+    def test_inv_cl_none_is_unity(self):
+        """NONE mode returns 1.0 for any (sigma, L)."""
+        for sigma in [0.1, 1.0, 5.0]:
+            for L in [0, 1, 2, 3]:
+                assert inv_cl(sigma, L, NormMode.NONE) == 1.0
+
+    def test_inv_cl_multipoles_l0_analytic(self):
+        """Closed-form check at L=0: inv_cl = 1 / (π·√2·σ³)."""
+        for sigma in [0.3, 1.0, 2.7]:
+            expected = 1.0 / (math.pi * math.sqrt(2.0) * sigma**3)
+            assert inv_cl(sigma, 0, NormMode.MULTIPOLES) == pytest.approx(
+                expected, rel=1e-14
+            )
+
+    def test_inv_cl_receiver_l0_analytic(self):
+        """Closed-form check at L=0: inv_cl = √(2/π) / σ³."""
+        for sigma in [0.3, 1.0, 2.7]:
+            expected = math.sqrt(2.0 / math.pi) / sigma**3
+            assert inv_cl(sigma, 0, NormMode.RECEIVER) == pytest.approx(
+                expected, rel=1e-14
+            )
+
+    def test_inv_cl_matches_reference_formula(self):
+        """Parity with the customer ``get_Cl_sigma`` reference across modes and L values."""
+        for mode_name, mode in [
+            ("multipoles", NormMode.MULTIPOLES),
+            ("receiver", NormMode.RECEIVER),
+            ("none", NormMode.NONE),
+        ]:
+            for sigma in [0.3, 1.0, 2.7]:
+                for L in [0, 1, 2, 3]:
+                    ref = _reference_get_cl_sigma(L, sigma, mode_name)
+                    got = inv_cl(sigma, L, mode)
+                    assert got == pytest.approx(ref, rel=1e-14), (
+                        f"mode={mode_name}, sigma={sigma}, L={L}: "
+                        f"expected {ref}, got {got}"
+                    )
+
+    def test_inv_cl_sigma_scaling_multipoles(self):
+        """inv_cl(2σ, L, MULTIPOLES) / inv_cl(σ, L, MULTIPOLES) = 2^-(2L+3)."""
+        sigma = 0.7
+        for L in [0, 1, 2, 3]:
+            ratio = inv_cl(2 * sigma, L, NormMode.MULTIPOLES) / inv_cl(
+                sigma, L, NormMode.MULTIPOLES
+            )
+            expected = 2.0 ** (-(2 * L + 3))
+            assert ratio == pytest.approx(expected, rel=1e-14)
+
+    def test_inv_cl_sigma_scaling_receiver(self):
+        """inv_cl(2σ, L, RECEIVER) / inv_cl(σ, L, RECEIVER) = 2^-(L+3)."""
+        sigma = 0.7
+        for L in [0, 1, 2, 3]:
+            ratio = inv_cl(2 * sigma, L, NormMode.RECEIVER) / inv_cl(
+                sigma, L, NormMode.RECEIVER
+            )
+            expected = 2.0 ** (-(L + 3))
+            assert ratio == pytest.approx(expected, rel=1e-14)
+
+    def test_inv_cl_accepts_int_mode(self):
+        """Passing a raw int for mode should be equivalent to the enum."""
+        sigma = 1.1
+        for L in [0, 1, 2]:
+            assert inv_cl(sigma, L, 0) == inv_cl(sigma, L, NormMode.MULTIPOLES)
+            assert inv_cl(sigma, L, 1) == inv_cl(sigma, L, NormMode.RECEIVER)
+            assert inv_cl(sigma, L, 2) == inv_cl(sigma, L, NormMode.NONE)
+
+    @pytest.mark.parametrize("bad_sigma", [0.0, -0.5])
+    def test_inv_cl_rejects_nonpositive_sigma(self, bad_sigma):
+        with pytest.raises(ValueError, match="sigma must be positive"):
+            inv_cl(bad_sigma, 0, NormMode.MULTIPOLES)
+
+    def test_inv_cl_rejects_negative_L(self):
+        with pytest.raises(ValueError, match="L must be non-negative"):
+            inv_cl(1.0, -1, NormMode.MULTIPOLES)
+
+    def test_inv_cl_rejects_unknown_mode(self):
+        with pytest.raises(ValueError):
+            inv_cl(1.0, 0, 99)
+
+
+class TestInvClTable:
+    """Tests for :func:`inv_cl_table`."""
+
+    def test_length_is_max_L_plus_one(self):
+        for max_L in [0, 1, 2, 3]:
+            table = inv_cl_table(1.0, max_L, NormMode.MULTIPOLES)
+            assert len(table) == max_L + 1
+
+    def test_entries_match_scalar_inv_cl(self):
+        sigma = 1.3
+        max_L = 3
+        for mode in [NormMode.MULTIPOLES, NormMode.RECEIVER, NormMode.NONE]:
+            table = inv_cl_table(sigma, max_L, mode)
+            for L in range(max_L + 1):
+                assert table[L] == inv_cl(sigma, L, mode)
+
+    def test_rejects_negative_max_L(self):
+        with pytest.raises(ValueError, match="max_L must be non-negative"):
+            inv_cl_table(1.0, -1, NormMode.MULTIPOLES)
 
 
 if __name__ == "__main__":

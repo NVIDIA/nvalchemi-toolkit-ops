@@ -142,6 +142,7 @@ vec9d = wp.types.vector(length=9, dtype=wp.float64)
 
 @wp.func
 def rsqrt(x: wp.float64) -> wp.float64:
+    """Reciprocal square root: ``1 / sqrt(x)`` (Warp-callable)."""
     return wp.float64(1.0) / wp.sqrt(x)
 
 
@@ -617,7 +618,7 @@ def gto_density_l0_gradient(r: wp.vec3d, sigma: wp.float64) -> wp.vec3d:
 
 
 # =============================================================================
-# PyTorch Wrappers for Testing
+# Warp launch kernels
 # =============================================================================
 
 
@@ -756,103 +757,3 @@ def _eval_gto_fourier_kernel(
         output_imag[i, 6] = wp.float64(0.0)
         output_imag[i, 7] = wp.float64(0.0)
         output_imag[i, 8] = wp.float64(0.0)
-
-
-def eval_gto_density_pytorch(
-    positions,
-    sigma: float,
-    L_max: int = 2,
-    device=None,
-):
-    """Evaluate GTO densities from PyTorch tensors.
-
-    Parameters
-    ----------
-    positions : torch.Tensor
-        Input positions [N, 3] as float64.
-    sigma : float
-        Gaussian width parameter.
-    L_max : int
-        Maximum angular momentum (0, 1, or 2). Default: 2.
-    device : torch.device, optional
-        Device for computation.
-
-    Returns
-    -------
-    torch.Tensor
-        GTO density values [N, num_components].
-    """
-    import torch
-
-    if device is None:
-        device = positions.device
-
-    N = positions.shape[0]
-    num_components = {0: 1, 1: 4, 2: 9}[L_max]
-
-    output = torch.zeros((N, num_components), dtype=torch.float64, device=device)
-
-    wp_device = wp.device_from_torch(device)
-    wp_positions = wp.from_torch(positions.contiguous(), dtype=wp.vec3d)
-    wp_output = wp.from_torch(output, dtype=wp.float64)
-
-    wp.launch(
-        kernel=_eval_gto_density_kernel,
-        dim=N,
-        inputs=[wp_positions, wp.float64(sigma), L_max],
-        outputs=[wp_output],
-        device=wp_device,
-    )
-
-    return output
-
-
-def eval_gto_fourier_pytorch(
-    k_vectors,
-    sigma: float,
-    L_max: int = 2,
-    device=None,
-):
-    """Evaluate GTO Fourier transforms from PyTorch tensors.
-
-    Parameters
-    ----------
-    k_vectors : torch.Tensor
-        Input wave vectors [K, 3] as float64.
-    sigma : float
-        Gaussian width parameter.
-    L_max : int
-        Maximum angular momentum (0, 1, or 2). Default: 2.
-    device : torch.device, optional
-        Device for computation.
-
-    Returns
-    -------
-    tuple[torch.Tensor, torch.Tensor]
-        (real_part, imag_part) each of shape [K, num_components].
-    """
-    import torch
-
-    if device is None:
-        device = k_vectors.device
-
-    K = k_vectors.shape[0]
-    num_components = {0: 1, 1: 4, 2: 9}[L_max]
-
-    output_real = torch.zeros((K, num_components), dtype=torch.float64, device=device)
-    output_imag = torch.zeros((K, num_components), dtype=torch.float64, device=device)
-
-    wp_device = wp.device_from_torch(device)
-    wp_k = wp.from_torch(k_vectors.contiguous(), dtype=wp.vec3d)
-    wp_real = wp.from_torch(output_real, dtype=wp.float64)
-    wp_imag = wp.from_torch(output_imag, dtype=wp.float64)
-
-    wp.launch(
-        kernel=_eval_gto_fourier_kernel,
-        dim=K,
-        inputs=[wp_k, wp.float64(sigma), L_max],
-        outputs=[wp_real, wp_imag],
-        device=wp_device,
-    )
-
-    return output_real, output_imag

@@ -66,7 +66,7 @@ The benchmarks are organized into 6 modular scripts:
 
    - Full optimization runs on LJ systems measuring convergence and wall-clock time
    - Fixed cell (coordinate-only): `run_fire()` vs `run_fire2()`
-   - Variable cell (extended arrays with cell DOFs): `run_fire_cell()` vs `run_fire2_cell()`
+   - Variable cell: `run_fire_cell()` vs coupled coordinate/cell `run_fire2_cell()`
    - Config section: `fire_compare`
    - Output: `fire_compare_{gpu_sku}.csv`
 
@@ -142,9 +142,14 @@ fire_compare:
   force_tolerance: 0.005
   fixed_cell:
     enabled: true
+    position_jitter: 0.05
   variable_cell:
     enabled: true
+    position_jitter: 0.05
 ```
+
+`position_jitter` is uniform Cartesian jitter in `[-value, value]` Å applied
+after P1 expansion.
 
 ## Output Format
 

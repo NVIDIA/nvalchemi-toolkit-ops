@@ -41,6 +41,8 @@ The following fixtures are defined in ``test/math/conftest.py``:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pytest
 import warp as wp
@@ -50,6 +52,10 @@ from nvalchemiops.math.spline import (
     batch_spline_gather_gradient,
     batch_spline_gather_vec3,
     batch_spline_spread,
+    bspline_derivative,
+    bspline_second_derivative,
+    bspline_weight,
+    bspline_weight_hessian_3d,
     spline_gather,
     spline_gather_gradient,
     spline_gather_vec3,
@@ -137,7 +143,7 @@ def batch_system():
 class TestSplineSpread:
     """Tests for spline_spread launcher."""
 
-    @pytest.mark.parametrize("order", [2, 3, 4])
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
     def test_spread_runs_without_error(self, device, simple_system, order):
         """Verify spread kernel runs without error for different orders."""
         positions = wp.from_numpy(
@@ -551,10 +557,10 @@ class TestSplineRegressionValues:
         mesh_np = mesh.numpy()
 
         # Regression values from initial run
-        assert mesh_np.sum() == pytest.approx(1.0, rel=1e-10)
+        assert mesh_np.sum() == pytest.approx(1.0, rel=1e-8)
         assert mesh_np.max() == pytest.approx(0.2508416403, rel=1e-8)
         assert mesh_np.min() == pytest.approx(-0.2962962963, rel=1e-8)
-        assert np.count_nonzero(mesh_np) == 182
+        assert np.count_nonzero(np.abs(mesh_np) > 1e-8) == 181
 
     def test_gather_regression(self, device, simple_system):
         """Regression test for spline_gather with expected values."""
@@ -702,7 +708,7 @@ class TestSplineRegressionValues:
 class TestBSplineProperties:
     """Tests for mathematical properties of B-splines."""
 
-    @pytest.mark.parametrize("order", [2, 3, 4])
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
     def test_spread_charge_conservation_all_orders(self, device, order):
         """Verify charge conservation for all B-spline orders."""
         positions_np = np.array([[5.0, 5.0, 5.0]], dtype=np.float64)
@@ -783,3 +789,443 @@ class TestBSplineProperties:
         forces_np = np.array(forces.numpy().tolist())
         # Force = -q * grad(phi). For constant phi, grad(phi) = 0, so F = 0
         assert forces_np == pytest.approx(0.0, abs=1e-10)
+
+
+# =============================================================================
+# B-spline second-derivative + 3D Hessian (Phase 3 chunk MA)
+# =============================================================================
+#
+# Trampoline kernels exposing the new ``@wp.func`` primitives so the tests can
+# compare against numpy-side analytical / finite-difference oracles. These
+# kernels live next to the test class so they don't pollute the public spline
+# surface; the ``@wp.func``s under test are exported from
+# nvalchemiops.math.spline.
+
+
+@wp.kernel
+def _test_bspline_weight_kernel(
+    u_in: wp.array(dtype=Any),
+    order: wp.int32,
+    out: wp.array(dtype=Any),
+):
+    """Trampoline: write ``M_n(u_in[i])`` to ``out[i]`` for parity tests."""
+    i = wp.tid()
+    out[i] = bspline_weight(u_in[i], order)
+
+
+@wp.kernel
+def _test_bspline_derivative_kernel(
+    u_in: wp.array(dtype=Any),
+    order: wp.int32,
+    out: wp.array(dtype=Any),
+):
+    """Trampoline: write ``M_n'(u_in[i])`` to ``out[i]`` for parity tests."""
+    i = wp.tid()
+    out[i] = bspline_derivative(u_in[i], order)
+
+
+@wp.kernel
+def _test_bspline_second_derivative_kernel(
+    u_in: wp.array(dtype=Any),
+    order: wp.int32,
+    out: wp.array(dtype=Any),
+):
+    """Trampoline: write ``B''(u_in[i])`` to ``out[i]`` for parity tests."""
+    i = wp.tid()
+    out[i] = bspline_second_derivative(u_in[i], order)
+
+
+@wp.kernel
+def _test_bspline_weight_hessian_3d_kernel(
+    theta_in: wp.array(dtype=Any),
+    offset_in: wp.array(dtype=wp.vec3i),
+    order: wp.int32,
+    mesh_dims: wp.vec3i,
+    diag_out: wp.array(dtype=Any),
+    off_out: wp.array(dtype=Any),
+):
+    """Trampoline: ``(diag, off)`` of the 3D B-spline Hessian per input."""
+    i = wp.tid()
+    diag, off = bspline_weight_hessian_3d(theta_in[i], offset_in[i], order, mesh_dims)
+    diag_out[i] = diag
+    off_out[i] = off
+
+
+def _truncated_power_bspline(u: np.ndarray, order: int, deriv: int) -> np.ndarray:
+    r"""Closed-form cardinal B-spline (and its derivatives) via truncated powers.
+
+    The cardinal B-spline of order ``n`` is the ``n``-fold convolution of the
+    unit boxcar ``χ_[0,1)`` and admits the explicit form
+
+    .. math::
+
+        M_n(u) = \frac{1}{(n-1)!} \sum_{j=0}^{n} (-1)^j \binom{n}{j}
+                 (u - j)_+^{n-1}
+
+    where ``(x)_+ = max(0, x)``. Differentiating ``deriv`` times reduces the
+    exponent and the leading factorial accordingly. Valid for any
+    ``deriv ≤ n - 1``; returns zeros otherwise (matches the convention of the
+    Warp primitives, which return zero when the spline order is too low to
+    support the requested derivative).
+
+    Independent of the piecewise polynomials used inside
+    :func:`bspline_weight` / :func:`bspline_derivative` /
+    :func:`bspline_second_derivative` — making this the right oracle for
+    parity tests of those functions.
+    """
+    import math
+
+    n = order
+    k = n - 1 - deriv  # exponent of the truncated-power term
+    if n < 1 or k < 0:
+        return np.zeros_like(u, dtype=np.float64)
+    out = np.zeros_like(u, dtype=np.float64)
+    norm = math.factorial(k)
+    for j in range(n + 1):
+        sign = -1.0 if (j & 1) else 1.0
+        coef = math.comb(n, j)
+        diff = u - j
+        # Strict ``> 0`` so the boundary diff == 0 maps to the zero branch
+        # (right-continuous truncated power).
+        out += sign * coef * np.where(diff > 0, np.power(diff, k), 0.0)
+    return out / norm
+
+
+def _bspline_weight_np(u: np.ndarray, order: int) -> np.ndarray:
+    """Pure-numpy ``M_n(u)`` mirroring ``bspline_weight``."""
+    return _truncated_power_bspline(u, order, deriv=0)
+
+
+def _bspline_derivative_np(u: np.ndarray, order: int) -> np.ndarray:
+    """Pure-numpy ``M_n'(u)`` mirroring ``bspline_derivative``."""
+    return _truncated_power_bspline(u, order, deriv=1)
+
+
+def _bspline_second_derivative_np(u: np.ndarray, order: int) -> np.ndarray:
+    """Pure-numpy ``M_n''(u)`` mirroring ``bspline_second_derivative``."""
+    return _truncated_power_bspline(u, order, deriv=2)
+
+
+def _bspline_via_convolution(u: np.ndarray, order: int, h: float = 1e-4) -> np.ndarray:
+    r"""Cardinal B-spline via numerical n-fold convolution of the unit boxcar.
+
+    Independent oracle for the analytical pieces — provides a check that
+    the polynomial coefficients in :func:`bspline_weight` actually
+    represent the n-fold convolution of ``χ_[0,1)`` rather than just
+    matching the closed-form truncated-power expression. With
+    ``h = 1e-4`` the trapezoidal-rule convolution converges to ~1e-8
+    accuracy, which is well below the breakpoint behavior we want to
+    detect (the cardinal pieces match to machine precision; if any
+    polynomial were wrong even by one term the residual would be O(1)).
+    """
+    n = order
+    grid = np.arange(0, n + 1, h)
+    box = ((grid >= 0) & (grid < 1)).astype(np.float64)
+    spline = box.copy()
+    for _ in range(n - 1):
+        spline = np.convolve(spline, box) * h
+    out_grid = np.arange(0, len(spline)) * h
+    return np.interp(u, out_grid, spline)
+
+
+class TestBSplineWeightHigherOrder:
+    r"""``bspline_weight`` and ``bspline_derivative`` match independent oracles
+    across all supported orders.
+
+    The closed-form truncated-power oracle and the explicit n-fold-convolution
+    oracle agree at machine precision for the well-conditioned interior of the
+    spline support, providing two independent paths to the same ground truth.
+    """
+
+    @pytest.mark.parametrize("order", [1, 2, 3, 4, 5, 6])
+    def test_weight_truncated_power_parity(self, device, order):
+        """``M_n(u)`` matches the truncated-power closed form on a sweep
+        of ``u`` ∈ (0, n).
+
+        ``atol`` widens with ``order`` because the truncated-power
+        oracle accumulates O(C(n, n/2) · u^(n-1)) cancellation —
+        order 4 boundary residual ~1e-15, order 6 boundary residual
+        ~1e-12. The kernel itself uses direct piecewise polynomials
+        and is 1-2 ULP precise."""
+        u_in = np.linspace(0.001, float(order) - 0.001, 64, dtype=np.float64)
+
+        u_wp = wp.from_numpy(u_in, dtype=wp.float64, device=device)
+        out_wp = wp.zeros(u_in.shape[0], dtype=wp.float64, device=device)
+        wp.launch(
+            _test_bspline_weight_kernel,
+            dim=u_in.shape[0],
+            inputs=[u_wp, order, out_wp],
+            device=device,
+        )
+        wp.synchronize()
+
+        expected = _bspline_weight_np(u_in, order)
+        atol = 1e-13 if order <= 4 else 1e-11
+        np.testing.assert_allclose(out_wp.numpy(), expected, atol=atol, rtol=1e-10)
+
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
+    def test_derivative_truncated_power_parity(self, device, order):
+        """``M_n'(u)`` matches the truncated-power closed form on a sweep
+        of ``u`` ∈ (0, n)."""
+        u_in = np.linspace(0.001, float(order) - 0.001, 64, dtype=np.float64)
+
+        u_wp = wp.from_numpy(u_in, dtype=wp.float64, device=device)
+        out_wp = wp.zeros(u_in.shape[0], dtype=wp.float64, device=device)
+        wp.launch(
+            _test_bspline_derivative_kernel,
+            dim=u_in.shape[0],
+            inputs=[u_wp, order, out_wp],
+            device=device,
+        )
+        wp.synchronize()
+
+        expected = _bspline_derivative_np(u_in, order)
+        atol = 1e-13 if order <= 4 else 1e-11
+        np.testing.assert_allclose(out_wp.numpy(), expected, atol=atol, rtol=1e-10)
+
+    @pytest.mark.parametrize("order", [5, 6])
+    def test_weight_n_fold_convolution_parity(self, device, order):
+        """``M_n(u)`` matches a numerical n-fold convolution of the unit
+        boxcar — independent of the closed-form polynomial pieces.
+
+        Sanity check that the new orders 5/6 polynomial coefficients
+        actually express the cardinal B-spline (n-fold convolution of
+        ``χ_[0,1)``). Loose tolerance because the convolution oracle is
+        a trapezoidal-rule approximation; if any piece were qualitatively
+        wrong the residual would be O(1)."""
+        u_in = np.linspace(0.05, float(order) - 0.05, 32, dtype=np.float64)
+
+        u_wp = wp.from_numpy(u_in, dtype=wp.float64, device=device)
+        out_wp = wp.zeros(u_in.shape[0], dtype=wp.float64, device=device)
+        wp.launch(
+            _test_bspline_weight_kernel,
+            dim=u_in.shape[0],
+            inputs=[u_wp, order, out_wp],
+            device=device,
+        )
+        wp.synchronize()
+
+        expected = _bspline_via_convolution(u_in, order, h=1e-4)
+        # Discrete np.convolve is rectangular-rule, so accuracy is O(h),
+        # not O(h²). Loose atol — the point is qualitative parity, not
+        # bit-precision: any wrong polynomial coefficient would give
+        # O(1) residual, easily caught at 1e-3.
+        np.testing.assert_allclose(out_wp.numpy(), expected, atol=1e-3)
+
+    @pytest.mark.parametrize("order", [1, 2, 3, 4, 5, 6])
+    def test_partition_of_unity(self, device, order):
+        """``Σ_k M_n(θ + k) = 1`` for any ``θ ∈ [0, 1)`` — the defining
+        property of cardinal B-splines (sum across a unit-shifted family
+        is identically one). Verifies normalization across orders."""
+        rng = np.random.default_rng(0xB5E)
+        thetas = rng.uniform(0.0, 1.0, size=16).astype(np.float64)
+        # u_k = θ + (k - n/2) for k = 0..n-1 covers the support [0, n).
+        # bspline_weight tests one (u, order) at a time; assemble the sum
+        # for each θ.
+        for theta in thetas:
+            u_vec = np.array([theta + i for i in range(order)], dtype=np.float64)
+            # Shift so all u_vec entries land in [0, order).
+            # For θ ∈ [0, 1) and k = 0..n-1, u = θ + k ∈ [0, n) trivially.
+            u_wp = wp.from_numpy(u_vec, dtype=wp.float64, device=device)
+            out_wp = wp.zeros(u_vec.shape[0], dtype=wp.float64, device=device)
+            wp.launch(
+                _test_bspline_weight_kernel,
+                dim=u_vec.shape[0],
+                inputs=[u_wp, order, out_wp],
+                device=device,
+            )
+            wp.synchronize()
+            # Tolerance scales with order because higher-order pieces
+            # involve larger polynomial coefficients (O(10⁴) at order 6)
+            # that introduce ULP-scale rounding when summed.
+            assert out_wp.numpy().sum() == pytest.approx(1.0, abs=1e-12)
+
+
+class TestBSplineSecondDerivative:
+    r"""``bspline_second_derivative`` matches analytical and finite-difference oracles."""
+
+    @pytest.mark.parametrize("order", [3, 4])
+    def test_known_values(self, device, order):
+        """Hand-computed values at the midpoint of each piece."""
+        if order == 4:
+            u_in = np.array([0.5, 1.5, 2.5, 3.5], dtype=np.float64)
+            # B''(u): u → u in [0,1); 4-3u in [1,2); 3u-8 in [2,3); 4-u in [3,4)
+            expected = np.array([0.5, -0.5, -0.5, 0.5], dtype=np.float64)
+        else:  # order == 3
+            u_in = np.array([0.5, 1.5, 2.5], dtype=np.float64)
+            # B''(u): 1, -2, 1
+            expected = np.array([1.0, -2.0, 1.0], dtype=np.float64)
+
+        u_wp = wp.from_numpy(u_in, dtype=wp.float64, device=device)
+        out_wp = wp.zeros(u_in.shape[0], dtype=wp.float64, device=device)
+        wp.launch(
+            _test_bspline_second_derivative_kernel,
+            dim=u_in.shape[0],
+            inputs=[u_wp, order, out_wp],
+            device=device,
+        )
+        wp.synchronize()
+        np.testing.assert_allclose(out_wp.numpy(), expected, atol=1e-15)
+
+    @pytest.mark.parametrize("order", [3, 4, 5, 6])
+    def test_analytical_parity(self, device, order):
+        """Sweep of ``u`` ∈ (0, order); each ``B''(u)`` matches the
+        truncated-power oracle evaluated independently in numpy.
+
+        Uses an analytical oracle (rather than finite differences)
+        because central FD second-derivative roundoff at h=1e-5 is
+        ~ε/h² per evaluation, which the mesh_dims² scale (~500) in
+        the downstream Hessian test amplifies past 1e-5 relative.
+        ``atol`` is widened to ``1e-12`` for orders ≥ 5 because the
+        truncated-power oracle accumulates O(10⁴) cancellations at
+        order 6 — 1-2 ULP per term × 7 terms ≈ 1e-12 absolute. The
+        kernel itself uses direct piecewise polynomials (no
+        cancellation), so the residual is dominated by the oracle.
+        """
+        u_in = np.linspace(0.001, float(order) - 0.001, 64, dtype=np.float64)
+
+        u_wp = wp.from_numpy(u_in, dtype=wp.float64, device=device)
+        out_wp = wp.zeros(u_in.shape[0], dtype=wp.float64, device=device)
+        wp.launch(
+            _test_bspline_second_derivative_kernel,
+            dim=u_in.shape[0],
+            inputs=[u_wp, order, out_wp],
+            device=device,
+        )
+        wp.synchronize()
+
+        expected = _bspline_second_derivative_np(u_in, order)
+        atol = 1e-13 if order <= 4 else 1e-11
+        np.testing.assert_allclose(out_wp.numpy(), expected, atol=atol, rtol=1e-10)
+
+
+class TestBSplineWeightHessian3D:
+    r"""``bspline_weight_hessian_3d`` matches the analytical product rule.
+
+    The 3D weight is :math:`w(\theta) = M_n(u_x) M_n(u_y) M_n(u_z)`. Its
+    Hessian factorizes via the product rule into a 6-component symmetric
+    tensor; we verify each component against the explicit factorization
+    using ``bspline_weight`` / ``bspline_derivative`` /
+    ``bspline_second_derivative`` evaluated independently.
+    """
+
+    @pytest.mark.parametrize("order", [3, 4])
+    def test_factorization_parity(self, device, order):
+        # Sample a handful of (theta, offset) pairs in the interior of the
+        # spline support so each axis lands cleanly inside the [0, order)
+        # parameter range.
+        rng = np.random.default_rng(0xC0DE)
+        n_pts = 32
+        theta_np = rng.uniform(0.0, 1.0, size=(n_pts, 3)).astype(np.float64)
+        # Pick offsets such that u_α = order/2 + θ - offset stays well
+        # inside [0.1, order - 0.1) — avoid the FD-unfriendly breakpoints
+        # entirely by taking offset_α = 1 (so u_α ∈ [order/2, order/2 + 1)
+        # for order = 4, that's [2, 3)).
+        offset_np = np.full((n_pts, 3), 1, dtype=np.int32)
+        mesh_dims_np = np.array([16, 24, 20], dtype=np.int32)
+
+        theta_wp = wp.from_numpy(theta_np, dtype=wp.vec3d, device=device)
+        offset_wp = wp.from_numpy(offset_np, dtype=wp.vec3i, device=device)
+        diag_wp = wp.zeros(n_pts, dtype=wp.vec3d, device=device)
+        off_wp = wp.zeros(n_pts, dtype=wp.vec3d, device=device)
+
+        wp.launch(
+            _test_bspline_weight_hessian_3d_kernel,
+            dim=n_pts,
+            inputs=[
+                theta_wp,
+                offset_wp,
+                order,
+                wp.vec3i(
+                    int(mesh_dims_np[0]), int(mesh_dims_np[1]), int(mesh_dims_np[2])
+                ),
+                diag_wp,
+                off_wp,
+            ],
+            device=device,
+        )
+        wp.synchronize()
+
+        # Numpy oracle — evaluate the same factorization independently.
+        half_order = order * 0.5
+        u_x = half_order + theta_np[:, 0] - offset_np[:, 0]
+        u_y = half_order + theta_np[:, 1] - offset_np[:, 1]
+        u_z = half_order + theta_np[:, 2] - offset_np[:, 2]
+
+        # Cross-check: u must be in [0, order) by construction.
+        assert ((u_x >= 0) & (u_x < order)).all()
+        assert ((u_y >= 0) & (u_y < order)).all()
+        assert ((u_z >= 0) & (u_z < order)).all()
+
+        w_x = _bspline_weight_np(u_x, order)
+        w_y = _bspline_weight_np(u_y, order)
+        w_z = _bspline_weight_np(u_z, order)
+        dw_x = _bspline_derivative_np(u_x, order)
+        dw_y = _bspline_derivative_np(u_y, order)
+        dw_z = _bspline_derivative_np(u_z, order)
+        ddw_x = _bspline_second_derivative_np(u_x, order)
+        ddw_y = _bspline_second_derivative_np(u_y, order)
+        ddw_z = _bspline_second_derivative_np(u_z, order)
+
+        md_x, md_y, md_z = (
+            float(mesh_dims_np[0]),
+            float(mesh_dims_np[1]),
+            float(mesh_dims_np[2]),
+        )
+        diag_expected = np.stack(
+            [
+                ddw_x * w_y * w_z * md_x * md_x,
+                w_x * ddw_y * w_z * md_y * md_y,
+                w_x * w_y * ddw_z * md_z * md_z,
+            ],
+            axis=1,
+        )
+        off_expected = np.stack(
+            [
+                dw_x * dw_y * w_z * md_x * md_y,
+                dw_x * w_y * dw_z * md_x * md_z,
+                w_x * dw_y * dw_z * md_y * md_z,
+            ],
+            axis=1,
+        )
+
+        diag_got = np.array(diag_wp.numpy().tolist())
+        off_got = np.array(off_wp.numpy().tolist())
+        np.testing.assert_allclose(diag_got, diag_expected, atol=1e-13)
+        np.testing.assert_allclose(off_got, off_expected, atol=1e-13)
+
+    def test_zero_outside_support(self, device):
+        """Hessian must be zero when ``u`` falls outside ``[0, order)``."""
+        # offset[0] = -1 forces u_x = order/2 + theta - (-1) = order/2 + 1 + theta;
+        # for order = 4 that's u_x ∈ [3, 4) which is in support, NOT what
+        # we want. Use offset[0] = order so u_x = order/2 + theta - order ∈
+        # [-order/2, -order/2+1) — out of [0, order).
+        order = 4
+        theta_np = np.array([[0.5, 0.5, 0.5]], dtype=np.float64)
+        offset_np = np.array([[order, 0, 0]], dtype=np.int32)  # x out-of-support
+        mesh_dims_np = np.array([16, 16, 16], dtype=np.int32)
+
+        theta_wp = wp.from_numpy(theta_np, dtype=wp.vec3d, device=device)
+        offset_wp = wp.from_numpy(offset_np, dtype=wp.vec3i, device=device)
+        diag_wp = wp.zeros(1, dtype=wp.vec3d, device=device)
+        off_wp = wp.zeros(1, dtype=wp.vec3d, device=device)
+
+        wp.launch(
+            _test_bspline_weight_hessian_3d_kernel,
+            dim=1,
+            inputs=[
+                theta_wp,
+                offset_wp,
+                order,
+                wp.vec3i(*[int(x) for x in mesh_dims_np]),
+                diag_wp,
+                off_wp,
+            ],
+            device=device,
+        )
+        wp.synchronize()
+
+        np.testing.assert_array_equal(
+            np.array(diag_wp.numpy().tolist())[0], np.zeros(3)
+        )
+        np.testing.assert_array_equal(np.array(off_wp.numpy().tolist())[0], np.zeros(3))

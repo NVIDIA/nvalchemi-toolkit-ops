@@ -25,7 +25,9 @@ Entry points:
 - :func:`fire2_step_coord` -- coordinate-only optimization.
 - :func:`fire2_step_coord_cell` -- variable-cell optimization
   (coordinates + cell DOFs).  Packs atomic and cell DOFs into an
-  interleaved extended array, runs FIRE2, and unpacks results.
+  interleaved extended velocity/force representation, runs FIRE2
+  mixing on the generalized DOFs, then applies a coupled atomic/cell
+  position update.
 - :func:`fire2_step_extended` -- run FIRE2 directly on caller-managed
   extended arrays (no per-step pack/unpack overhead).
 
@@ -38,17 +40,18 @@ pre-computation recipes.
 
 from __future__ import annotations
 
+import warnings
+
 import torch
 import warp as wp
 
 from nvalchemiops.batch_utils import atom_ptr_to_batch_idx, batch_idx_to_atom_ptr
-from nvalchemiops.dynamics.optimizers.fire2 import fire2_step
+from nvalchemiops.dynamics.optimizers.fire2 import fire2_step, fire2_update
 from nvalchemiops.dynamics.utils.cell_filter import (
+    _apply_fire2_coord_cell_step,
     extend_atom_ptr,
     pack_forces_with_cell,
-    pack_positions_with_cell,
     pack_velocities_with_cell,
-    unpack_positions_with_cell,
     unpack_velocities_with_cell,
 )
 
@@ -178,6 +181,9 @@ def fire2_step_coord(
     f_sumsq = _alloc_or_zero(f_sumsq, M, dtype, device)
     max_norm = _alloc_or_zero(max_norm, M, dtype, device)
 
+    if positions.shape[0] == 0:
+        return
+
     # Delegate to the Warp-level fire2_step
     fire2_step(
         wp.from_torch(positions.detach(), dtype=vec_type),
@@ -232,14 +238,17 @@ def fire2_step_coord_cell(
     tmax: float = 0.08,
     tmin: float = 0.005,
     maxstep: float = 0.1,
+    cell_force_scale: float = 1.0,
 ) -> None:
     """FIRE2 variable-cell optimization step.
 
     Performs a FIRE2 step on both atomic coordinates and cell degrees of
-    freedom.  Internally packs atomic + cell DOFs into extended arrays
-    using an **interleaved layout** (each system's atoms followed by its
-    2 cell vec3s), runs the 3-kernel FIRE2 algorithm, and unpacks
-    results back.
+    freedom. Internally packs atomic + cell velocity/force DOFs into an
+    **interleaved layout** (each system's atoms followed by its 2 cell
+    vec3s), runs the FIRE2 reduction + mixing phase on those generalized
+    DOFs, unpacks the mixed velocities, and then applies the physically
+    coupled atomic/cell update directly on the caller's coordinate and cell
+    tensors.
 
     The cell must be pre-aligned to upper-triangular form via
     :func:`nvalchemiops.dynamics.utils.cell_filter.align_cell` before
@@ -261,7 +270,9 @@ def fire2_step_coord_cell(
     cell_velocities : Tensor, shape (M, 3, 3), dtype float32/float64
         Cell velocity matrices.
     cell_force : Tensor, shape (M, 3, 3), dtype float32/float64
-        Cell force matrices from ``stress_to_cell_force()`` (read-only).
+        Raw cell force matrices from ``stress_to_cell_force()`` (read-only).
+        These are divided by ``atoms_per_system * cell_force_scale`` before
+        FIRE2 velocity mixing.
     batch_idx : Tensor, shape (N,), dtype int32
         Sorted system index per atom.
     alpha : Tensor, shape (M,), dtype float32/float64
@@ -281,10 +292,16 @@ def fire2_step_coord_cell(
         If ``None``, computed from *atom_ptr* each call via
         :func:`~nvalchemiops.dynamics.utils.cell_filter.extend_atom_ptr`.
         See *Notes* for how to compute.
-    ext_positions, ext_velocities, ext_forces : Tensor, shape (N+2M, 3), optional
-        Pre-allocated extended working arrays.  Allocated if ``None``;
-        contents are overwritten each call.  Providing them avoids
-        repeated allocation in tight loops.
+    ext_positions : Tensor, shape (N+2M, 3), optional
+        Deprecated and ignored.
+        ``ext_positions`` is accepted only for backward compatibility.
+        The coupled variable-cell FIRE2 path no longer updates packed
+        positions directly.
+
+    ext_velocities, ext_forces : Tensor, shape (N+2M, 3), optional
+        Pre-allocated extended working arrays for the FIRE2 generalized-DOF
+        reduction and mixing phase. Allocated if ``None``; contents are
+        overwritten each call.
     ext_batch_idx : Tensor, shape (N+2M,), dtype int32, optional
         Pre-computed extended batch index (sorted, matching interleaved
         pack layout).  If ``None``, computed from *ext_atom_ptr* each
@@ -294,9 +311,14 @@ def fire2_step_coord_cell(
         See *Notes* for how to compute.
     vf, v_sumsq, f_sumsq, max_norm : Tensor, shape (M,), optional
         Scratch buffers for reductions.  Allocated and zeroed if ``None``;
-        zeroed in-place if provided.
+        zeroed in-place if provided. In this coupled cell adapter,
+        ``max_norm`` is the final physical Cartesian atomic displacement norm,
+        recomputed after cell motion is coupled back to the atoms.
     delaystep, dtgrow, dtshrink, alphashrink, alpha0, tmax, tmin, maxstep
         FIRE2 hyperparameters.
+    cell_force_scale : float, default=1.0
+        Extra positive multiplier for stress-derived cell-force normalization.
+        Cell forces are divided by ``atoms_per_system * cell_force_scale``.
 
     Notes
     -----
@@ -306,6 +328,10 @@ def fire2_step_coord_cell(
     ``tmin=0.005``, ``maxstep=0.1``.
     See :func:`nvalchemiops.dynamics.optimizers.fire2.fire2_step` for
     full descriptions.
+
+    The high-level variable-cell adapter normalizes raw stress-derived cell
+    forces by the number of atoms in each system. ``cell_force_scale`` is an
+    extra multiplier on top of that per-system atom-count normalization.
 
     **Pre-computing static metadata for tight loops**
 
@@ -360,7 +386,7 @@ def fire2_step_coord_cell(
 
     **Extended array layout (interleaved)**
 
-    The packing places each system's cell DOFs immediately after its
+    The mixing phase places each system's cell DOFs immediately after its
     atoms::
 
         [sys0_atom0, ..., sys0_atomK, sys0_cell_row0, sys0_cell_row1,
@@ -387,10 +413,9 @@ def fire2_step_coord_cell(
     >>> ext_atom_ptr = ...
     >>> ext_batch_idx = ...
     >>> N_ext = positions.shape[0] + 2 * alpha.shape[0]
-    >>> ext_pos = torch.empty(N_ext, 3, dtype=positions.dtype,
+    >>> ext_vel = torch.empty(N_ext, 3, dtype=positions.dtype,
     ...                       device=positions.device)
-    >>> ext_vel = torch.empty_like(ext_pos)
-    >>> ext_forces = torch.empty_like(ext_pos)
+    >>> ext_forces = torch.empty_like(ext_vel)
     >>> M = alpha.shape[0]
     >>> vf = torch.empty(M, dtype=positions.dtype, device=positions.device)
     >>> v_sumsq = torch.empty_like(vf)
@@ -403,7 +428,6 @@ def fire2_step_coord_cell(
     ...         batch_idx, alpha, dt, nsteps_inc,
     ...         atom_ptr=atom_ptr,
     ...         ext_atom_ptr=ext_atom_ptr,
-    ...         ext_positions=ext_pos,
     ...         ext_velocities=ext_vel,
     ...         ext_forces=ext_forces,
     ...         ext_batch_idx=ext_batch_idx,
@@ -420,9 +444,23 @@ def fire2_step_coord_cell(
     mat_type = _TORCH_TO_WP_MAT[dtype]
     wp_device = wp.device_from_torch(device)
 
+    if cell_force_scale <= 0.0:
+        raise ValueError("cell_force_scale must be positive")
+
+    if ext_positions is not None:
+        warnings.warn(
+            "fire2_step_coord_cell(..., ext_positions=...) is deprecated and ignored.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    if N == 0:
+        for buf in (vf, v_sumsq, f_sumsq, max_norm):
+            if buf is not None:
+                buf.zero_()
+        return
+
     # --- Allocate extended working arrays if not provided ---
-    if ext_positions is None:
-        ext_positions = torch.empty(N_ext, 3, dtype=dtype, device=device)
     if ext_velocities is None:
         ext_velocities = torch.empty(N_ext, 3, dtype=dtype, device=device)
     if ext_forces is None:
@@ -440,10 +478,8 @@ def fire2_step_coord_cell(
     wp_forces = wp.from_torch(forces.detach(), dtype=vec_type)
     wp_cell = wp.from_torch(cell.detach(), dtype=mat_type)
     wp_cell_vel = wp.from_torch(cell_velocities.detach(), dtype=mat_type)
-    wp_cell_force = wp.from_torch(cell_force.detach(), dtype=mat_type)
     wp_bidx = wp.from_torch(batch_idx.detach(), dtype=wp.int32)
 
-    wp_ext_pos = wp.from_torch(ext_positions, dtype=vec_type)
     wp_ext_vel = wp.from_torch(ext_velocities, dtype=vec_type)
     wp_ext_forces = wp.from_torch(ext_forces, dtype=vec_type)
 
@@ -458,6 +494,13 @@ def fire2_step_coord_cell(
         )
     wp_atom_ptr = wp.from_torch(atom_ptr, dtype=wp.int32)
 
+    atom_counts = atom_ptr[1:] - atom_ptr[:-1]
+    if torch.any(atom_counts <= 0).item():
+        raise ValueError("fire2_step_coord_cell requires at least one atom per system")
+    cell_force_divisor = atom_counts.to(dtype=dtype).reshape(M, 1, 1) * cell_force_scale
+    cell_force_work = (cell_force.detach() / cell_force_divisor).contiguous()
+    wp_cell_force = wp.from_torch(cell_force_work, dtype=mat_type)
+
     if ext_atom_ptr is None:
         ext_atom_ptr = torch.zeros(M + 1, dtype=torch.int32, device=device)
         extend_atom_ptr(
@@ -467,14 +510,8 @@ def fire2_step_coord_cell(
         )
     wp_ext_atom_ptr = wp.from_torch(ext_atom_ptr, dtype=wp.int32)
 
-    # --- Pack into extended arrays ---
+    # --- Pack velocities and forces into extended arrays ---
     if M == 1:
-        pack_positions_with_cell(
-            wp_pos,
-            wp_cell,
-            wp_ext_pos,
-            device=wp_device,
-        )
         pack_velocities_with_cell(
             wp_vel,
             wp_cell_vel,
@@ -488,15 +525,6 @@ def fire2_step_coord_cell(
             device=wp_device,
         )
     else:
-        pack_positions_with_cell(
-            wp_pos,
-            wp_cell,
-            wp_ext_pos,
-            wp_atom_ptr,
-            wp_ext_atom_ptr,
-            device=wp_device,
-            batch_idx=wp_bidx,
-        )
         pack_velocities_with_cell(
             wp_vel,
             wp_cell_vel,
@@ -523,13 +551,13 @@ def fire2_step_coord_cell(
             wp_ext_atom_ptr,
             wp.from_torch(ext_batch_idx, dtype=wp.int32),
         )
+    wp_ext_batch_idx = wp.from_torch(ext_batch_idx, dtype=wp.int32)
 
-    # --- Delegate to the Warp-level fire2_step on extended arrays ---
-    fire2_step(
-        wp_ext_pos,
+    # --- FIRE2 mix/update on generalized DOFs (no position application) ---
+    fire2_update(
         wp_ext_vel,
         wp_ext_forces,
-        wp.from_torch(ext_batch_idx, dtype=wp.int32),
+        wp_ext_batch_idx,
         wp.from_torch(alpha.detach()),
         wp.from_torch(dt.detach()),
         wp.from_torch(nsteps_inc.detach(), dtype=wp.int32),
@@ -544,18 +572,11 @@ def fire2_step_coord_cell(
         alpha0=alpha0,
         tmax=tmax,
         tmin=tmin,
-        maxstep=maxstep,
+        compute_max_norm=False,
     )
 
-    # --- Unpack extended arrays back to original tensors ---
+    # --- Unpack mixed velocities back to atomic and cell tensors ---
     if M == 1:
-        unpack_positions_with_cell(
-            wp_ext_pos,
-            wp_pos,
-            wp_cell,
-            num_atoms=N,
-            device=wp_device,
-        )
         unpack_velocities_with_cell(
             wp_ext_vel,
             wp_vel,
@@ -564,15 +585,6 @@ def fire2_step_coord_cell(
             device=wp_device,
         )
     else:
-        unpack_positions_with_cell(
-            wp_ext_pos,
-            wp_pos,
-            wp_cell,
-            atom_ptr=wp_atom_ptr,
-            ext_atom_ptr=wp_ext_atom_ptr,
-            device=wp_device,
-            batch_idx=wp_bidx,
-        )
         unpack_velocities_with_cell(
             wp_ext_vel,
             wp_vel,
@@ -582,6 +594,21 @@ def fire2_step_coord_cell(
             device=wp_device,
             batch_idx=wp_bidx,
         )
+
+    # Apply the coupled affine cell update directly on positions/cells.
+    _apply_fire2_coord_cell_step(
+        wp_pos,
+        wp_vel,
+        wp_cell,
+        wp_cell_vel,
+        wp.from_torch(dt.detach()),
+        wp.from_torch(vf),
+        wp_ext_batch_idx,
+        wp_ext_atom_ptr,
+        wp.from_torch(max_norm),
+        maxstep=maxstep,
+        device=wp_device,
+    )
 
 
 def fire2_step_extended(
@@ -615,6 +642,11 @@ def fire2_step_extended(
 
     This eliminates the per-step pack/unpack overhead that
     ``fire2_step_coord_cell`` incurs.
+
+    Unlike :func:`fire2_step_coord_cell`, this function treats the packed DOFs
+    exactly as provided. It does not add the affine atomic remap implied by
+    variable-cell motion, so it should be used only when the caller explicitly
+    wants generic packed-DOF FIRE2 behavior.
 
     Parameters
     ----------
@@ -652,6 +684,9 @@ def fire2_step_extended(
     v_sumsq = _alloc_or_zero(v_sumsq, M, dtype, device)
     f_sumsq = _alloc_or_zero(f_sumsq, M, dtype, device)
     max_norm = _alloc_or_zero(max_norm, M, dtype, device)
+
+    if ext_positions.shape[0] == 0:
+        return
 
     fire2_step(
         wp.from_torch(ext_positions.detach(), dtype=vec_type),

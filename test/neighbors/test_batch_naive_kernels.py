@@ -20,12 +20,13 @@ import pytest
 import torch
 import warp as wp
 
-from nvalchemiops.neighbors.batch_naive import (
-    _fill_batch_naive_neighbor_matrix,
-    _fill_batch_naive_neighbor_matrix_pbc_overload,
+from nvalchemiops.neighbors.naive import (
     batch_naive_neighbor_matrix,
     batch_naive_neighbor_matrix_pbc,
+    get_naive_neighbor_matrix_kernel,
 )
+from nvalchemiops.neighbors.naive.kernels import BLOCK_DIM
+from nvalchemiops.neighbors.naive.launchers import _scalar_sentinels
 from nvalchemiops.neighbors.neighbor_utils import (
     compute_inv_cells,
     wrap_positions_batch,
@@ -34,6 +35,25 @@ from nvalchemiops.torch.neighbors.neighbor_utils import compute_naive_num_shifts
 from nvalchemiops.torch.types import get_wp_dtype, get_wp_mat_dtype, get_wp_vec_dtype
 
 from .test_utils import create_batch_systems
+
+_FILL_BATCH_NAIVE_NO_PBC = {
+    half_fill: {
+        t: get_naive_neighbor_matrix_kernel(
+            t, pbc_mode="none", batched=True, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
+}
+_FILL_BATCH_NAIVE_PBC_WRAP = {
+    half_fill: {
+        t: get_naive_neighbor_matrix_kernel(
+            t, pbc_mode="wrap_on_entry", batched=True, half_fill=half_fill
+        )
+        for t in (wp.float32, wp.float64, wp.float16)
+    }
+    for half_fill in (False, True)
+}
 
 
 def create_batch_idx_and_ptr(
@@ -51,6 +71,34 @@ def create_batch_idx_and_ptr(
         start_idx += num_atoms
 
     return batch_idx, batch_ptr
+
+
+def _skip_if_cpu(device: str) -> None:
+    """Skip tiled kernel tests on CPU."""
+    if "cpu" in str(device):
+        pytest.skip(
+            "native_strategy='tile' uses wp.launch_tiled and is CUDA-only; "
+            "CPU parameter is not supported"
+        )
+
+
+def _neighbor_shift_sets(
+    neighbor_matrix: torch.Tensor,
+    neighbor_matrix_shifts: torch.Tensor,
+    num_neighbors: torch.Tensor,
+) -> list[set[tuple[int, tuple[int, int, int]]]]:
+    """Return row-local ``(neighbor, shift)`` sets for order-independent checks."""
+    matrix_cpu = neighbor_matrix.detach().cpu()
+    shifts_cpu = neighbor_matrix_shifts.detach().cpu()
+    counts_cpu = num_neighbors.detach().cpu()
+    rows = []
+    for row in range(matrix_cpu.shape[0]):
+        row_items = set()
+        for slot in range(int(counts_cpu[row].item())):
+            shift = tuple(int(x) for x in shifts_cpu[row, slot].tolist())
+            row_items.add((int(matrix_cpu[row, slot].item()), shift))
+        rows.append(row_items)
+    return rows
 
 
 class TestBatchNaiveKernels:
@@ -91,20 +139,53 @@ class TestBatchNaiveKernels:
 
         wp_neighbor_matrix = wp.from_torch(neighbor_matrix, dtype=wp.int32)
         wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32)
+        (
+            empty_offsets,
+            empty_cell,
+            empty_shift_range,
+            empty_num_shifts,
+            _empty_batch_idx,
+            _empty_batch_ptr,
+            empty_target_indices,
+            empty_matrix,
+            empty_shifts,
+            empty_num_neighbors,
+            empty_vectors,
+            empty_distances,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            empty_rebuild_flags,
+        ) = _scalar_sentinels(wp_dtype, wp_device)
 
         # Launch kernel
         wp.launch(
-            _fill_batch_naive_neighbor_matrix,
-            dim=total_atoms,
+            _FILL_BATCH_NAIVE_NO_PBC[half_fill][wp_dtype],
+            dim=(1, 1, total_atoms),
             device=wp_device,
             inputs=[
                 wp_positions,
-                wp_dtype(cutoff),
+                empty_offsets,
+                wp_dtype(cutoff * cutoff),
+                wp_dtype(0.0),
+                empty_cell,
+                empty_shift_range,
+                empty_num_shifts,
                 wp_batch_idx,
                 wp_batch_ptr,
+                empty_target_indices,
                 wp_neighbor_matrix,
+                empty_shifts,
                 wp_num_neighbors,
-                half_fill,
+                empty_matrix,
+                empty_shifts,
+                empty_num_neighbors,
+                empty_vectors,
+                empty_distances,
+                empty_pair_params,
+                empty_energies,
+                empty_forces,
+                empty_rebuild_flags,
             ],
         )
 
@@ -182,24 +263,53 @@ class TestBatchNaiveKernels:
             neighbor_matrix_shifts, dtype=wp.vec3i
         )
         wp_num_neighbors = wp.from_torch(num_neighbors, dtype=wp.int32)
+        (
+            _empty_offsets,
+            _empty_cell,
+            _empty_shift_range,
+            _empty_num_shifts,
+            _empty_batch_idx,
+            _empty_batch_ptr,
+            empty_target_indices,
+            empty_matrix,
+            empty_shifts,
+            empty_num_neighbors,
+            empty_vectors,
+            empty_distances,
+            empty_pair_params,
+            empty_energies,
+            empty_forces,
+            empty_rebuild_flags,
+        ) = _scalar_sentinels(wp_dtype, wp_device)
 
         # Launch kernel using the typed overload (3D: systems x shifts x atoms)
         wp.launch(
-            _fill_batch_naive_neighbor_matrix_pbc_overload[wp_dtype],
+            _FILL_BATCH_NAIVE_PBC_WRAP[True][wp_dtype],
             dim=(num_systems, max_shifts, max_atoms_per_system),
             device=wp_device,
             inputs=[
                 wp_positions_wrapped,
                 wp_per_atom_cell_offsets,
+                wp_dtype(cutoff * cutoff),
+                wp_dtype(0.0),
                 wp_cell,
-                wp_dtype(cutoff),
-                wp_batch_ptr,
                 wp_shift_range,
                 wp_num_shifts,
+                wp_batch_idx,
+                wp_batch_ptr,
+                empty_target_indices,
                 wp_neighbor_matrix,
                 wp_neighbor_matrix_shifts,
                 wp_num_neighbors,
-                True,  # half_fill
+                empty_matrix,
+                empty_shifts,
+                empty_num_neighbors,
+                empty_vectors,
+                empty_distances,
+                empty_pair_params,
+                empty_energies,
+                empty_forces,
+                empty_rebuild_flags,
             ],
         )
 
@@ -333,6 +443,153 @@ class TestBatchNaiveWpLaunchers:
             assert torch.all(torch.abs(valid_shifts) <= 5), (
                 "Unit shifts should be small integers"
             )
+
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_batch_tiled_pbc_neighbor_shifts_match_scalar(self, device, dtype):
+        """Batched tiled PBC should match scalar row-local neighbor/shift sets."""
+        _skip_if_cpu(device)
+        atoms_per_system = [2, 2]
+        num_systems = len(atoms_per_system)
+        box = 2.0
+        positions_batch = torch.tensor(
+            [
+                [0.1, 0.5, 0.5],
+                [3.9, 0.5, 0.5],
+                [0.2, 0.4, 0.4],
+                [3.8, 0.4, 0.4],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        cell_batch = (
+            torch.eye(3, dtype=dtype, device=device)
+            .unsqueeze(0)
+            .repeat(num_systems, 1, 1)
+            * box
+        )
+        pbc_batch = torch.ones((num_systems, 3), dtype=torch.bool, device=device)
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+        cutoff = 0.35
+        max_neighbors = 4
+        total_atoms = positions_batch.shape[0]
+        max_atoms_per_system = max(atoms_per_system)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell_batch, cutoff, pbc_batch
+        )
+        wp_dtype = get_wp_dtype(dtype)
+        wp_vec_dtype = get_wp_vec_dtype(dtype)
+        wp_mat_dtype = get_wp_mat_dtype(dtype)
+        wp_device = str(device)
+
+        wp_positions = wp.from_torch(positions_batch, dtype=wp_vec_dtype)
+        wp_cell = wp.from_torch(cell_batch, dtype=wp_mat_dtype)
+        wp_batch_idx = wp.from_torch(batch_idx, dtype=wp.int32)
+        wp_batch_ptr = wp.from_torch(batch_ptr, dtype=wp.int32)
+        wp_shift_range = wp.from_torch(shift_range, dtype=wp.vec3i)
+        wp_num_shifts = wp.from_torch(num_shifts, dtype=wp.int32)
+        inv_cell = torch.empty_like(cell_batch)
+        wp_inv_cell = wp.from_torch(inv_cell, dtype=wp_mat_dtype)
+        compute_inv_cells(wp_cell, wp_inv_cell, wp_dtype, wp_device)
+        positions_wrapped = torch.empty_like(positions_batch)
+        per_atom_cell_offsets = torch.empty(
+            (total_atoms, 3), dtype=torch.int32, device=device
+        )
+        wp_positions_wrapped = wp.from_torch(positions_wrapped, dtype=wp_vec_dtype)
+        wp_per_atom_cell_offsets = wp.from_torch(per_atom_cell_offsets, dtype=wp.vec3i)
+        wrap_positions_batch(
+            wp_positions,
+            wp_cell,
+            wp_inv_cell,
+            wp_batch_idx,
+            wp_positions_wrapped,
+            wp_per_atom_cell_offsets,
+            wp_dtype,
+            wp_device,
+        )
+
+        sentinels = _scalar_sentinels(wp_dtype, wp_device)
+        cutoff_sq = wp_dtype(cutoff * cutoff)
+
+        nm_scalar = torch.full(
+            (total_atoms, max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        ns_scalar = torch.zeros(
+            (total_atoms, max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_scalar = torch.zeros(total_atoms, dtype=torch.int32, device=device)
+        wp.launch(
+            get_naive_neighbor_matrix_kernel(
+                wp_dtype,
+                pbc_mode="wrap_on_entry",
+                batched=True,
+                half_fill=False,
+                strategy="scalar",
+            ),
+            dim=(num_systems, max_shifts, max_atoms_per_system),
+            device=wp_device,
+            inputs=[
+                wp_positions_wrapped,
+                wp_per_atom_cell_offsets,
+                cutoff_sq,
+                wp_dtype(0.0),
+                wp_cell,
+                wp_shift_range,
+                wp_num_shifts,
+                wp_batch_idx,
+                wp_batch_ptr,
+                sentinels.target_indices,
+                wp.from_torch(nm_scalar, dtype=wp.int32),
+                wp.from_torch(ns_scalar, dtype=wp.vec3i),
+                wp.from_torch(nn_scalar, dtype=wp.int32),
+                sentinels.neighbor_matrix,
+                sentinels.neighbor_matrix_shifts,
+                sentinels.num_neighbors,
+                sentinels.neighbor_vectors,
+                sentinels.neighbor_distances,
+                sentinels.pair_params,
+                sentinels.pair_energies,
+                sentinels.pair_forces,
+                sentinels.rebuild_flags,
+            ],
+        )
+
+        nm_tiled = torch.full(
+            (total_atoms, max_neighbors), -1, dtype=torch.int32, device=device
+        )
+        ns_tiled = torch.zeros(
+            (total_atoms, max_neighbors, 3), dtype=torch.int32, device=device
+        )
+        nn_tiled = torch.zeros(total_atoms, dtype=torch.int32, device=device)
+        wp.launch_tiled(
+            get_naive_neighbor_matrix_kernel(
+                wp_dtype,
+                pbc_mode="wrap_on_entry",
+                batched=True,
+                strategy="tile",
+            ),
+            dim=[max_shifts, total_atoms],
+            device=wp_device,
+            inputs=[
+                wp_positions_wrapped,
+                wp_per_atom_cell_offsets,
+                cutoff_sq,
+                wp_cell,
+                wp_shift_range,
+                wp_num_shifts,
+                wp_batch_idx,
+                wp_batch_ptr,
+                wp.from_torch(nm_tiled, dtype=wp.int32),
+                wp.from_torch(ns_tiled, dtype=wp.vec3i),
+                wp.from_torch(nn_tiled, dtype=wp.int32),
+                sentinels.rebuild_flags,
+            ],
+            block_dim=BLOCK_DIM,
+        )
+
+        assert _neighbor_shift_sets(nm_tiled, ns_tiled, nn_tiled) == (
+            _neighbor_shift_sets(nm_scalar, ns_scalar, nn_scalar)
+        )
 
     @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])

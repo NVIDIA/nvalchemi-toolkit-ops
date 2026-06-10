@@ -861,6 +861,86 @@ class TestFireUpdate:
         wp.synchronize_device(device)
 
 
+class TestFireEmptyInputs:
+    """Zero-atom FIRE calls should return without launching kernels."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,dtype_mat,np_dtype", DTYPE_CONFIGS)
+    def test_fire_step_zero_atoms_returns(
+        self, device, dtype_vec, dtype_scalar, dtype_mat, np_dtype
+    ):
+        """fire_step exits early for zero atoms and zeroes scratch buffers."""
+        num_systems = 1
+        positions = wp.empty(0, dtype=dtype_vec, device=device)
+        velocities = wp.empty(0, dtype=dtype_vec, device=device)
+        forces = wp.empty(0, dtype=dtype_vec, device=device)
+        masses = wp.empty(0, dtype=dtype_scalar, device=device)
+
+        params = make_fire_params(num_systems, dtype_scalar, device, np_dtype)
+        alpha_before = params["alpha"].numpy().copy()
+        dt_before = params["dt"].numpy().copy()
+        nsteps_before = params["n_steps_positive"].numpy().copy()
+        accum = {
+            "vf": wp.array([9.0], dtype=dtype_scalar, device=device),
+            "vv": wp.array([8.0], dtype=dtype_scalar, device=device),
+            "ff": wp.array([7.0], dtype=dtype_scalar, device=device),
+        }
+
+        fire_step(
+            positions=positions,
+            velocities=velocities,
+            forces=forces,
+            masses=masses,
+            **params,
+            **accum,
+        )
+        wp.synchronize_device(device)
+
+        np.testing.assert_allclose(params["alpha"].numpy(), alpha_before)
+        np.testing.assert_allclose(params["dt"].numpy(), dt_before)
+        np.testing.assert_array_equal(params["n_steps_positive"].numpy(), nsteps_before)
+        np.testing.assert_allclose(accum["vf"].numpy(), np.zeros(num_systems))
+        np.testing.assert_allclose(accum["vv"].numpy(), np.zeros(num_systems))
+        np.testing.assert_allclose(accum["ff"].numpy(), np.zeros(num_systems))
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,dtype_mat,np_dtype", DTYPE_CONFIGS)
+    def test_fire_update_zero_atoms_returns(
+        self, device, dtype_vec, dtype_scalar, dtype_mat, np_dtype
+    ):
+        """fire_update exits early for zero atoms and zeroes scratch buffers."""
+        num_systems = 1
+        velocities = wp.empty(0, dtype=dtype_vec, device=device)
+        forces = wp.empty(0, dtype=dtype_vec, device=device)
+
+        params = make_fire_params(num_systems, dtype_scalar, device, np_dtype)
+        del params["maxstep"]
+        del params["uphill_flag"]
+        alpha_before = params["alpha"].numpy().copy()
+        dt_before = params["dt"].numpy().copy()
+        nsteps_before = params["n_steps_positive"].numpy().copy()
+        accum = {
+            "vf": wp.array([9.0], dtype=dtype_scalar, device=device),
+            "vv": wp.array([8.0], dtype=dtype_scalar, device=device),
+            "ff": wp.array([7.0], dtype=dtype_scalar, device=device),
+        }
+
+        fire_update(
+            velocities=velocities,
+            forces=forces,
+            **params,
+            **accum,
+        )
+        wp.synchronize_device(device)
+
+        np.testing.assert_allclose(params["alpha"].numpy(), alpha_before)
+        np.testing.assert_allclose(params["dt"].numpy(), dt_before)
+        np.testing.assert_array_equal(params["n_steps_positive"].numpy(), nsteps_before)
+        np.testing.assert_allclose(accum["vf"].numpy(), np.zeros(num_systems))
+        np.testing.assert_allclose(accum["vv"].numpy(), np.zeros(num_systems))
+        np.testing.assert_allclose(accum["ff"].numpy(), np.zeros(num_systems))
+
+
 class TestFireUpdateErrors:
     """Test fire_update error cases."""
 

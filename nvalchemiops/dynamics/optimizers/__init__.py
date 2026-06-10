@@ -41,6 +41,11 @@ fire2_step
     Complete FIRE2 optimization step.
     Uses batch_idx batching only.
 
+fire2_update
+    FIRE2 reduction, adaptive parameter update, and velocity mixing WITHOUT
+    position/cell application. Use for custom final apply phases such as
+    coupled variable-cell optimization.
+
 Kernel Selection
 ----------------
 - Neither batch_idx nor atom_ptr: single system kernel
@@ -59,13 +64,14 @@ from nvalchemiops.dynamics.optimizers.fire import (
     fire_step,
     fire_update,
 )
-from nvalchemiops.dynamics.optimizers.fire2 import fire2_step
+from nvalchemiops.dynamics.optimizers.fire2 import fire2_step, fire2_update
 
 __all__ = [
     # Unified API
     "fire_step",
     "fire_update",
     "fire2_step",
+    "fire2_update",
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

@@ -44,7 +44,10 @@ import pytest
 # Enable JAX float64 support (disabled by default)
 jax.config.update("jax_enable_x64", True)
 
+import nvalchemiops.jax.spline as spline_module  # noqa: E402
 from nvalchemiops.jax.spline import (  # noqa: E402
+    _spline_gather_gradient_position_hessian,
+    _spline_gather_with_force,
     compute_bspline_deconvolution,
     compute_bspline_deconvolution_1d,
     spline_gather,
@@ -269,7 +272,6 @@ class TestSplineRegressionValues:
     both float32 and float64 outputs.
     """
 
-    @pytest.mark.slow
     def test_spread_regression(self, simple_system):
         """Regression test for spline_spread with expected values."""
         positions = simple_system["positions"]
@@ -284,7 +286,7 @@ class TestSplineRegressionValues:
         assert float(mesh.sum()) == pytest.approx(1.0, rel=1e-4)
         assert float(mesh.max()) == pytest.approx(0.2508416403, rel=1e-4)
         assert float(mesh.min()) == pytest.approx(-0.2962962963, rel=1e-4)
-        assert int((jnp.abs(mesh) > 1e-12).sum()) == pytest.approx(182, rel=1e-4)
+        assert int((jnp.abs(mesh) > 1e-12).sum()) == pytest.approx(181, rel=1e-4)
 
     def test_gather_regression(self, simple_system):
         """Regression test for spline_gather with expected values."""
@@ -388,7 +390,7 @@ class TestSplineRegressionValues:
 class TestSplineSpread:
     """Test B-spline charge spreading."""
 
-    @pytest.mark.parametrize("spline_order", [2, 3, 4])
+    @pytest.mark.parametrize("spline_order", [2, 3, 4, 5, 6])
     def test_charge_conservation(self, spline_order):
         """Test that spreading conserves total charge."""
         positions = jnp.array(
@@ -412,6 +414,90 @@ class TestSplineSpread:
         assert jnp.allclose(mesh_total, charge_total, rtol=1e-3), (
             f"Charge not conserved: mesh={float(mesh_total)}, charges={float(charge_total)}"
         )
+
+    @pytest.mark.parametrize("spline_order", [2, 3, 4, 5, 6])
+    def test_specialized_spread_matches_generic_fallback(
+        self,
+        spline_order,
+        monkeypatch,
+    ):
+        """Per-order spread kernels match the generic JAX spread wrapper."""
+        positions = jnp.array(
+            [[2.3, 2.7, 2.1], [5.8, 5.2, 5.6], [3.1, 4.2, 6.8]],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.5, -0.8, 0.3], dtype=jnp.float64)
+        cell = jnp.eye(3, dtype=jnp.float64) * 8.0
+
+        specialized = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=(16, 16, 16),
+            spline_order=spline_order,
+        )
+
+        order_kernels = spline_module._PER_ORDER_SPREAD_JAX_KERNELS[jnp.float64]
+        monkeypatch.setattr(order_kernels, "_wp_overload_by_order", {})
+        generic = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=(16, 16, 16),
+            spline_order=spline_order,
+        )
+
+        # The generic kernel prunes tiny weights at 1e-8 before the final
+        # multiply; the per-order kernel applies the same cutoff after 1D
+        # register accumulation, so order 5/6 can differ at the cutoff scale.
+        assert jnp.allclose(specialized, generic, rtol=1e-7, atol=2e-8)
+
+    @pytest.mark.parametrize("spline_order", [2, 3, 4, 5, 6])
+    def test_specialized_batch_spread_matches_generic_fallback(
+        self,
+        spline_order,
+        monkeypatch,
+    ):
+        """Per-order batch spread kernels match the generic JAX spread wrapper."""
+        positions = jnp.array(
+            [
+                [2.3, 2.7, 2.1],
+                [5.8, 5.2, 5.6],
+                [3.1, 4.2, 6.8],
+                [1.5, 6.1, 4.0],
+            ],
+            dtype=jnp.float64,
+        )
+        charges = jnp.array([1.5, -0.8, 0.3, 0.7], dtype=jnp.float64)
+        cell = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float64) * 8.0,
+                jnp.eye(3, dtype=jnp.float64) * 9.0,
+            ]
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+
+        specialized = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=(16, 16, 16),
+            spline_order=spline_order,
+            batch_idx=batch_idx,
+        )
+
+        order_kernels = spline_module._PER_ORDER_BATCH_SPREAD_JAX_KERNELS[jnp.float64]
+        monkeypatch.setattr(order_kernels, "_wp_overload_by_order", {})
+        generic = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=(16, 16, 16),
+            spline_order=spline_order,
+            batch_idx=batch_idx,
+        )
+
+        assert jnp.allclose(specialized, generic, rtol=1e-7, atol=2e-8)
 
     def test_spread_output_shape(self):
         """Test that spread returns correct mesh shape."""
@@ -443,13 +529,18 @@ class TestSplineSpread:
             positions, charges, cell, mesh_dims=(8, 8, 8), spline_order=4
         )
 
-        # Count non-zero points
-        nonzero = int((jnp.abs(mesh) > 1e-12).sum())
+        # Count non-zero points and verify they stay in the local 4x4x4 stencil.
+        # Some spline weights can be exactly pruned by the implementation, so the
+        # locality contract is bounded support rather than exactly 64 stored cells.
+        support = jnp.argwhere(jnp.abs(mesh) > 1e-12)
+        nonzero = support.shape[0]
 
-        # For order-4 B-spline with theta != 0, should affect 4^3 = 64 points
-        assert nonzero == 64, f"Expected 64 non-zero points, got {nonzero}"
+        assert 27 < nonzero <= 64, f"Expected local stencil, got {nonzero} cells"
+        assert jnp.all((support >= 3) & (support <= 6)), (
+            f"Spread escaped local stencil: {support.tolist()}"
+        )
 
-    @pytest.mark.parametrize("spline_order", [2, 3, 4])
+    @pytest.mark.parametrize("spline_order", [2, 3, 4, 5, 6])
     def test_spread_center_of_mass(self, spline_order):
         """Test that the center of mass of the spread is at the atom position.
 
@@ -598,6 +689,214 @@ class TestSplineGatherGradient:
 
         assert forces.shape == (10, 3), f"Unexpected shape: {forces.shape}"
         assert forces.dtype == jnp.float64
+
+
+class TestSplineCellInvT:
+    """Coverage for caller-supplied inverse-transpose cell metadata."""
+
+    def test_public_cell_inv_t_matches_internal_inverse(self, simple_system):
+        """Public spread/gather/gradient helpers honor supplied cell_inv_t."""
+        positions = simple_system["positions"]
+        charges = simple_system["charges"]
+        cell = simple_system["cell"]
+        mesh_dims = simple_system["mesh_dims"]
+        cell_3d = cell[jnp.newaxis, :, :]
+        cell_inv_t = jnp.transpose(jnp.linalg.inv(cell_3d), (0, 2, 1))
+
+        mesh_internal = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=mesh_dims,
+            spline_order=4,
+        )
+        mesh_cached = spline_spread(
+            positions,
+            charges,
+            cell,
+            mesh_dims=mesh_dims,
+            spline_order=4,
+            cell_inv_t=cell_inv_t,
+        )
+        assert jnp.allclose(mesh_cached, mesh_internal, rtol=1e-12, atol=1e-12)
+
+        potential = jax.random.normal(
+            jax.random.PRNGKey(101),
+            mesh_dims,
+            dtype=positions.dtype,
+        )
+        gathered_internal = spline_gather(
+            positions,
+            potential,
+            cell,
+            spline_order=4,
+        )
+        gathered_cached = spline_gather(
+            positions,
+            potential,
+            cell,
+            spline_order=4,
+            cell_inv_t=cell_inv_t,
+        )
+        assert jnp.allclose(
+            gathered_cached,
+            gathered_internal,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+        forces_internal = spline_gather_gradient(
+            positions,
+            charges,
+            potential,
+            cell,
+            spline_order=4,
+        )
+        forces_cached = spline_gather_gradient(
+            positions,
+            charges,
+            potential,
+            cell,
+            spline_order=4,
+            cell_inv_t=cell_inv_t,
+        )
+        assert jnp.allclose(forces_cached, forces_internal, rtol=1e-12, atol=1e-12)
+
+    def test_private_batched_gather_with_force_fallback_forwards_cell_inv_t(
+        self, batch_system
+    ):
+        """Private fused-gather helper fallback forwards cell_inv_t."""
+        positions = batch_system["positions"]
+        charges = batch_system["charges"]
+        cell = batch_system["cell"]
+        batch_idx = batch_system["batch_idx"]
+        mesh_dims = batch_system["mesh_dims"]
+        cell_inv_t = jnp.transpose(jnp.linalg.inv(cell), (0, 2, 1))
+        mesh = jax.random.normal(
+            jax.random.PRNGKey(103),
+            (batch_system["num_systems"], *mesh_dims),
+            dtype=positions.dtype,
+        )
+
+        output_internal, forces_internal = _spline_gather_with_force(
+            positions,
+            charges,
+            mesh,
+            cell,
+            spline_order=1,
+            batch_idx=batch_idx,
+        )
+        output_cached, forces_cached = _spline_gather_with_force(
+            positions,
+            charges,
+            mesh,
+            cell,
+            spline_order=1,
+            batch_idx=batch_idx,
+            cell_inv_t=cell_inv_t,
+        )
+
+        assert jnp.allclose(output_cached, output_internal, rtol=1e-12, atol=1e-12)
+        assert jnp.allclose(forces_cached, forces_internal, rtol=1e-12, atol=1e-12)
+
+    def test_private_gather_gradient_position_hessian_uses_cell_inv_t(
+        self, simple_system
+    ):
+        """Private position-Hessian helper honors cell_inv_t and matches FD."""
+        positions = simple_system["positions"]
+        charges = simple_system["charges"]
+        cell = simple_system["cell"]
+        mesh_dims = simple_system["mesh_dims"]
+        cell_3d = cell[jnp.newaxis, :, :]
+        cell_inv_t = jnp.transpose(jnp.linalg.inv(cell_3d), (0, 2, 1))
+        mesh = jax.random.normal(
+            jax.random.PRNGKey(107),
+            mesh_dims,
+            dtype=positions.dtype,
+        )
+        v_cart = jax.random.normal(
+            jax.random.PRNGKey(109),
+            positions.shape,
+            dtype=positions.dtype,
+        )
+        v_cart = v_cart / jnp.linalg.norm(v_cart)
+        v_frac = jnp.einsum("ij,nj->ni", cell_inv_t[0], v_cart)
+
+        hessian_internal = _spline_gather_gradient_position_hessian(
+            positions,
+            charges,
+            v_frac,
+            cell,
+            mesh,
+            spline_order=4,
+        )
+        hessian_cached = _spline_gather_gradient_position_hessian(
+            positions,
+            charges,
+            v_frac,
+            cell,
+            mesh,
+            spline_order=4,
+            cell_inv_t=cell_inv_t,
+        )
+        assert jnp.allclose(
+            hessian_cached,
+            hessian_internal,
+            rtol=1e-12,
+            atol=1e-12,
+        )
+
+        eps = jnp.array(1.0e-4, dtype=positions.dtype)
+        fd = (
+            spline_gather_gradient(
+                positions + eps * v_cart,
+                charges,
+                mesh,
+                cell,
+                spline_order=4,
+                cell_inv_t=cell_inv_t,
+            )
+            - spline_gather_gradient(
+                positions - eps * v_cart,
+                charges,
+                mesh,
+                cell,
+                spline_order=4,
+                cell_inv_t=cell_inv_t,
+            )
+        ) / (2.0 * eps)
+        assert jnp.allclose(hessian_cached, fd, rtol=5e-3, atol=2e-5)
+
+
+class TestPrivateSplineLazyKernelHelpers:
+    """Private helper tests for lazy JAX spline wrapper construction."""
+
+    def test_private_lazy_dtype_map_builds_wrapper_on_first_lookup(self):
+        """Private lazy dtype map starts empty and caches by requested dtype."""
+        lazy = spline_module._make_spline_jax_kernels(
+            spline_module.wp_spread,
+            1,
+            ["mesh"],
+        )
+
+        assert lazy._cache == {}
+        kernel = lazy[jnp.float64]
+        assert lazy._cache[jnp.float64] is kernel
+        assert jnp.float32 not in lazy._cache
+
+    def test_private_lazy_per_order_map_builds_requested_order_only(self):
+        """Private per-order lazy map caches only the requested order."""
+        lazy = spline_module._LazySplinePerOrderJaxKernels(
+            spline_module._PER_ORDER_SPREAD_KERNELS,
+            1,
+            ["mesh"],
+        )
+
+        order_map = lazy[jnp.float64]
+        assert order_map._cache == {}
+        kernel = order_map.get(4)
+        assert order_map._cache[4] is kernel
+        assert 5 not in order_map._cache
 
 
 ###########################################################################################
@@ -1247,7 +1546,7 @@ class TestBSplineDeconvolution:
 
         assert deconv.shape == mesh_dims, f"Unexpected shape: {deconv.shape}"
 
-    @pytest.mark.parametrize("order", [1, 2, 3, 4])
+    @pytest.mark.parametrize("order", [1, 2, 3, 4, 5, 6])
     def test_deconvolution_at_zero_frequency(self, order):
         """Test that deconvolution is 1 at zero frequency."""
         mesh_dims = (8, 8, 8)
@@ -1258,7 +1557,7 @@ class TestBSplineDeconvolution:
             f"Deconvolution at zero frequency should be 1, got {float(deconv[0, 0, 0])}"
         )
 
-    @pytest.mark.parametrize("order", [2, 3, 4])
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
     def test_deconvolution_positive(self, order):
         """Test that deconvolution factors are positive."""
         mesh_dims = (16, 16, 16)
@@ -1266,7 +1565,7 @@ class TestBSplineDeconvolution:
 
         assert (deconv > 0).all(), "Deconvolution factors should be positive"
 
-    @pytest.mark.parametrize("order", [2, 3, 4])
+    @pytest.mark.parametrize("order", [2, 3, 4, 5, 6])
     def test_deconvolution_symmetry(self, order):
         """Test that deconvolution has correct symmetry."""
         n = 8

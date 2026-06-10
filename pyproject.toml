@@ -12,7 +12,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.15"
 license = "Apache-2.0"
 dependencies = [
-    "warp-lang >= 1.10.0",
+    "warp-lang >= 1.13.0",
     "numpy",
 ]
 keywords = [
@@ -39,15 +39,15 @@ dynamic = ["version"]
 [project.optional-dependencies]
 
 torch = [
-    "torch>=2.11.0",
+    "torch>=2.8.0",
 ]
 
 torch-cu12 = [
-    "torch>=2.11.0",
+    "torch>=2.8.0",
 ]
 
 torch-cu13 = [
-    "torch>=2.11.0",
+    "torch>=2.8.0",
 ]
 
 jax = [
@@ -86,6 +86,7 @@ dev = [
     "pytest-testmon>=2.2.0",
     {include-group="docs"},
 ]
+
 docs = [
     "sphinx>=6.0.0",
     "sphinx-design",
@@ -148,12 +149,6 @@ torch = [
 ]
 
 [[tool.uv.index]]
-name = "internal-alchemi"
-url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
-publish-url = "https://urm.nvidia.com/artifactory/api/pypi/sw-alchemi-pypi-local"
-explicit = true
-
-[[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
@@ -183,6 +178,16 @@ ignore = ["E501", "S311"]
 testpaths = ["test"]
 norecursedirs = [".git", "third_party"]
 addopts = ["-vv", "-r", "xfXs"]
+filterwarnings = [
+    "ignore:`torch\\.jit\\.script_method` is deprecated.*:DeprecationWarning",
+    "ignore:The direct-output flags .* are deprecated.*:DeprecationWarning",
+    "ignore:The component direct-output flag.* deprecated.*:DeprecationWarning",
+    "ignore:The 'inv_cell' kwarg is deprecated; use 'inv_cell_buffer' instead\\.:DeprecationWarning",
+    "ignore:The 'positions_wrapped' kwarg is deprecated; use 'positions_wrapped_buffer' instead\\.:DeprecationWarning",
+    "ignore:The 'per_atom_cell_offsets' kwarg is deprecated; use 'per_atom_cell_offsets_buffer' instead\\.:DeprecationWarning",
+    "ignore:'cells_inv' is deprecated and ignored.*:DeprecationWarning",
+    "ignore:'volumes' is deprecated and ignored.*:DeprecationWarning",
+]
 markers = [
     "slow: marks tests as slow (deselect with: -m 'not slow')",
     "gpu: marks tests that require GPU",
@@ -205,12 +210,18 @@ exclude_also = [
     "@wp.kernel",
     "@wp.func",
     "@torch.jit.script",
+    # register_fake stubs run only under fake-tensor / meta tracing, never in
+    # eager execution, so coverage never sees them — exclude like @wp.kernel.
+    "\\.register_fake",
 ]
 omit = [
     "test/*",
 ]
 show_missing = true
 fail_under = 70
+# Warn instead of aborting on missing source files (e.g. stale cached
+# testmon/coverage baselines referencing files deleted in the current PR).
+ignore_errors = true
 
 [tool.coverage.xml]
 output = "nvalchemiops.coverage.xml"

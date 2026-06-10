@@ -35,8 +35,11 @@ tests unless they truly need to affect every pytest invocation.
 """
 
 import gc
+import hashlib
 import os
 import sys
+import tempfile
+import warnings
 from collections.abc import Callable
 from typing import Literal
 
@@ -44,10 +47,17 @@ import pytest
 
 FrameworkName = Literal["jax", "torch"]
 
-_JAX_ALLOCATOR_ENVIRONMENT = {
+_JAX_IMPORT_ENVIRONMENT = {
+    "JAX_ENABLE_X64": "True",
     "XLA_PYTHON_CLIENT_ALLOCATOR": "platform",
     "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
 }
+
+warnings.filterwarnings(
+    "ignore",
+    message="`torch.jit.script_method` is deprecated.*",
+    category=DeprecationWarning,
+)
 
 _FRAMEWORK_PATH_MARKERS: tuple[tuple[str, FrameworkName], ...] = (
     ("/bindings/jax/", "jax"),
@@ -60,6 +70,14 @@ _FRAMEWORK_SORT_RANK: dict[FrameworkName | None, int] = {
     "torch": 2,
 }
 
+_WORKTREE_CACHE_TOKEN = hashlib.sha256(os.getcwd().encode("utf-8")).hexdigest()[:12]
+_WARP_CACHE_DEFAULT = os.path.join(
+    os.environ.get("TMPDIR", tempfile.gettempdir()),
+    f"warp_test_cache_{os.path.basename(os.getcwd())}_{_WORKTREE_CACHE_TOKEN}_{os.getpid()}",
+)
+os.environ.setdefault("WARP_CACHE_PATH", _WARP_CACHE_DEFAULT)
+os.makedirs(os.environ["WARP_CACHE_PATH"], exist_ok=True)
+
 
 # ==============================================================================
 # Import-Time Environment
@@ -68,7 +86,7 @@ _FRAMEWORK_SORT_RANK: dict[FrameworkName | None, int] = {
 
 def _configure_jax_allocator_environment() -> None:
     """Set XLA allocator variables before collection-time imports can load JAX."""
-    for name, value in _JAX_ALLOCATOR_ENVIRONMENT.items():
+    for name, value in _JAX_IMPORT_ENVIRONMENT.items():
         os.environ[name] = value
 
 

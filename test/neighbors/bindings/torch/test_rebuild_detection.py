@@ -1065,3 +1065,42 @@ class TestTorchPBCRebuildDetection:
         assert not result.any(), (
             "Batch PBC should prevent spurious rebuilds at boundaries"
         )
+
+
+class TestRebuildDetectionCompile:
+    """Compile contracts for rebuild detection helpers."""
+
+    def test_batch_neighbor_rebuild_requires_num_systems_under_compile(self):
+        """Compiled callers must not derive num_systems from batch_idx.max()."""
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        reference_positions = torch.zeros(4, 3, dtype=torch.float32, device=device)
+        current_positions = reference_positions.clone()
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        def run(ref, cur, idx):
+            return batch_neighbor_list_needs_rebuild(ref, cur, idx, 0.1)
+
+        with pytest.raises(RuntimeError, match="requires num_systems"):
+            torch.compile(run)(reference_positions, current_positions, batch_idx)
+
+    def test_batch_neighbor_rebuild_compile_with_explicit_num_systems(self):
+        """Explicit num_systems gives the custom op static fake output shape."""
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        reference_positions = torch.zeros(4, 3, dtype=torch.float32, device=device)
+        current_positions = reference_positions.clone()
+        current_positions[2, 0] = 0.2
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+
+        def run(ref, cur, idx):
+            return batch_neighbor_list_needs_rebuild(
+                ref,
+                cur,
+                idx,
+                0.1,
+                num_systems=2,
+            )
+
+        eager = run(reference_positions, current_positions, batch_idx)
+        compiled = torch.compile(run)(reference_positions, current_positions, batch_idx)
+
+        assert torch.equal(eager, compiled)

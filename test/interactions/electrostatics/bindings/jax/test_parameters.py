@@ -417,6 +417,47 @@ class TestEstimatePMEParameters:
         assert isinstance(params.mesh_spacing, jax.Array)
         assert params.mesh_spacing.shape == (2, 3)
 
+    def test_batch_uses_shared_median_system_cutoff_and_alpha(self):
+        """Batched PME uses one cutoff/alpha from median batch properties."""
+        positions = jax.random.normal(
+            jax.random.PRNGKey(0),
+            (120, 3),
+            dtype=jnp.float64,
+        )
+        cells = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float64) * 10.0,
+                jnp.eye(3, dtype=jnp.float64) * 20.0,
+                jnp.eye(3, dtype=jnp.float64) * 30.0,
+            ]
+        )
+        batch_idx = jnp.array([0] * 20 + [1] * 40 + [2] * 60, dtype=jnp.int32)
+
+        accuracy = 1e-6
+        params = estimate_pme_parameters(
+            positions,
+            cells,
+            batch_idx=batch_idx,
+            accuracy=accuracy,
+        )
+
+        n_repr = 40.0
+        v_repr = 20.0**3
+        eta = (v_repr**2 / n_repr) ** (1.0 / 6.0) / math.sqrt(2.0 * math.pi)
+        expected_cutoff = math.sqrt(-2.0 * math.log(accuracy)) * eta
+        expected_alpha = 1.0 / (math.sqrt(2.0) * eta)
+
+        assert jnp.allclose(params.real_space_cutoff, params.real_space_cutoff[0])
+        assert jnp.allclose(params.alpha, params.alpha[0])
+        assert jnp.allclose(
+            params.real_space_cutoff,
+            jnp.full_like(params.real_space_cutoff, expected_cutoff),
+        )
+        assert jnp.allclose(
+            params.alpha,
+            jnp.full_like(params.alpha, expected_alpha),
+        )
+
     def test_mesh_dimensions_are_power_of_two(self):
         """Test that mesh dimensions are powers of 2."""
         positions = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
@@ -427,18 +468,44 @@ class TestEstimatePMEParameters:
         for d in params.mesh_dimensions:
             assert d > 0 and (d & (d - 1)) == 0, f"{d} is not a power of 2"
 
-    def test_consistency_with_ewald_parameters(self):
-        """Test that alpha matches estimate_ewald_parameters."""
+    def test_pme_alpha_matches_ewald_closed_form(self):
+        """Default PME estimator uses the same Essmann/Kolafa-Perram
+        closed-form as the Ewald estimator (both derive rc and α from
+        a single length scale η)."""
         positions = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
         cell = jnp.eye(3)[None, ...] * 20.0
 
         pme_params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
         ewald_params = estimate_ewald_parameters(positions, cell, accuracy=1e-6)
 
-        assert jnp.allclose(pme_params.alpha, ewald_params.alpha)
         assert jnp.allclose(
             pme_params.real_space_cutoff, ewald_params.real_space_cutoff
         )
+        assert jnp.allclose(pme_params.alpha, ewald_params.alpha)
+
+    def test_pme_cutoff_in_sane_range(self):
+        """Cost-optimal PME rc should land in the 4–20 Å band for typical systems."""
+        positions = jax.random.normal(jax.random.PRNGKey(0), (500, 3))
+        cell = jnp.eye(3)[None, ...] * 25.0
+
+        params = estimate_pme_parameters(positions, cell, accuracy=1e-6)
+        rc = float(params.real_space_cutoff[0])
+        assert 4.0 <= rc <= 20.0, f"rc={rc} outside sane band"
+
+    def test_pme_user_supplied_cutoff_respected(self):
+        """When real_space_cutoff is given, it is used as-is."""
+        positions = jax.random.normal(jax.random.PRNGKey(0), (100, 3))
+        cell = jnp.eye(3)[None, ...] * 20.0
+
+        params = estimate_pme_parameters(
+            positions,
+            cell,
+            accuracy=1e-6,
+            real_space_cutoff=7.5,
+        )
+        assert jnp.allclose(params.real_space_cutoff, jnp.array([7.5]))
+        expected_alpha = math.sqrt(-math.log(1e-6)) / 7.5
+        assert jnp.allclose(params.alpha, jnp.array([expected_alpha]), rtol=1e-5)
 
     def test_mesh_spacing_varies_per_system(self):
         """Test that mesh_spacing varies per system in batch mode."""

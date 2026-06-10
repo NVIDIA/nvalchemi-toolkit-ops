@@ -2597,5 +2597,100 @@ class TestCoulombMatrixEnergyInvariance:
         )
 
 
+class TestCoulombTorchCompile:
+    """Focused torch.compile coverage for the Coulomb custom-op wrapper."""
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compile_list_energy_forces_and_backward(self):
+        """Legacy Coulomb custom op should compile for first-order gradients."""
+        device = torch.device("cuda")
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell = torch.eye(3, dtype=torch.float64, device=device).mul(100.0).unsqueeze(0)
+        neighbor_list = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=device)
+        neighbor_ptr = torch.tensor([0, 1, 2], dtype=torch.int32, device=device)
+        neighbor_shifts = torch.zeros((2, 3), dtype=torch.int32, device=device)
+
+        def energy_forces(pos, chg, box):
+            energies, forces = coulomb_energy_forces(
+                pos,
+                chg,
+                box,
+                cutoff=10.0,
+                alpha=0.0,
+                neighbor_list=neighbor_list,
+                neighbor_ptr=neighbor_ptr,
+                neighbor_shifts=neighbor_shifts,
+            )
+            return energies.sum(), forces
+
+        pos_eager = positions.clone().requires_grad_(True)
+        charges_eager = charges.clone().requires_grad_(True)
+        cell_eager = cell.clone().requires_grad_(True)
+        energy_eager, forces_eager = energy_forces(pos_eager, charges_eager, cell_eager)
+        grad_eager = torch.autograd.grad(energy_eager, pos_eager)[0]
+
+        pos_compiled = positions.clone().requires_grad_(True)
+        charges_compiled = charges.clone().requires_grad_(True)
+        cell_compiled = cell.clone().requires_grad_(True)
+        energy_compiled, forces_compiled = torch.compile(energy_forces)(
+            pos_compiled,
+            charges_compiled,
+            cell_compiled,
+        )
+        grad_compiled = torch.autograd.grad(
+            energy_compiled,
+            pos_compiled,
+        )[0]
+
+        torch.testing.assert_close(energy_compiled, energy_eager, atol=1e-12, rtol=0.0)
+        torch.testing.assert_close(forces_compiled, forces_eager, atol=1e-12, rtol=0.0)
+        torch.testing.assert_close(grad_compiled, grad_eager, atol=1e-12, rtol=0.0)
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available(), reason="CUDA required for torch.compile"
+    )
+    def test_compile_matrix_energy_forces(self):
+        """Neighbor-matrix Coulomb custom op should compile."""
+        device = torch.device("cuda")
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=torch.float64,
+            device=device,
+        )
+        charges = torch.tensor([1.0, -1.0], dtype=torch.float64, device=device)
+        cell = torch.eye(3, dtype=torch.float64, device=device).mul(100.0).unsqueeze(0)
+        neighbor_matrix = torch.tensor(
+            [[1, -1], [0, -1]], dtype=torch.int32, device=device
+        )
+        neighbor_matrix_shifts = torch.zeros(
+            (2, 2, 3), dtype=torch.int32, device=device
+        )
+
+        def energy_forces(pos, chg, box):
+            return coulomb_energy_forces(
+                pos,
+                chg,
+                box,
+                cutoff=10.0,
+                alpha=0.2,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                fill_value=-1,
+            )
+
+        eager = energy_forces(positions, charges, cell)
+        compiled = torch.compile(energy_forces)(positions, charges, cell)
+
+        torch.testing.assert_close(compiled[0], eager[0], atol=1e-12, rtol=0.0)
+        torch.testing.assert_close(compiled[1], eager[1], atol=1e-12, rtol=0.0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

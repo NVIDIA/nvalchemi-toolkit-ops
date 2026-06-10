@@ -7,12 +7,18 @@ interaction modules (electrostatics, dispersion, Lennard-Jones).
 
 ## Virial
 
-All modules return the virial tensor defined as the negative strain derivative
-of the energy:
+All modules return the virial tensor defined as the negative derivative of the
+energy with respect to the row-vector affine displacement tensor:
 
-$$W_{ab} = -\frac{\partial E}{\partial \varepsilon_{ab}}$$
+$$W_{ab} = -\frac{\partial E}{\partial u_{ab}}$$
 
-where $\varepsilon$ is the symmetric infinitesimal strain tensor.
+where deformed coordinates and cells are built as:
+
+$$R' = R (I + u), \qquad C' = C (I + u).$$
+
+This matches the `nvalchemi-toolkit` `prepare_strain` /
+`autograd_stresses` convention. The displacement tensor is not symmetrized by
+the energy-derivative recipe.
 
 For pairwise real-space interactions this is equivalent to:
 
@@ -30,6 +36,10 @@ The tensile-positive Cauchy stress is obtained from the virial as:
 $$\sigma = -\frac{W}{V}$$
 
 where $V = |\det(\mathbf{C})|$ is the cell volume.
+
+Equivalently, when using the displacement recipe above:
+
+$$\sigma = \frac{1}{V}\frac{\partial E}{\partial u}.$$
 
 ```{note}
 Some molecular-dynamics codes use the opposite (compression-positive or

@@ -9,10 +9,11 @@ In periodic systems, the $1/r$ potential decays slowly, requiring special techni
 to handle the conditionally convergent lattice sum. ALCHEMI Toolkit-Ops provides
 GPU-accelerated implementations of Ewald summation, two-dimensional slab
 correction, Particle Mesh Ewald (PME), and Damped Shifted Force (DSF) electrostatics
-via [NVIDIA Warp](https://nvidia.github.io/warp/), with PyTorch and JAX autograd support
-for machine learning applications (Ewald and PME support full position/charge/cell
-autograd; DSF provides charge gradients via autograd and computes forces/virials
-analytically).
+via [NVIDIA Warp](https://nvidia.github.io/warp/). PyTorch and JAX bindings support
+energy autograd where documented. Direct-output flags remain available for legacy
+compatibility and component-level MD/inference workflows, but full Ewald/PME
+training should derive forces, charge gradients, and stress from the returned
+energy tensor.
 
 ```{tip}
 For periodic systems, start with
@@ -24,7 +25,7 @@ systems or large-scale simulations, consider approximate
 {func}`~nvalchemiops.torch.interactions.electrostatics.dsf_coulomb` (PyTorch only) which provides $O(N)$ scaling
 with smooth force continuity at the cutoff.
 For slab-like systems with two periodic directions, use Ewald or PME with
-`slab_correction=True` and `pbc=...` in PyTorch.
+`slab_correction=True` and `pbc=...` in PyTorch or JAX.
 ```
 
 ## Overview of Available Methods
@@ -53,6 +54,28 @@ All methods support:
 | Direct Coulomb | Autograd | Autograd | Autograd |
 | DSF | Analytical forces | Analytical (straight-through) | Analytical virial (PBC) |
 
+```{important}
+For MLIP training with the full Ewald/PME APIs, call the function without
+direct-output flags and derive forces, stress, and charge gradients from the
+returned energy tensor. The full-api flags `compute_forces`,
+`compute_charge_gradients`, `compute_virial`, and `hybrid_forces` are deprecated
+and emit `DeprecationWarning`; component APIs such as `ewald_real_space`,
+`ewald_reciprocal_space`, and `pme_reciprocal_space` keep direct outputs as
+no-autograd MD/inference paths. See {ref}`energy-derivative-contract`
+for the full migration recipe and performance guidance.
+
+JAX Ewald/PME energy autograd supports first-order derivatives for positions,
+charges, and strain-first virials. Higher-order JAX support is limited to tested
+position and charge scalar losses; PME cell/stress/strain higher-order
+derivatives are unsupported. There are no public Hessian or Jacobian APIs.
+```
+
+Torch and JAX electrostatics support `float32` and `float64` point-charge Ewald
+and PME inputs. Keep positions, charges, cells, `alpha`, and precomputed metadata
+in a consistent dtype within each call. The examples use `float64` because
+reciprocal-space electrostatics and gradient checks are accuracy sensitive;
+`float32` is supported when throughput is the priority.
+
 ## Quick Start
 
 :::::::{tab-set}
@@ -66,8 +89,12 @@ All methods support:
 :sync: pytorch
 
 ```python
+import torch
+
 from nvalchemiops.torch.interactions.electrostatics import ewald_summation
 from nvalchemiops.torch.neighbors import neighbor_list
+
+positions = positions.detach().requires_grad_(True)
 
 # Build neighbor list
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
@@ -75,7 +102,7 @@ neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
 )
 
 # Compute electrostatics (parameters estimated automatically)
-energies, forces = ewald_summation(
+energies = ewald_summation(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -83,8 +110,8 @@ energies, forces = ewald_summation(
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
     accuracy=5e-4,  # Target accuracy for parameter estimation
-    compute_forces=True,
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 :::
@@ -104,16 +131,19 @@ neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
 )
 
 # Compute electrostatics (parameters estimated automatically)
-energies, forces = ewald_summation(
-    positions=positions,
-    charges=charges,
-    cell=cell,
-    neighbor_list=neighbor_list_coo,
-    neighbor_ptr=neighbor_ptr,
-    neighbor_shifts=neighbor_shifts,
-    accuracy=5e-4,  # Target accuracy for parameter estimation
-    compute_forces=True,
-)
+def total_energy(pos):
+    energies = ewald_summation(
+        positions=pos,
+        charges=charges,
+        cell=cell,
+        neighbor_list=neighbor_list_coo,
+        neighbor_ptr=neighbor_ptr,
+        neighbor_shifts=neighbor_shifts,
+        accuracy=5e-4,  # Target accuracy for parameter estimation
+    )
+    return jnp.sum(energies)
+
+forces = -jax.grad(total_energy)(positions)
 ```
 
 :::
@@ -131,8 +161,12 @@ energies, forces = ewald_summation(
 :sync: pytorch
 
 ```python
+import torch
+
 from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
 from nvalchemiops.torch.neighbors import neighbor_list
+
+positions = positions.detach().requires_grad_(True)
 
 # Build neighbor list
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
@@ -140,7 +174,7 @@ neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
 )
 
 # Compute electrostatics (parameters estimated automatically)
-energies, forces = particle_mesh_ewald(
+energies = particle_mesh_ewald(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -148,8 +182,8 @@ energies, forces = particle_mesh_ewald(
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
     accuracy=5e-4,
-    compute_forces=True,
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 :::
@@ -169,16 +203,19 @@ neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
 )
 
 # Compute electrostatics (parameters estimated automatically)
-energies, forces = particle_mesh_ewald(
-    positions=positions,
-    charges=charges,
-    cell=cell,
-    neighbor_list=neighbor_list_coo,
-    neighbor_ptr=neighbor_ptr,
-    neighbor_shifts=neighbor_shifts,
-    accuracy=5e-4,
-    compute_forces=True,
-)
+def total_energy(pos):
+    energies = particle_mesh_ewald(
+        positions=pos,
+        charges=charges,
+        cell=cell,
+        neighbor_list=neighbor_list_coo,
+        neighbor_ptr=neighbor_ptr,
+        neighbor_shifts=neighbor_shifts,
+        accuracy=5e-4,
+    )
+    return jnp.sum(energies)
+
+forces = -jax.grad(total_energy)(positions)
 ```
 
 :::
@@ -298,18 +335,19 @@ and consistency.
 | Tensor | Shape | Dtype | Description |
 |--------|-------|-------|-------------|
 | `positions` | `(N, 3)` | `float64/float32` | Atomic coordinates |
-| `charges` | `(N,)` | `float64` | Atomic partial charges |
-| `cell` | `(1, 3, 3)` or `(B, 3, 3)` | `float64` | Unit cell lattice vectors (rows) |
+| `charges` | `(N,)` | `float64/float32` | Atomic partial charges |
+| `cell` | `(1, 3, 3)` or `(B, 3, 3)` | `float64/float32` | Unit cell lattice vectors (rows) |
 | `pbc` | `(1, 3)` or `(B, 3)` | `bool` | Periodic boundary conditions per axis |
 | `batch_idx` | `(N,)` | `int32` | System index for each atom (batched only) |
-| `alpha` | `float` or `(B,)` tensor | `float64` | Ewald splitting parameter |
+| `alpha` | `float` or `(B,)` tensor | `float64/float32` | Ewald splitting parameter |
 
 ### Output Data Types
 
-Energies are always computed and returned in `float64` for numerical stability
-during accumulation. Forces, virial, and charge gradients match the input
-precision -- `float32` when positions are `float32`, `float64` when positions
-are `float64`.
+Internal reductions use `float64` where needed for numerical stability. Full
+framework API energy outputs follow the input floating-point precision unless a
+specific component documents a `float64` output. Forces and virials match the
+input precision; charge gradients are `float64` for direct electrostatics
+component outputs that accumulate charge potentials.
 
 ### Neighbor Representations
 
@@ -376,6 +414,12 @@ E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
 
 ### Usage Examples
 
+The full Ewald API returns per-atom energy by default. Derive training forces
+from that energy; direct-output flags are legacy compatibility outputs and emit
+`DeprecationWarning`. Snippets in this section that still request
+`compute_forces=True`, `compute_charge_gradients=True`, or `compute_virial=True`
+show the legacy direct-output tuple contract.
+
 #### Explicit Parameters
 
 ::::{tab-set}
@@ -384,9 +428,12 @@ E_{\text{background}} = \frac{\pi}{2\alpha^2 V} Q_{\text{total}}^2
 :sync: pytorch
 
 ```python
+import torch
+
 from nvalchemiops.torch.interactions.electrostatics import ewald_summation
 
-energies, forces = ewald_summation(
+positions = positions.detach().requires_grad_(True)
+energies = ewald_summation(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -395,8 +442,8 @@ energies, forces = ewald_summation(
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
-    compute_forces=True,
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 :::
@@ -409,17 +456,20 @@ import jax
 import jax.numpy as jnp
 from nvalchemiops.jax.interactions.electrostatics import ewald_summation
 
-energies, forces = ewald_summation(
-    positions=positions,
-    charges=charges,
-    cell=cell,
-    alpha=0.3,        # Ewald splitting parameter
-    k_cutoff=8.0,     # Reciprocal-space cutoff in inverse length
-    neighbor_list=neighbor_list,
-    neighbor_ptr=neighbor_ptr,
-    neighbor_shifts=neighbor_shifts,
-    compute_forces=True,
-)
+def total_energy(pos):
+    energies = ewald_summation(
+        positions=pos,
+        charges=charges,
+        cell=cell,
+        alpha=0.3,        # Ewald splitting parameter
+        k_cutoff=8.0,     # Reciprocal-space cutoff in inverse length
+        neighbor_list=neighbor_list,
+        neighbor_ptr=neighbor_ptr,
+        neighbor_shifts=neighbor_shifts,
+    )
+    return jnp.sum(energies)
+
+forces = -jax.grad(total_energy)(positions)
 ```
 
 :::
@@ -486,7 +536,12 @@ k_{\text{cutoff}} = \sqrt{-2 \ln \varepsilon} / \eta
 Refer to the [Parameter Estimation](parameter-estimation) section for API usage.
 ```
 
-#### 2D Slab Correction (PyTorch)
+#### 2D Slab Correction
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 For slab-like systems with two periodic directions and one non-periodic direction,
 PyTorch Ewald can add the Yeh-Berkowitz / Ballenegger-Arnold-Cerdà slab
@@ -501,14 +556,13 @@ from nvalchemiops.torch.neighbors import neighbor_list
 
 pbc_slab = torch.tensor([[True, True, False]], dtype=torch.bool, device=positions.device)
 
-# The neighbor list controls the real-space 3D Ewald images. For a slab setup,
-# use a cell with enough vacuum in the non-periodic direction.
-pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=positions.device)
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
     cutoff=5.0,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 
@@ -527,6 +581,53 @@ energies, forces = ewald_summation(
 )
 ```
 
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+JAX Ewald supports the same explicit-output slab correction. Pass
+`slab_correction=True` and request forces, charge gradients, or virials with the
+usual flags:
+
+```python
+import jax.numpy as jnp
+
+from nvalchemiops.jax.interactions.electrostatics import ewald_summation
+from nvalchemiops.jax.neighbors import neighbor_list
+
+pbc_slab = jnp.array([[True, True, False]], dtype=jnp.bool_)
+
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
+neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
+    positions,
+    cutoff=5.0,
+    cell=cell,
+    pbc=pbc_slab,
+    return_neighbor_list=True,
+)
+
+energies, forces, charge_grads = ewald_summation(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=0.3,
+    k_cutoff=8.0,
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    pbc=pbc_slab,
+    slab_correction=True,
+    compute_forces=True,
+    compute_charge_gradients=True,
+)
+```
+
+:::
+
+::::
+
 ```{tip}
 For batched slab simulations, pass `pbc` as an explicit contiguous `(B, 3)`
 tensor so each system carries its own slab geometry.
@@ -542,7 +643,7 @@ E_\mathrm{slab}
 \left(M_z^2 - Q M_{z^2} - \frac{Q^2 L_z^2}{12}\right)
 ```
 
-The per-atom contribution used by the PyTorch kernels is:
+The per-atom contribution used by the slab kernels is:
 
 ```{math}
 e_i
@@ -583,14 +684,17 @@ from nvalchemiops.torch.interactions.electrostatics import (
 )
 
 # Real-space only (short-range, damped Coulomb)
+alpha = torch.tensor([0.3], dtype=positions.dtype, device=positions.device)
 real_energies, real_forces = ewald_real_space(
-    positions, charges, cell, alpha=0.3,
-    neighbor_list=neighbor_list, neighbor_shifts=neighbor_shifts,
+    positions, charges, cell, alpha=alpha,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
 )
 
 # Reciprocal-space only (long-range, smooth)
-alpha = torch.tensor([0.3], dtype=positions.dtype, device=positions.device)
-k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+k_vectors = generate_k_vectors_ewald_summation(cell.detach(), k_cutoff=8.0)
 recip_energies, recip_forces = ewald_reciprocal_space(
     positions, charges, cell, k_vectors, alpha, compute_forces=True,
 )
@@ -603,18 +707,27 @@ recip_energies, recip_forces = ewald_reciprocal_space(
 
 ```python
 import jax
-import jax.numpy as jnp
-from nvalchemiops.jax.interactions.electrostatics import ewald_real_space, ewald_reciprocal_space
+from nvalchemiops.jax.interactions.electrostatics import (
+    ewald_real_space,
+    ewald_reciprocal_space,
+    generate_k_vectors_ewald_summation,
+)
 
 # Real-space only (short-range, damped Coulomb)
 real_energies, real_forces = ewald_real_space(
     positions, charges, cell, alpha=0.3,
-    neighbor_list=neighbor_list, neighbor_shifts=neighbor_shifts,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    compute_forces=True,
 )
 
 # Reciprocal-space only (long-range, smooth)
+k_vectors = generate_k_vectors_ewald_summation(
+    jax.lax.stop_gradient(cell), k_cutoff=8.0
+)
 recip_energies, recip_forces = ewald_reciprocal_space(
-    positions, charges, cell, alpha=0.3, k_cutoff=8.0,
+    positions, charges, cell, k_vectors, alpha=0.3, compute_forces=True,
 )
 ```
 
@@ -632,6 +745,11 @@ When using the Ewald component functions for slab-like systems, add the slab
 correction explicitly after computing the 3D-periodic real- and reciprocal-space
 parts:
 
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
 ```python
 from nvalchemiops.torch.interactions.electrostatics import compute_slab_correction
 
@@ -646,6 +764,30 @@ slab_energies, slab_forces = compute_slab_correction(
 ewald_slab_energies = real_energies + recip_energies + slab_energies
 ewald_slab_forces = real_forces + recip_forces + slab_forces
 ```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.interactions.electrostatics import compute_slab_correction
+
+slab_energies, slab_forces = compute_slab_correction(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    pbc=pbc_slab,
+    compute_forces=True,
+)
+
+ewald_slab_energies = real_energies + recip_energies + slab_energies
+ewald_slab_forces = real_forces + recip_forces + slab_forces
+```
+
+:::
+
+::::
 
 ## Particle Mesh Ewald (PME)
 
@@ -662,15 +804,36 @@ using fast Fourier transforms by:
 4. **Inverse FFT**: Transform back to get potentials/electric field
 5. **Force Interpolation**: Gather forces at atomic positions
 
-The B-spline interpolation introduces errors corrected by the influence function:
+The B-spline interpolation is corrected by per-axis modulus tables in the PME
+influence function. For a nonzero reciprocal grid vector, Toolkit-Ops uses the
+convolution kernel
 
 ```{math}
-G(\mathbf{k}) = \frac{2\pi}{V} \cdot \frac{\exp(-k^2 / 4\alpha^2)}{k^2} \cdot \frac{1}{C^{2p}(\mathbf{k})}
+G(\mathbf{k}) =
+\frac{4\pi}{V}
+\frac{\exp\left(-k^2 / 4\alpha^2\right)}{k^2}
+\frac{1}{M_x(k_x) M_y(k_y) M_z(k_z)}
 ```
 
-where $C(\mathbf{k})$ is the B-spline correction factor and $p$ is the spline order.
+where $M_x$, $M_y$, and $M_z$ are the one-dimensional B-spline modulus tables for
+the chosen spline order. The reciprocal energy keeps the usual final one-half
+factor from $E = \frac{1}{2}\sum_i q_i \phi_i$.
 
 ### Usage Examples
+
+The full PME API follows the same contract as full Ewald: use energy autograd
+for training derivatives, and reserve direct-output flags for legacy migration
+checks. The reciprocal component API, `pme_reciprocal_space`, remains the
+direct-output escape hatch for no-autograd MD/inference loops. Snippets in this
+section that still request full-API direct outputs show compatibility behavior
+and emit `DeprecationWarning`.
+
+For JAX PME under `jax.jit` or other JAX transformations, pass explicit
+`mesh_dimensions` when `cell`, `alpha`, or batch metadata are traced. For JAX
+Ewald under `jax.jit`, pass `miller_bounds` as a concrete static tuple or build
+`k_vectors` outside jit; dynamic `miller_bounds` changes the reciprocal array
+shape and is not traceable.
+`mesh_spacing` and `accuracy`-based mesh sizing need concrete mesh setup values.
 
 #### Basic Usage
 
@@ -680,9 +843,12 @@ where $C(\mathbf{k})$ is the B-spline correction factor and $p$ is the spline or
 :sync: pytorch
 
 ```python
+import torch
+
 from nvalchemiops.torch.interactions.electrostatics import particle_mesh_ewald
 
-energies, forces = particle_mesh_ewald(
+positions = positions.detach().requires_grad_(True)
+energies = particle_mesh_ewald(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -692,8 +858,8 @@ energies, forces = particle_mesh_ewald(
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
-    compute_forces=True,
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 :::
@@ -704,19 +870,103 @@ energies, forces = particle_mesh_ewald(
 ```python
 import jax
 import jax.numpy as jnp
+
 from nvalchemiops.jax.interactions.electrostatics import particle_mesh_ewald
 
-energies, forces = particle_mesh_ewald(
-    positions=positions,
-    charges=charges,
-    cell=cell,
+def total_energy(pos):
+    energies = particle_mesh_ewald(
+        positions=pos,
+        charges=charges,
+        cell=cell,
+        alpha=0.3,
+        mesh_dimensions=(32, 32, 32),  # FFT mesh size
+        spline_order=4,                 # B-spline order (4 = cubic)
+        neighbor_list=neighbor_list,
+        neighbor_ptr=neighbor_ptr,
+        neighbor_shifts=neighbor_shifts,
+    )
+    return jnp.sum(energies)
+
+forces = -jax.grad(total_energy)(positions)
+```
+
+:::
+
+::::
+
+#### Precomputed PME Moduli
+
+For fixed mesh dimensions and spline order, precompute the one-dimensional
+B-spline modulus tables once and pass them to PME:
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import (
+    compute_bspline_moduli_1d,
+    particle_mesh_ewald,
+)
+
+mesh_dimensions = (32, 32, 32)
+spline_order = 4
+miller_x = torch.fft.fftfreq(
+    mesh_dimensions[0], d=1.0 / mesh_dimensions[0],
+    device=positions.device, dtype=positions.dtype,
+)
+miller_y = torch.fft.fftfreq(
+    mesh_dimensions[1], d=1.0 / mesh_dimensions[1],
+    device=positions.device, dtype=positions.dtype,
+)
+miller_z = torch.fft.rfftfreq(
+    mesh_dimensions[2], d=1.0 / mesh_dimensions[2],
+    device=positions.device, dtype=positions.dtype,
+)
+
+energies = particle_mesh_ewald(
+    positions, charges, cell,
     alpha=0.3,
-    mesh_dimensions=(32, 32, 32),  # FFT mesh size
-    spline_order=4,                 # B-spline order (4 = cubic)
+    mesh_dimensions=mesh_dimensions,
+    spline_order=spline_order,
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
-    compute_forces=True,
+    moduli_x=compute_bspline_moduli_1d(miller_x, mesh_dimensions[0], spline_order),
+    moduli_y=compute_bspline_moduli_1d(miller_y, mesh_dimensions[1], spline_order),
+    moduli_z=compute_bspline_moduli_1d(miller_z, mesh_dimensions[2], spline_order),
+)
+```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+```python
+from nvalchemiops.jax.interactions.electrostatics import (
+    compute_bspline_moduli_1d,
+    particle_mesh_ewald,
+)
+
+mesh_dimensions = (32, 32, 32)
+spline_order = 4
+miller_x = jnp.fft.fftfreq(mesh_dimensions[0], d=1.0 / mesh_dimensions[0])
+miller_y = jnp.fft.fftfreq(mesh_dimensions[1], d=1.0 / mesh_dimensions[1])
+miller_z = jnp.fft.rfftfreq(mesh_dimensions[2], d=1.0 / mesh_dimensions[2])
+
+energies = particle_mesh_ewald(
+    positions, charges, cell,
+    alpha=0.3,
+    mesh_dimensions=mesh_dimensions,
+    spline_order=spline_order,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    moduli_x=compute_bspline_moduli_1d(miller_x, mesh_dimensions[0], spline_order),
+    moduli_y=compute_bspline_moduli_1d(miller_y, mesh_dimensions[1], spline_order),
+    moduli_z=compute_bspline_moduli_1d(miller_z, mesh_dimensions[2], spline_order),
 )
 ```
 
@@ -734,7 +984,7 @@ Instead of explicit mesh dimensions, specify mesh spacing:
 :sync: pytorch
 
 ```python
-energies, forces = particle_mesh_ewald(
+energies = particle_mesh_ewald(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -743,8 +993,8 @@ energies, forces = particle_mesh_ewald(
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
-    compute_forces=True,
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 :::
@@ -753,7 +1003,7 @@ energies, forces = particle_mesh_ewald(
 :sync: jax
 
 ```python
-energies, forces = particle_mesh_ewald(
+energies = particle_mesh_ewald(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -762,8 +1012,15 @@ energies, forces = particle_mesh_ewald(
     neighbor_list=neighbor_list,
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
-    compute_forces=True,
 )
+forces = -jax.grad(lambda pos: particle_mesh_ewald(
+    pos, charges, cell,
+    alpha=0.3,
+    mesh_spacing=0.5,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+).sum())(positions)
 ```
 
 :::
@@ -781,7 +1038,7 @@ that can be used to automatically determine sensible $\alpha$ and mesh:
 :sync: pytorch
 
 ```python
-energies, forces = particle_mesh_ewald(
+energies = particle_mesh_ewald(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -789,8 +1046,8 @@ energies, forces = particle_mesh_ewald(
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
     accuracy=4e-5,  # Estimates alpha and mesh dimensions
-    compute_forces=True,
 )
+forces = -torch.autograd.grad(energies.sum(), positions)[0]
 ```
 
 :::
@@ -799,7 +1056,7 @@ energies, forces = particle_mesh_ewald(
 :sync: jax
 
 ```python
-energies, forces = particle_mesh_ewald(
+energies = particle_mesh_ewald(
     positions=positions,
     charges=charges,
     cell=cell,
@@ -807,8 +1064,14 @@ energies, forces = particle_mesh_ewald(
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
     accuracy=4e-5,  # Estimates alpha and mesh dimensions
-    compute_forces=True,
 )
+forces = -jax.grad(lambda pos: particle_mesh_ewald(
+    pos, charges, cell,
+    neighbor_list=neighbor_list,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    accuracy=4e-5,
+).sum())(positions)
 ```
 
 :::
@@ -822,7 +1085,12 @@ the value of `accuracy` the more precise, at the cost of higher
 computational requirements.
 ```
 
-#### 2D Slab Correction with PME (PyTorch)
+#### 2D Slab Correction with PME
+
+::::{tab-set}
+
+:::{tab-item} PyTorch
+:sync: pytorch
 
 For slab-like systems with two periodic directions, full PyTorch PME supports the
 same slab correction as Ewald. Pass `slab_correction=True` and a boolean `pbc`
@@ -836,14 +1104,13 @@ from nvalchemiops.torch.neighbors import neighbor_list
 
 pbc_slab = torch.tensor([[True, True, False]], dtype=torch.bool, device=positions.device)
 
-# The neighbor list controls the real-space 3D images. For a slab setup,
-# use a cell with enough vacuum in the non-periodic direction.
-pbc_neighbor = torch.tensor([[True, True, True]], dtype=torch.bool, device=positions.device)
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
 neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
     positions,
     cutoff=5.0,
     cell=cell,
-    pbc=pbc_neighbor,
+    pbc=pbc_slab,
     return_neighbor_list=True,
 )
 
@@ -908,6 +1175,59 @@ slab_energies, slab_forces = compute_slab_correction(
 pme_slab_energies = real_energies + pme_reciprocal_energies + slab_energies
 pme_slab_forces = real_forces + pme_reciprocal_forces + slab_forces
 ```
+
+:::
+
+:::{tab-item} JAX
+:sync: jax
+
+For legacy migration checks, full JAX PME still accepts the same slab correction
+and explicit-output flags. The snippet below shows that compatibility tuple. New
+differentiable training code should omit these flags and differentiate the
+returned energy:
+
+```python
+import jax
+import jax.numpy as jnp
+
+from nvalchemiops.jax.interactions.electrostatics import particle_mesh_ewald
+from nvalchemiops.jax.neighbors import neighbor_list
+
+pbc_slab = jnp.array([[True, True, False]], dtype=jnp.bool_)
+
+# The neighbor list controls real-space periodic images. For this slab setup,
+# use the same T/T/F periodicity and a cell with enough vacuum along z.
+neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
+    positions,
+    cutoff=5.0,
+    cell=cell,
+    pbc=pbc_slab,
+    return_neighbor_list=True,
+)
+
+energies, forces, charge_grads = particle_mesh_ewald(
+    positions=positions,
+    charges=charges,
+    cell=cell,
+    alpha=0.3,
+    mesh_dimensions=(32, 32, 32),
+    neighbor_list=neighbor_list_coo,
+    neighbor_ptr=neighbor_ptr,
+    neighbor_shifts=neighbor_shifts,
+    pbc=pbc_slab,
+    slab_correction=True,
+    compute_forces=True,
+    compute_charge_gradients=True,
+)
+```
+
+The full JAX PME interface adds the same slab correction described in the Ewald
+section; component-wise PME composition uses `compute_slab_correction(...)` in
+the same way as the PyTorch snippet above.
+
+:::
+
+::::
 
 ### PME vs Ewald: When to Use Each
 
@@ -1269,6 +1589,334 @@ and its parameters.
   summation." *J. Chem. Phys.* 110, 8254.
   [DOI: 10.1063/1.478738](https://doi.org/10.1063/1.478738)
 
+## Multipole Electrostatics
+
+The methods above treat every atom as a point charge. ALCHEMI Toolkit-Ops also
+provides **multipole** electrostatics, where each atom additionally carries a
+dipole (and optionally a quadrupole). The charge density is modelled as a sum of
+Gaussian-type-orbital (GTO) smeared multipoles, so the lattice sum is handled by
+the same GTO-Ewald split used for point charges. Both an $O(N^2)$ Ewald path and
+an $O(N \log N)$ PME path are available, along with atom-centered feature
+extractors and an amortized SCF cache for repeated evaluations at fixed cell.
+
+```{tip}
+For an end-to-end walkthrough (energy, forces, stress, and force-loss training at
+$l_{\max}=0/1/2$), see the gallery examples
+{ref}`sphx_glr_examples_electrostatics_07_multipole_ewald_summation_example.py`
+(Ewald) and
+{ref}`sphx_glr_examples_electrostatics_08_multipole_pme_example.py` (PME).
+```
+
+### Packed Multipole Moments
+
+All multipole entry points consume a single packed `multipole_moments` tensor
+rather than separate charge/dipole/quadrupole arguments. Build it with
+{func}`~nvalchemiops.torch.interactions.electrostatics.pack_multipole_moments`,
+which accepts the moments in their natural physical Cartesian layout:
+
+- **charges** — shape $(N,)$, required.
+- **dipoles** — Cartesian, shape $(N, 3)$, optional.
+- **quadrupoles** — Cartesian symmetric, shape $(N, 3, 3)$, optional.
+
+The returned tensor has shape $(N, (l_{\max}+1)^2)$, i.e. $(N, 1)$ for charges
+only ($l_{\max}=0$), $(N, 4)$ with dipoles ($l_{\max}=1$), and $(N, 9)$ with
+quadrupoles ($l_{\max}=2$). Internally the moments are stored in the e3nn
+spherical layout; the $l=2$ block is the **traceless** quadrupole (5 independent
+degrees of freedom), so a supplied Cartesian quadrupole must be symmetric and is
+validated to be (near-)traceless.
+
+```python
+import torch
+from nvalchemiops.torch.interactions.electrostatics import pack_multipole_moments
+
+charges = torch.randn(N)
+dipoles = torch.randn(N, 3)                     # Cartesian (N, 3)
+
+# A clean physical axial (linear) quadrupole: diag(-1, -1, 2) is symmetric and
+# traceless by construction, scaled per atom. pack_multipole_moments accepts any
+# symmetric Cartesian (N, 3, 3) and drops a residual trace, so no manual
+# symmetrize/detrace is required.
+axial = torch.diag(torch.tensor([-1.0, -1.0, 2.0]))
+quadrupoles = torch.randn(N)[:, None, None] * axial          # (N, 3, 3)
+
+moments_l0 = pack_multipole_moments(charges)                            # (N, 1)
+moments_l1 = pack_multipole_moments(charges, dipoles)                   # (N, 4)
+moments_l2 = pack_multipole_moments(charges, dipoles, quadrupoles)      # (N, 9)
+```
+
+### Ewald Multipole
+
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_ewald_summation`
+computes the full periodic multipole energy as a single composite call. It uses
+the GTO-Ewald split
+
+$$
+E = E_{\text{real}} + E_{\text{recip}} - E_{\text{self}},
+$$
+
+where the real-space term is a short-ranged pair sum over a neighbor list, the
+reciprocal term is a direct $k$-space sum, and the self term removes the
+spurious self-interaction of each smeared multipole. It supports $l_{\max}=0/1/2$
+energy, forces, stress, and force-loss ($\texttt{create\_graph=True}$) training,
+for both single systems and batches (via `batch_idx`).
+
+The real-space term requires a CSR-style neighbor list: a flat `idx_j` (target
+atoms), a `neighbor_ptr` row pointer of shape $(N+1,)$, and per-pair PBC
+`unit_shifts`. The general
+{func}`~nvalchemiops.torch.neighbors.neighbor_list` returns the list as a
+$(2, n_{\text{pairs}})$ COO tensor; take the second row as `idx_j`.
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import multipole_ewald_summation
+from nvalchemiops.torch.neighbors import neighbor_list
+
+nl_2d, neighbor_ptr, unit_shifts = neighbor_list(
+    positions, cell, cutoff=cutoff, return_neighbor_list=True
+)
+idx_j = nl_2d[1].contiguous()
+
+energy = multipole_ewald_summation(
+    positions,
+    moments_l1,       # packed (N, 4) charges + dipoles
+    cell,
+    idx_j,
+    neighbor_ptr,
+    unit_shifts,
+    sigma=1.0,        # GTO width of the source multipoles
+)
+forces = -torch.autograd.grad(energy, positions)[0]
+```
+
+```{note}
+`sigma` is the GTO smearing width of the source multipoles and is **required**.
+The Ewald splitting parameter `alpha` and the reciprocal-space `k_cutoff`
+are estimated automatically from the requested `accuracy` when left as `None`.
+```
+
+### PME Multipole
+
+For large periodic systems, prefer the Particle Mesh Ewald path
+{func}`~nvalchemiops.torch.interactions.electrostatics.pme_multipole.multipole_particle_mesh_ewald`.
+It replaces the direct $k$-space sum with B-spline charge spreading plus an FFT
+convolution, reducing the reciprocal cost to $O(N \log N)$ while supporting the
+same $l_{\max}=0/1/2$ energy/forces/stress/force-loss coverage (single and
+batched). It is imported from the `pme_multipole` submodule:
+
+```python
+from nvalchemiops.torch.interactions.electrostatics.pme_multipole import (
+    multipole_particle_mesh_ewald,
+)
+
+energy = multipole_particle_mesh_ewald(
+    positions,
+    moments_l1,
+    cell,
+    idx_j,
+    neighbor_ptr,
+    unit_shifts,
+    sigma=1.0,
+    mesh_dimensions=(32, 32, 32),  # estimated from accuracy if None
+    spline_order=4,                # B-spline order (4 = cubic)
+)
+```
+
+As with point-charge PME, `alpha` and `mesh_dimensions` are estimated from the
+requested `accuracy` when omitted. Unlike point-charge PME, batched multipole
+PME requires a **single shared `alpha`** across the batch: when `alpha` is
+auto-estimated and the per-system estimates differ,
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_particle_mesh_ewald`
+raises a `ValueError` — pass an explicit `alpha` (and `mesh_dimensions`) for
+heterogeneous batches.
+
+### Atom-Centered Features
+
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_electrostatic_features`
+produces per-atom electrostatic features by projecting the GTO-smeared multipole
+density onto a set of receiver GTOs centered on each atom. It needs **no**
+neighbor list — the interaction is captured entirely through the reciprocal-space
+projection — making it convenient as an equivariant descriptor for MLIPs.
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import (
+    multipole_electrostatic_features,
+)
+
+features = multipole_electrostatic_features(
+    positions,
+    moments_l1,
+    cell,
+    sigma=1.0,
+    receiver_sigmas=[0.5, 1.0, 2.0],  # one GTO width per receiver channel
+    feature_max_l=1,                  # max angular order of the output features
+)
+```
+
+`receiver_sigmas` is a list (or tensor) of receiver GTO widths — one per radial
+channel — and `feature_max_l` sets the maximum angular order of the returned
+features (decoupled from the source `l_max`). Here $l$ is the
+**angular-momentum order** of the spherical-harmonic channel: $l=0$ is a scalar
+(1 component), $l=1$ a vector (3 components), and $l=2$ a rank-2 tensor (5
+components). `feature_max_l` is the receiver cap on $l$, so the output has width
+`len(receiver_sigmas) * (feature_max_l + 1)**2`.
+
+### SCF Cache (Amortized Workflow)
+
+When evaluating many configurations at a **fixed cell** (MD steps or
+self-consistent-field iterations), the position-independent reciprocal-space
+state — $k$-vectors, receiver $\hat\phi$, per-$k$ factors, overlap constants —
+can be built once and reused. Use
+{func}`~nvalchemiops.torch.interactions.electrostatics.prepare_multipole_scf_cache`
+to build a
+{class}`~nvalchemiops.torch.interactions.electrostatics.MultipoleSCFCache`, then
+feed it to the per-step functions
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_energy`
+and
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_features`:
+
+```python
+from nvalchemiops.torch.interactions.electrostatics import (
+    prepare_multipole_scf_cache,
+    multipole_scf_step_energy,
+    multipole_scf_step_features,
+)
+
+cache = prepare_multipole_scf_cache(
+    cell,
+    sigma=1.0,
+    receiver_sigmas=[1.0],
+    l_max=1,           # source moment order held by the cache
+    feature_max_l=1,
+)
+
+for positions in trajectory:               # fixed cell, varying positions
+    energy = multipole_scf_step_energy(cache, positions, source_feats)
+    feats = multipole_scf_step_features(cache, positions, source_feats)
+```
+
+```{note}
+The step functions take `source_feats` in the **e3nn-packed** spherical layout of
+shape $(N, (l_{\max}+1)^2)$ — $(N, 1)$ for `l_max=0`, $(N, 4)$ for `l_max=1`
+ordered `[q, mu_y, mu_z, mu_x]` — which must match `cache.l_max`. For $l_{\max}=2$,
+pass the Cartesian source quadrupole through the optional `quadrupoles=` argument
+(shape $(N, 3, 3)$); the cache must have been built with `l_max>=2`.
+```
+
+### Batched Multipole Calculations
+
+Every multipole entry point batches through a **single unified pattern** that
+mirrors
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_ewald_summation`:
+pass a batched `cell` of shape $(B, 3, 3)$ together with a `batch_idx` tensor
+(`int32`, one entry per atom giving its system index, **sorted** so atoms group
+contiguously by system). Every per-atom tensor — `positions`,
+`multipole_moments`, and the neighbor-list arrays — stays **flat** with the
+leading dimension $N_{\text{total}} = \sum_b N_b$ over all systems. There are no
+separate `batch_*` multipole functions; the same call serves single systems
+(`batch_idx=None`) and batches.
+
+This applies to
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_ewald_summation`,
+{func}`~nvalchemiops.torch.interactions.electrostatics.pme_multipole.multipole_particle_mesh_ewald`,
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_electrostatic_energy`,
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_electrostatic_features`,
+and the SCF cache pair
+{func}`~nvalchemiops.torch.interactions.electrostatics.prepare_multipole_scf_cache`
++
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_energy` /
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_scf_step_features`.
+For the cache, build it from a $(B, 3, 3)$ cell stack and pass `batch_idx` to the
+per-step calls.
+
+```python
+import torch
+from nvalchemiops.torch.interactions.electrostatics import (
+    multipole_ewald_summation,
+    pack_multipole_moments,
+)
+from nvalchemiops.torch.neighbors import neighbor_list
+
+# Two small systems concatenated into one flat batch.
+pos_a, cell_a = positions_a, cell_a  # (Na, 3), (3, 3)
+pos_b, cell_b = positions_b, cell_b  # (Nb, 3), (3, 3)
+
+positions = torch.cat([pos_a, pos_b], dim=0)          # (Na + Nb, 3)
+moments = torch.cat([moments_a, moments_b], dim=0)    # (Na + Nb, 4)
+cell = torch.stack([cell_a, cell_b], dim=0)           # (B, 3, 3)
+batch_idx = torch.cat([                                # int32, sorted by system
+    torch.zeros(pos_a.shape[0], dtype=torch.int32),
+    torch.ones(pos_b.shape[0], dtype=torch.int32),
+])
+
+nl_2d, neighbor_ptr, unit_shifts = neighbor_list(
+    positions, cell, cutoff=cutoff, batch_idx=batch_idx, return_neighbor_list=True
+)
+idx_j = nl_2d[1].contiguous()
+
+energy = multipole_ewald_summation(
+    positions,
+    moments,
+    cell,
+    idx_j,
+    neighbor_ptr,
+    unit_shifts,
+    sigma=1.0,
+    batch_idx=batch_idx,
+)   # (B,) — one energy per system
+```
+
+:::{note}
+The real-space smearing/splitting parameters `sigma` and `alpha` may be supplied
+as per-system $(B,)$ tensors when systems differ in scale, or as plain Python
+floats when shared across the batch.
+:::
+
+For end-to-end batched walkthroughs (energy, forces, stress, force-loss), see the
+gallery examples
+{ref}`sphx_glr_examples_electrostatics_07_multipole_ewald_summation_example.py`,
+{ref}`sphx_glr_examples_electrostatics_08_multipole_pme_example.py`,
+{ref}`sphx_glr_examples_electrostatics_09_multipole_features_example.py`, and
+{ref}`sphx_glr_examples_electrostatics_10_multipole_scf_cache_example.py`.
+
+### Autograd: Forces, Stress, and Force-Loss
+
+The multipole energy is differentiable with respect to three inputs:
+
+- **`positions`** — the gradient is the negative force, $F = -\partial E /
+  \partial r$.
+- **`multipole_moments`** — per-moment gradients flow back to the packed charges,
+  dipoles, and quadrupoles, so the moments can be predicted and trained by an ML
+  model (e.g. learned partial charges or polarizabilities).
+- **`cell`** — the cell gradient yields the stress/virial,
+  $\sigma = V^{-1}\, \partial E / \partial \mathbf{h}$.
+
+All three derivatives are supported at $l_{\max}=0/1/2$ for both the Ewald and PME
+paths, single and batched. Second-order autograd via `create_graph=True` (used for
+force-loss / force-matching training) is likewise supported across all of these
+combinations. The feature extractor
+{func}`~nvalchemiops.torch.interactions.electrostatics.multipole_electrostatic_features`
+is autograd-connected to both `positions` and `multipole_moments` as well.
+
+```python
+import torch
+from nvalchemiops.torch.interactions.electrostatics import multipole_ewald_summation
+
+positions = positions.requires_grad_(True)
+moments = moments.requires_grad_(True)
+
+energy = multipole_ewald_summation(
+    positions, moments, cell, idx_j, neighbor_ptr, unit_shifts, sigma=1.0
+)
+energy.backward()
+
+forces = -positions.grad        # (-dE/dr)
+moment_grads = moments.grad     # dE/d(charge, dipole, quadrupole)
+```
+
+To obtain the stress/virial, make the `cell` require gradients and read
+`cell.grad` after `backward()` (scale by $V^{-1}$ for the stress tensor). For
+force-loss training, differentiate the forces again with
+`torch.autograd.grad(energy, positions, create_graph=True)`.
+
 ## Batched Calculations
 
 All electrostatics functions support batched calculations for evaluating multiple
@@ -1452,10 +2100,9 @@ from nvalchemiops.jax.interactions.electrostatics import ewald_summation
 
 # Define energy function for differentiation
 def energy_fn(positions):
-    energies, _ = ewald_summation(
+    energies = ewald_summation(
         positions, charges, cell, alpha=0.3, k_cutoff=8.0,
         neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
-        compute_forces=False,
     )
     return jnp.sum(energies)
 
@@ -1515,7 +2162,7 @@ import jax.numpy as jnp
 from nvalchemiops.jax.interactions.electrostatics import ewald_summation
 
 def energy_fn(charges):
-    energies, _ = ewald_summation(
+    energies = ewald_summation(
         positions, charges, cell, alpha=0.3, k_cutoff=8.0,
         neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
         compute_forces=False,
@@ -1562,7 +2209,7 @@ import jax.numpy as jnp
 from nvalchemiops.jax.interactions.electrostatics import ewald_summation
 
 def batch_energy_fn(charges):
-    energies, _ = ewald_summation(
+    energies = ewald_summation(
         positions, charges, cell, alpha=0.3, k_cutoff=8.0,
         neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
         batch_idx=batch_idx,
@@ -1581,6 +2228,14 @@ charge_gradients = jax.grad(batch_energy_fn)(charges)
 
 ### Geometry-Dependent Charges (Hybrid Mode)
 
+```{important}
+`hybrid_forces=True` is **deprecated** and emits a `DeprecationWarning`. The
+recommended `q(R)` path keeps `charges = charge_model(positions)` in the autograd
+graph and derives the full force from energy; see
+{ref}`energy-derivative-contract`. The section
+below documents the legacy behavior for callers still on the old flag.
+```
+
 When charges depend on atomic positions -- as in machine-learned interatomic
 potentials (MLIPs) with learned charge models (`q = q(R)`) -- computing total forces requires two contributions:
 
@@ -1588,18 +2243,19 @@ potentials (MLIPs) with learned charge models (`q = q(R)`) -- computing total fo
   the Ewald/PME kernel (`compute_forces=True`)
 - **Charge chain-rule forces** `-(dE/dq)(dq/dR)`, computed via PyTorch autograd through the charge model
 
-The `hybrid_forces` parameter provides an efficient way to compute both
-contributions without redundancy.  In standard mode, `energy.backward()`
-already includes both position and charge terms, so adding explicit forces
-would **double-count** the positional contribution. `hybrid_forces=True`
-detaches positions and cell from the autograd graph and makes energy
-differentiable only through the charges via a straight-through estimator.
+The legacy `hybrid_forces=True` path computes both contributions without adding
+the fixed-charge positional term twice. In standard mode, `energy.backward()`
+already includes both position and charge terms, so adding explicit forces would
+**double-count** the positional contribution. `hybrid_forces=True` detaches
+positions and cell from the autograd graph and makes energy differentiable only
+through the charges via a straight-through estimator.
 
 ```{important}
 Do not combine explicit forces (`compute_forces=True`) with full autograd
 forces (`-torch.autograd.grad(energy, positions)`) in standard mode -- this
-double-counts the positional term `dE/dR|_q`.  Use `hybrid_forces=True` when
-you need both explicit forces and autograd charge gradients.
+double-counts the positional term `dE/dR|_q`. During migration, use
+`hybrid_forces=True` only for legacy direct-output code that still needs explicit
+fixed-charge forces plus autograd charge gradients.
 ```
 
 ::::{tab-set}
@@ -1661,16 +2317,28 @@ charge-chain-rule forces are always complementary without any extra flag.
 ```
 
 ```{note}
-**JAX:** Ewald/PME real-space kernels in JAX use forward-only differentiation
-and do not have this issue.  For PME reciprocal space, which uses differentiable
-spline/FFT ops, a similar `hybrid_forces` flag is planned.
+**JAX:** Full JAX Ewald/PME calls follow the same first-order energy-derivative
+contract for new code. Direct-output and `hybrid_forces` flags are kept as
+deprecated compatibility outputs during migration.
 ```
 
 ### Virial / Stress
 
+```{important}
+`compute_virial=True` on the full `ewald_summation` / `particle_mesh_ewald` APIs
+is **deprecated** and emits a `DeprecationWarning`. For MLIP training, use the
+strain-first energy derivative documented in
+{ref}`energy-derivative-contract`:
+`grad_u = torch.autograd.grad(E.sum(), displacement)[0]`,
+`virial = -grad_u`, and `stress = grad_u / V`. That virial equals the direct
+output below. The section below documents the legacy direct-virial behavior.
+```
+
 Both Ewald and PME provide explicit virial computation via `compute_virial=True`.
-The virial is differentiable by default: when `compute_virial=True` and inputs
-require gradients, stress-based losses automatically back-propagate to model parameters.
+Those direct virials are kept for compatibility, MD/inference loops, and
+migration checks. For differentiable stress training, derive virials from the
+scalar energy with the strain-first recipe instead of training on the
+direct-output tensor.
 
 **Convention:**
 
@@ -1679,7 +2347,9 @@ require gradients, stress-based losses automatically back-propagate to model par
 - Reciprocal-space: $W_\text{recip}(k) = E(k) \left[\delta_{ab} - \frac{2 k_a k_b}{k^2}\left(1 + \frac{k^2}{4\alpha^2}\right)\right]$
 - Stress (tensile-positive Cauchy stress): $\sigma = -W / V$ where $V = |\det(\mathbf{C})|$
 - The virial convention is validated against finite-difference strain derivatives
-  of the energy ($W_{ab} = -\partial E / \partial \varepsilon_{ab}$) in the test suite.
+  of the row-vector affine displacement energy
+  ($R' = R(I + u)$, $C' = C(I + u)$, $W_{ab} = -\partial E / \partial u_{ab}$)
+  in the test suite.
 
 See {ref}`conventions` for the project-wide virial and stress definitions used by all
 interaction modules.
@@ -1800,24 +2470,35 @@ stress = -virial / volume[:, None, None]             # (B, 3, 3)
 :sync: pytorch
 
 ```python
-# Forward pass with explicit outputs
-energies, forces, virial = ewald_summation(
-    positions, charges, cell,
+strain = torch.zeros(3, 3, dtype=positions.dtype, device=positions.device)
+strain.requires_grad_(True)
+deformation = torch.eye(3, dtype=positions.dtype, device=positions.device) + strain
+positions_s = positions @ deformation
+cell_s = cell @ deformation
+
+energies = ewald_summation(
+    positions_s, charges, cell_s,
     neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
-    compute_forces=True,
-    compute_virial=True,
 )
+total_energy = energies.sum()
+grad_pos, grad_strain = torch.autograd.grad(
+    total_energy,
+    (positions_s, strain),
+    create_graph=True,
+)
+forces = -grad_pos
+virial = -grad_strain
 
 # Compute stress (single system shown; for batch use volume[:, None, None])
-volume = torch.abs(torch.linalg.det(cell))
-pred_stress = -virial.squeeze(0) / volume
+volume = torch.abs(torch.linalg.det(cell_s.squeeze(0)))
+pred_stress = grad_strain / volume
 
 loss = (
-    w_energy * (energies.sum() - E_target) ** 2
+    w_energy * (total_energy - E_target) ** 2
     + w_forces * (forces - F_target).pow(2).sum()
     + w_stress * (pred_stress - stress_target).pow(2).sum()
 )
-loss.backward()  # Stress-loss gradients flow automatically with compute_virial=True
+loss.backward()
 ```
 
 :::
@@ -1830,38 +2511,52 @@ import jax
 import jax.numpy as jnp
 from nvalchemiops.jax.interactions.electrostatics import ewald_summation
 
-def loss_fn(positions, charges, cell):
-    energies, forces, virial = ewald_summation(
-        positions, charges, cell,
+def energy_from_strain(positions, charges, cell, strain):
+    deformation = jnp.eye(3, dtype=positions.dtype) + strain
+    positions_s = positions @ deformation
+    cell_s = cell @ deformation
+    return jnp.sum(ewald_summation(
+        positions_s, charges, cell_s,
         neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
-        compute_forces=True,
-        compute_virial=True,
+    ))
+
+def loss_fn(positions, charges, cell):
+    strain = jnp.zeros((3, 3), dtype=positions.dtype)
+    energy, (grad_pos, grad_strain) = jax.value_and_grad(
+        lambda pos, eps: energy_from_strain(pos, charges, cell, eps),
+        argnums=(0, 1),
+    )(
+        positions,
+        strain,
     )
+    forces = -grad_pos
+    virial = -grad_strain
 
     # Compute stress (single system shown; for batch use volume[:, None, None])
-    volume = jnp.abs(jnp.linalg.det(cell))
-    pred_stress = -virial.squeeze(0) / volume
+    volume = jnp.abs(jnp.linalg.det(cell.squeeze(0)))
+    pred_stress = grad_strain / volume
 
-    loss = (
-        w_energy * (jnp.sum(energies) - E_target) ** 2
+    return (
+        w_energy * (energy - E_target) ** 2
         + w_forces * jnp.sum((forces - F_target) ** 2)
         + w_stress * jnp.sum((pred_stress - stress_target) ** 2)
     )
-    return loss
 
-# Compute loss and gradients simultaneously
+# Compute loss and gradients simultaneously.
 loss, grads = jax.value_and_grad(loss_fn, argnums=(0, 1, 2))(positions, charges, cell)
 pos_grad, charge_grad, cell_grad = grads
 ```
+
+For second-order force or charge-gradient losses in JAX, use energy autograd.
+JAX PME reciprocal position and charge losses use the native PME mesh HVP path.
 
 :::
 
 ::::
 
 :::{note}
-When `compute_virial=True` and inputs track gradients, the virial automatically
-participates in the autograd graph. Stress-based losses back-propagate to model
-parameters without any additional flags.
+Direct virials are compatibility outputs. Stress-loss training should use the
+strain-first energy derivative above.
 :::
 
 :::{tip}
@@ -1869,9 +2564,312 @@ For quick inference or debugging you can also obtain an approximate stress via
 cell gradients followed by reading the gradient divided by volume. In PyTorch use
 `cell.requires_grad_(True)` followed by `energy.backward()` and reading
 `cell.grad / volume`. In JAX use `jax.grad` with respect to the cell parameter.
-This is first-order only (no higher-order gradients through the Warp bridge) and
-is **not** recommended for MLIP training.
+This shortcut is **not** recommended for MLIP training; use the strain-first
+energy derivative contract above for training stress losses.
 :::
+
+(energy-derivative-contract)=
+
+## Energy-Derivative Contract
+
+For differentiable energy evaluation, **energy is the only differentiable output
+of the full
+{func}`~nvalchemiops.torch.interactions.electrostatics.ewald_summation` and
+{func}`~nvalchemiops.torch.interactions.electrostatics.particle_mesh_ewald`
+APIs, with matching first-order support on the full JAX Ewald/PME APIs**.
+Forces, virial/stress, and charge gradients are derivatives of that energy.
+With no direct-output flags set, the call returns the per-atom energy tensor only.
+
+Only `positions`, `charges`, and `cell` are differentiable inputs in this
+contract. Setup values such as `alpha`, cutoffs, accuracy, mesh spacing or
+dimensions, spline order, PBC/slab flags, batch metadata, neighbor topology,
+Miller/grid indices, and PME B-spline moduli are constants. Gradients are not
+reported for those setup values.
+
+Precomputed numerical metadata is treated as setup state, not as a
+differentiable parameter. `k_vectors`, `k_squared`, `volume`, `cell_inv_t`,
+reciprocal-cell metadata, and slab-geometry caches remain accepted when
+differentiating with respect to `cell`, but they are static metadata assumed
+to correspond to the current `cell`. Precomputed structure
+factors, charge meshes, and total-charge caches must be omitted from any public
+API that would use them while differentiating with respect to `positions` or
+`charges`.
+
+Neighbor-list differentiation is fixed-topology differentiation. The gradient
+includes pair displacements and periodic image terms such as `shift @ cell`, but
+does not differentiate the discrete event of a pair entering or leaving the
+neighbor list.
+
+Torch supports the second-order force/stress-loss paths used in training. JAX
+higher-order support is limited to tested position and charge scalar losses.
+JAX PME stress/cell/strain, alpha, and precomputed-metadata higher-order
+derivatives are unsupported until implemented and tested, including high-level
+`particle_mesh_ewald(..., slab_correction=True)` calls. Energy-returning Ewald,
+PME, and slab paths support non-uniform per-atom losses such as `loss = (weights
+* energies).sum()` for positions, charges, and supported cell derivatives.
+Precomputed static caches still do not recover the derivative of how those
+caches were generated; omit the cache when that derivative is part of the
+intended loss.
+Second-order support means differentiating scalar losses through these energy
+paths with Torch/JAX autograd. Electrostatics does not expose public Hessian or
+Jacobian tensors/functions.
+
+### Fixed-Cell Metadata Recipes
+
+For fixed-cell Ewald/PME loops, precompute reciprocal metadata once from a cell
+that is detached from autograd, then reuse it while that cell is unchanged.
+
+```python
+with torch.no_grad():
+    k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0)
+
+for positions in trajectory:
+    energy = ewald_summation(
+        positions, charges, cell,
+        k_vectors=k_vectors,
+        neighbor_list=nl,
+        neighbor_ptr=nl_ptr,
+        neighbor_shifts=shifts,
+    )
+```
+
+```python
+cell_static = jax.lax.stop_gradient(cell)
+cell_inv_t = jnp.linalg.inv(cell_static).transpose(0, 2, 1)
+volume = jnp.abs(jnp.linalg.det(cell_static))
+reciprocal_cell = 2.0 * jnp.pi * jnp.linalg.inv(cell_static)
+k_vectors, k_squared = generate_k_vectors_pme(
+    cell_static, mesh_dimensions, reciprocal_cell=reciprocal_cell
+)
+mesh_nx, mesh_ny, mesh_nz = mesh_dimensions
+miller_x = jnp.fft.fftfreq(mesh_nx, d=1.0 / mesh_nx)
+miller_y = jnp.fft.fftfreq(mesh_ny, d=1.0 / mesh_ny)
+miller_z = jnp.fft.rfftfreq(mesh_nz, d=1.0 / mesh_nz)
+moduli_x = compute_bspline_moduli_1d(miller_x, mesh_nx, spline_order)
+moduli_y = compute_bspline_moduli_1d(miller_y, mesh_ny, spline_order)
+moduli_z = compute_bspline_moduli_1d(miller_z, mesh_nz, spline_order)
+
+for positions in trajectory:
+    energy = particle_mesh_ewald(
+        positions, charges, cell,
+        k_vectors=k_vectors,
+        k_squared=k_squared,
+        cell_inv_t=cell_inv_t,
+        volume=volume,
+        moduli_x=moduli_x,
+        moduli_y=moduli_y,
+        moduli_z=moduli_z,
+        mesh_dimensions=mesh_dimensions,
+        spline_order=spline_order,
+        neighbor_list=nl,
+        neighbor_ptr=nl_ptr,
+        neighbor_shifts=shifts,
+    )
+```
+
+If the cell changes and cell gradients are part of the loss, regenerate
+cell-derived metadata for that cell or omit the cache so the wrapper rebuilds it
+internally. The cached tensors are setup metadata; they do not carry derivatives
+of the metadata-generation step.
+
+```{important}
+The direct-output flags `compute_forces`, `compute_virial`,
+`compute_charge_gradients`, and `hybrid_forces` on the full
+`ewald_summation` / `particle_mesh_ewald` APIs are **deprecated** and emit a
+`DeprecationWarning`. They remain functional for compatibility in v0.4.0, but
+differentiable training code should use the energy-derivative recipes below. The
+lower-level component functions (`ewald_real_space`, `ewald_reciprocal_space`,
+`pme_reciprocal_space`) keep their direct-force outputs as no-autograd
+MD/inference paths and do not warn. Full-API calls that still pass
+`compute_forces=True` etc. emit a `DeprecationWarning`.
+```
+
+The examples below use `particle_mesh_ewald`; `ewald_summation` follows the same
+contract. A complete runnable script is in
+{doc}`/examples/electrostatics/07_pme_energy_derivative_training`.
+
+### Force Evaluation
+
+```python
+positions = positions.detach().requires_grad_(True)
+energy = particle_mesh_ewald(
+    positions, charges, cell,
+    neighbor_list=nl, neighbor_ptr=nl_ptr, neighbor_shifts=shifts,
+)  # returns the per-atom energy tensor only
+
+forces = -torch.autograd.grad(energy.sum(), positions)[0]  # (N, 3)
+```
+
+`energy.sum()` is the scalar total energy whose derivative is the full force for
+the graph that produced `energy`.
+
+### Force-Loss Training
+
+For Torch training on a force loss, build the force with `create_graph=True` so
+the later `loss.backward()` can differentiate through it (double-backward):
+
+```python
+positions = positions.detach().requires_grad_(True)
+energy = particle_mesh_ewald(positions, charges, cell, ...)
+
+forces = -torch.autograd.grad(energy.sum(), positions, create_graph=True)[0]
+loss = force_loss(forces, target_forces)
+loss.backward()
+```
+
+### Geometry-Dependent Charges (`q(R)`)
+
+When charges are predicted from positions by a learned model, keep
+`charges = charge_model(positions)` **in the autograd graph**. The full force then
+includes both the fixed-charge term and the charge-model chain-rule term
+$\frac{\partial E}{\partial q}\frac{\partial q}{\partial R}$:
+
+```python
+positions = positions.detach().requires_grad_(True)
+charges = charge_model(positions)              # stays connected to positions
+energy = particle_mesh_ewald(positions, charges, cell, ...)
+
+forces = -torch.autograd.grad(energy.sum(), positions, create_graph=True)[0]
+```
+
+```{important}
+This replaces the deprecated `hybrid_forces=True` path. A legacy direct force
+(`compute_forces=True`) is the fixed-charge partial $-\partial E/\partial R|_q$
+and does not include the $\partial E/\partial q \cdot \partial q/\partial R$
+term for `q(R)` models -- which is why direct force output on the full API is
+deprecated.
+```
+
+### Virial and Stress (Strain-First)
+
+`strain` is not a PME/Ewald argument. Build a differentiable row-vector
+displacement tensor, deform positions and cell by `I + strain`, and let autograd
+map gradients from the deformed inputs back to strain. The virial is
+$W = -\partial E/\partial u$ and tensile-positive stress is
+$\partial E/\partial u / V$:
+
+```python
+positions = positions.detach().requires_grad_(True)
+num_systems = cell.shape[0]
+strain = torch.zeros(
+    num_systems, 3, 3, device=positions.device, dtype=positions.dtype,
+    requires_grad=True,
+)
+eye = torch.eye(3, device=positions.device, dtype=positions.dtype).unsqueeze(0)
+deform = eye + strain
+
+# batch_idx maps each atom to its system (all zeros for a single system)
+positions_s = torch.einsum("ni,nij->nj", positions, deform[batch_idx])
+cell_s = torch.einsum("bij,bjk->bik", cell, deform)
+
+energy = particle_mesh_ewald(positions_s, charges, cell_s, ...)
+grad_strain = torch.autograd.grad(
+    energy.sum(), strain,
+    create_graph=True,   # keep for stress-loss training; omit for evaluation
+)[0]                                                       # (num_systems, 3, 3)
+virial = -grad_strain
+
+volume = torch.abs(torch.linalg.det(cell_s))               # (num_systems,)
+stress = grad_strain / volume[:, None, None]               # (num_systems, 3, 3)
+```
+
+This `virial` matches the (deprecated) `compute_virial=True` direct output -- both
+are $-\partial E/\partial u$. The stress uses the project-wide tensile-positive
+Cauchy convention $\sigma = -W/V = \partial E/\partial u / V$; see
+{ref}`conventions`. For stress-loss training, build the loss from `stress` and
+call `loss.backward()`.
+
+### Combined Force + Stress Loss (Performance)
+
+When a single training loss mixes **both** forces and stress, take them from **one**
+`torch.autograd.grad` call over `(positions, strain)` together -- not two separate
+calls:
+
+The position argument in that combined call chooses the force coordinate frame.
+Use `positions_s` for deformed-coordinate force targets, or use the undeformed
+reference `positions` if the target forces are defined in the reference frame.
+The runnable derivative-training example uses the reference-frame variant.
+
+```python
+# Preferred: one combined grad call -> one double-backward.
+# This variant returns deformed-coordinate forces.
+grad_pos, grad_strain = torch.autograd.grad(
+    energy.sum(), (positions_s, strain), create_graph=True,
+)
+forces = -grad_pos
+virial = -grad_strain
+stress = grad_strain / volume[:, None, None]
+```
+
+Each `create_graph=True` `grad` call builds its own first-derivative graph node, and
+`loss.backward()` runs the reciprocal second-derivative (an $O(K\cdot N)$ kernel)
+**once per node**. Computing forces and virial in two separate `grad` calls
+therefore doubles the reciprocal double-backward work; combining them in one
+call avoids duplicate reciprocal double-backward work. The gradients are identical
+either way -- this is purely a performance choice.
+
+### `torch.compile` Compatibility
+
+Direct-output Ewald/PME calls without framework autograd can be wrapped in
+`torch.compile(fullgraph=True)` when all shape-determining metadata is static
+and precomputed outside the compiled function. This is useful for no-autograd
+MD/inference loops and for benchmarking the deprecated direct-output migration
+path.
+
+Energy-autograd training callables that contain `torch.autograd.grad` are not
+treated as a `torch.compile` fast path in this release: Dynamo does not trace the
+complete force/stress loss callable as one full graph. Compile only the
+energy-forward function when that is useful for an application, and keep the
+force, stress, and
+double-backward training step in eager PyTorch. Benchmark CSV rows label this
+difference explicitly with `derivative_contract` and `workload`.
+
+### Charge Gradients
+
+$\partial E/\partial q$ is an ordinary gradient of the energy w.r.t. charges:
+
+```python
+charges = charges.detach().requires_grad_(True)
+energy = particle_mesh_ewald(positions, charges, cell, ...)
+
+charge_grad = torch.autograd.grad(
+    energy.sum(), charges,
+    create_graph=True,   # keep for charge-gradient-loss training
+)[0]                                                                   # (N,)
+```
+
+(electrostatics-migration)=
+
+### Migration From Deprecated Flags
+
+Each deprecated direct-output flag maps to an energy-autograd replacement. The
+deprecated flags remain available for compatibility in v0.4.0 but emit a
+`DeprecationWarning`.
+
+| Deprecated flag | Replacement |
+|-----------------|-------------|
+| `compute_forces=True` | `forces = -torch.autograd.grad(E.sum(), positions)[0]` |
+| `compute_virial=True` | `grad_u = torch.autograd.grad(E.sum(), displacement)[0]` with the row-vector displacement recipe; `virial = -grad_u`, `stress = grad_u / V` |
+| `compute_charge_gradients=True` | `dEdq = torch.autograd.grad(E.sum(), charges)[0]` |
+| `hybrid_forces=True` | Keep `charges = charge_model(positions)` in the graph; derive the force from energy (full `q(R)` force) |
+
+```{note}
+These deprecations apply to the **full** APIs only. `ewald_real_space`,
+`ewald_reciprocal_space`, and `pme_reciprocal_space` retain their direct-force
+outputs for no-autograd MD/inference loops and do not warn. They are not part of
+the differentiable training contract.
+```
+
+```{note}
+JAX full Ewald/PME follows the same first-order energy-derivative contract
+for positions, charges, and row-vector displacement virials. Higher-order JAX
+support is limited to tested position and charge scalar losses; PME reciprocal
+terms use the native PME mesh HVP path. JAX PME stress/cell/strain, alpha, and
+precomputed-metadata higher-order paths are
+unsupported until implemented and tested. JAX direct-output flags remain
+functional for compatibility in v0.4.0 but are deprecated for differentiable
+training.
+```
 
 (parameter-estimation)=
 
@@ -1992,6 +2990,12 @@ print(f"r_cutoff = {params.real_space_cutoff:.4f}")
 
 This method returns a `PMEParameters` dataclass, which
 is a light data structure that holds parameters used for the particle-mesh Ewald algorithm.
+For batched inputs, `estimate_pme_parameters` intentionally returns one shared
+real-space cutoff and one shared $\alpha$ for the whole batch. The shared values
+are computed from the median atom count and median cell volume, while
+`mesh_spacing` remains per-system because it depends on each cell length. Pass
+`real_space_cutoff=` when a simulation needs to pin the neighbor-list cutoff
+instead of using this median-system heuristic.
 
 ## Units
 
@@ -2056,10 +3060,12 @@ PME uses cardinal B-splines of order $p$ for charge assignment:
 - Order 2: Cloud-in-cell (CIC)
 - Order 3: Triangular-shaped cloud (TSC)
 - Order 4: Cubic B-spline (recommended)
-- Higher orders: Smoother but wider support
+- Order 5: Quartic B-spline
+- Order 6: Quintic B-spline
 
 Higher spline orders provide better accuracy but spread charges over more grid
-points. Order 4 (cubic) is the standard choice, balancing accuracy and efficiency.
+points. Orders 1-6 are supported; order 4 (cubic) is the standard choice,
+balancing accuracy and efficiency.
 
 ## Troubleshooting
 

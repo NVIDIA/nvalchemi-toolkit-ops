@@ -163,7 +163,7 @@ jobs:
       - get-pr-labels
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 45
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -218,43 +218,81 @@ jobs:
       # CONDITIONAL LOGIC BASED ON EVENT TYPE
       #
       # PR branches use push events to refs/heads/pull-request/*, not the
-      # pull_request event. Detect them via the branch name pattern.
-      # Testmon baselines are Python/CUDA-specific because testmon keys its
+      # pull_request event. Merge queue runs use merge_group events on
+      # gh-readonly-queue refs, but should use the same testmon-selected path.
+      # Testmon databases are Python/CUDA-specific because testmon keys its
       # dependency database by the interpreter version and installed packages.
-      - name: Restore testmon baseline (for PRs)
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
+      # Coverage baselines are cached separately so stale coverage files do not
+      # replace or mask the testmon dependency database.
+      - name: Restore testmon cache (for PRs and merge queue)
+        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
         uses: actions/cache/restore@v4
         with:
           path: |
             .testmondata
-            .coverage
-          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+            .testmondata-shm
+            .testmondata-wal
+          key: testmon-cache-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
           restore-keys: |
-            testmon-baseline-main-py${{ matrix.python-version }}-cuda13-
+            testmon-cache-main-py${{ matrix.python-version }}-cuda13-
+
+      - name: Restore coverage baseline (for PRs and merge queue)
+        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
+        uses: actions/cache/restore@v4
+        with:
+          path: .coverage.baseline
+          key: coverage-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+          restore-keys: |
+            coverage-baseline-main-py${{ matrix.python-version }}-cuda13-
+
+      - name: Prepare coverage baseline (for PRs and merge queue)
+        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
+        run: |
+          if [ -f .coverage.baseline ]; then
+            echo "Using restored coverage baseline for PR coverage merge"
+            mv .coverage.baseline coverage_main.dat
+          else
+            echo "No coverage baseline restored; reporting PR coverage only"
+          fi
 
       - name: Run tests with testmon and coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          IS_PR=${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
-          if [[ "$IS_PR" == "true" ]]; then
-            # PR: testmon selects affected tests, coverage traces them
-            make testmon-coverage
+          USE_TESTMON_SELECTION=${{ startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group' }}
+          if [[ "$USE_TESTMON_SELECTION" == "true" ]]; then
+            # PR/Merge queue: testmon selects affected tests, coverage traces them
+            make testmon-coverage COVERAGE_BASELINE_FILE=coverage_main.dat
           else
-            # Main/Schedule: build testmon DB, then full coverage without testmon
-            make testmon-collect
-            make testmon-coverage PYTEST_TESTMON_FLAGS=""
+            # Main/Schedule: refresh testmon DB and coverage baseline in one full pass.
+            rm -f .testmondata .testmondata-shm .testmondata-wal
+            rm -f .coverage .coverage.* coverage_main.dat
+            make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
           fi
 
-      # Save one baseline per Python version from main/schedule runs. PR runs
-      # restore the newest matching baseline for their matrix interpreter.
-      - name: Save testmon baseline
+      # Save one testmon DB and one coverage baseline per Python/CUDA version
+      # from main/schedule runs. PR and merge queue runs restore the newest
+      # matching pair.
+      - name: Save testmon cache
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
         uses: actions/cache/save@v4
         with:
           path: |
             .testmondata
-            .coverage
-          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+            .testmondata-shm
+            .testmondata-wal
+          key: testmon-cache-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
+
+      - name: Prepare coverage baseline
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
+        run: |
+          cp .coverage .coverage.baseline
+
+      - name: Save coverage baseline
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
+        uses: actions/cache/save@v4
+        with:
+          path: .coverage.baseline
+          key: coverage-baseline-main-py${{ matrix.python-version }}-cuda13-${{ github.run_id }}
 
       - name: Upload coverage to Codecov
         if: github.event_name != 'merge_group' && github.event_name != 'schedule'
@@ -276,7 +314,7 @@ jobs:
     needs:
       - lint
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 45
+    timeout-minutes: 120
     if: github.event_name == 'schedule'
     strategy:
       fail-fast: false
@@ -321,16 +359,28 @@ jobs:
       - name: Run tests with testmon and coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          make testmon-collect
-          make testmon-coverage PYTEST_TESTMON_FLAGS=""
+          rm -f .testmondata .testmondata-shm .testmondata-wal
+          rm -f .coverage .coverage.* coverage_main.dat
+          make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
 
-      - name: Save testmon baseline
+      - name: Save testmon cache
         uses: actions/cache/save@v4
         with:
           path: |
             .testmondata
-            .coverage
-          key: testmon-baseline-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
+            .testmondata-shm
+            .testmondata-wal
+          key: testmon-cache-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
+
+      - name: Prepare coverage baseline
+        run: |
+          cp .coverage .coverage.baseline
+
+      - name: Save coverage baseline
+        uses: actions/cache/save@v4
+        with:
+          path: .coverage.baseline
+          key: coverage-baseline-main-py${{ matrix.python-version }}-cuda12-${{ github.run_id }}
 
       - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4

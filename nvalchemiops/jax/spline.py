@@ -28,6 +28,8 @@ SUPPORTED ORDERS
 - Order 2: Linear
 - Order 3: Quadratic
 - Order 4: Cubic (recommended for PME)
+- Order 5: Quartic
+- Order 6: Quintic
 
 OPERATIONS
 ==========
@@ -72,16 +74,27 @@ REFERENCES
 - Essmann et al. (1995). J. Chem. Phys. 103, 8577 (PME B-splines)
 """
 
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import warp as wp
 from warp.jax_experimental import jax_kernel
 
 from nvalchemiops.math.spline import (
+    _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,
+    _PER_ORDER_BATCH_SPREAD_KERNELS,
+    _PER_ORDER_GATHER_WITH_FORCE_KERNELS,
+    _PER_ORDER_SPREAD_KERNELS,
+)
+from nvalchemiops.math.spline import (
     _batch_bspline_gather_channels_kernel_overload as wp_batch_gather_channels,
 )
 from nvalchemiops.math.spline import (
     _batch_bspline_gather_gradient_kernel_overload as wp_batch_gather_gradient,
+)
+from nvalchemiops.math.spline import (
+    _batch_bspline_gather_gradient_position_hessian_kernel_overload as wp_batch_gather_gradient_position_hessian,
 )
 from nvalchemiops.math.spline import (
     _batch_bspline_gather_kernel_overload as wp_batch_gather,
@@ -93,6 +106,9 @@ from nvalchemiops.math.spline import (
     _batch_bspline_spread_channels_kernel_overload as wp_batch_spread_channels,
 )
 from nvalchemiops.math.spline import (
+    _batch_bspline_spread_gradient_weights_kernel_overload as wp_batch_spread_gradient_weights,
+)
+from nvalchemiops.math.spline import (
     _batch_bspline_spread_kernel_overload as wp_batch_spread,
 )
 from nvalchemiops.math.spline import (
@@ -101,12 +117,21 @@ from nvalchemiops.math.spline import (
 from nvalchemiops.math.spline import (
     _bspline_gather_gradient_kernel_overload as wp_gather_gradient,
 )
+from nvalchemiops.math.spline import (
+    _bspline_gather_gradient_position_hessian_kernel_overload as wp_gather_gradient_position_hessian,
+)
 from nvalchemiops.math.spline import _bspline_gather_kernel_overload as wp_gather
 from nvalchemiops.math.spline import (
     _bspline_gather_vec3_kernel_overload as wp_gather_vec3,
 )
 from nvalchemiops.math.spline import (
+    _bspline_gather_with_force_kernel_overload as wp_gather_with_force,
+)
+from nvalchemiops.math.spline import (
     _bspline_spread_channels_kernel_overload as wp_spread_channels,
+)
+from nvalchemiops.math.spline import (
+    _bspline_spread_gradient_weights_kernel_overload as wp_spread_gradient_weights,
 )
 from nvalchemiops.math.spline import _bspline_spread_kernel_overload as wp_spread
 from nvalchemiops.math.spline import _bspline_weight_kernel_overload as wp_weight
@@ -120,8 +145,8 @@ def _make_spline_jax_kernels(
     wp_overload_dict: dict,
     num_outputs: int,
     in_out_argnames: list[str],
-) -> dict:
-    """Create dtype-dispatched JAX kernel wrappers from Warp overloads.
+) -> _LazySplineJaxKernels:
+    """Create lazy dtype-dispatched JAX kernel wrappers from Warp overloads.
 
     Parameters
     ----------
@@ -134,19 +159,109 @@ def _make_spline_jax_kernels(
 
     Returns
     -------
-    dict
-        Dictionary mapping jnp.float32/jnp.float64 to jax_kernel instances.
+    _LazySplineJaxKernels
+        Mapping from ``jnp.float32`` / ``jnp.float64`` to lazily-created
+        ``jax_kernel`` wrappers.
     """
+    return _LazySplineJaxKernels(wp_overload_dict, num_outputs, in_out_argnames)
+
+
+class _LazySplineJaxKernels:
+    """Lazy ``{jnp.float32 | jnp.float64 -> jax_kernel}`` mapping."""
+
     _JAX_TO_WP = {jnp.float32: wp.float32, jnp.float64: wp.float64}
-    return {
-        jax_dtype: jax_kernel(
-            wp_overload_dict[wp_dtype],
-            num_outputs=num_outputs,
-            in_out_argnames=in_out_argnames,
-            enable_backward=False,
-        )
-        for jax_dtype, wp_dtype in _JAX_TO_WP.items()
-    }
+
+    def __init__(
+        self,
+        wp_overload_dict: dict,
+        num_outputs: int,
+        in_out_argnames: list[str],
+    ) -> None:
+        self._wp_overload_dict = wp_overload_dict
+        self._num_outputs = num_outputs
+        self._in_out_argnames = in_out_argnames
+        self._cache: dict = {}
+
+    def __getitem__(self, jax_dtype):
+        if jax_dtype not in self._cache:
+            wp_dtype = self._JAX_TO_WP[jax_dtype]
+            self._cache[jax_dtype] = jax_kernel(
+                self._wp_overload_dict[wp_dtype],
+                num_outputs=self._num_outputs,
+                in_out_argnames=self._in_out_argnames,
+                enable_backward=False,
+            )
+        return self._cache[jax_dtype]
+
+    def __contains__(self, jax_dtype) -> bool:
+        return jax_dtype in self._JAX_TO_WP
+
+
+class _LazySplineOrderKernels:
+    """Lazy ``{spline_order -> jax_kernel}`` mapping for one JAX dtype."""
+
+    def __init__(
+        self,
+        wp_overload_by_order: dict,
+        num_outputs: int,
+        in_out_argnames: list[str],
+    ) -> None:
+        self._wp_overload_by_order = wp_overload_by_order
+        self._num_outputs = num_outputs
+        self._in_out_argnames = in_out_argnames
+        self._cache: dict = {}
+
+    def get(self, spline_order: int, default=None):
+        """Return the lazy wrapper for ``spline_order`` if available."""
+        if spline_order not in self._wp_overload_by_order:
+            return default
+        if spline_order not in self._cache:
+            self._cache[spline_order] = jax_kernel(
+                self._wp_overload_by_order[spline_order],
+                num_outputs=self._num_outputs,
+                in_out_argnames=self._in_out_argnames,
+                enable_backward=False,
+            )
+        return self._cache[spline_order]
+
+    def __getitem__(self, spline_order: int):
+        result = self.get(spline_order)
+        if result is None:
+            raise KeyError(spline_order)
+        return result
+
+    def __contains__(self, spline_order: int) -> bool:
+        return spline_order in self._wp_overload_by_order
+
+
+class _LazySplinePerOrderJaxKernels:
+    """Lazy ``{jax_dtype -> {spline_order -> jax_kernel}}`` mapping."""
+
+    _JAX_TO_WP = _LazySplineJaxKernels._JAX_TO_WP
+
+    def __init__(
+        self,
+        wp_overload_dict: dict,
+        num_outputs: int,
+        in_out_argnames: list[str],
+    ) -> None:
+        self._wp_overload_dict = wp_overload_dict
+        self._num_outputs = num_outputs
+        self._in_out_argnames = in_out_argnames
+        self._cache: dict = {}
+
+    def __getitem__(self, jax_dtype) -> _LazySplineOrderKernels:
+        if jax_dtype not in self._cache:
+            wp_dtype = self._JAX_TO_WP[jax_dtype]
+            self._cache[jax_dtype] = _LazySplineOrderKernels(
+                self._wp_overload_dict[wp_dtype],
+                self._num_outputs,
+                self._in_out_argnames,
+            )
+        return self._cache[jax_dtype]
+
+    def __contains__(self, jax_dtype) -> bool:
+        return jax_dtype in self._JAX_TO_WP
 
 
 def _normalize_dtype(dtype):
@@ -181,6 +296,12 @@ _spread_kernels = _make_spline_jax_kernels(wp_spread, 1, ["mesh"])
 _gather_kernels = _make_spline_jax_kernels(wp_gather, 1, ["output"])
 _gather_vec3_kernels = _make_spline_jax_kernels(wp_gather_vec3, 1, ["output"])
 _gather_gradient_kernels = _make_spline_jax_kernels(wp_gather_gradient, 1, ["forces"])
+_spread_gradient_weights_kernels = _make_spline_jax_kernels(
+    wp_spread_gradient_weights, 1, ["mesh"]
+)
+_gather_gradient_position_hessian_kernels = _make_spline_jax_kernels(
+    wp_gather_gradient_position_hessian, 1, ["grad_positions"]
+)
 _spread_channels_kernels = _make_spline_jax_kernels(wp_spread_channels, 1, ["mesh"])
 _gather_channels_kernels = _make_spline_jax_kernels(wp_gather_channels, 1, ["output"])
 
@@ -194,11 +315,50 @@ _batch_gather_vec3_kernels = _make_spline_jax_kernels(
 _batch_gather_gradient_kernels = _make_spline_jax_kernels(
     wp_batch_gather_gradient, 1, ["forces"]
 )
+_batch_spread_gradient_weights_kernels = _make_spline_jax_kernels(
+    wp_batch_spread_gradient_weights, 1, ["mesh"]
+)
+_batch_gather_gradient_position_hessian_kernels = _make_spline_jax_kernels(
+    wp_batch_gather_gradient_position_hessian, 1, ["grad_positions"]
+)
 _batch_spread_channels_kernels = _make_spline_jax_kernels(
     wp_batch_spread_channels, 1, ["mesh"]
 )
 _batch_gather_channels_kernels = _make_spline_jax_kernels(
     wp_batch_gather_channels, 1, ["output"]
+)
+
+# --- Fused gather + force kernels ---
+# Generic (any spline_order, single-system only) and per-order specialized
+# variants for orders 2-6 (both single and batched). The per-order kernels
+# fully unroll the order^3 stencil at codegen time — a single 1D launch
+# per atom rather than (num_atoms, order^3) — and run substantially faster.
+_gather_with_force_kernels = _make_spline_jax_kernels(
+    wp_gather_with_force, 2, ["output", "forces"]
+)
+
+_PER_ORDER_GATHER_WITH_FORCE_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_GATHER_WITH_FORCE_KERNELS,
+    2,
+    ["output", "forces"],
+)
+
+_PER_ORDER_BATCH_GATHER_WITH_FORCE_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_BATCH_GATHER_WITH_FORCE_KERNELS,
+    2,
+    ["output", "forces"],
+)
+
+_PER_ORDER_SPREAD_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_SPREAD_KERNELS,
+    1,
+    ["mesh"],
+)
+
+_PER_ORDER_BATCH_SPREAD_JAX_KERNELS = _LazySplinePerOrderJaxKernels(
+    _PER_ORDER_BATCH_SPREAD_KERNELS,
+    1,
+    ["mesh"],
 )
 
 __all__ = [
@@ -227,7 +387,7 @@ def bspline_weight(u: jax.Array, order: int) -> jax.Array:
     u : jax.Array
         Input values. dtype=float32 or float64.
     order : int
-        Spline order (1-4).
+        Spline order (1-6).
 
     Returns
     -------
@@ -266,6 +426,7 @@ def spline_spread(
     mesh_dims: tuple[int, int, int],
     spline_order: int = 4,
     batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
 ) -> jax.Array:
     """Spread values from atoms to mesh grid using B-spline interpolation.
 
@@ -289,7 +450,7 @@ def spline_spread(
     mesh_dims : tuple[int, int, int]
         Mesh dimensions (nx, ny, nz).
     spline_order : int, optional
-        B-spline order (1-4, where 4=cubic). Default: 4
+        B-spline order (1-6, where 4=cubic). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -333,25 +494,40 @@ def spline_spread(
     # Cast inputs to working dtype
     values_work = values.astype(working_dtype)
     cell_work = cell.astype(working_dtype)
-
-    # Compute cell_inv_t
     if cell_work.ndim == 2:
         cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_work)
-    cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
+    # Use caller-supplied cell_inv_t if available (skip the linalg.inv +
+    # transpose — saves a per-step CPU op chain in MD steady state).
+    if cell_inv_t is None:
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t = cell_inv_t.astype(working_dtype)
+        if cell_inv_t.ndim == 2:
+            cell_inv_t = cell_inv_t[jnp.newaxis, :, :]
 
     if batch_idx is None:
         # Single-system kernel
         mesh = jnp.zeros((mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype)
-        (mesh_out,) = _spread_kernels[working_dtype](
-            positions,
-            values_work,
-            cell_inv_t,
-            int(spline_order),
-            mesh,
-            launch_dims=(num_atoms, num_points),
-        )
+        per_order = _PER_ORDER_SPREAD_JAX_KERNELS[working_dtype].get(spline_order)
+        if per_order is not None:
+            (mesh_out,) = per_order(
+                positions,
+                values_work,
+                cell_inv_t,
+                mesh,
+                launch_dims=num_atoms,
+            )
+        else:
+            (mesh_out,) = _spread_kernels[working_dtype](
+                positions,
+                values_work,
+                cell_inv_t,
+                int(spline_order),
+                mesh,
+                launch_dims=(num_atoms, num_points),
+            )
         return mesh_out
     else:
         # Batched kernel
@@ -359,15 +535,26 @@ def spline_spread(
         batch_idx_i32 = batch_idx.astype(jnp.int32)
 
         mesh = jnp.zeros((num_systems, mesh_nx, mesh_ny, mesh_nz), dtype=working_dtype)
-        (mesh_out,) = _batch_spread_kernels[working_dtype](
-            positions,
-            values_work,
-            batch_idx_i32,
-            cell_inv_t,
-            int(spline_order),
-            mesh,
-            launch_dims=(num_atoms, num_points),
-        )
+        per_order = _PER_ORDER_BATCH_SPREAD_JAX_KERNELS[working_dtype].get(spline_order)
+        if per_order is not None:
+            (mesh_out,) = per_order(
+                positions,
+                values_work,
+                batch_idx_i32,
+                cell_inv_t,
+                mesh,
+                launch_dims=num_atoms,
+            )
+        else:
+            (mesh_out,) = _batch_spread_kernels[working_dtype](
+                positions,
+                values_work,
+                batch_idx_i32,
+                cell_inv_t,
+                int(spline_order),
+                mesh,
+                launch_dims=(num_atoms, num_points),
+            )
         return mesh_out
 
 
@@ -377,6 +564,7 @@ def spline_gather(
     cell: jax.Array,
     spline_order: int = 4,
     batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
 ) -> jax.Array:
     """Gather values from mesh to atoms using B-spline interpolation.
 
@@ -398,7 +586,7 @@ def spline_gather(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -424,13 +612,18 @@ def spline_gather(
     # Cast inputs to working dtype
     mesh_work = mesh.astype(working_dtype)
     cell_work = cell.astype(working_dtype)
-
-    # Compute cell_inv_t
     if cell_work.ndim == 2:
         cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
 
-    cell_inv = jnp.linalg.inv(cell_work)
-    cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
+    # Use caller-supplied cell_inv_t if available (skip the linalg.inv +
+    # transpose — saves a per-step CPU op chain in MD steady state).
+    if cell_inv_t is None:
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t = cell_inv_t.astype(working_dtype)
+        if cell_inv_t.ndim == 2:
+            cell_inv_t = cell_inv_t[jnp.newaxis, :, :]
 
     # Allocate output
     output = jnp.zeros(num_atoms, dtype=working_dtype)
@@ -490,7 +683,7 @@ def spline_gather_vec3(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -565,6 +758,7 @@ def spline_gather_gradient(
     cell: jax.Array,
     spline_order: int = 4,
     batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
 ) -> jax.Array:
     """Compute forces by gathering mesh gradients using B-spline derivatives.
 
@@ -591,7 +785,7 @@ def spline_gather_gradient(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -621,12 +815,15 @@ def spline_gather_gradient(
     mesh_work = mesh.astype(working_dtype)
     cell_work = cell.astype(working_dtype)
 
-    # Compute cell_inv_t
-    if cell_work.ndim == 2:
-        cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
-
-    cell_inv = jnp.linalg.inv(cell_work)
-    cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
+    if cell_inv_t is None:
+        if cell_work.ndim == 2:
+            cell_work = cell_work[jnp.newaxis, :, :]  # Shape (1, 3, 3)
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t_work = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t_work = cell_inv_t.astype(working_dtype)
+        if cell_inv_t_work.ndim == 2:
+            cell_inv_t_work = cell_inv_t_work[jnp.newaxis, :, :]
 
     # Allocate forces output (vec3)
     forces = jnp.zeros((num_atoms, 3), dtype=working_dtype)
@@ -636,7 +833,7 @@ def spline_gather_gradient(
         (forces_out,) = _gather_gradient_kernels[working_dtype](
             positions,
             charges_work,
-            cell_inv_t,
+            cell_inv_t_work,
             int(spline_order),
             mesh_work,
             forces,
@@ -651,13 +848,260 @@ def spline_gather_gradient(
             positions,
             charges_work,
             batch_idx_i32,
-            cell_inv_t,
+            cell_inv_t_work,
             int(spline_order),
             mesh_work,
             forces,
             launch_dims=(num_atoms, num_points),
         )
         return forces_out
+
+
+def _spline_spread_gradient_weights(
+    positions: jax.Array,
+    per_atom_vec: jax.Array,
+    cell: jax.Array,
+    mesh_dims: tuple[int, int, int],
+    spline_order: int = 4,
+    batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
+) -> jax.Array:
+    """Spread per-atom vector weights with B-spline gradient weights."""
+    num_atoms = positions.shape[0]
+    num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
+
+    vec_work = per_atom_vec.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
+    if cell_inv_t is None:
+        if cell_work.ndim == 2:
+            cell_work = cell_work[jnp.newaxis, :, :]
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t_work = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t_work = cell_inv_t.astype(working_dtype)
+        if cell_inv_t_work.ndim == 2:
+            cell_inv_t_work = cell_inv_t_work[jnp.newaxis, :, :]
+
+    if batch_idx is None:
+        mesh = jnp.zeros(mesh_dims, dtype=working_dtype)
+        (mesh_out,) = _spread_gradient_weights_kernels[working_dtype](
+            positions,
+            vec_work,
+            cell_inv_t_work,
+            int(spline_order),
+            mesh,
+            launch_dims=(num_atoms, num_points),
+        )
+        return mesh_out
+
+    batch_idx_i32 = batch_idx.astype(jnp.int32)
+    num_systems = cell_inv_t_work.shape[0]
+    mesh = jnp.zeros((num_systems, *mesh_dims), dtype=working_dtype)
+    (mesh_out,) = _batch_spread_gradient_weights_kernels[working_dtype](
+        positions,
+        vec_work,
+        batch_idx_i32,
+        cell_inv_t_work,
+        int(spline_order),
+        mesh,
+        launch_dims=(num_atoms, num_points),
+    )
+    return mesh_out
+
+
+def _spline_gather_gradient_position_hessian(
+    positions: jax.Array,
+    charges: jax.Array,
+    v_per_atom: jax.Array,
+    cell: jax.Array,
+    mesh: jax.Array,
+    spline_order: int = 4,
+    batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
+) -> jax.Array:
+    """Apply the position-Hessian of ``spline_gather_gradient``."""
+    num_atoms = positions.shape[0]
+    num_points = spline_order**3
+    working_dtype = _normalize_dtype(positions.dtype)
+
+    charges_work = charges.astype(working_dtype)
+    v_work = v_per_atom.astype(working_dtype)
+    mesh_work = mesh.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
+    if cell_inv_t is None:
+        if cell_work.ndim == 2:
+            cell_work = cell_work[jnp.newaxis, :, :]
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t_work = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t_work = cell_inv_t.astype(working_dtype)
+        if cell_inv_t_work.ndim == 2:
+            cell_inv_t_work = cell_inv_t_work[jnp.newaxis, :, :]
+
+    grad_positions = jnp.zeros((num_atoms, 3), dtype=working_dtype)
+    if batch_idx is None:
+        (grad_out,) = _gather_gradient_position_hessian_kernels[working_dtype](
+            positions,
+            charges_work,
+            v_work,
+            cell_inv_t_work,
+            int(spline_order),
+            mesh_work,
+            grad_positions,
+            launch_dims=(num_atoms, num_points),
+        )
+        return grad_out
+
+    batch_idx_i32 = batch_idx.astype(jnp.int32)
+    (grad_out,) = _batch_gather_gradient_position_hessian_kernels[working_dtype](
+        positions,
+        charges_work,
+        v_work,
+        batch_idx_i32,
+        cell_inv_t_work,
+        int(spline_order),
+        mesh_work,
+        grad_positions,
+        launch_dims=(num_atoms, num_points),
+    )
+    return grad_out
+
+
+def _spline_gather_with_force(
+    positions: jax.Array,
+    charges: jax.Array,
+    mesh: jax.Array,
+    cell: jax.Array,
+    spline_order: int = 4,
+    batch_idx: jax.Array | None = None,
+    cell_inv_t: jax.Array | None = None,
+) -> tuple[jax.Array, jax.Array]:
+    """Fused gather of scalar potential AND derivative-based force from one mesh.
+
+    Returns ``(output, forces)`` where:
+      - ``output[atom] = Σ_g mesh[g] * w(atom, g)``           — raw potential per atom
+        (the caller multiplies by charge in the PME corrections step).
+      - ``forces[atom] = -q_atom * Σ_g mesh[g] * Cell^{-T} ∇w`` — Cartesian force.
+
+    Replaces ``spline_gather(...)`` followed by ``spline_gather_gradient(...)``
+    on the same mesh: each thread reads its stencil cell ONCE and accumulates
+    both outputs. Halves mesh DRAM traffic and shares the per-thread weight
+    derivative work across both channels.
+
+    For ``spline_order`` in ``{2, 3, 4, 5, 6}`` the per-order specialized
+    kernel is used (single 1D launch per atom, fully-unrolled stencil). For
+    other orders, single-system inputs use the generic kernel and batched
+    inputs fall back to the ``spline_gather`` + ``spline_gather_gradient``
+    sequence.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic positions in Cartesian coordinates.
+    charges : jax.Array, shape (N,)
+        Atomic charges.
+    mesh : jax.Array
+        Single-system: shape (nx, ny, nz). Batch: shape (B, nx, ny, nz).
+    cell : jax.Array, shape (3, 3) or (B, 3, 3)
+        Unit cell matrix.
+    spline_order : int, default=4
+        B-spline interpolation order.
+    batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
+        System index per atom. If None, single-system kernel is used.
+    cell_inv_t : jax.Array | None, shape (B, 3, 3), optional
+        Precomputed transpose of inverse cell; if None, computed from ``cell``.
+
+    Returns
+    -------
+    output : jax.Array, shape (N,), dtype matches positions
+        Raw potential per atom.
+    forces : jax.Array, shape (N, 3), dtype matches positions
+        Cartesian force per atom (already including the -q factor).
+    """
+    num_atoms = positions.shape[0]
+    working_dtype = _normalize_dtype(positions.dtype)
+
+    charges_work = charges.astype(working_dtype)
+    mesh_work = mesh.astype(working_dtype)
+    cell_work = cell.astype(working_dtype)
+    if cell_work.ndim == 2:
+        cell_work = cell_work[jnp.newaxis, :, :]
+
+    if cell_inv_t is None:
+        cell_inv = jnp.linalg.inv(cell_work)
+        cell_inv_t = jnp.transpose(cell_inv, (0, 2, 1))
+    else:
+        cell_inv_t = cell_inv_t.astype(working_dtype)
+        if cell_inv_t.ndim == 2:
+            cell_inv_t = cell_inv_t[jnp.newaxis, :, :]
+
+    output = jnp.zeros(num_atoms, dtype=working_dtype)
+    forces = jnp.zeros((num_atoms, 3), dtype=working_dtype)
+
+    if batch_idx is None:
+        per_order = _PER_ORDER_GATHER_WITH_FORCE_JAX_KERNELS[working_dtype].get(
+            spline_order
+        )
+        if per_order is not None:
+            output_out, forces_out = per_order(
+                positions,
+                charges_work,
+                cell_inv_t,
+                mesh_work,
+                output,
+                forces,
+                launch_dims=(num_atoms,),
+            )
+        else:
+            output_out, forces_out = _gather_with_force_kernels[working_dtype](
+                positions,
+                charges_work,
+                cell_inv_t,
+                int(spline_order),
+                mesh_work,
+                output,
+                forces,
+                launch_dims=(num_atoms, spline_order**3),
+            )
+        return output_out, forces_out
+
+    batch_idx_i32 = batch_idx.astype(jnp.int32)
+    per_order = _PER_ORDER_BATCH_GATHER_WITH_FORCE_JAX_KERNELS[working_dtype].get(
+        spline_order
+    )
+    if per_order is not None:
+        output_out, forces_out = per_order(
+            positions,
+            charges_work,
+            batch_idx_i32,
+            cell_inv_t,
+            mesh_work,
+            output,
+            forces,
+            launch_dims=(num_atoms,),
+        )
+        return output_out, forces_out
+
+    # Fallback for unsupported orders in the batched path.
+    output_out = spline_gather(
+        positions,
+        mesh_work,
+        cell_work,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t,
+    )
+    forces_out = spline_gather_gradient(
+        positions,
+        charges_work,
+        mesh_work,
+        cell_work,
+        spline_order=spline_order,
+        batch_idx=batch_idx,
+        cell_inv_t=cell_inv_t,
+    )
+    return output_out, forces_out
 
 
 def spline_spread_channels(
@@ -685,7 +1129,7 @@ def spline_spread_channels(
     mesh_dims : tuple[int, int, int]
         Mesh dimensions (nx, ny, nz).
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None
@@ -786,7 +1230,7 @@ def spline_gather_channels(
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
     spline_order : int, optional
-        B-spline order (1-4). Default: 4
+        B-spline order (1-6). Default: 4
     batch_idx : jax.Array | None, shape (N,), dtype=int32, optional
         System index for each atom. If None, uses single-system kernel.
         Default: None

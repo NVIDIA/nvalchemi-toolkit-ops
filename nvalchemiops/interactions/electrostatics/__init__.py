@@ -54,7 +54,8 @@ Available Methods
 5. **Slab Correction** (`slab_kernels`)
    - Yeh-Berkowitz / Ballenegger correction for 2D-periodic slabs
    - Supports orthogonal and triclinic cells via projected slab normals
-   - Warp launchers: ``slab_reduce_moments()``, ``slab_correction()``
+   - Warp launchers: ``slab_reduce_moments()``, ``slab_precompute_geometry()``,
+     ``slab_correction()``
    - PyTorch API: ``compute_slab_correction()`` and
      ``ewald_summation(..., slab_correction=True)``
 
@@ -105,6 +106,22 @@ from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     ewald_subtract_self_energy,
 )
 
+# Multipole direct k-space - Warp launchers (framework-agnostic). Re-exported
+# here because the batched multipole torch autograd wrappers import them from
+# the package root.
+from nvalchemiops.interactions.electrostatics.multipole_direct_kspace_kernels import (
+    batch_apply_per_k_factor,
+    batch_assemble_rho_k_dipole,
+    batch_build_structure_factor_table,
+    batch_compute_energy_product_per_k,
+    batch_eval_gto_fourier_dipole,
+    batch_eval_receiver_gto_fourier_dipole,
+    batch_position_gradient_from_feature_grad,
+    batch_position_gradient_from_rhok,
+    batch_project_features_dipole,
+    batch_v_gradient_from_feature_grad,
+)
+
 # PME - Warp launchers (framework-agnostic)
 from nvalchemiops.interactions.electrostatics.pme_kernels import (
     batch_pme_energy_corrections,
@@ -118,6 +135,7 @@ from nvalchemiops.interactions.electrostatics.pme_kernels import (
 # Slab correction - Warp launchers (framework-agnostic)
 from nvalchemiops.interactions.electrostatics.slab_kernels import (
     slab_correction,
+    slab_precompute_geometry,
     slab_reduce_moments,
 )
 
@@ -166,6 +184,7 @@ __all__ = [
     "batch_ewald_reciprocal_space_energy_forces_charge_grad",
     # Slab correction - Warp launchers
     "slab_reduce_moments",
+    "slab_precompute_geometry",
     "slab_correction",
     # PME - Warp launchers
     "pme_green_structure_factor",

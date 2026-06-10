@@ -1098,7 +1098,11 @@ def standard_backward(
             if grad_output is not None and output_name in arrays:
                 output_array = arrays[output_name]
                 actual_dtype = output_array.dtype
-                wp_grad = wp.from_torch(grad_output.contiguous(), dtype=actual_dtype)
+                wp_grad = wp.from_torch(
+                    grad_output.contiguous(),
+                    dtype=actual_dtype,
+                    requires_grad=False,
+                )
                 wp.copy(output_array.grad, wp_grad)
 
         tape.backward()

@@ -26,17 +26,22 @@ Tests cover:
 - Mesh size convergence
 - Numerical correctness against torchpme reference
 - Batch vs single-system consistency
-- Explicit charge gradient computation (replaces autograd tests)
+- Energy-derived gradients and explicit charge gradient computation
 - Non-cubic cells, spline orders, precomputed k-vectors
 - Full PME (real + reciprocal) with neighbor lists
 - Edge cases (zero charges, single atom, empty system)
 
-Note: JAX bindings are GPU-only (Warp JAX FFI constraint) and do not support
-autograd (enable_backward=False). Tests that call kernels require GPU.
+Note: JAX bindings are GPU-only (Warp JAX FFI constraint). PME energy outputs
+support custom autodiff for energy-derived positions, charges, and strain-first
+virials. Reverse-mode higher-order reciprocal position and charge losses use
+the native PME HVP path. Direct component forces remain forward/direct escape
+hatches. Stress/cell/strain, alpha, and precomputed-metadata higher-order paths
+are intentionally unsupported until implemented and tested.
 """
 
 from __future__ import annotations
 
+import warnings
 from functools import partial
 
 import jax
@@ -950,8 +955,8 @@ class TestPMEBatchConsistency:
 class TestExplicitChargeGradients:
     """Test explicit charge gradient computation (compute_charge_gradients=True).
 
-    Since JAX bindings do not support autograd (enable_backward=False),
-    we test the explicit charge gradient flag instead.
+    PME reciprocal component outputs remain direct/forward escape hatches, so
+    component charge-gradient coverage still exercises the explicit flag.
     """
 
     def test_reciprocal_charge_gradients_shape(self, device):
@@ -1155,6 +1160,425 @@ class TestParticleMeshEwald:
 
         assert energies.shape == (4,)
         assert jnp.all(jnp.isfinite(energies))
+
+    def test_energy_grad_positions_matches_direct_forces(self, device):
+        """Energy-derived position gradients match direct full-PME forces."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+
+        cutoff = 5.0
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
+        )
+
+        def energy_sum(pos):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        grad_positions = jax.grad(energy_sum)(positions)
+        with pytest.warns(DeprecationWarning):
+            _energies, direct_forces = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+            )
+
+        assert jnp.allclose(-grad_positions, direct_forces, rtol=1e-5, atol=1e-7)
+
+    def test_reciprocal_position_second_derivative_matches_fd(self, device):
+        """JAX PME reciprocal position HVP matches finite-difference reference."""
+        positions, charges, cell = create_simple_system(num_atoms=6)
+        mesh_dimensions = (16, 16, 16)
+
+        def energy_sum(pos):
+            return pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3], dtype=jnp.float64),
+                mesh_dimensions=mesh_dimensions,
+            ).sum()
+
+        grad_fn = jax.grad(energy_sum)
+        v = jax.random.normal(
+            jax.random.PRNGKey(7), positions.shape, dtype=positions.dtype
+        )
+        v = v / jnp.linalg.norm(v)
+
+        hvp_fn = jax.grad(lambda x: jnp.vdot(grad_fn(x), v))
+        hvp = hvp_fn(positions)
+        eps = jnp.array(1.0e-5, dtype=positions.dtype)
+        fd = (grad_fn(positions + eps * v) - grad_fn(positions - eps * v)) / (2.0 * eps)
+
+        assert jnp.all(jnp.isfinite(hvp))
+        assert jnp.allclose(hvp, fd, rtol=5e-4, atol=5e-6)
+        assert jnp.allclose(jax.jit(hvp_fn)(positions), hvp, rtol=1e-5, atol=1e-7)
+
+    def test_reciprocal_mesh_spacing_second_derivative_is_finite(self, device):
+        """JAX PME reciprocal HVP with concrete mesh_spacing matches FD."""
+        positions, charges, cell = create_simple_system(num_atoms=6)
+
+        def energy_sum(pos):
+            return pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3], dtype=jnp.float64),
+                mesh_spacing=0.5,
+            ).sum()
+
+        grad_fn = jax.grad(energy_sum)
+        v = jax.random.normal(
+            jax.random.PRNGKey(11), positions.shape, dtype=positions.dtype
+        )
+        v = v / jnp.linalg.norm(v)
+
+        hvp_fn = jax.grad(lambda x: jnp.vdot(grad_fn(x), v))
+        hvp = hvp_fn(positions)
+        eps = jnp.array(1.0e-5, dtype=positions.dtype)
+        fd = (grad_fn(positions + eps * v) - grad_fn(positions - eps * v)) / (2.0 * eps)
+
+        assert hvp.shape == positions.shape
+        assert jnp.all(jnp.isfinite(hvp))
+        assert jnp.allclose(hvp, fd, rtol=7e-4, atol=8e-6)
+
+    def test_reciprocal_mesh_spacing_first_derivative_with_concrete_cell(self, device):
+        """First-order PME reciprocal grad allows mesh_spacing with concrete cell."""
+        positions, charges, cell = create_simple_system(num_atoms=6)
+
+        def energy_sum(pos):
+            return pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3], dtype=jnp.float64),
+                mesh_spacing=0.5,
+            ).sum()
+
+        grad_positions = jax.grad(energy_sum)(positions)
+        assert grad_positions.shape == positions.shape
+        assert jnp.all(jnp.isfinite(grad_positions))
+
+    def test_reciprocal_charge_second_derivative_matches_fd(self, device):
+        """JAX PME reciprocal charge HVP matches finite-difference reference."""
+        positions, charges, cell = create_simple_system(num_atoms=6)
+        mesh_dimensions = (16, 16, 16)
+
+        def energy_sum(chg):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=jnp.array([0.3], dtype=jnp.float64),
+                mesh_dimensions=mesh_dimensions,
+            ).sum()
+
+        grad_fn = jax.grad(energy_sum)
+        v = jax.random.normal(
+            jax.random.PRNGKey(13), charges.shape, dtype=charges.dtype
+        )
+        v = v / jnp.linalg.norm(v)
+
+        hvp = jax.grad(lambda q: jnp.vdot(grad_fn(q), v))(charges)
+        eps = jnp.array(1.0e-5, dtype=charges.dtype)
+        fd = (grad_fn(charges + eps * v) - grad_fn(charges - eps * v)) / (2.0 * eps)
+
+        assert jnp.all(jnp.isfinite(hvp))
+        assert jnp.allclose(hvp, fd, rtol=5e-4, atol=5e-6)
+
+    def test_reciprocal_alpha_tangent_is_ignored(self, device):
+        """JAX PME treats alpha as a setup constant in custom JVP paths."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        def energy_sum(alpha_arg):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha_arg,
+                mesh_dimensions=(16, 16, 16),
+            ).sum()
+
+        _value, tangent = jax.jvp(energy_sum, (alpha,), (jnp.ones_like(alpha),))
+        assert jnp.allclose(tangent, 0.0)
+
+    def test_reciprocal_precomputed_metadata_tangent_is_ignored(self, device):
+        """JAX PME treats precomputed setup metadata as constants."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        mesh_dimensions = (16, 16, 16)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+        k_vectors, k_squared = generate_k_vectors_pme(cell, mesh_dimensions)
+
+        def energy_sum(k_squared_arg):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                k_vectors=k_vectors,
+                k_squared=k_squared_arg,
+            ).sum()
+
+        _value, tangent = jax.jvp(energy_sum, (k_squared,), (jnp.ones_like(k_squared),))
+        assert jnp.allclose(tangent, 0.0)
+
+    def test_reciprocal_cell_second_derivative_raises(self, device):
+        """JAX PME rejects reciprocal cell HVPs instead of returning zeros."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        def energy_sum(cell_arg):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell_arg,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+            ).sum()
+
+        grad_cell = jax.grad(energy_sum)(cell)
+        assert grad_cell.shape == cell.shape
+        assert jnp.all(jnp.isfinite(grad_cell))
+
+        with pytest.raises(NotImplementedError, match="cell/strain HVPs"):
+            jax.jvp(jax.grad(energy_sum), (cell,), (jnp.ones_like(cell),))
+
+    def test_reciprocal_strain_second_derivative_raises(self, device):
+        """JAX PME documents strain HVPs as unsupported."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+        strain = jnp.zeros_like(cell)
+
+        def energy_sum(strain_arg):
+            deform = jnp.eye(3, dtype=cell.dtype) + strain_arg
+            return pme_reciprocal_space(
+                positions=positions @ deform[0],
+                charges=charges,
+                cell=cell @ deform,
+                alpha=alpha,
+                mesh_dimensions=(16, 16, 16),
+            ).sum()
+
+        with pytest.raises(
+            (NotImplementedError, TypeError),
+            match="cell/strain HVPs|forward-mode autodiff",
+        ):
+            jax.jvp(jax.grad(energy_sum), (strain,), (jnp.ones_like(strain),))
+
+    def test_batch_reciprocal_second_derivatives_match_fd(self, device):
+        """Batched JAX PME reciprocal HVPs match finite-difference references."""
+        pos1, chg1, cell1 = create_simple_system(num_atoms=4, cell_size=10.0)
+        pos2, chg2, cell2 = create_simple_system(num_atoms=5, cell_size=12.0)
+        positions = jnp.concatenate([pos1, pos2], axis=0)
+        charges = jnp.concatenate([chg1, chg2], axis=0)
+        cell = jnp.concatenate([cell1, cell2], axis=0)
+        batch_idx = jnp.concatenate(
+            [
+                jnp.zeros(pos1.shape[0], dtype=jnp.int32),
+                jnp.ones(pos2.shape[0], dtype=jnp.int32),
+            ]
+        )
+        alpha = jnp.array([0.3, 0.35], dtype=positions.dtype)
+        mesh_dimensions = (16, 16, 16)
+
+        def energy_pos(pos):
+            return pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                batch_idx=batch_idx,
+            ).sum()
+
+        grad_pos = jax.grad(energy_pos)
+        v_pos = jax.random.normal(
+            jax.random.PRNGKey(17), positions.shape, dtype=positions.dtype
+        )
+        v_pos = v_pos / jnp.linalg.norm(v_pos)
+        hvp_pos = jax.grad(lambda pos: jnp.vdot(grad_pos(pos), v_pos))(positions)
+        eps = jnp.array(1.0e-5, dtype=positions.dtype)
+        fd_pos = (
+            grad_pos(positions + eps * v_pos) - grad_pos(positions - eps * v_pos)
+        ) / (2.0 * eps)
+
+        def energy_charge(chg):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                batch_idx=batch_idx,
+            ).sum()
+
+        grad_charge = jax.grad(energy_charge)
+        v_charge = jax.random.normal(
+            jax.random.PRNGKey(19), charges.shape, dtype=charges.dtype
+        )
+        v_charge = v_charge / jnp.linalg.norm(v_charge)
+        hvp_charge = jax.grad(lambda chg: jnp.vdot(grad_charge(chg), v_charge))(charges)
+        fd_charge = (
+            grad_charge(charges + eps * v_charge)
+            - grad_charge(charges - eps * v_charge)
+        ) / (2.0 * eps)
+
+        assert jnp.all(jnp.isfinite(hvp_pos))
+        assert jnp.all(jnp.isfinite(hvp_charge))
+        assert jnp.allclose(hvp_pos, fd_pos, rtol=1e-3, atol=2e-5)
+        assert jnp.allclose(hvp_charge, fd_charge, rtol=1e-3, atol=2e-5)
+
+    def test_full_pme_second_derivative_matches_fd(self, device):
+        """Full JAX PME position HVP matches finite differences."""
+        positions, charges, cell = create_simple_system(num_atoms=6, cell_size=12.0)
+        cutoff = 5.0
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
+        )
+
+        def energy_sum(pos):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        grad_fn = jax.grad(energy_sum)
+        v = jax.random.normal(
+            jax.random.PRNGKey(3), positions.shape, dtype=positions.dtype
+        )
+        v = v / jnp.linalg.norm(v)
+
+        hvp = jax.grad(lambda x: jnp.vdot(grad_fn(x), v))(positions)
+        eps = jnp.array(1.0e-5, dtype=positions.dtype)
+        fd = (grad_fn(positions + eps * v) - grad_fn(positions - eps * v)) / (2.0 * eps)
+
+        assert hvp.shape == positions.shape
+        assert jnp.all(jnp.isfinite(hvp))
+        assert jnp.allclose(hvp, fd, rtol=1e-3, atol=2e-5)
+
+    @pytest.mark.parametrize("slab_correction", [False, True])
+    def test_full_pme_cell_second_derivative_raises(
+        self, device, slab_correction: bool
+    ):
+        """High-level JAX PME rejects unsupported cell HVPs, including slab."""
+        positions, charges, cell = create_simple_system(num_atoms=4, cell_size=12.0)
+        cutoff = 5.0
+        pbc = jnp.array([[True, True, False if slab_correction else True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
+        )
+
+        def energy_sum(cell_arg):
+            return particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell_arg,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                pbc=pbc,
+                slab_correction=slab_correction,
+            ).sum()
+
+        grad_cell = jax.grad(energy_sum)(cell)
+        assert grad_cell.shape == cell.shape
+        assert jnp.all(jnp.isfinite(grad_cell))
+
+        with pytest.raises(
+            (NotImplementedError, TypeError),
+            match="cell/strain HVPs|forward-mode autodiff",
+        ):
+            jax.jvp(jax.grad(energy_sum), (cell,), (jnp.ones_like(cell),))
+
+    @pytest.mark.parametrize("slab_correction", [False, True])
+    def test_full_pme_strain_second_derivative_raises(
+        self, device, slab_correction: bool
+    ):
+        """High-level JAX PME rejects unsupported strain HVPs, including slab."""
+        positions, charges, cell = create_simple_system(num_atoms=4, cell_size=12.0)
+        cutoff = 5.0
+        pbc = jnp.array([[True, True, False if slab_correction else True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
+        )
+        strain = jnp.zeros((3, 3), dtype=positions.dtype)
+
+        def energy_sum(strain_arg):
+            deformation = jnp.eye(3, dtype=positions.dtype) + strain_arg
+            return particle_mesh_ewald(
+                positions=positions @ deformation,
+                charges=charges,
+                cell=cell @ deformation,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                pbc=pbc,
+                slab_correction=slab_correction,
+            ).sum()
+
+        with pytest.raises(
+            (NotImplementedError, TypeError),
+            match="cell/strain HVPs|forward-mode autodiff",
+        ):
+            jax.jvp(jax.grad(energy_sum), (strain,), (jnp.ones_like(strain),))
+
+    def test_energy_grad_charges_matches_direct_charge_gradients(self, device):
+        """Energy-derived charge gradients match direct full-PME charge gradients."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+
+        cutoff = 5.0
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
+        )
+
+        def energy_sum(chg):
+            return particle_mesh_ewald(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        grad_charges = jax.grad(energy_sum)(charges)
+        with pytest.warns(DeprecationWarning):
+            _energies, direct_charge_grads = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_charge_gradients=True,
+            )
+
+        assert jnp.allclose(grad_charges, direct_charge_grads, rtol=1e-5, atol=1e-7)
 
     def test_full_pme_auto_estimate_alpha(self, device):
         """Test full PME with automatic alpha estimation."""
@@ -1907,9 +2331,8 @@ class TestBatchPMEShapePaths:
 class TestPMEChargeGradients:
     """Test explicit charge gradient computation against finite differences.
 
-    Since JAX bindings do not support autograd (enable_backward=False),
-    we compare explicit charge gradients against numerical finite
-    differences to verify correctness.
+    PME reciprocal component outputs remain direct/forward escape hatches, so
+    compare explicit charge gradients against numerical finite differences.
     """
 
     def test_reciprocal_charge_grad_matches_finite_difference(self, device):
@@ -2052,6 +2475,108 @@ class TestPMEChargeGradients:
         )
 
 
+class TestPMEHybridForces:
+    """Test legacy hybrid charge-gradient injection contracts."""
+
+    def test_reciprocal_hybrid_keeps_charge_gradients_internal(self, device):
+        """Hybrid reciprocal mode injects charge gradients without returning them."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        alpha = jnp.array([0.3], dtype=positions.dtype)
+        mesh_dimensions = (16, 16, 16)
+
+        with pytest.warns(DeprecationWarning):
+            hybrid_energies = pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                hybrid_forces=True,
+            )
+
+        assert not isinstance(hybrid_energies, tuple)
+        assert hybrid_energies.shape == (4,)
+
+        def hybrid_energy_sum(chg):
+            return pme_reciprocal_space(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                hybrid_forces=True,
+            ).sum()
+
+        with pytest.warns(DeprecationWarning):
+            hybrid_grad = jax.grad(hybrid_energy_sum)(charges)
+        with pytest.warns(DeprecationWarning):
+            _energies, explicit_charge_grad = pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=alpha,
+                mesh_dimensions=mesh_dimensions,
+                compute_charge_gradients=True,
+            )
+
+        assert jnp.all(jnp.isfinite(hybrid_grad))
+        assert jnp.allclose(hybrid_grad, explicit_charge_grad, rtol=1e-5, atol=1e-6)
+
+    def test_full_pme_hybrid_keeps_charge_gradients_internal(self, device):
+        """Full PME hybrid mode injects charge gradients without tuple drift."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        cutoff = 5.0
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
+        )
+        mesh_dimensions = (16, 16, 16)
+
+        with pytest.warns(DeprecationWarning):
+            hybrid_energies = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=mesh_dimensions,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                hybrid_forces=True,
+            )
+
+        assert not isinstance(hybrid_energies, tuple)
+        assert hybrid_energies.shape == (4,)
+
+        def hybrid_energy_sum(chg):
+            return particle_mesh_ewald(
+                positions=positions,
+                charges=chg,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=mesh_dimensions,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                hybrid_forces=True,
+            ).sum()
+
+        with pytest.warns(DeprecationWarning):
+            hybrid_grad = jax.grad(hybrid_energy_sum)(charges)
+        with pytest.warns(DeprecationWarning):
+            _energies, explicit_charge_grad = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=mesh_dimensions,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_charge_gradients=True,
+            )
+
+        assert jnp.all(jnp.isfinite(hybrid_grad))
+        assert jnp.allclose(hybrid_grad, explicit_charge_grad, rtol=1e-5, atol=1e-6)
+
+
 ###########################################################################################
 ########################### Full PME Neighbor List Tests ###################################
 ###########################################################################################
@@ -2133,6 +2658,40 @@ class TestFullPMENeighborList:
 class TestPMEJIT:
     """Smoke tests for PME calculations with jax.jit."""
 
+    def test_jit_full_energy_grad_positions(self):
+        """Test full PME energy gradients work under jax.jit."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        def energy_sum(pos):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        grad_positions = jax.jit(jax.grad(energy_sum))(positions)
+        with pytest.warns(DeprecationWarning):
+            _energies, direct_forces = particle_mesh_ewald(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=0.3,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+                compute_forces=True,
+            )
+
+        assert jnp.allclose(-grad_positions, direct_forces, rtol=1e-5, atol=1e-7)
+
     def test_jit_reciprocal_space(self):
         """Test pme_reciprocal_space works under jax.jit."""
         positions = jnp.array([[4.0, 5.0, 5.0], [6.0, 5.0, 5.0]], dtype=jnp.float64)
@@ -2183,6 +2742,26 @@ class TestPMEJIT:
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
 
+    def test_jit_reciprocal_space_requires_explicit_mesh_dimensions(self):
+        """JIT reciprocal PME rejects eager-only mesh inference paths clearly."""
+        positions = jnp.array([[4.0, 5.0, 5.0], [6.0, 5.0, 5.0]], dtype=jnp.float64)
+        charges = jnp.array([1.0, -1.0], dtype=jnp.float64)
+        cell = cubic_cell_jax(10.0)
+        alpha = jnp.array([0.3], dtype=jnp.float64)
+
+        @jax.jit
+        def jitted_pme_recip(pos, cell_arg):
+            return pme_reciprocal_space(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=alpha,
+                mesh_spacing=0.5,
+            ).sum()
+
+        with pytest.raises(ValueError, match="explicit mesh_dimensions"):
+            jitted_pme_recip(positions, cell)
+
     def test_jit_full_pme(self):
         """Test particle_mesh_ewald works under jax.jit."""
         positions = jnp.array(
@@ -2219,6 +2798,100 @@ class TestPMEJIT:
         assert forces.shape == (4, 3)
         assert jnp.all(jnp.isfinite(energies))
         assert jnp.all(jnp.isfinite(forces))
+
+    def test_jit_full_pme_requires_explicit_mesh_dimensions_for_mesh_spacing(self):
+        """JIT full PME rejects mesh_spacing-based mesh inference clearly."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        @jax.jit
+        def jitted_full_pme(pos, cell_arg):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=0.3,
+                mesh_spacing=0.5,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        with pytest.raises(ValueError, match="explicit mesh_dimensions"):
+            jitted_full_pme(positions, cell)
+
+    def test_jit_full_pme_requires_explicit_mesh_dimensions_for_auto_mesh(self):
+        """JIT full PME rejects accuracy-based mesh sizing with explicit alpha."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        @jax.jit
+        def jitted_full_pme(pos, cell_arg):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=0.3,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        with pytest.raises(ValueError, match="explicit mesh_dimensions"):
+            jitted_full_pme(positions, cell)
+
+    def test_jit_full_pme_requires_explicit_mesh_dimensions_for_auto_estimation(self):
+        """JIT full PME rejects accuracy-based mesh inference clearly."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        @jax.jit
+        def jitted_full_pme(pos, cell_arg):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=None,
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        with pytest.raises(ValueError) as excinfo:
+            jitted_full_pme(positions, cell)
+
+        message = str(excinfo.value)
+        assert "explicit alpha" in message
+        assert "explicit mesh_dimensions" in message
+
+    def test_jit_full_pme_requires_explicit_alpha_for_auto_estimation(self):
+        """JIT full PME rejects alpha auto-estimation even with explicit mesh."""
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _, neighbor_matrix_shifts = cell_list(
+            positions, cutoff=5.0, cell=cell, pbc=pbc
+        )
+
+        @jax.jit
+        def jitted_full_pme(pos, cell_arg):
+            return particle_mesh_ewald(
+                positions=pos,
+                charges=charges,
+                cell=cell_arg,
+                alpha=None,
+                mesh_dimensions=(16, 16, 16),
+                neighbor_matrix=neighbor_matrix,
+                neighbor_matrix_shifts=neighbor_matrix_shifts,
+            ).sum()
+
+        with pytest.raises(ValueError, match="explicit alpha"):
+            jitted_full_pme(positions, cell)
 
     def test_jit_equivalence(self):
         """Test PME results from JIT vs not is equivalent"""
@@ -2692,6 +3365,123 @@ class TestFullPMEVirial:
         assert len(result) == 2
         energies, virial = result
         assert virial.shape == (1, 3, 3)
+
+
+class TestDirectOutputDeprecation:
+    """Direct-output warnings on the JAX PME APIs."""
+
+    mesh_dimensions = (16, 16, 16)
+
+    def _system(self):
+        positions, charges, cell = create_simple_system(num_atoms=4)
+        cutoff = 5.0
+        pbc = jnp.array([[True, True, True]])
+        neighbor_matrix, _num_neighbors, neighbor_matrix_shifts = cell_list(
+            positions, cutoff, cell, pbc
+        )
+        return positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts
+
+    def _full_call(self, **flags):
+        positions, charges, cell, neighbor_matrix, neighbor_matrix_shifts = (
+            self._system()
+        )
+        return particle_mesh_ewald(
+            positions=positions,
+            charges=charges,
+            cell=cell,
+            alpha=0.3,
+            mesh_dimensions=self.mesh_dimensions,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+            **flags,
+        )
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "compute_forces",
+            "compute_virial",
+            "compute_charge_gradients",
+            "hybrid_forces",
+        ],
+    )
+    def test_full_api_flag_warns_once(self, device, flag):
+        """Differentiable-use direct outputs emit one DeprecationWarning."""
+        with pytest.warns(DeprecationWarning) as record:
+            result = self._full_call(**{flag: True})
+
+        dep = [w for w in record if issubclass(w.category, DeprecationWarning)]
+        assert len(dep) == 1
+        messages = "\n".join(str(w.message) for w in dep)
+        assert "JAX autodiff" in messages
+        assert "particle_mesh_ewald" in messages
+        assert dep[0].filename.endswith("test_pme.py")
+        energy = result[0] if isinstance(result, tuple) else result
+        assert jnp.all(jnp.isfinite(energy))
+
+    def test_full_api_no_flag_does_not_warn(self, device):
+        """particle_mesh_ewald with no deprecated flag must not warn."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            energy = self._full_call()
+        assert jnp.all(jnp.isfinite(energy))
+
+    def test_legacy_tuple_ordering_unchanged(self, device):
+        """Deprecated full outputs keep their documented tuple ordering."""
+        with pytest.warns(DeprecationWarning):
+            out = self._full_call(
+                compute_forces=True,
+                compute_charge_gradients=True,
+                compute_virial=True,
+            )
+
+        assert isinstance(out, tuple) and len(out) == 4
+        energies, forces, charge_grads, virial = out
+        assert energies.shape == (4,)
+        assert forces.shape == (4, 3)
+        assert charge_grads.shape == (4,)
+        assert virial.shape == (1, 3, 3)
+        for value in out:
+            assert jnp.all(jnp.isfinite(value))
+
+    def test_component_compute_forces_does_not_warn(self, device):
+        """Component compute_forces=True remains a no-warning escape hatch."""
+        positions, charges, cell, _neighbor_matrix, _neighbor_matrix_shifts = (
+            self._system()
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3], dtype=positions.dtype),
+                mesh_dimensions=self.mesh_dimensions,
+                compute_forces=True,
+            )
+
+    @pytest.mark.parametrize(
+        "flag", ["compute_charge_gradients", "compute_virial", "hybrid_forces"]
+    )
+    def test_component_training_style_outputs_warn(self, device, flag):
+        """Component charge/virial/hybrid direct outputs warn during deprecation."""
+        positions, charges, cell, _neighbor_matrix, _neighbor_matrix_shifts = (
+            self._system()
+        )
+
+        with pytest.warns(DeprecationWarning, match="pme_reciprocal_space"):
+            result = pme_reciprocal_space(
+                positions=positions,
+                charges=charges,
+                cell=cell,
+                alpha=jnp.array([0.3], dtype=positions.dtype),
+                mesh_dimensions=self.mesh_dimensions,
+                **{flag: True},
+            )
+
+        energy = result[0] if isinstance(result, tuple) else result
+        assert jnp.all(jnp.isfinite(energy))
 
 
 if __name__ == "__main__":

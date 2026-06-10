@@ -568,7 +568,6 @@ def bench_fire2_torch_adapter_cell(N, M, device, dtype, hyper, warmup, runs):
     )
 
     # Pre-allocate scratch buffers
-    ext_pos = torch.empty(N_ext, 3, dtype=dtype, device=device)
     ext_vel = torch.empty(N_ext, 3, dtype=dtype, device=device)
     ext_forces = torch.empty(N_ext, 3, dtype=dtype, device=device)
     vf = torch.zeros(M, dtype=dtype, device=device)
@@ -590,7 +589,6 @@ def bench_fire2_torch_adapter_cell(N, M, device, dtype, hyper, warmup, runs):
             nsteps_inc,
             atom_ptr=atom_ptr,
             ext_atom_ptr=ext_atom_ptr,
-            ext_positions=ext_pos,
             ext_velocities=ext_vel,
             ext_forces=ext_forces,
             ext_batch_idx=ext_batch_idx,

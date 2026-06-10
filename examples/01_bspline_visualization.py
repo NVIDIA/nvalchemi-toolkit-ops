@@ -64,9 +64,12 @@ from nvalchemiops.torch.spline import bspline_weight, spline_gather, spline_spre
 # - Order 2: Linear (cloud-in-cell)
 # - Order 3: Quadratic
 # - Order 4: Cubic (most common in PME)
+# - Order 5: Quartic
+# - Order 6: Quintic
 
 # %%
-# Plot the B-spline basis functions for orders 1-4:
+# Plot the B-spline basis functions for orders 1-4. Orders 5 and 6 are also
+# supported by the APIs, but the compact plot focuses on the common low orders:
 
 fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 axes = axes.flatten()
@@ -331,7 +334,8 @@ plt.show()
 # Effect of Spline Order
 # ----------------------
 # Higher order splines spread over more grid points but provide smoother
-# interpolation. We compare orders 1-4 for both spreading and gathering.
+# interpolation. We compare orders 1-4 for both spreading and gathering; orders
+# 5 and 6 follow the same API and use wider stencils.
 
 
 def create_dipole_system(cell_size: float = 10.0):
@@ -524,7 +528,7 @@ for order in orders:
 # -------
 # This example demonstrated:
 #
-# 1. **B-spline basis functions** of orders 1-4
+# 1. **B-spline basis functions** of orders 1-6, with orders 1-4 visualized
 # 2. **1D spreading** showing weight distribution near an atom
 # 3. **2D spreading** visualization with scatter plots
 # 4. **Effect of mesh resolution** on spreading

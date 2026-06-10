@@ -1,9 +1,35 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 (Unreleased)
+
+### Added
+
+- Full Torch Ewald/PME APIs support energy-derived forces, charge
+  gradients, and strain-first virials, including second-order force/stress
+  losses.
+- Torch slab correction participates in autograd when inputs require
+  gradients.
+- Full JAX Ewald/PME energy-only calls support first-order gradients for
+  positions, charges, and row-vector displacement virials.
+- JAX PME reciprocal higher-order support is limited to tested position and
+  charge scalar losses. PME cell/stress/strain higher-order derivatives remain
+  unsupported.
+- Torch Ewald accepts `miller_bounds` for k-vector generation.
+- Torch/JAX PME accept precomputed `cell_inv_t`, `volume`, and B-spline
+  moduli where supported.
+- `compute_bspline_moduli_1d` is exported from the top-level Torch and JAX
+  electrostatics namespaces for PME precompute workflows.
+- Electrostatics autograd documents `positions`, `charges`, and `cell` as
+  the only gradient targets. Setup values such as `alpha` are constants, and
+  cell-derived reciprocal caches are static metadata assumed to correspond to
+  the current cell.
+- Higher-order electrostatics support is exposed through framework autograd on
+  scalar losses; no public Hessian or Jacobian tensor/function APIs were added.
 
 ### Fixed
 
+- Fixed Torch Ewald gradients for non-uniform per-atom energy cotangents
+  (`torch.autograd.grad(..., grad_outputs=w)`).
 - **MTK NPT/NPH cell propagation**: kernels wrote `V·(P − P_ext)/W`
   (strain-rate units) into `cell_velocity` while consumers read it as
   `ḣ = dh/dt`, costing a factor of cell length in the cell response.
@@ -22,6 +48,12 @@
 
 ### Deprecated
 
+- Direct-output flags on full Torch and JAX Ewald/PME APIs are deprecated for
+  differentiable training: `compute_forces`, `compute_virial`,
+  `compute_charge_gradients`, and `hybrid_forces`. They remain available and keep
+  the existing tuple order. Component `compute_forces=True` remains available for
+  no-autograd MD/inference use; component charge-gradient, virial, and hybrid
+  direct outputs warn as legacy training-style outputs.
 - `cells_inv` argument on `compute_cell_kinetic_energy`,
   `npt_velocity_half_step{,_out}`, `npt_position_update{,_out}`,
   `nph_velocity_half_step{,_out}`, `nph_position_update{,_out}`,
@@ -41,6 +73,51 @@
   `ḣ = dh/dt`. Kernel signatures unchanged.
 - `npt_barostat_half_step{,_aniso,_triclinic}` drop the `eta_dots`
   argument; thermostat coupling is now a separate Trotter operator.
+
+### Added (neighbors)
+
+- **Pair potentials evaluated inline**: neighbor kernels now accept a
+  user-supplied `pair_fn` callback (with `pair_params`, `pair_energies`,
+  `pair_forces` buffers) that computes per-pair energy and force as pairs
+  are enumerated, so Lennard-Jones–style potentials no longer require a
+  separate pass over the neighbor list.
+- **Per-pair vectors and distances on demand**: `return_vectors` and
+  `return_distances` keyword arguments return the separation vectors
+  `r_ij` and Euclidean distances `|r_ij|` alongside the neighbor matrix,
+  avoiding a manual recomputation downstream.
+- **Cluster-pair tile algorithm**: a new CUDA strategy for large
+  fully-periodic float32 systems. `neighbor_list` auto-selects it when
+  it is eligible; pass `method="cluster_tile"` (or
+  `"batch_cluster_tile"`) to force it. Supports dual cutoff in
+  matrix format.
+- **Partial rebuild for batched workflows**: callers can pass
+  `rebuild_flags` to re-enumerate only the systems whose atoms have
+  moved enough to need a fresh list; unchanged systems keep their
+  previous output. Supported for matrix and segmented-COO outputs in
+  both the JAX and PyTorch bindings.
+
+### Changed (neighbors)
+
+- Restructured `nvalchemiops/neighbors/` into per-strategy subpackages:
+  `naive/`, `cell_list/`, `cluster_tile/`, `rebuild/`. Public launchers
+  live under `*/launchers.py`; strategy selection lives under
+  `*/dispatch.py`.
+- The flat compatibility modules `nvalchemiops.neighbors.{naive_dual_cutoff,
+  batch_naive, batch_cell_list, batch_naive_dual_cutoff, rebuild_detection}`
+  continue to re-export the new entry points with `DeprecationWarning`.
+  (Note: `nvalchemiops.neighbors.naive` and `nvalchemiops.neighbors.cell_list`
+  are now the canonical subpackages, not deprecated shims.)
+
+### Added (electrostatics)
+
+- Higher-order (multipole) electrostatics for charges, dipoles, and quadrupoles
+  (l = 0, 1, 2): direct-k Ewald (`multipole_ewald_summation`), particle-mesh
+  Ewald (`multipole_particle_mesh_ewald`), reciprocal- and real-space entry
+  points, electrostatic feature extraction (`multipole_electrostatic_features`),
+  and an SCF cache/step API for repeated evaluations on a fixed cell. Provided as
+  Warp kernels and `nvalchemiops.torch` bindings, single-system and batched, with
+  energies, forces, moment gradients, stress, and force-loss (`create_graph`)
+  training; the forward and first-order backward are `torch.compile`-compatible.
 
 ## 0.3.0 - 2026-XX-XX
 

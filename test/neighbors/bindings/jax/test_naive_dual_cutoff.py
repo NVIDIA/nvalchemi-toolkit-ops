@@ -165,6 +165,57 @@ class TestNaiveDualCutoffEdgeCases:
         # Neighbor counts should be identical
         assert jnp.all(num_neighbors1 == num_neighbors2)
 
+    @pytest.mark.parametrize("return_neighbor_list", [True, False])
+    @pytest.mark.parametrize("with_pbc", [True, False])
+    def test_zero_cutoffs_fast_path(self, return_neighbor_list, with_pbc):
+        """``cutoff1 <= 0 and cutoff2 <= 0`` returns 0-pair tuples — 4 shape
+        variants × {return_list, !return_list} × {pbc, !pbc}."""
+        positions, cell, pbc = create_simple_cubic_system_jax(
+            num_atoms=4, cell_size=2.0, dtype=jnp.float32
+        )
+        kwargs = dict(max_neighbors1=10, max_neighbors2=15)
+        if with_pbc:
+            kwargs["cell"] = cell
+            kwargs["pbc"] = pbc.squeeze(0)
+        result = naive_neighbor_list_dual_cutoff(
+            positions,
+            0.0,
+            0.0,
+            return_neighbor_list=return_neighbor_list,
+            **kwargs,
+        )
+        N = positions.shape[0]
+        if return_neighbor_list:
+            if with_pbc:
+                # (nlist1, nptr1, shifts1, nlist2, nptr2, shifts2)
+                assert len(result) == 6
+                nl1, np1, sh1, nl2, np2, sh2 = result
+                assert nl1.shape == (2, 0)
+                assert np1.shape == (N + 1,)
+                assert sh1.shape == (0, 3)
+                assert nl2.shape == (2, 0)
+                assert np2.shape == (N + 1,)
+                assert sh2.shape == (0, 3)
+            else:
+                # (nlist1, nptr1, nlist2, nptr2)
+                assert len(result) == 4
+                nl1, np1, nl2, np2 = result
+                assert nl1.shape == (2, 0)
+                assert np1.shape == (N + 1,)
+                assert nl2.shape == (2, 0)
+                assert np2.shape == (N + 1,)
+        else:
+            if with_pbc:
+                # (nm1, nn1, shifts1, nm2, nn2, shifts2)
+                assert len(result) == 6
+                nm1, nn1, sh1, nm2, nn2, sh2 = result
+                assert int(nn1.sum()) == 0 and int(nn2.sum()) == 0
+            else:
+                # (nm1, nn1, nm2, nn2)
+                assert len(result) == 4
+                nm1, nn1, nm2, nn2 = result
+                assert int(nn1.sum()) == 0 and int(nn2.sum()) == 0
+
 
 # ==============================================================================
 # Tests: return_neighbor_list=True (COO format)

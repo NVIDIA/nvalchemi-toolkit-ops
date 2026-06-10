@@ -86,11 +86,6 @@ __all__ = [
 # Internal Custom Ops - Neighbor List Format
 # ==============================================================================
 
-# Output dtype convention:
-#   - Energies: always wp.float64 for numerical stability during accumulation.
-#   - Forces: match input precision via get_wp_vec_dtype(pos.dtype) -- vec3f for
-#     float32 inputs, vec3d for float64.
-
 
 @warp_custom_op(
     name="nvalchemiops::_coulomb_energy_list",

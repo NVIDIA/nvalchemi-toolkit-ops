@@ -1644,6 +1644,9 @@ def fire_step(
             "energy, energy_last, positions_last, velocities_last"
         )
 
+    if num_atoms == 0:
+        return
+
     # Dispatch to appropriate kernel
     if exec_mode is ExecutionMode.ATOM_PTR:
         # PTR mode – one fused kernel per system
@@ -1939,6 +1942,9 @@ def fire_update(
             "For downhill check, must provide ALL of: "
             "energy, energy_last, positions, positions_last, velocities_last"
         )
+
+    if num_atoms == 0:
+        return
 
     vec_dtype = velocities.dtype
 

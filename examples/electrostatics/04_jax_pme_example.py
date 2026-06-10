@@ -26,7 +26,7 @@ In this example you will learn:
 - How to set up and run PME with automatic parameter estimation in JAX
 - Using neighbor list (COO) and neighbor matrix formats
 - Accessing real-space and reciprocal-space components separately
-- Computing charge gradients for ML potential training
+- Computing charge gradients from energy autograd for ML potential training
 - ``jax.jit`` compilation of the full neighbor list + PME pipeline
 
 .. important::
@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import sys
 import time
+import warnings
 
 try:
     import jax
@@ -54,6 +55,18 @@ except ImportError:
     sys.exit(0)
 
 import numpy as np
+
+
+def _legacy_direct_output_call(function, *args, **kwargs):
+    """Call a deprecated direct-output path used for explicit migration checks."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            message="The direct-output flags.*",
+        )
+        return function(*args, **kwargs)
+
 
 try:
     from nvalchemiops.jax.interactions.electrostatics import (
@@ -141,7 +154,7 @@ positions, charges, cell, pbc = create_nacl_system(n_cells=3)
 
 print(f"\nSystem: {len(positions)} atoms NaCl crystal")
 print(f"Cell size: {float(cell[0, 0, 0]):.2f} Å")
-print(f"Total charge: {float(charges.sum()):.1f} (should be 0 for neutral)")
+print(f"Total charge: {float(charges.sum()):.1f} (constructed neutral system)")
 
 # %%
 # Estimate optimal PME parameters:
@@ -169,16 +182,29 @@ nl, nptr, ns = neighbor_list(
     return_neighbor_list=True,
 )
 
-energies, forces = particle_mesh_ewald(
+
+def energy_from_positions(pos):
+    return particle_mesh_ewald(
+        positions=pos,
+        charges=charges,
+        cell=cell,
+        neighbor_list=nl,
+        neighbor_ptr=nptr,
+        neighbor_shifts=ns,
+        accuracy=1e-6,
+    ).sum()
+
+
+energies = particle_mesh_ewald(
     positions=positions,
     charges=charges,
     cell=cell,
     neighbor_list=nl,
     neighbor_ptr=nptr,
     neighbor_shifts=ns,
-    compute_forces=True,
     accuracy=1e-6,
 )
+forces = -jax.grad(energy_from_positions)(positions)
 
 total_energy = float(energies.sum())
 max_force = float(jnp.linalg.norm(forces, axis=1).max())
@@ -221,7 +247,8 @@ print(f"\nUsing alpha={float(params.alpha[0]):.4f}, mesh_dims={params.mesh_dimen
 # %%
 # Using neighbor list (COO) format:
 
-energies_coo, forces_coo = particle_mesh_ewald(
+energies_coo, forces_coo = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -237,7 +264,8 @@ print(f"  COO format: E={float(energies_coo.sum()):.6f}")
 # %%
 # Using neighbor matrix (dense) format:
 
-energies_dense, forces_dense = particle_mesh_ewald(
+energies_dense, forces_dense = _legacy_direct_output_call(
+    particle_mesh_ewald,
     positions=positions,
     charges=charges,
     cell=cell,
@@ -329,25 +357,27 @@ print(f"\n  Component sum vs full PME difference: {component_diff:.2e}")
 # %%
 # Charge Gradients for ML Potentials
 # ----------------------------------
-# PME supports computing analytical charge gradients (∂E/∂q_i), which are useful
-# for training machine learning potentials that predict atomic partial charges.
+# For training machine learning potentials that predict atomic partial charges,
+# compute dE/dq from the energy with ``jax.grad``.
 
 print("\n" + "=" * 70)
 print("CHARGE GRADIENTS")
 print("=" * 70)
 
-# Compute PME with charge gradients
-energies_cg, forces_cg, charge_grads = particle_mesh_ewald(
-    positions=positions,
-    charges=charges,
-    cell=cell,
-    neighbor_list=nl_comp,
-    neighbor_ptr=nptr_comp,
-    neighbor_shifts=ns_comp,
-    compute_forces=True,
-    compute_charge_gradients=True,
-    accuracy=1e-4,
-)
+
+def _pme_total_energy_for_charges(charge_values):
+    return particle_mesh_ewald(
+        positions=positions,
+        charges=charge_values,
+        cell=cell,
+        neighbor_list=nl_comp,
+        neighbor_ptr=nptr_comp,
+        neighbor_shifts=ns_comp,
+        accuracy=1e-4,
+    ).sum()
+
+
+charge_grads = jax.grad(_pme_total_energy_for_charges)(charges)
 
 print(f"\n  Charge gradients shape: {charge_grads.shape}")
 print(
@@ -373,8 +403,8 @@ print(f"  Cl- charge gradients mean: {float(cl_grads.mean()):.4f}")
 # JIT Compilation
 # ---------------
 # Demonstrate combining the neighbor list build and PME calculation into a
-# single ``jax.jit``-compiled function. This allows JAX to fuse the entire
-# pipeline into one optimized computation.
+# single ``jax.jit``-compiled function. This compiles the array program into one
+# callable while keeping launch-size metadata static.
 #
 # For JIT compatibility:
 #
@@ -435,7 +465,8 @@ def compute_pme_energy_forces(
     )
 
     # Compute PME (mesh_dimensions is static, alpha is traced)
-    energies, forces = particle_mesh_ewald(
+    energies, forces = _legacy_direct_output_call(
+        particle_mesh_ewald,
         positions=positions,
         charges=charges,
         cell=cell,
@@ -515,10 +546,9 @@ jit_forces.block_until_ready()
 total_time = time.time() - start_time
 print(f"  JIT average time per call: {total_time / 50:.6f} seconds")
 
-# Compare with non-jitted result (note: may differ slightly due to different
-# accuracy settings or neighbor list truncation from max_neighbors)
+# Compare with the non-jitted result from the same construction path.
 energy_diff_jit = abs(jit_total_energy - total_energy)
-print(f"  Difference vs non-jitted (different accuracy): {energy_diff_jit:.2e}")
+print(f"  Difference vs non-jitted: {energy_diff_jit:.2e}")
 
 
 # %%
@@ -531,7 +561,7 @@ print(f"  Difference vs non-jitted (different accuracy): {energy_diff_jit:.2e}")
 # 2. **Neighbor format flexibility** with COO (list) and dense (matrix) formats
 # 3. **Component access** for real-space and reciprocal-space separately
 # 4. **Charge gradients** (∂E/∂q_i) for ML potential training
-# 5. **JIT compilation** of the full neighbor list + PME pipeline
+# 5. **JIT compilation** of the neighbor list + PME pipeline
 #
 # Key JAX-specific patterns:
 #
@@ -550,5 +580,5 @@ print("  - Use estimate_pme_parameters() for automatic parameter selection")
 print("  - Both COO and dense neighbor formats produce identical results")
 print("  - Real and reciprocal components can be computed separately")
 print("  - Charge gradients are available for ML potential training")
-print("  - Use jax.jit to fuse neighbor list + PME into one compiled function")
+print("  - Use jax.jit to compile neighbor list + PME into one callable")
 print("\nJAX PME example completed successfully!")

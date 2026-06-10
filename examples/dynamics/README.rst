@@ -89,8 +89,8 @@ Geometry Optimization Examples
 11_fire2_variable_cell.py
     Variable-cell FIRE2 optimization for joint atom + cell relaxation.
 
-    - Same pack/unpack workflow as ``07_fire_variable_cell.py``
-    - Uses ``fire2_step`` on extended DOF arrays
+    - Uses ``fire2_step_coord_cell`` for coupled coordinate/cell updates
+    - Preserves fractional coordinates during cell-only motion
     - Simpler state than FIRE (no masses, fewer per-system arrays)
 
 Key Concepts
@@ -140,7 +140,12 @@ Use ``nvalchemiops.batch_utils`` for conversions and per-system reductions.
 Variable-Cell Optimization
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The ``cell_filter`` utilities enable joint optimization of positions and cell::
+The ``cell_filter`` utilities enable joint optimization of positions and cell
+with FIRE. FIRE2 variable-cell optimization should use the coupled
+``fire2_step_coord_cell`` adapter, which applies the affine coordinate remap
+implied by cell motion.
+
+Generic cell-filter workflow for optimizers such as FIRE::
 
     # 1. Align cell to upper-triangular form
     positions, cell = align_cell(positions, cell)

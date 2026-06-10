@@ -299,24 +299,24 @@ using the instructions below.
 
 | Parameter | Value |
 | --------- | ----- |
-| System Type | FCC crystal lattice with periodic boundaries |
+| System Type | BCC/CsCl crystal lattices with periodic boundaries |
 | Neighbor List | Cell list algorithm ($O(N)$ scaling) |
-| Warmup Iterations | 3 |
+| Warmup Iterations | 5 |
 | Timing Iterations | 10 |
 | Precision | `float32` |
 
 ### Ewald/PME Parameters
 
 Parameters are automatically estimated using accuracy-based parameter estimation
-targeting $10^{-6}$ relative accuracy:
+targeting $10^{-4}$ relative accuracy by default:
 
 | Parameter | Description |
 | --------- | ----------- |
 | `alpha` | Ewald splitting parameter (auto-estimated) |
 | `k_cutoff` | Reciprocal-space cutoff for Ewald (auto-estimated) |
-| `real_space_cutoff` | Real-space cutoff distance (auto-estimated) |
+| `real_space_cutoff` | Real-space cutoff distance (pinned to 12.0 Å by the default config; auto-estimated when unset) |
 | `mesh_dimensions` | PME mesh grid size (auto-estimated) |
-| `spline_order` | B-spline interpolation order (4) |
+| `spline_order` | B-spline interpolation order (orders 1-6 supported; 4 by default) |
 
 ## Interpreting Results
 
@@ -327,7 +327,7 @@ targeting $10^{-6}$ relative accuracy:
 : Number of systems processed simultaneously (1 for single-system mode).
 
 `method`
-: The electrostatics method used (`ewald`, `pme`, or `dsf`).
+: The electrostatics method used (`ewald`, `ewald_slab`, `pme`, `pme_slab`, or `dsf`).
 
 `backend`
 : The computational backend (`torch`, `jax`, `torchpme`, or `torch_dsf`).
@@ -335,14 +335,46 @@ targeting $10^{-6}$ relative accuracy:
 `component`
 : Which part of the calculation was benchmarked (`real`, `reciprocal`, or `full`).
 
+`derivative_contract`
+: Whether nvalchemiops Ewald/PME rows use the default `energy_autograd`
+  contract or the opt-in deprecated `legacy_direct` output flags.
+
+`workload`
+: Runtime row type: `forward`, `backward`, `double_backward`,
+  `legacy_direct`, or `autograd_reference`.
+
 `compute_forces`
 : Whether forces were computed in addition to energies.
+
+`compute_virial`
+: Whether virials were computed in addition to energies.
+
+`neighbor_format`
+: Neighbor-list representation used by the benchmark row.
+
+`dtype`
+: Floating-point dtype used for the row.
 
 `median_time_ms`
 : Median execution time in milliseconds (lower is better).
 
 `peak_memory_mb`
 : Peak GPU memory usage in megabytes.
+
+`compile_ms`, `warp_compile_ms`, `framework_compile_ms`
+: Timing columns for benchmark warmup, Warp NVRTC, and framework compile/JIT
+  costs when available.
+
+`framework`
+: Framework execution mode, such as eager, `torch.compile`, or `jax.jit`.
+
+`success`, `error`, `error_type`
+: Row status and failure details for skipped or failed benchmark cases.
+
+Requested compile modes are strict. A failed `torch.compile` or JAX JIT setup is
+recorded as a failed CSV row with `success=False`, `framework`, `error`, and
+`error_type` populated; the benchmark does not silently fall back to eager timing
+for that row.
 
 ```{note}
 Timings include the full electrostatics calculation (real-space + reciprocal-space
@@ -390,17 +422,43 @@ python benchmark_electrostatics.py \
 
 `--backend {torch,jax,torchpme,torch_dsf,both}`
 : Computational backend (default: `torch`). `both` dispatches per-method:
-  `torch` + `torchpme` for Ewald/PME, `torch` + `torch_dsf` for DSF.
+  `torch` + `torchpme` for Ewald/PME, `torch` for Ewald/PME slab
+  methods, and `torch` + `torch_dsf` for DSF.
 
-`--method {ewald,ewald_slab,pme,pme_slab,dsf,both,all}`
-: Electrostatics method (default: `both`). `both` = Ewald + PME.
-  `all` = Ewald + Ewald slab + PME + PME slab + DSF.
+`--method {ewald,ewald_slab,pme,pme_slab,dsf,multipole_ewald,multipole_pme,both,all}`
+: Electrostatics method. When omitted, the YAML `methods:` list controls; if
+  that is empty, the script defaults to Ewald + PME. `both` = Ewald + PME.
+  `all` = Ewald + Ewald slab + PME + PME slab + DSF + multipole Ewald +
+  multipole PME. The `multipole_ewald` / `multipole_pme` methods are torch-only
+  and take an extra `--l-max` flag.
+
+`--l-max {0,1,2}`
+: Maximum multipole order for the `multipole_*` methods (default: `1`):
+  `0` = charges, `1` = + dipoles, `2` = + quadrupoles. Ignored by the
+  point-charge methods.
 
 `--neighbor-format {list,matrix,both}`
 : Neighbor format for DSF benchmarks (default: `list`). Ewald/PME always use matrix.
 
 `--dtype {float32,float64}`
 : Override dtype from config file.
+
+`--real-space-cutoff REAL_SPACE_CUTOFF`
+: Override the PME real-space cutoff in Angstrom.
+
+`--accuracy ACCURACY`
+: Override the target relative force accuracy used by parameter estimation.
+
+`--torch-compile`
+: Time torch backends through `torch.compile(fullgraph=True)` and record
+  framework compile costs.
+
+`--derivative-contract {energy_autograd,legacy_direct}`
+: Select the nvalchemiops Ewald/PME derivative contract. The default
+  `energy_autograd` path benchmarks energy-only calls plus framework autograd
+  force/stress workloads, including Torch double-backward rows when derivatives
+  are requested. `legacy_direct` benchmarks deprecated direct-output flags and
+  suppresses their migration warnings inside the explicit legacy rows.
 
 `--gpu-sku <name>`
 : Override GPU SKU name for output files (default: auto-detect).
@@ -421,16 +479,28 @@ python benchmark_electrostatics.py \
 #### Slab Benchmarks
 
 ```bash
-# Ewald slab
+# Ewald slab (PyTorch)
 python benchmark_electrostatics.py \
     --config benchmark_config.yaml \
     --backend torch \
     --method ewald_slab
 
-# PME slab
+# Ewald slab (JAX)
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend jax \
+    --method ewald_slab
+
+# PME slab (PyTorch)
 python benchmark_electrostatics.py \
     --config benchmark_config.yaml \
     --backend torch \
+    --method pme_slab
+
+# PME slab (JAX)
+python benchmark_electrostatics.py \
+    --config benchmark_config.yaml \
+    --backend jax \
     --method pme_slab
 ```
 

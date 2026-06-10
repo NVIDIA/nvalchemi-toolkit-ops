@@ -250,12 +250,12 @@ fire_compare:
   # Fixed-cell optimization (coordinate-only)
   fixed_cell:
     enabled: true
-    perturbation: 0.1  # Å
+    position_jitter: 0.05  # uniform Cartesian jitter in [-0.05, 0.05] Å after P1 expansion
 
-  # Variable-cell optimization (extended arrays with cell DOFs)
+  # Variable-cell optimization (FIRE2 uses coupled coordinate/cell updates)
   variable_cell:
     enabled: true
-    perturbation: 0.1  # Å
+    position_jitter: 0.05  # uniform Cartesian jitter in [-0.05, 0.05] Å after P1 expansion
 
   # FIRE1 hyperparameters
   fire1:
@@ -280,6 +280,7 @@ fire_compare:
     alpha0: 0.20
     alphashrink: 0.985
     maxstep: 0.25
+    cell_force_scale: 1.0
 
 # System Configuration (shared across all benchmarks)
 # ---------------------------------------------------
