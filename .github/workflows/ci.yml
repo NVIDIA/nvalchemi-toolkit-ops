@@ -218,13 +218,14 @@ jobs:
       # CONDITIONAL LOGIC BASED ON EVENT TYPE
       #
       # PR branches use push events to refs/heads/pull-request/*, not the
-      # pull_request event. Detect them via the branch name pattern.
+      # pull_request event. Merge queue runs use merge_group events on
+      # gh-readonly-queue refs, but should use the same testmon-selected path.
       # Testmon databases are Python/CUDA-specific because testmon keys its
       # dependency database by the interpreter version and installed packages.
       # Coverage baselines are cached separately so stale coverage files do not
       # replace or mask the testmon dependency database.
-      - name: Restore testmon cache (for PRs)
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
+      - name: Restore testmon cache (for PRs and merge queue)
+        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -235,8 +236,8 @@ jobs:
           restore-keys: |
             testmon-cache-main-py${{ matrix.python-version }}-cuda13-
 
-      - name: Restore coverage baseline (for PRs)
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
+      - name: Restore coverage baseline (for PRs and merge queue)
+        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
         uses: actions/cache/restore@v4
         with:
           path: .coverage.baseline
@@ -244,8 +245,8 @@ jobs:
           restore-keys: |
             coverage-baseline-main-py${{ matrix.python-version }}-cuda13-
 
-      - name: Prepare coverage baseline (for PRs)
-        if: startsWith(github.ref, 'refs/heads/pull-request/')
+      - name: Prepare coverage baseline (for PRs and merge queue)
+        if: startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group'
         run: |
           if [ -f .coverage.baseline ]; then
             echo "Using restored coverage baseline for PR coverage merge"
@@ -257,20 +258,20 @@ jobs:
       - name: Run tests with testmon and coverage
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          IS_PR=${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
-          if [[ "$IS_PR" == "true" ]]; then
-            # PR: testmon selects affected tests, coverage traces them
+          USE_TESTMON_SELECTION=${{ startsWith(github.ref, 'refs/heads/pull-request/') || github.event_name == 'merge_group' }}
+          if [[ "$USE_TESTMON_SELECTION" == "true" ]]; then
+            # PR/Merge queue: testmon selects affected tests, coverage traces them
             make testmon-coverage COVERAGE_BASELINE_FILE=coverage_main.dat
           else
-            # Main/Schedule: build testmon DB, then full coverage without testmon
+            # Main/Schedule: refresh testmon DB and coverage baseline in one full pass.
             rm -f .testmondata .testmondata-shm .testmondata-wal
             rm -f .coverage .coverage.* coverage_main.dat
-            make testmon-collect
-            make testmon-coverage PYTEST_TESTMON_FLAGS=""
+            make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
           fi
 
       # Save one testmon DB and one coverage baseline per Python/CUDA version
-      # from main/schedule runs. PR runs restore the newest matching pair.
+      # from main/schedule runs. PR and merge queue runs restore the newest
+      # matching pair.
       - name: Save testmon cache
         if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'schedule')
         uses: actions/cache/save@v4
@@ -360,8 +361,7 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           rm -f .testmondata .testmondata-shm .testmondata-wal
           rm -f .coverage .coverage.* coverage_main.dat
-          make testmon-collect
-          make testmon-coverage PYTEST_TESTMON_FLAGS=""
+          make testmon-coverage PYTEST_TESTMON_FLAGS="--testmon"
 
       - name: Save testmon cache
         uses: actions/cache/save@v4
