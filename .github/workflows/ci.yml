@@ -163,7 +163,7 @@ jobs:
       - get-pr-labels
       - changed-files
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -313,7 +313,7 @@ jobs:
     needs:
       - lint
     runs-on: linux-amd64-gpu-h100-latest-1
-    timeout-minutes: 90
+    timeout-minutes: 120
     if: github.event_name == 'schedule'
     strategy:
       fail-fast: false
