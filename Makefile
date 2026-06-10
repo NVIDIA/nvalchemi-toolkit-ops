@@ -82,6 +82,8 @@ pytest:  ## Run pytest with coverage
 
 PYTEST_TESTMON_FLAGS ?= --testmon --testmon-nocollect
 TEST_MODULES := types:test/test_types.py math:test/math neighbors:test/neighbors interactions:test/interactions
+COVERAGE_DATA_FILES := $(foreach mod,$(TEST_MODULES),.coverage.$(firstword $(subst :, ,$(mod))))
+COVERAGE_BASELINE_FILE ?=
 
 .PHONY: testmon-collect
 testmon-collect:  ## Build testmon dependency database (no coverage)
@@ -90,11 +92,30 @@ testmon-collect:  ## Build testmon dependency database (no coverage)
 
 .PHONY: testmon-coverage
 testmon-coverage:  ## Run tests with coverage (testmon selects by default)
+	rm -f .coverage $(COVERAGE_DATA_FILES) $(addsuffix .*, $(COVERAGE_DATA_FILES))
 	$(foreach mod,$(TEST_MODULES),\
 		COVERAGE_FILE=.coverage.$(firstword $(subst :, ,$(mod))) \
 		uv run coverage run -m pytest $(PYTEST_TESTMON_FLAGS) $(lastword $(subst :, ,$(mod))); \
 		RET=$$?; if [ $$RET -ne 0 ] && [ $$RET -ne 5 ]; then exit $$RET; fi;) true
-	uv run coverage combine --append || true
+	@coverage_files=""; \
+	if [ -n "$(COVERAGE_BASELINE_FILE)" ] && [ -f "$(COVERAGE_BASELINE_FILE)" ]; then \
+		coverage_files="$$coverage_files $(COVERAGE_BASELINE_FILE)"; \
+	fi; \
+	for coverage_prefix in $(COVERAGE_DATA_FILES); do \
+		for coverage_file in "$$coverage_prefix" "$$coverage_prefix".*; do \
+			if [ -f "$$coverage_file" ]; then \
+				coverage_files="$$coverage_files $$coverage_file"; \
+			fi; \
+		done; \
+	done; \
+	if [ -n "$$coverage_files" ]; then \
+		uv run coverage combine --data-file=.coverage $$coverage_files || true; \
+	else \
+		coverage_files=$$(find . -maxdepth 1 -name ".coverage.*" ! -name ".coverage.baseline" -print); \
+		if [ -n "$$coverage_files" ]; then \
+			uv run coverage combine --data-file=.coverage $$coverage_files || true; \
+		fi; \
+	fi
 	uv run coverage report --show-missing --fail-under=70
 	uv run coverage xml -o nvalchemiops.coverage.xml
 
