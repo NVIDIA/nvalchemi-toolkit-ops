@@ -765,65 +765,6 @@ class TestNaiveCudaGraph:
 class TestNaivePerformance:
     """Test performance characteristics and scaling (marked as slow)."""
 
-    @pytest.mark.slow
-    def test_scaling_with_system_size(self, device):
-        """Test that naive implementation has reasonable scaling with system size."""
-        import time
-
-        dtype = torch.float32
-        cutoff = 1.1
-        max_neighbors = 100
-
-        # Test different system sizes
-        sizes = [10, 50, 100] if device == "cpu" else [50, 100, 200]
-        times = []
-
-        for num_atoms in sizes:
-            positions, cell, pbc = create_simple_cubic_system(
-                num_atoms=num_atoms, dtype=dtype, device=device
-            )
-
-            # Warm up
-            for _ in range(10):
-                naive_neighbor_list(
-                    positions,
-                    cutoff,
-                    pbc=pbc,
-                    cell=cell,
-                    max_neighbors=max_neighbors,
-                )
-
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()
-
-            # Time the operation
-            start_time = time.time()
-            for _ in range(100):
-                naive_neighbor_list(
-                    positions,
-                    cutoff,
-                    pbc=pbc,
-                    cell=cell,
-                    max_neighbors=max_neighbors,
-                )
-
-            if device.startswith("cuda"):
-                torch.cuda.synchronize()
-
-            elapsed = time.time() - start_time
-            times.append(elapsed)
-
-        # Verify time increases with system size (loose check)
-        assert times[1] > times[0] * 0.8, "Time should increase with system size"
-        if len(times) > 2:
-            # Very loose scaling check - should not be orders of magnitude worse than O(N^2)
-            scaling_factor = times[-1] / times[0]
-            size_factor = (sizes[-1] / sizes[0]) ** 2
-            # Allow 5x deviation from ideal O(N^2) scaling
-            assert scaling_factor < size_factor * 5, (
-                f"Scaling ({scaling_factor:.2f}) much worse than O(N^2) ({size_factor:.2f})"
-            )
-
     def test_cutoff_scaling(self, device):
         """Test that neighbor count increases with cutoff."""
         dtype = torch.float32

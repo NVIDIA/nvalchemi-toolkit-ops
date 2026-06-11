@@ -1285,9 +1285,10 @@ def batch_query_cell_list(
         requires a **concrete** ``neighbor_search_radius`` (its launch grid is
         sized by host-read ``total_cells`` / ``n_outer`` / ``R_max`` scalars
         baked at launch-build time): it works eagerly / outside ``jax.jit`` but
-        raises a clear error under ``jax.jit`` with a traced radius.  It is
-        full-fill only (``half_fill=True`` + explicit ``pair_centric`` raises)
-        and is registered with ``GraphMode.NONE``.
+        raises a clear error under ``jax.jit`` with a traced radius.  ``"auto"``
+        falls back to ``"atom_centric"`` when pair-centric launch sizing is
+        traced.  It is full-fill only (``half_fill=True`` + explicit
+        ``pair_centric`` raises) and is registered with ``GraphMode.NONE``.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Accepted for signature parity with the Torch binding.  JAX registers
         only the *sorted* atom-centric query kernel, so this option never
@@ -1467,23 +1468,27 @@ def batch_query_cell_list(
             jax.errors.ConcretizationTypeError,
             jax.errors.TracerIntegerConversionError,
         ) as exc:
-            raise ValueError(
-                "strategy='pair_centric' needs a concrete "
-                "neighbor_search_radius to size its launch grid (total_cells / "
-                "n_outer / R_max are host-read).  Compute the cell-list sizing "
-                "outside jax.jit and pass a concrete neighbor_search_radius, or "
-                "use strategy='atom_centric'.",
-            ) from exc
-        # JAX batch cell_list is full-fill (half_fill+pair_centric raised above).
-        n_outer = compute_batch_pair_centric_n_outer(R_max, False)
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer, 64)
-            chosen = "atom_centric"
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
-            total_atoms, total_cells, n_outer
-        ):
-            chosen = "atom_centric"
+            if strategy == "auto":
+                chosen = "atom_centric"
+            else:
+                raise ValueError(
+                    "strategy='pair_centric' needs a concrete "
+                    "neighbor_search_radius to size its launch grid (total_cells / "
+                    "n_outer / R_max are host-read).  Compute the cell-list sizing "
+                    "outside jax.jit and pass a concrete neighbor_search_radius, or "
+                    "use strategy='atom_centric'.",
+                ) from exc
+        else:
+            # JAX batch cell_list is full-fill (half_fill+pair_centric raised above).
+            n_outer = compute_batch_pair_centric_n_outer(R_max, False)
+            if not is_pair_centric_launch_safe(total_cells, n_outer):
+                if strategy == "pair_centric":
+                    _raise_unsafe_pair_centric_launch(total_cells, n_outer, 64)
+                chosen = "atom_centric"
+            elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+                total_atoms, total_cells, n_outer
+            ):
+                chosen = "atom_centric"
 
     if chosen == "pair_centric":
         pair_query = (
@@ -1919,9 +1924,11 @@ def batch_cell_list(
         ``neighbor_matrix`` differs.  ``"pair_centric"`` is CUDA-only, requires
         a concrete ``neighbor_search_radius`` (host-read ``total_cells`` /
         ``n_outer`` / ``R_max``), runs full-fill only, and raises a clear error
-        under ``jax.jit`` with a traced radius.  Explicit ``"pair_centric"`` on
-        CPU raises; ``"auto"`` resolves to ``"atom_centric"`` on CPU.  Not yet
-        wired through the pair-output (return_distances / return_vectors) path.
+        under ``jax.jit`` with a traced radius when requested explicitly.
+        ``"auto"`` falls back to ``"atom_centric"`` when pair-centric launch
+        sizing is traced.  Explicit ``"pair_centric"`` on CPU raises; ``"auto"``
+        resolves to ``"atom_centric"`` on CPU.  Not yet wired through the
+        pair-output (return_distances / return_vectors) path.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Accepted for signature parity with Torch; forwarded to
         :func:`batch_query_cell_list`.  JAX always runs the sorted atom-centric
@@ -2001,13 +2008,13 @@ def batch_cell_list(
             "strategy='atom_centric' (or 'auto') for identical results.",
         )
 
-    # Preserve LIVE positions/cell for the autograd primitive; the warp
-    # kernels are non-differentiable across the JAX boundary so we detach
-    # them for the cell-list build.
+    # Preserve LIVE positions/cell for the pair-output autograd primitive; the
+    # Warp kernels are non-differentiable across the JAX boundary, so detach
+    # topology-side inputs for both pair-output and topology-only paths.
     positions_for_grad = positions
     cell_for_grad = cell
-    if has_pair_outputs:
-        positions = jax.lax.stop_gradient(positions)
+    positions = jax.lax.stop_gradient(positions)
+    if cell is not None:
         cell = jax.lax.stop_gradient(cell)
 
     # Prepare batch info

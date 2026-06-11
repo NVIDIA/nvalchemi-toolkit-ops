@@ -78,6 +78,34 @@ class TestCellList:
         # Each atom should have at least some neighbors
         assert jnp.sum(num_neighbors) > 0
 
+    def test_topology_only_grad_pbc_is_zero(self):
+        """Topology-only cell-list outputs do not differentiate Warp FFI."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32) * 5.0
+        pbc = jnp.array([True, True, True])
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors, shifts = cell_list(
+                pos,
+                2.0,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+                strategy="auto",
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+                + shifts.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
+
     def test_return_neighbor_list_format(self):
         """Test cell_list with return_neighbor_list=True."""
         positions = jnp.array(
@@ -241,6 +269,62 @@ class TestCellListJIT:
         assert num_neighbors.shape == (2,)
         assert shifts.shape[0] == 2
         assert shifts.shape[2] == 3
+
+    def test_jit_auto_falls_back_when_pair_centric_sizing_is_traced(self):
+        """``strategy='auto'`` must not expose pair-centric host reads to JIT."""
+        num_atoms = 200
+        max_neighbors = 128
+        box_size = 15.0
+        key = jax.random.PRNGKey(42)
+        positions = (
+            jax.random.uniform(key, (num_atoms, 3), dtype=jnp.float32) * box_size
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :] * box_size
+        pbc = jnp.array([[True, True, True]])
+
+        @jax.jit
+        def jitted_cell_list(positions, cell, pbc):
+            return cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cell * 1.5,
+                pbc=pbc,
+                max_neighbors=max_neighbors,
+                max_total_cells=16,
+            )
+
+        neighbor_matrix, num_neighbors, shifts = jitted_cell_list(positions, cell, pbc)
+
+        assert neighbor_matrix.shape == (num_atoms, max_neighbors)
+        assert neighbor_matrix.dtype == jnp.int32
+        assert num_neighbors.shape == (num_atoms,)
+        assert shifts.shape == (num_atoms, max_neighbors, 3)
+
+    def test_jit_explicit_pair_centric_still_requires_concrete_sizing(self):
+        """Explicit pair-centric keeps the concrete launch-sizing contract."""
+        num_atoms = 200
+        box_size = 15.0
+        key = jax.random.PRNGKey(43)
+        positions = (
+            jax.random.uniform(key, (num_atoms, 3), dtype=jnp.float32) * box_size
+        )
+        cell = jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :] * box_size
+        pbc = jnp.array([[True, True, True]])
+
+        @jax.jit
+        def jitted_cell_list(positions, cell, pbc):
+            return cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cell * 1.5,
+                pbc=pbc,
+                max_neighbors=128,
+                max_total_cells=16,
+                strategy="pair_centric",
+            )
+
+        with pytest.raises(ValueError, match="needs a concrete neighbor_search_radius"):
+            jitted_cell_list(positions, cell, pbc)
 
 
 class TestEstimateCellListSizes:

@@ -278,7 +278,7 @@ def run_compute_loop(
     """Example of encapsulating a compute loop"""
     num_loops = 100
     all_neighbors = jnp.zeros(
-        (num_loops, max_num_atoms, max_neighbors), dtype=positions.dtype
+        (num_loops, max_num_atoms, max_neighbors), dtype=jnp.int32
     )
     # generate some random positions
     key = jax.random.PRNGKey(64)

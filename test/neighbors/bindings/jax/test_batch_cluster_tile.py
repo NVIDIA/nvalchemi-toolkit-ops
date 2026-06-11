@@ -125,6 +125,28 @@ class TestBatchTileNeighborListCorrectness:
         assert nm.shape == (64, 64)
         assert bool(jnp.all(nn >= 0))
 
+    def test_topology_only_grad_matrix_is_zero(self):
+        """Matrix topology from batched cluster-tile is nondifferentiable."""
+        positions, cell_batch, batch_ptr = _make_batch([32, 32], [10.0, 10.0], seed=8)
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors, shifts = batch_cluster_tile_neighbor_list(
+                pos,
+                2.0,
+                cell_batch,
+                batch_ptr,
+                max_neighbors=32,
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+                + shifts.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
+
     def test_two_systems_different_sizes(self):
         positions, cell_batch, batch_ptr = _make_batch([64, 96], [10.0, 8.0], seed=6)
         cutoff = 2.5

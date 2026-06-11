@@ -1294,6 +1294,18 @@ def batch_naive_neighbor_list(
         _jax_wrap_batch = _jax_wrap_positions_batch_f32
         positions = positions.astype(jnp.float32)
 
+    positions = jax.lax.stop_gradient(positions)
+    if cell is not None:
+        cell = jax.lax.stop_gradient(cell)
+    if inv_cell_buffer is not None:
+        inv_cell_buffer = jax.lax.stop_gradient(inv_cell_buffer)
+    if positions_wrapped_buffer is not None:
+        positions_wrapped_buffer = jax.lax.stop_gradient(positions_wrapped_buffer)
+    if per_atom_cell_offsets_buffer is not None:
+        per_atom_cell_offsets_buffer = jax.lax.stop_gradient(
+            per_atom_cell_offsets_buffer
+        )
+
     total_atoms = positions.shape[0]
 
     batch_idx_i32 = batch_idx.astype(jnp.int32)

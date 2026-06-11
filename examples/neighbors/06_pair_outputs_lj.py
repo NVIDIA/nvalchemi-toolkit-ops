@@ -217,6 +217,8 @@ pair_forces = torch.zeros(
     neighbor_shifts,
     neighbor_distances,
     neighbor_vectors,
+    pair_energies,
+    pair_forces,
 ) = neighbor_list(
     positions,
     CUTOFF,

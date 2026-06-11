@@ -63,6 +63,55 @@ class TestNaiveNeighborList:
         assert int(num_neighbors[0]) >= 1
         assert int(num_neighbors[1]) >= 1
 
+    def test_topology_only_grad_no_pbc_is_zero(self):
+        """Topology-only outputs do not differentiate through Warp FFI."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors = naive_neighbor_list(
+                pos,
+                2.0,
+                max_neighbors=8,
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
+
+    def test_topology_only_grad_pbc_is_zero(self):
+        """PBC wrapping for topology-only outputs is nondifferentiable."""
+        positions = jnp.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32) * 5.0
+        pbc = jnp.array([True, True, True])
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors, shifts = naive_neighbor_list(
+                pos,
+                2.0,
+                cell=cell,
+                pbc=pbc,
+                max_neighbors=8,
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+                + shifts.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
+
     def test_two_atom_outside_cutoff(self):
         """Test with two atoms outside cutoff."""
         positions = jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=jnp.float32)
@@ -372,8 +421,11 @@ class TestNaiveNeighborListJIT:
             )
 
         with pytest.raises(
-            jax.errors.ConcretizationTypeError,
-            match="Abstract tracer value encountered",
+            (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerArrayConversionError,
+            ),
+            match="Abstract tracer value encountered|__array__",
         ):
             jitted_naive_pbc(positions, cell, pbc)
 

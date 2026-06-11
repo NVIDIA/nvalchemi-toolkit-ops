@@ -164,8 +164,8 @@ def select_cell_list_strategy(
     Sync-free: takes Python ints / floats, no GPU reads.  Note this applies to
     the strategy *decision* only; once ``"pair_centric"`` is chosen, the Torch
     launcher materializes launch metadata (``n_outer`` per axis, and for the
-    batched path ``R_max`` / ``total_cells``) via ``.item()`` / ``.tolist()``,
-    which do synchronize to host.  ``"atom_centric"`` avoids those reads.
+    batched path ``R_max`` / ``total_cells``) via scalar tensor readbacks, which
+    do synchronize to host.  ``"atom_centric"`` avoids those reads.
 
     Pair-centric wins iff any of:
       1. ``cutoff >= 8  AND N <= 65536``

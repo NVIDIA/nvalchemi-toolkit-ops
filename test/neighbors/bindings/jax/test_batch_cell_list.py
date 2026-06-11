@@ -77,6 +77,49 @@ class TestBatchCellList:
         assert shifts.shape[0] == 4
         assert shifts.shape[2] == 3
 
+    def test_topology_only_grad_pbc_is_zero(self):
+        """Topology-only batch cell-list outputs do not differentiate Warp FFI."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cells = jnp.array(
+            [
+                [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+                [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            ],
+            dtype=jnp.float32,
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors, shifts = batch_cell_list(
+                pos,
+                2.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=8,
+                strategy="auto",
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+                + shifts.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
+
 
 class TestBatchCellListEdgeCases:
     """Edge case tests for batch_cell_list."""
@@ -234,6 +277,118 @@ class TestBatchCellListJIT:
         assert nn.shape == (4,)
         assert shifts.shape[0] == 4
         assert shifts.shape[2] == 3
+
+    def test_jit_auto_falls_back_when_pair_centric_sizing_is_traced(self):
+        """``strategy='auto'`` must not expose pair-centric host reads to JIT."""
+        atoms_per_system = 200
+        total_atoms = atoms_per_system * 2
+        max_neighbors = 128
+        box_size = 15.0
+        positions = jnp.vstack(
+            [
+                jax.random.uniform(
+                    jax.random.PRNGKey(1),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+                jax.random.uniform(
+                    jax.random.PRNGKey(2),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+            ]
+        )
+        cells = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+            ]
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.concatenate(
+            [
+                jnp.zeros(atoms_per_system, dtype=jnp.int32),
+                jnp.ones(atoms_per_system, dtype=jnp.int32),
+            ]
+        )
+        batch_ptr = jnp.array([0, atoms_per_system, total_atoms], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
+            return batch_cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cells * 1.5,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=max_neighbors,
+                max_total_cells=32,
+            )
+
+        nm, nn, shifts = jitted_batch_cell_list(
+            positions, cells, pbcs, batch_idx, batch_ptr
+        )
+
+        assert nm.shape == (total_atoms, max_neighbors)
+        assert nm.dtype == jnp.int32
+        assert nn.shape == (total_atoms,)
+        assert shifts.shape == (total_atoms, max_neighbors, 3)
+
+    def test_jit_explicit_pair_centric_still_requires_concrete_sizing(self):
+        """Explicit pair-centric keeps the concrete launch-sizing contract."""
+        atoms_per_system = 200
+        total_atoms = atoms_per_system * 2
+        box_size = 15.0
+        positions = jnp.vstack(
+            [
+                jax.random.uniform(
+                    jax.random.PRNGKey(3),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+                jax.random.uniform(
+                    jax.random.PRNGKey(4),
+                    (atoms_per_system, 3),
+                    dtype=jnp.float32,
+                )
+                * box_size,
+            ]
+        )
+        cells = jnp.stack(
+            [
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+                jnp.eye(3, dtype=jnp.float32) * box_size,
+            ]
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.concatenate(
+            [
+                jnp.zeros(atoms_per_system, dtype=jnp.int32),
+                jnp.ones(atoms_per_system, dtype=jnp.int32),
+            ]
+        )
+        batch_ptr = jnp.array([0, atoms_per_system, total_atoms], dtype=jnp.int32)
+
+        @jax.jit
+        def jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr):
+            return batch_cell_list(
+                positions,
+                cutoff=6.0,
+                cell=cells * 1.5,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=128,
+                max_total_cells=32,
+                strategy="pair_centric",
+            )
+
+        with pytest.raises(ValueError, match="needs a concrete neighbor_search_radius"):
+            jitted_batch_cell_list(positions, cells, pbcs, batch_idx, batch_ptr)
 
 
 class TestBatchCellListReturnNeighborList:

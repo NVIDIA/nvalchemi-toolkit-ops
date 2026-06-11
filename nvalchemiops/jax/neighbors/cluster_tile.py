@@ -1857,6 +1857,9 @@ def cluster_tile_neighbor_list(
             tail.extend((pe_out, pf_out))
         return (*base, *tail)
 
+    positions_topology = jax.lax.stop_gradient(positions)
+    cell_topology = jax.lax.stop_gradient(cell)
+
     # Tile candidates must cover the larger radius so the cutoff2 matrix cannot
     # miss pairs in the (cutoff, cutoff2] shell; the query filters each matrix
     # by its own cutoff.
@@ -1877,9 +1880,9 @@ def cluster_tile_neighbor_list(
         tile_row_group,
         tile_col_group,
     ) = build_cluster_tile_list(
-        positions,
+        positions_topology,
         build_cutoff,
-        cell,
+        cell_topology,
         rebuild_flags=rebuild_flags,
         num_tiles=previous_num_tiles,
         tile_row_group=previous_tile_row_group,
@@ -1916,7 +1919,7 @@ def cluster_tile_neighbor_list(
                 num_tiles,
                 tile_row_group,
                 tile_col_group,
-                cell,
+                cell_topology,
                 cutoff,
                 N,
                 int(pair_offsets[-1]),
@@ -1937,7 +1940,7 @@ def cluster_tile_neighbor_list(
             num_tiles,
             tile_row_group,
             tile_col_group,
-            cell,
+            cell_topology,
             cutoff,
             N,
             int(max_pairs),
@@ -1952,7 +1955,7 @@ def cluster_tile_neighbor_list(
         num_tiles,
         tile_row_group,
         tile_col_group,
-        cell,
+        cell_topology,
         cutoff,
         N,
         int(max_neighbors),

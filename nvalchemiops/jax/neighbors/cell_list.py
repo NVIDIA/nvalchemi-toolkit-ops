@@ -2265,9 +2265,10 @@ def query_cell_list(
         ``neighbor_search_radius``: its launch grid is sized by a host-read
         ``n_outer`` baked at launch-build time, so it works eagerly / outside
         ``jax.jit`` but raises a clear error under ``jax.jit`` with a traced
-        radius.  ``"pair_centric"`` is registered with ``graph_mode="none"``;
-        ``graph_mode="warp"`` + explicit pair-centric raises
-        ``NotImplementedError``.
+        radius.  ``"auto"`` falls back to ``"atom_centric"`` when pair-centric
+        launch sizing is traced.  ``"pair_centric"`` is registered with
+        ``graph_mode="none"``; ``graph_mode="warp"`` + explicit pair-centric
+        raises ``NotImplementedError``.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         ``"direct"`` reads positions in original order and skips the sorted
         gather (the symmetric-full-fill kernel), on the plain full-fill,
@@ -2467,24 +2468,28 @@ def query_cell_list(
             jax.errors.ConcretizationTypeError,
             jax.errors.TracerIntegerConversionError,
         ) as exc:
-            raise ValueError(
-                "strategy='pair_centric' needs a concrete "
-                "neighbor_search_radius to size its launch grid (n_outer is "
-                "host-read).  Compute the cell-list sizing outside jax.jit and "
-                "pass a concrete neighbor_search_radius, or use "
-                "strategy='atom_centric'.",
-            ) from exc
-        # JAX cell_list is full-fill (half_fill+pair_centric raised above).
-        n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), False)
-        total_cells = int(atoms_per_cell_count.shape[0])
-        if not is_pair_centric_launch_safe(total_cells, n_outer):
-            if strategy == "pair_centric":
-                _raise_unsafe_pair_centric_launch(total_cells, n_outer)
-            chosen = "atom_centric"
-        elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
-            total_atoms, total_cells, n_outer
-        ):
-            chosen = "atom_centric"
+            if strategy == "auto":
+                chosen = "atom_centric"
+            else:
+                raise ValueError(
+                    "strategy='pair_centric' needs a concrete "
+                    "neighbor_search_radius to size its launch grid (n_outer is "
+                    "host-read).  Compute the cell-list sizing outside jax.jit and "
+                    "pass a concrete neighbor_search_radius, or use "
+                    "strategy='atom_centric'.",
+                ) from exc
+        else:
+            # JAX cell_list is full-fill (half_fill+pair_centric raised above).
+            n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), False)
+            total_cells = int(atoms_per_cell_count.shape[0])
+            if not is_pair_centric_launch_safe(total_cells, n_outer):
+                if strategy == "pair_centric":
+                    _raise_unsafe_pair_centric_launch(total_cells, n_outer)
+                chosen = "atom_centric"
+            elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+                total_atoms, total_cells, n_outer
+            ):
+                chosen = "atom_centric"
 
     if chosen == "pair_centric":
         fill_value = int(positions.shape[0])
@@ -2684,8 +2689,10 @@ def cell_list(
         ``neighbor_matrix`` differs.  ``"pair_centric"`` is CUDA-only, requires
         a concrete ``neighbor_search_radius`` (host-read ``n_outer``), runs only
         with ``graph_mode="none"`` and full-fill, and raises a clear error
-        under ``jax.jit`` with a traced radius.  ``graph_mode="warp"`` +
-        explicit ``strategy="pair_centric"`` raises ``NotImplementedError``.
+        under ``jax.jit`` with a traced radius when requested explicitly.
+        ``"auto"`` falls back to ``"atom_centric"`` when pair-centric launch
+        sizing is traced.  ``graph_mode="warp"`` + explicit
+        ``strategy="pair_centric"`` raises ``NotImplementedError``.
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Forwarded to :func:`query_cell_list`.  Explicit ``"direct"`` uses the
         direct-reads (gather-skipping) kernel on the plain full-fill,
@@ -2789,16 +2796,16 @@ def cell_list(
             "strategy='atom_centric' (or 'auto') for identical results.",
         )
 
-    # When pair outputs are requested, keep the LIVE positions and cell for
-    # the autograd primitive's backward (reconstruction needs live tensors),
-    # and use stop_gradient'd copies for the warp-kernel side of the
-    # forward.  The warp ``jax_kernel`` callables are registered with
-    # ``enable_backward=False``; calling them inside ``jax.grad`` requires
-    # detached inputs.
+    # Keep the LIVE positions and cell for the pair-output autograd primitive
+    # (reconstruction needs live tensors), and use stop_gradient'd copies for
+    # all topology-side Warp launches.  The Warp ``jax_kernel`` callables are
+    # registered with ``enable_backward=False``; calling them inside
+    # ``jax.grad`` requires detached inputs even when only integer topology is
+    # returned.
     positions_for_grad = positions
     cell_for_grad = cell
-    if has_pair_outputs:
-        positions = jax.lax.stop_gradient(positions)
+    positions = jax.lax.stop_gradient(positions)
+    if cell is not None:
         cell = jax.lax.stop_gradient(cell)
 
     if cell is None:

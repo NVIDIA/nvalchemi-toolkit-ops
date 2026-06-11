@@ -111,6 +111,30 @@ class TestTileNeighborListCorrectness:
         assert int(nn.sum()) == 0
         assert nm.shape == (1, 8)
 
+    def test_topology_only_grad_matrix_is_zero(self):
+        """Matrix topology from cluster-tile is nondifferentiable."""
+        positions = (
+            jax.random.uniform(jax.random.key(0), (64, 3), dtype=jnp.float32) * 10.0
+        )
+        cell = _orthorhombic_cell(10.0)
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors, shifts = cluster_tile_neighbor_list(
+                pos,
+                2.0,
+                cell,
+                max_neighbors=32,
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+                + shifts.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
+
     def test_two_atom_pair(self):
         positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
         cell = _orthorhombic_cell(2.0)

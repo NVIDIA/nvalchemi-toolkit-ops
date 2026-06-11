@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import jax.numpy as jnp
 import pytest
 
@@ -115,6 +117,19 @@ class TestComputeNaiveNumShifts:
         # Large cutoff should result in many shifts
         assert max_shifts > 1
         assert shift_range.shape == (1, 3)
+
+    def test_does_not_request_jax_int64_when_x64_disabled(self):
+        """Host-side shift counting should not emit JAX int64 truncation warnings."""
+        cell = jnp.array([[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]])
+        pbc = jnp.array([[True, True, True]])
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            compute_naive_num_shifts(cell, 5.0, pbc)
+
+        assert not any(
+            "Explicitly requested dtype int64" in str(item.message) for item in caught
+        )
 
 
 # ==============================================================================

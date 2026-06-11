@@ -19,6 +19,7 @@ import pytest
 import torch
 
 import nvalchemiops.torch.neighbors.batch_cluster_tile as batch_cluster_tile_module
+from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
 from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
@@ -182,6 +183,38 @@ def test_batch_cluster_tile_max_tiles_per_group_bypasses_sizing(monkeypatch):
             batch_ptr,
             max_tiles_per_group=7,
         )
+
+
+def test_batch_cluster_tile_max_tiles_per_group_vectorized_helper():
+    """Batched max-tile sizing should match the scalar estimator."""
+    batch_ptr = torch.tensor([0, 32, 32800], dtype=torch.int32)
+    cell_batch = torch.stack(
+        [
+            torch.eye(3, dtype=torch.float64) * 10.0,
+            torch.eye(3, dtype=torch.float64) * 10.0,
+        ],
+    )
+    cutoff = 20.0
+
+    expected = 256
+    for start, stop, cell in zip(batch_ptr[:-1], batch_ptr[1:], cell_batch):
+        expected = max(
+            expected,
+            estimate_max_tiles_per_group(
+                int((stop - start).item()),
+                cutoff,
+                float(torch.linalg.det(cell).abs().item()),
+            ),
+        )
+
+    got = batch_cluster_tile_module._batch_max_tiles_per_group(
+        batch_ptr,
+        cutoff,
+        cell_batch,
+    )
+
+    assert got == expected
+    assert got > 256
 
 
 def _canonicalize_matrix_full(

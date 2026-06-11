@@ -33,7 +33,6 @@ import warp as wp
 
 from nvalchemiops.neighbors.cluster_tile import (
     TILE_GROUP_SIZE,
-    estimate_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.cluster_tile import (
     batch_build_cluster_tile_list as wp_batch_build_cluster_tile_list,
@@ -127,17 +126,37 @@ def _batch_max_tiles_per_group(
     cross-system ``mtpg`` must cover the densest system's neighbor-group count.
     Returns the max of the per-system estimates (floored at the old default).
     """
-    counts = (batch_ptr[1:] - batch_ptr[:-1]).tolist()
-    vols = torch.linalg.det(cell_batch.to(torch.float64)).abs().tolist()
-    if not isinstance(vols, list):
-        vols = [vols]
-    best = 256
-    for natom, vol in zip(counts, vols):
-        best = max(
-            best,
-            estimate_max_tiles_per_group(int(natom), float(cutoff), float(vol)),
+    floor = 256
+    counts = (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64)
+    if counts.numel() == 0:
+        return floor
+
+    ngroup = torch.div(
+        counts + TILE_GROUP_SIZE - 1,
+        TILE_GROUP_SIZE,
+        rounding_mode="floor",
+    )
+    volumes = torch.linalg.det(cell_batch.to(torch.float64)).abs().reshape(-1)
+    valid_density = (ngroup > 1) & (volumes > 0.0) & (float(cutoff) > 0.0)
+
+    cluster_volumes = torch.where(
+        valid_density,
+        volumes / ngroup.clamp_min(1).to(torch.float64),
+        torch.ones_like(volumes),
+    )
+    cluster_extents = cluster_volumes.pow(1.0 / 3.0)
+    radii = float(cutoff) + 2.0 * cluster_extents
+    neighbor_estimates = (
+        torch.ceil(
+            2.0 * (4.0 / 3.0) * torch.pi * radii * radii * radii / cluster_volumes,
         )
-    return best
+        .to(torch.int64)
+        .clamp_min(floor)
+    )
+    fallback_estimates = torch.minimum(ngroup, torch.full_like(ngroup, floor))
+    per_system = torch.where(valid_density, neighbor_estimates, fallback_estimates)
+    per_system = torch.where(ngroup <= 1, torch.ones_like(per_system), per_system)
+    return int(per_system.max().clamp_min(floor).item())
 
 
 def estimate_batch_cluster_tile_list_sizes(

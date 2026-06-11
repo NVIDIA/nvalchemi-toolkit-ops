@@ -55,6 +55,37 @@ class TestBatchNaiveNeighborList:
         assert neighbor_matrix.shape == (4, 10)
         assert num_neighbors.shape == (4,)
 
+    def test_topology_only_grad_no_pbc_is_zero(self):
+        """Topology-only batch outputs do not differentiate through Warp FFI."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [11.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors = batch_naive_neighbor_list(
+                pos,
+                2.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=8,
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
+
     def test_two_systems_with_pbc(self):
         """Test with two systems with PBC."""
         positions1 = jnp.array([[0.0, 0.0, 0.0], [9.5, 0.0, 0.0]], dtype=jnp.float32)
@@ -87,6 +118,49 @@ class TestBatchNaiveNeighborList:
         assert neighbor_matrix.shape == (4, 10)
         assert num_neighbors.shape == (4,)
         assert shifts.shape == (4, 10, 3)
+
+    def test_topology_only_grad_pbc_is_zero(self):
+        """PBC batch wrapping for topology-only outputs is nondifferentiable."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cells = jnp.array(
+            [
+                [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+                [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]],
+            ],
+            dtype=jnp.float32,
+        )
+        pbcs = jnp.array([[True, True, True], [True, True, True]])
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+
+        def loss(pos):
+            neighbor_matrix, num_neighbors, shifts = batch_naive_neighbor_list(
+                pos,
+                2.0,
+                cell=cells,
+                pbc=pbcs,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                max_neighbors=8,
+                max_atoms_per_system=2,
+            )
+            return (
+                neighbor_matrix.astype(pos.dtype).sum()
+                + num_neighbors.astype(pos.dtype).sum()
+                + shifts.astype(pos.dtype).sum()
+            )
+
+        grad = jax.grad(loss)(positions)
+        assert jnp.isfinite(grad).all().item()
+        np.testing.assert_allclose(np.asarray(grad), 0.0)
 
     def test_different_system_sizes(self):
         """Test with systems of different sizes."""

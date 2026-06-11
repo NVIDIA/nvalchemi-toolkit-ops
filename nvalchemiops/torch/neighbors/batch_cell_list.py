@@ -120,6 +120,12 @@ def _resolve_atom_centric_path(atom_centric_path: str) -> str:
     )
 
 
+def _max_radius_tuple(neighbor_search_radius: torch.Tensor) -> tuple[int, int, int]:
+    """Return cross-system maximum cell-search radii as a launch tuple."""
+    radius = neighbor_search_radius.max(dim=0).values
+    return (int(radius[0].item()), int(radius[1].item()), int(radius[2].item()))
+
+
 def estimate_batch_cell_list_sizes(
     cell: torch.Tensor,
     pbc: torch.Tensor,
@@ -594,8 +600,7 @@ def _batch_query_cell_list_op(
     R_max = None
     if use_pair_centric:
         total_cells = int(cells_per_system.sum().item())
-        R_max_t = neighbor_search_radius.max(dim=0).values.tolist()
-        R_max = (int(R_max_t[0]), int(R_max_t[1]), int(R_max_t[2]))
+        R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
         if not is_pair_centric_launch_safe(total_cells, n_outer):
             if strategy == "pair_centric":
@@ -1401,8 +1406,7 @@ def _batch_query_cell_list_optional(
     R_max = None
     if use_pair_centric:
         total_cells = int(cells_per_system.sum().item())
-        R_max_t = neighbor_search_radius.max(dim=0).values.tolist()
-        R_max = (int(R_max_t[0]), int(R_max_t[1]), int(R_max_t[2]))
+        R_max = _max_radius_tuple(neighbor_search_radius)
         n_outer = compute_batch_pair_centric_n_outer(R_max, bool(half_fill))
         if not is_pair_centric_launch_safe(total_cells, n_outer):
             if strategy == "pair_centric":

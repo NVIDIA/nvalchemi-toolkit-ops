@@ -219,21 +219,26 @@ def compute_naive_num_shifts(
             launch_dims=(num_systems,),
         )
 
-    s = shift_range.astype(jnp.int64)
-    k1 = 2 * s[:, 1] + 1
-    k2 = 2 * s[:, 2] + 1
-    num_shifts_i64 = s[:, 0] * k1 * k2 + s[:, 1] * k2 + s[:, 2] + 1
+    count_dtype = jnp.int64 if jax.config.jax_enable_x64 else jnp.int32
+    shift_range_count = shift_range.astype(count_dtype)
+    k1 = 2 * shift_range_count[:, 1] + 1
+    k2 = 2 * shift_range_count[:, 2] + 1
+    num_shifts_count = (
+        (shift_range_count[:, 0] * k1 + shift_range_count[:, 1]) * k2
+        + shift_range_count[:, 2]
+        + 1
+    )
 
-    max_shifts_i64 = int(num_shifts_i64.max()) if num_systems > 0 else 0
-    if max_shifts_i64 > 2**31 - 1:
+    max_shifts = int(num_shifts_count.max()) if num_systems > 0 else 0
+    if count_dtype == jnp.int64 and max_shifts > 2**31 - 1:
         raise ValueError(
-            f"Per-system shift count ({max_shifts_i64}) exceeds int32 max "
+            f"Per-system shift count ({max_shifts}) exceeds int32 max "
             f"(2^31 - 1). Reduce the cutoff, increase cell size, or use a "
             f"cell-list method for very small cells."
         )
 
-    num_shifts = num_shifts_i64.astype(jnp.int32)
-    return shift_range, num_shifts, int(max_shifts_i64)
+    num_shifts = num_shifts_count.astype(jnp.int32)
+    return shift_range, num_shifts, max_shifts
 
 
 def get_neighbor_list_from_neighbor_matrix(
