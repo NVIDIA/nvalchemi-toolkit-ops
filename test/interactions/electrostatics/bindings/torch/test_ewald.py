@@ -8025,21 +8025,27 @@ class TestEwaldDoubleBackward:
 
     @pytest.mark.parametrize("device", ["cuda"])
     @pytest.mark.parametrize(
-        ("part", "wrt"),
+        ("part", "wrt", "recip_tiling_mode"),
         [
-            ("real", ("positions",)),
-            ("real", ("cell",)),
-            ("real", ("positions", "cell")),
-            ("recip", ("positions",)),
-            ("recip", ("charges",)),
-            ("recip", ("cell",)),
-            ("summation", ("positions", "cell")),
+            ("real", ("positions",), None),
+            ("real", ("cell",), None),
+            ("real", ("positions", "cell"), None),
+            ("recip", ("positions",), "0"),
+            ("recip", ("positions",), "1"),
+            ("recip", ("charges",), "0"),
+            ("recip", ("charges",), "1"),
+            ("recip", ("cell",), None),
+            ("summation", ("positions", "cell"), None),
         ],
     )
-    def test_gradgradcheck_focused_canary(self, device, part, wrt):
+    def test_gradgradcheck_focused_canary(
+        self, device, part, wrt, recip_tiling_mode, monkeypatch
+    ):
         """Non-slow second-order canary for key Ewald derivative paths."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
+        if recip_tiling_mode is not None:
+            monkeypatch.setenv("NVALCHEMIOPS_EWALD_RECIP_TILED", recip_tiling_mode)
         device = torch.device(device)
         energy_fn, positions, charges, cell = self._energy_fn(part, device)
         assert gradgradcheck_energy(energy_fn, positions, charges, cell, wrt=wrt)
