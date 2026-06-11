@@ -164,7 +164,6 @@ __all__ = [
     "ewald_reciprocal_space_fill_structure_factors",
     "ewald_subtract_self_energy",
     "can_tile_ewald_recip_on_device",
-    "should_tile_ewald_recip_compute",
     "should_tile_ewald_recip_fill",
 ]
 
@@ -215,18 +214,6 @@ def should_tile_ewald_recip_fill(num_atoms: int) -> bool:
     if override is not None:
         return override
     return num_atoms >= _env_int("NVALCHEMIOPS_EWALD_RECIP_MIN_ATOMS", 1024)
-
-
-def should_tile_ewald_recip_compute(num_atoms: int, num_k: int) -> bool:
-    """Return whether reciprocal atom-major compute should use a tiled launch."""
-    override = _recip_tiling_override()
-    if override is False:
-        return False
-    if override is True:
-        return True
-    min_atoms = _env_int("NVALCHEMIOPS_EWALD_RECIP_MIN_ATOMS", 1024)
-    max_k = _env_int("NVALCHEMIOPS_EWALD_RECIP_COMPUTE_MAX_K", 512)
-    return num_atoms >= min_atoms and num_k <= max_k
 
 
 def can_tile_ewald_recip_on_device(device: object) -> bool:
