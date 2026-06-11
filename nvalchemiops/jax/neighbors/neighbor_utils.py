@@ -33,6 +33,9 @@ from nvalchemiops.neighbors.neighbor_utils import (
     get_compute_naive_num_shifts_kernel,
 )
 
+_INT32_MAX = 2**31 - 1
+_INT32_HALF_MAX = (_INT32_MAX - 1) // 2
+
 __all__ = [
     "compute_naive_num_shifts",
     "get_neighbor_list_from_neighbor_matrix",
@@ -139,6 +142,49 @@ _jax_compute_naive_num_shifts_f64 = jax_kernel(
 )
 
 
+def _num_shifts_from_shift_range(
+    shift_range: jax.Array,
+) -> tuple[jax.Array, int]:
+    """Return int32 shift counts after checking the count formula for overflow."""
+    num_systems = shift_range.shape[0]
+    if num_systems == 0:
+        return jnp.zeros((0,), dtype=jnp.int32), 0
+
+    shift_range_i32 = shift_range.astype(jnp.int32)
+    rx = shift_range_i32[:, 0]
+    ry = shift_range_i32[:, 1]
+    rz = shift_range_i32[:, 2]
+
+    int32_max = jnp.array(_INT32_MAX, dtype=jnp.int32)
+    int32_half_max = jnp.array(_INT32_HALF_MAX, dtype=jnp.int32)
+
+    k1_overflows = ry > int32_half_max
+    k2_overflows = rz > int32_half_max
+    k1 = 2 * jnp.minimum(ry, int32_half_max) + 1
+    k2 = 2 * jnp.minimum(rz, int32_half_max) + 1
+
+    tail_limit = int32_max - rz - 1
+    base_limit = tail_limit // k2
+    base_room = jnp.maximum(base_limit - ry, 0)
+    count_overflows = (
+        (base_limit < 0)
+        | (ry > base_limit)
+        | (rx > (base_room // k1))
+        | (k1_overflows & (rx > 0))
+        | (k2_overflows & ((rx > 0) | (ry > 0)))
+    )
+    num_shifts = ((rx * k1 + ry) * k2 + rz + 1).astype(jnp.int32)
+    max_shifts = int(num_shifts.max())
+    if bool(jnp.any(count_overflows)):
+        raise ValueError(
+            "Per-system shift count exceeds int32 max "
+            "(2^31 - 1). Reduce the cutoff, increase cell size, or use a "
+            "cell-list method for very small cells."
+        )
+
+    return num_shifts, max_shifts
+
+
 # ==============================================================================
 # Public API
 # ==============================================================================
@@ -198,7 +244,7 @@ def compute_naive_num_shifts(
     pbc_bool = pbc.astype(jnp.bool_)
 
     # Select the appropriate kernel based on input dtype
-    if cell.dtype == jnp.float64:
+    if cell.dtype == jnp.float64 and jax.config.jax_enable_x64:
         cell_f64 = cell.astype(jnp.float64)
         num_shifts_i32, shift_range = _jax_compute_naive_num_shifts_f64(
             cell_f64,
@@ -219,25 +265,7 @@ def compute_naive_num_shifts(
             launch_dims=(num_systems,),
         )
 
-    count_dtype = jnp.int64 if jax.config.jax_enable_x64 else jnp.int32
-    shift_range_count = shift_range.astype(count_dtype)
-    k1 = 2 * shift_range_count[:, 1] + 1
-    k2 = 2 * shift_range_count[:, 2] + 1
-    num_shifts_count = (
-        (shift_range_count[:, 0] * k1 + shift_range_count[:, 1]) * k2
-        + shift_range_count[:, 2]
-        + 1
-    )
-
-    max_shifts = int(num_shifts_count.max()) if num_systems > 0 else 0
-    if count_dtype == jnp.int64 and max_shifts > 2**31 - 1:
-        raise ValueError(
-            f"Per-system shift count ({max_shifts}) exceeds int32 max "
-            f"(2^31 - 1). Reduce the cutoff, increase cell size, or use a "
-            f"cell-list method for very small cells."
-        )
-
-    num_shifts = num_shifts_count.astype(jnp.int32)
+    num_shifts, max_shifts = _num_shifts_from_shift_range(shift_range)
     return shift_range, num_shifts, max_shifts
 
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import warnings
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -123,13 +124,31 @@ class TestComputeNaiveNumShifts:
         cell = jnp.array([[[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]])
         pbc = jnp.array([[True, True, True]])
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            compute_naive_num_shifts(cell, 5.0, pbc)
+        old_x64 = jax.config.jax_enable_x64
+        try:
+            jax.config.update("jax_enable_x64", False)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                compute_naive_num_shifts(cell, 5.0, pbc)
+        finally:
+            jax.config.update("jax_enable_x64", old_x64)
 
         assert not any(
             "Explicitly requested dtype int64" in str(item.message) for item in caught
         )
+
+    def test_overflow_guard_when_x64_disabled(self):
+        """Shift count overflow should raise even when JAX int64 is unavailable."""
+        cell = jnp.array([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]])
+        pbc = jnp.array([[True, True, False]])
+
+        old_x64 = jax.config.jax_enable_x64
+        try:
+            jax.config.update("jax_enable_x64", False)
+            with pytest.raises(ValueError, match="exceeds int32 max"):
+                compute_naive_num_shifts(cell, 50_000.0, pbc)
+        finally:
+            jax.config.update("jax_enable_x64", old_x64)
 
 
 # ==============================================================================
