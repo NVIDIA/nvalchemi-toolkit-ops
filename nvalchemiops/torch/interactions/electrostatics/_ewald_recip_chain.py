@@ -64,12 +64,18 @@ from nvalchemiops.interactions.electrostatics._factory_common import (
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
     EIGHTPI,
+    RECIP_TILED_BLOCK_DIM,
     _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
+    _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
     _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
+    _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
+    can_tile_ewald_recip_on_device,
+    should_tile_ewald_recip_fill,
 )
 from nvalchemiops.interactions.electrostatics.ewald_recip_factory import (
     _make_backward_kspace_from_cache_kernel,
     alloc_ewald_recip_sentinels,
+    get_ewald_recip_component_kernel,
     get_ewald_recip_kernel,
 )
 from nvalchemiops.torch._warp_op_helpers import (
@@ -253,6 +259,9 @@ def _run_fill(
             max_atoms = int((atom_end - atom_start).max().item()) if num_atoms else 0
             max_blocks = (max_atoms + BATCH_BLOCK_SIZE - 1) // BATCH_BLOCK_SIZE
             max_blocks = max(max_blocks, 1)
+            use_tiled_fill = can_tile_ewald_recip_on_device(
+                device
+            ) and should_tile_ewald_recip_fill(max_atoms)
             if want_cellgrad:
                 cache_t = torch.zeros(
                     (num_systems * num_k, 8),
@@ -260,52 +269,80 @@ def _run_fill(
                     device=positions.device,
                 )
                 cache_wp = _wp(cache_t, wp.float64)
-                wp.launch(
-                    _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
-                    dim=(num_k, num_systems, max_blocks),
-                    inputs=[
-                        wp_pos,
-                        wp_chg,
-                        _wp(k_vectors_2d, wp_vec),
-                        wp_cell,
-                        wp_alpha,
-                        wp_as,
-                        wp_ae,
-                        total_charges,
-                        cos_kr,
-                        sin_kr,
-                        real_sf,
-                        imag_sf,
-                        cache_wp,
-                    ],
-                    device=device,
-                )
+                inputs = [
+                    wp_pos,
+                    wp_chg,
+                    _wp(k_vectors_2d, wp_vec),
+                    wp_cell,
+                    wp_alpha,
+                    wp_as,
+                    wp_ae,
+                    total_charges,
+                    cos_kr,
+                    sin_kr,
+                    real_sf,
+                    imag_sf,
+                    cache_wp,
+                ]
+                if use_tiled_fill:
+                    wp.launch_tiled(
+                        _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
+                        dim=(num_k, num_systems),
+                        inputs=inputs,
+                        device=device,
+                        block_dim=RECIP_TILED_BLOCK_DIM,
+                    )
+                else:
+                    wp.launch(
+                        _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
+                        dim=(num_k, num_systems, max_blocks),
+                        inputs=inputs,
+                        device=device,
+                    )
                 cellgrad_cache = cache_t
             else:
-                wp.launch(
-                    bundle.fill,
-                    dim=(num_k, num_systems, max_blocks),
-                    inputs=[
-                        wp_pos,
-                        wp_chg,
-                        _wp(k_vectors_2d, wp_vec),
-                        wp_cell,
-                        wp_alpha,
-                        wp_as,
-                        wp_ae,
-                        total_charges,
-                        cos_kr,
-                        sin_kr,
-                        real_sf,
-                        imag_sf,
-                    ],
-                    device=device,
-                )
+                inputs = [
+                    wp_pos,
+                    wp_chg,
+                    _wp(k_vectors_2d, wp_vec),
+                    wp_cell,
+                    wp_alpha,
+                    wp_as,
+                    wp_ae,
+                    total_charges,
+                    cos_kr,
+                    sin_kr,
+                    real_sf,
+                    imag_sf,
+                ]
+                if use_tiled_fill:
+                    wp.launch_tiled(
+                        get_ewald_recip_component_kernel(
+                            wp_scalar,
+                            component="fill",
+                            batched=True,
+                            tiled=True,
+                        ),
+                        dim=(num_k, num_systems),
+                        inputs=inputs,
+                        device=device,
+                        block_dim=RECIP_TILED_BLOCK_DIM,
+                    )
+                else:
+                    wp.launch(
+                        bundle.fill,
+                        dim=(num_k, num_systems, max_blocks),
+                        inputs=inputs,
+                        device=device,
+                    )
         else:
             kv_1d = _wp(k_vectors_2d.reshape(num_k, 3), wp_vec)
             real_1d = _wp_empty_f64(num_k, positions.device)
             imag_1d = _wp_empty_f64(num_k, positions.device)
             total_charge = _wp_zeros_f64(1, positions.device)
+            use_tiled_fill = can_tile_ewald_recip_on_device(
+                device
+            ) and should_tile_ewald_recip_fill(num_atoms)
             if want_cellgrad:
                 # Fused variant: same outputs + the un-weighted (K, 8) cell-grad
                 # reduction, accumulated in the SAME atom loop (marginal cost), so the
@@ -315,43 +352,67 @@ def _run_fill(
                     (num_k, 8), dtype=torch.float64, device=positions.device
                 )
                 cache_wp = _wp(cache_t, wp.float64)
-                wp.launch(
-                    _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
-                    dim=num_k,
-                    inputs=[
-                        wp_pos,
-                        wp_chg,
-                        kv_1d,
-                        wp_cell,
-                        wp_alpha,
-                        total_charge,
-                        cos_kr,
-                        sin_kr,
-                        real_1d,
-                        imag_1d,
-                        cache_wp,
-                    ],
-                    device=device,
-                )
+                inputs = [
+                    wp_pos,
+                    wp_chg,
+                    kv_1d,
+                    wp_cell,
+                    wp_alpha,
+                    total_charge,
+                    cos_kr,
+                    sin_kr,
+                    real_1d,
+                    imag_1d,
+                    cache_wp,
+                ]
+                if use_tiled_fill:
+                    wp.launch_tiled(
+                        _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad_tiled,
+                        dim=num_k,
+                        inputs=inputs,
+                        device=device,
+                        block_dim=RECIP_TILED_BLOCK_DIM,
+                    )
+                else:
+                    wp.launch(
+                        _ewald_reciprocal_space_energy_kernel_fill_structure_factors_cellgrad,
+                        dim=num_k,
+                        inputs=inputs,
+                        device=device,
+                    )
                 cellgrad_cache = cache_t
             else:
-                wp.launch(
-                    bundle.fill,
-                    dim=num_k,
-                    inputs=[
-                        wp_pos,
-                        wp_chg,
-                        kv_1d,
-                        wp_cell,
-                        wp_alpha,
-                        total_charge,
-                        cos_kr,
-                        sin_kr,
-                        real_1d,
-                        imag_1d,
-                    ],
-                    device=device,
-                )
+                inputs = [
+                    wp_pos,
+                    wp_chg,
+                    kv_1d,
+                    wp_cell,
+                    wp_alpha,
+                    total_charge,
+                    cos_kr,
+                    sin_kr,
+                    real_1d,
+                    imag_1d,
+                ]
+                if use_tiled_fill:
+                    wp.launch_tiled(
+                        get_ewald_recip_component_kernel(
+                            wp_scalar,
+                            component="fill",
+                            tiled=True,
+                        ),
+                        dim=num_k,
+                        inputs=inputs,
+                        device=device,
+                        block_dim=RECIP_TILED_BLOCK_DIM,
+                    )
+                else:
+                    wp.launch(
+                        bundle.fill,
+                        dim=num_k,
+                        inputs=inputs,
+                        device=device,
+                    )
             real_sf = real_1d.reshape((1, num_k))
             imag_sf = imag_1d.reshape((1, num_k))
     return cos_kr, sin_kr, real_sf, imag_sf, cellgrad_cache
@@ -738,12 +799,22 @@ def _double_backward_impl(
 
     use_charge_db = bool(need_charge)
     use_cell_db = bool(need_cell)
+    if batched and num_atoms:
+        max_atoms = int((atom_end - atom_start).max().item())
+    else:
+        max_atoms = num_atoms
+    use_tiled_reduce = (
+        (not use_cell_db)
+        and can_tile_ewald_recip_on_device(device)
+        and should_tile_ewald_recip_fill(max_atoms)
+    )
     bundle = get_ewald_recip_kernel(
         wp_scalar,
         batched=batched,
         deriv_state=_DerivState.E_F_dQ,
         cell_grad=use_cell_db,
         order="double_backward",
+        tiled=use_tiled_reduce,
     )
     # Per-(system,k) reduction scratch buffers (g_k-scaled sums).
     gA = wp.zeros((num_systems, num_k), dtype=wp.float64, device=device)
@@ -779,40 +850,50 @@ def _double_backward_impl(
     deriv_dq = wp.int32(1 if use_charge_db else 0)
     cell_grad_flag = wp.int32(1 if use_cell_db else 0)
     with _scoped_stream(positions.device):
-        wp.launch(
-            bundle.fill,  # = reduce kernel for double_backward bundle
-            dim=(num_k, num_systems) if batched else num_k,
-            inputs=[
-                wp_pos,
-                wp_chg,
-                wp_kv,
-                cell_mat,
-                wp_alpha,
-                batch_id,
-                wp_as,
-                wp_ae,
-                wp_vpos,
-                wp_vq,
-                wp_ge,
-                deriv_dq,
-                gA,
-                gB,
-                gC,
-                gD,
-                gP,
-                gQ,
-                wp_ggE,
-                cell_grad_flag,
-                wp_vol,
-                wp_vkv,
-                wp_vvol,
-                gPu,
-                gQu,
-                wp_gkv,
-                wp_gvol,
-            ],
-            device=device,
-        )
+        reduce_inputs = [
+            wp_pos,
+            wp_chg,
+            wp_kv,
+            cell_mat,
+            wp_alpha,
+            batch_id,
+            wp_as,
+            wp_ae,
+            wp_vpos,
+            wp_vq,
+            wp_ge,
+            deriv_dq,
+            gA,
+            gB,
+            gC,
+            gD,
+            gP,
+            gQ,
+            wp_ggE,
+            cell_grad_flag,
+            wp_vol,
+            wp_vkv,
+            wp_vvol,
+            gPu,
+            gQu,
+            wp_gkv,
+            wp_gvol,
+        ]
+        if use_tiled_reduce:
+            wp.launch_tiled(
+                bundle.fill,  # = tiled reduce kernel for double_backward bundle
+                dim=(num_k, num_systems) if batched else num_k,
+                inputs=reduce_inputs,
+                device=device,
+                block_dim=RECIP_TILED_BLOCK_DIM,
+            )
+        else:
+            wp.launch(
+                bundle.fill,  # = reduce kernel for double_backward bundle
+                dim=(num_k, num_systems) if batched else num_k,
+                inputs=reduce_inputs,
+                device=device,
+            )
         wp.launch(
             bundle.compute,
             dim=num_atoms,

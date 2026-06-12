@@ -30,12 +30,19 @@ import warnings
 
 import jax
 import jax.numpy as jnp
+import warp as wp
 from jax.interpreters import ad as jax_ad
 from jax.scipy.special import erfc
+from warp.jax_experimental import GraphMode, jax_callable
 
 from nvalchemiops.interactions.electrostatics._factory_common import _DerivState
 from nvalchemiops.interactions.electrostatics.ewald_kernels import (
     BATCH_BLOCK_SIZE,
+    batch_ewald_reciprocal_space_fill_structure_factors,
+    should_tile_ewald_recip_fill,
+)
+from nvalchemiops.interactions.electrostatics.ewald_kernels import (
+    ewald_reciprocal_space_fill_structure_factors as _wp_ewald_recip_fill,
 )
 from nvalchemiops.interactions.electrostatics.ewald_real_factory import (
     get_ewald_real_kernel,
@@ -83,6 +90,15 @@ PI = math.pi
 # ``_make_jax_kernel_factory`` returns lazy dtype mappings whose entries
 # materialize their ``jax_kernel`` wrappers on first ``__getitem__``. Module import
 # is therefore free of FFI work; warp NVRTC compile defers to first launch.
+
+
+def _jax_can_tile_ewald_recip() -> bool:
+    """Return whether JAX reciprocal tiled callbacks should be used."""
+    # ``jax_callable`` + nested ``wp.launch_tiled`` is not stable under the
+    # current JAX/Warp stack for jitted reciprocal calls. Keep JAX on the
+    # existing ``jax_kernel`` path until Warp exposes tiled launch metadata
+    # through that wrapper.
+    return False
 
 
 # ==============================================================================
@@ -183,6 +199,190 @@ _jax_batch_ewald_reciprocal_fill_structure_factors = _jax_ewald_recip_component(
     ],
     batched=True,
 )
+
+
+def _ewald_recip_fill_tiled_f32(
+    positions: wp.array(dtype=wp.vec3f),
+    charges: wp.array(dtype=wp.float32),
+    k_vectors: wp.array(dtype=wp.vec3f),
+    cell: wp.array(dtype=wp.mat33f),
+    alpha: wp.array(dtype=wp.float32),
+    total_charge: wp.array(dtype=wp.float64),
+    cos_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    sin_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    real_structure_factors: wp.array(dtype=wp.float64),
+    imag_structure_factors: wp.array(dtype=wp.float64),
+) -> None:
+    _wp_ewald_recip_fill(
+        positions,
+        charges,
+        k_vectors,
+        cell,
+        alpha,
+        total_charge,
+        cos_k_dot_r,
+        sin_k_dot_r,
+        real_structure_factors,
+        imag_structure_factors,
+        wp.float32,
+        str(positions.device),
+    )
+
+
+def _ewald_recip_fill_tiled_f64(
+    positions: wp.array(dtype=wp.vec3d),
+    charges: wp.array(dtype=wp.float64),
+    k_vectors: wp.array(dtype=wp.vec3d),
+    cell: wp.array(dtype=wp.mat33d),
+    alpha: wp.array(dtype=wp.float64),
+    total_charge: wp.array(dtype=wp.float64),
+    cos_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    sin_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    real_structure_factors: wp.array(dtype=wp.float64),
+    imag_structure_factors: wp.array(dtype=wp.float64),
+) -> None:
+    _wp_ewald_recip_fill(
+        positions,
+        charges,
+        k_vectors,
+        cell,
+        alpha,
+        total_charge,
+        cos_k_dot_r,
+        sin_k_dot_r,
+        real_structure_factors,
+        imag_structure_factors,
+        wp.float64,
+        str(positions.device),
+    )
+
+
+def _batch_ewald_recip_fill_tiled_f32(
+    positions: wp.array(dtype=wp.vec3f),
+    charges: wp.array(dtype=wp.float32),
+    k_vectors: wp.array(dtype=wp.vec3f, ndim=2),
+    cell: wp.array(dtype=wp.mat33f),
+    alpha: wp.array(dtype=wp.float32),
+    atom_start: wp.array(dtype=wp.int32),
+    atom_end: wp.array(dtype=wp.int32),
+    total_charges: wp.array(dtype=wp.float64),
+    cos_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    sin_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    real_structure_factors: wp.array(dtype=wp.float64, ndim=2),
+    imag_structure_factors: wp.array(dtype=wp.float64, ndim=2),
+    max_blocks_per_system: wp.int32,
+) -> None:
+    batch_ewald_reciprocal_space_fill_structure_factors(
+        positions,
+        charges,
+        k_vectors,
+        cell,
+        alpha,
+        atom_start,
+        atom_end,
+        total_charges,
+        cos_k_dot_r,
+        sin_k_dot_r,
+        real_structure_factors,
+        imag_structure_factors,
+        int(k_vectors.shape[1]),
+        int(cell.shape[0]),
+        int(max_blocks_per_system),
+        wp.float32,
+        str(positions.device),
+    )
+
+
+def _batch_ewald_recip_fill_tiled_f64(
+    positions: wp.array(dtype=wp.vec3d),
+    charges: wp.array(dtype=wp.float64),
+    k_vectors: wp.array(dtype=wp.vec3d, ndim=2),
+    cell: wp.array(dtype=wp.mat33d),
+    alpha: wp.array(dtype=wp.float64),
+    atom_start: wp.array(dtype=wp.int32),
+    atom_end: wp.array(dtype=wp.int32),
+    total_charges: wp.array(dtype=wp.float64),
+    cos_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    sin_k_dot_r: wp.array(dtype=wp.float64, ndim=2),
+    real_structure_factors: wp.array(dtype=wp.float64, ndim=2),
+    imag_structure_factors: wp.array(dtype=wp.float64, ndim=2),
+    max_blocks_per_system: wp.int32,
+) -> None:
+    batch_ewald_reciprocal_space_fill_structure_factors(
+        positions,
+        charges,
+        k_vectors,
+        cell,
+        alpha,
+        atom_start,
+        atom_end,
+        total_charges,
+        cos_k_dot_r,
+        sin_k_dot_r,
+        real_structure_factors,
+        imag_structure_factors,
+        int(k_vectors.shape[1]),
+        int(cell.shape[0]),
+        int(max_blocks_per_system),
+        wp.float64,
+        str(positions.device),
+    )
+
+
+_JAX_EWALD_RECIP_FILL_TILED = {
+    jnp.dtype(jnp.float32): jax_callable(
+        _ewald_recip_fill_tiled_f32,
+        num_outputs=5,
+        in_out_argnames=[
+            "total_charge",
+            "cos_k_dot_r",
+            "sin_k_dot_r",
+            "real_structure_factors",
+            "imag_structure_factors",
+        ],
+        graph_mode=GraphMode.NONE,
+    ),
+    jnp.dtype(jnp.float64): jax_callable(
+        _ewald_recip_fill_tiled_f64,
+        num_outputs=5,
+        in_out_argnames=[
+            "total_charge",
+            "cos_k_dot_r",
+            "sin_k_dot_r",
+            "real_structure_factors",
+            "imag_structure_factors",
+        ],
+        graph_mode=GraphMode.NONE,
+    ),
+}
+
+
+_JAX_BATCH_EWALD_RECIP_FILL_TILED = {
+    jnp.dtype(jnp.float32): jax_callable(
+        _batch_ewald_recip_fill_tiled_f32,
+        num_outputs=5,
+        in_out_argnames=[
+            "total_charges",
+            "cos_k_dot_r",
+            "sin_k_dot_r",
+            "real_structure_factors",
+            "imag_structure_factors",
+        ],
+        graph_mode=GraphMode.NONE,
+    ),
+    jnp.dtype(jnp.float64): jax_callable(
+        _batch_ewald_recip_fill_tiled_f64,
+        num_outputs=5,
+        in_out_argnames=[
+            "total_charges",
+            "cos_k_dot_r",
+            "sin_k_dot_r",
+            "real_structure_factors",
+            "imag_structure_factors",
+        ],
+        graph_mode=GraphMode.NONE,
+    ),
+}
 
 # --- Energy Computation ---
 
@@ -860,39 +1060,76 @@ def _ewald_reciprocal_space_impl(
             max_atoms_per_system + BATCH_BLOCK_SIZE - 1
         ) // BATCH_BLOCK_SIZE
 
-        (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
-            _jax_batch_ewald_reciprocal_fill_structure_factors[dtype](
-                positions_cast,
-                charges_cast,
-                k_vectors_cast,
-                cell_cast,
-                alpha_arr,
-                atom_start,
-                atom_end,
-                fill_total_charge,
-                cos_k_dot_r,
-                sin_k_dot_r,
-                real_sf,
-                imag_sf,
-                launch_dims=(num_k, num_systems, max_blocks_per_system),
+        if _jax_can_tile_ewald_recip() and should_tile_ewald_recip_fill(
+            int(max_atoms_per_system)
+        ):
+            (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
+                _JAX_BATCH_EWALD_RECIP_FILL_TILED[jnp.dtype(dtype)](
+                    positions_cast,
+                    charges_cast,
+                    k_vectors_cast,
+                    cell_cast,
+                    alpha_arr,
+                    atom_start,
+                    atom_end,
+                    fill_total_charge,
+                    cos_k_dot_r,
+                    sin_k_dot_r,
+                    real_sf,
+                    imag_sf,
+                    max_blocks_per_system,
+                )
             )
-        )
+        else:
+            (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
+                _jax_batch_ewald_reciprocal_fill_structure_factors[dtype](
+                    positions_cast,
+                    charges_cast,
+                    k_vectors_cast,
+                    cell_cast,
+                    alpha_arr,
+                    atom_start,
+                    atom_end,
+                    fill_total_charge,
+                    cos_k_dot_r,
+                    sin_k_dot_r,
+                    real_sf,
+                    imag_sf,
+                    launch_dims=(num_k, num_systems, max_blocks_per_system),
+                )
+            )
     else:
-        (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
-            _jax_ewald_reciprocal_fill_structure_factors[dtype](
-                positions_cast,
-                charges_cast,
-                k_vectors_cast,
-                cell_cast,
-                alpha_arr,
-                fill_total_charge,
-                cos_k_dot_r,
-                sin_k_dot_r,
-                real_sf,
-                imag_sf,
-                launch_dims=(num_k,),
+        if _jax_can_tile_ewald_recip() and should_tile_ewald_recip_fill(int(num_atoms)):
+            (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
+                _JAX_EWALD_RECIP_FILL_TILED[jnp.dtype(dtype)](
+                    positions_cast,
+                    charges_cast,
+                    k_vectors_cast,
+                    cell_cast,
+                    alpha_arr,
+                    fill_total_charge,
+                    cos_k_dot_r,
+                    sin_k_dot_r,
+                    real_sf,
+                    imag_sf,
+                )
             )
-        )
+        else:
+            (_fill_total_charge, cos_k_dot_r, sin_k_dot_r, real_sf, imag_sf) = (
+                _jax_ewald_reciprocal_fill_structure_factors[dtype](
+                    positions_cast,
+                    charges_cast,
+                    k_vectors_cast,
+                    cell_cast,
+                    alpha_arr,
+                    fill_total_charge,
+                    cos_k_dot_r,
+                    sin_k_dot_r,
+                    real_sf,
+                    imag_sf,
+                    launch_dims=(num_k,),
+                )
+            )
 
     # Step 2: Compute energy (and forces/charge_grads if requested)
     if is_batched:
