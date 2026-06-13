@@ -108,6 +108,7 @@ def _wrap_pbc_positions(
     *,
     batched: bool,
     batch_idx: wp.array | None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Launch the shared position-wrapping helper for one batching mode."""
     if batched:
@@ -122,6 +123,7 @@ def _wrap_pbc_positions(
             per_atom_cell_offsets,
             wp_dtype,
             device,
+            pbc=pbc,
         )
         return
     wrap_positions_single(
@@ -132,12 +134,14 @@ def _wrap_pbc_positions(
         per_atom_cell_offsets,
         wp_dtype,
         device,
+        pbc=pbc,
     )
 
 
 def _prepare_pbc_positions(
     positions: wp.array,
     cell: wp.array,
+    pbc: wp.array,
     batch_idx: wp.array | None,
     wp_dtype: type,
     device: str,
@@ -179,6 +183,7 @@ def _prepare_pbc_positions(
         device,
         batched=batched,
         batch_idx=batch_idx,
+        pbc=pbc,
     )
     return positions_wrapped_buffer, per_atom_cell_offsets_buffer
 
@@ -417,6 +422,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions: wp.array,
     cutoff: float,
     cell: wp.array,
+    pbc: wp.array,
     shift_range: wp.array,
     neighbor_matrix: wp.array,
     neighbor_matrix_shifts: wp.array,
@@ -501,6 +507,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
         cell,
+        pbc,
         batch_idx,
         wp_dtype,
         device,
@@ -746,6 +753,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     cutoff1: float,
     cutoff2: float,
     cell: wp.array,
+    pbc: wp.array,
     shift_range: wp.array,
     neighbor_matrix1: wp.array,
     neighbor_matrix2: wp.array,
@@ -775,6 +783,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
         cell,
+        pbc,
         batch_idx,
         wp_dtype,
         device,
@@ -1202,6 +1211,7 @@ def naive_neighbor_matrix_pbc(
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
     native_strategy: str = "auto",
+    pbc: wp.array | None = None,
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
@@ -1343,6 +1353,7 @@ def naive_neighbor_matrix_pbc(
             positions,
             cutoff,
             cell,
+            pbc,
             shift_range,
             neighbor_matrix,
             neighbor_matrix_shifts,
@@ -1363,6 +1374,7 @@ def naive_neighbor_matrix_pbc(
         positions,
         cutoff,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -1421,6 +1433,7 @@ def batch_naive_neighbor_matrix_pbc(
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
     native_strategy: str = "auto",
+    pbc: wp.array | None = None,
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
@@ -1574,6 +1587,7 @@ def batch_naive_neighbor_matrix_pbc(
             positions,
             cutoff,
             cell,
+            pbc,
             shift_range,
             neighbor_matrix,
             neighbor_matrix_shifts,
@@ -1600,6 +1614,7 @@ def batch_naive_neighbor_matrix_pbc(
         positions,
         cutoff,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -1736,6 +1751,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    pbc: wp.array | None = None,
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
@@ -1846,6 +1862,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1,
         cutoff2,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix1,
         neighbor_matrix2,
@@ -1989,6 +2006,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
+    pbc: wp.array | None = None,
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
@@ -2099,6 +2117,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1,
         cutoff2,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix1,
         neighbor_matrix2,

@@ -20,6 +20,7 @@ from unittest import mock
 import pytest
 import torch
 
+from nvalchemiops.torch.neighbors import batch_cell_list
 from nvalchemiops.torch.neighbors.batch_naive import (
     batch_naive_neighbor_list,
 )
@@ -158,6 +159,66 @@ class TestBatchNaiveCorrectness:
 
         # Check neighbor counts
         assert torch.all(num_neighbors >= 0)
+
+    def test_non_periodic_axis_is_not_folded(self, device, dtype):
+        """A non-periodic axis must not be folded when wrapping positions.
+
+        With a non-zero cell and atoms sitting outside the primary cell along a
+        non-periodic axis, the naive launcher used to wrap every axis (it
+        branched only on ``pbc is None``), which corrupts the neighbors of the
+        non-periodic axis. The cell-list method honors per-axis pbc, so the two
+        must reconstruct the same neighbor distances; the comparison fails if
+        the non-periodic axis is folded again.
+        """
+        cutoff = 5.0
+        atol = 1e-4 if dtype == torch.float32 else 1e-9
+
+        def sorted_pair_distances(fn, positions, cell, pbc):
+            batch_idx = torch.zeros(
+                positions.shape[0], dtype=torch.int32, device=device
+            )
+            nbr, _, shifts = fn(
+                positions=positions,
+                cutoff=cutoff,
+                batch_idx=batch_idx,
+                cell=cell.unsqueeze(0),
+                pbc=pbc.unsqueeze(0),
+                return_neighbor_list=True,
+            )
+            i, j = nbr[0].long(), nbr[1].long()
+            disp = positions[j] + shifts.to(dtype) @ cell - positions[i]
+            return torch.sort(torch.linalg.norm(disp, dim=1)).values
+
+        def assert_matches_cell_list(positions, cell, pbc):
+            naive = sorted_pair_distances(
+                batch_naive_neighbor_list, positions, cell, pbc
+            )
+            oracle = sorted_pair_distances(batch_cell_list, positions, cell, pbc)
+            assert naive.shape == oracle.shape
+            assert torch.allclose(naive, oracle, atol=atol)
+
+        # Fully non-periodic molecule carrying a 1 A dummy cell; atoms straddle
+        # the origin so a fold along any axis changes the geometry
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.0, 0.76, -0.59], [0.0, -0.76, -0.59]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=dtype, device=device)
+        pbc = torch.tensor([False, False, False], device=device)
+        assert_matches_cell_list(positions, cell, pbc)
+
+        # Slab: periodic in x and y, non-periodic z with atoms straddling z = 0
+        a, lz = 3.0, 20.0
+        coords = [
+            [x, y, z]
+            for (x, y) in [(0.0, 0.0), (1.5, 0.0), (0.0, 1.5), (1.5, 1.5)]
+            for z in (0.5, -0.5)
+        ]
+        positions = torch.tensor(coords, dtype=dtype, device=device)
+        cell = torch.diag(torch.tensor([a, a, lz], dtype=dtype, device=device))
+        pbc = torch.tensor([True, True, False], device=device)
+        assert_matches_cell_list(positions, cell, pbc)
 
     def test_pbc_uses_forwarded_batch_idx_without_rebuilding(self, device, dtype):
         """Test PBC path does not rebuild batch_idx when both batch tensors are provided."""

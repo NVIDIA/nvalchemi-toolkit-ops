@@ -148,6 +148,7 @@ def _batch_naive_neighbor_matrix_no_pbc(
 def _batch_naive_neighbor_matrix_pbc(
     positions: torch.Tensor,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     cutoff: float,
     batch_idx: torch.Tensor,
     batch_ptr: torch.Tensor,
@@ -247,6 +248,8 @@ def _batch_naive_neighbor_matrix_pbc(
     if max_atoms_per_system is None:
         max_atoms_per_system = (batch_ptr[1:] - batch_ptr[:-1]).max().item()
 
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
+
     wp_rebuild_flags = None
     if rebuild_flags is not None:
         wp_rebuild_flags = wp.from_torch(
@@ -282,6 +285,7 @@ def _batch_naive_neighbor_matrix_pbc(
     batch_naive_neighbor_matrix_pbc(
         positions=wp_positions,
         cell=wp_cell,
+        pbc=wp_pbc,
         cutoff=cutoff,
         batch_ptr=wp_batch_ptr,
         batch_idx=wp_batch_idx,
@@ -1043,6 +1047,7 @@ def batch_naive_neighbor_list(
         _batch_naive_neighbor_matrix_pbc(
             positions=positions,
             cell=cell,
+            pbc=pbc,
             cutoff=cutoff,
             batch_idx=batch_idx,
             batch_ptr=batch_ptr,

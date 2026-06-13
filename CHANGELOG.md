@@ -28,6 +28,10 @@
 
 ### Fixed
 
+- `batch_naive_neighbor_list` and `naive_neighbor_list` no longer fold a
+  non-periodic axis when a non-zero cell is supplied, so fully non-periodic
+  systems and slabs return correct neighbors when atoms cross the
+  non-periodic boundary (#104).
 - Fixed Torch Ewald gradients for non-uniform per-atom energy cotangents
   (`torch.autograd.grad(..., grad_outputs=w)`).
 - **MTK NPT/NPH cell propagation**: kernels wrote `V·(P − P_ext)/W`
