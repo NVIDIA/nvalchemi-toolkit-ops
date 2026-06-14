@@ -148,6 +148,7 @@ def _batch_naive_neighbor_matrix_no_pbc(
 def _batch_naive_neighbor_matrix_pbc(
     positions: torch.Tensor,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     cutoff: float,
     batch_idx: torch.Tensor,
     batch_ptr: torch.Tensor,
@@ -219,6 +220,7 @@ def _batch_naive_neighbor_matrix_pbc(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -282,6 +284,7 @@ def _batch_naive_neighbor_matrix_pbc(
     batch_naive_neighbor_matrix_pbc(
         positions=wp_positions,
         cell=wp_cell,
+        pbc=wp_pbc,
         cutoff=cutoff,
         batch_ptr=wp_batch_ptr,
         batch_idx=wp_batch_idx,
@@ -382,6 +385,7 @@ def _batch_naive_neighbor_matrix_no_pbc_pair(
 def _batch_naive_neighbor_matrix_pbc_pair(
     positions: torch.Tensor,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     cutoff: float,
     batch_idx: torch.Tensor,
     batch_ptr: torch.Tensor,
@@ -414,6 +418,7 @@ def _batch_naive_neighbor_matrix_pbc_pair(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -449,6 +454,7 @@ def _batch_naive_neighbor_matrix_pbc_pair(
     batch_naive_neighbor_matrix_pbc(
         positions=wp_positions,
         cell=wp_cell,
+        pbc=wp_pbc,
         cutoff=cutoff,
         batch_ptr=wp_batch_ptr,
         batch_idx=wp_batch_idx,
@@ -523,6 +529,7 @@ def _batch_naive_pair_outputs_forward(
         _batch_naive_neighbor_matrix_pbc_pair(
             positions=positions.detach(),
             cell=cell.detach(),
+            pbc=pbc,
             cutoff=cutoff,
             batch_idx=batch_idx,
             batch_ptr=batch_ptr,
@@ -615,6 +622,9 @@ def _batch_naive_pair_outputs_forward(
                     dtype=wp_mat_dtype,
                     requires_grad=False,
                     return_ctype=True,
+                ),
+                pbc=wp.from_torch(
+                    pbc, dtype=wp.bool, requires_grad=False, return_ctype=True
                 ),
                 cutoff=cutoff,
                 batch_ptr=wp_batch_ptr,
@@ -1043,6 +1053,7 @@ def batch_naive_neighbor_list(
         _batch_naive_neighbor_matrix_pbc(
             positions=positions,
             cell=cell,
+            pbc=pbc,
             cutoff=cutoff,
             batch_idx=batch_idx,
             batch_ptr=batch_ptr,

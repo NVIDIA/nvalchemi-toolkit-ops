@@ -31,6 +31,9 @@
 
 ### Fixed
 
+- Naive PBC neighbor wrapping now leaves non-periodic axes unwrapped when
+  per-axis `pbc` flags are supplied, fixing partial-PBC and non-periodic
+  systems (#104).
 - Fixed Torch Ewald gradients for non-uniform per-atom energy cotangents
   (`torch.autograd.grad(..., grad_outputs=w)`).
 - JAX electrostatics no longer import the removed `jax.custom_transpose`. The

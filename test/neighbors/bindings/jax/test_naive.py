@@ -112,6 +112,43 @@ class TestNaiveNeighborList:
         assert jnp.isfinite(grad).all().item()
         np.testing.assert_allclose(np.asarray(grad), 0.0)
 
+    @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
+    def test_tile_pbc_prewrapped_matches_scalar(self, dtype):
+        """Tile PBC path supports prewrapped single-system inputs."""
+        positions = jnp.array(
+            [
+                [0.2, 0.2, 0.2],
+                [0.8, 0.2, 0.2],
+                [0.2, 0.8, 0.2],
+            ],
+            dtype=dtype,
+        )
+        cell = (jnp.eye(3, dtype=dtype) * 5.0).reshape(1, 3, 3)
+        pbc = jnp.array([[True, True, True]])
+
+        scalar_result = naive_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            return_neighbor_list=False,
+            native_strategy="scalar",
+            wrap_positions=False,
+        )
+        tile_result = naive_neighbor_list(
+            positions,
+            1.0,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=8,
+            return_neighbor_list=False,
+            native_strategy="tile",
+            wrap_positions=False,
+        )
+
+        _assert_arrays_equal(scalar_result, tile_result)
+
     def test_two_atom_outside_cutoff(self):
         """Test with two atoms outside cutoff."""
         positions = jnp.array([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], dtype=jnp.float32)

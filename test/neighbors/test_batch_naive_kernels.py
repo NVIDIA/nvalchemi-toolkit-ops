@@ -663,6 +663,78 @@ class TestBatchNaiveWpLaunchers:
                 "Unit shifts should be small integers"
             )
 
+    @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize("half_fill", [True, False])
+    def test_batch_naive_neighbor_matrix_pbc_uses_explicit_axes(
+        self, device, dtype, half_fill
+    ):
+        """Explicit PBC flags leave non-periodic coordinates unwrapped."""
+        atoms_per_system = [2, 2]
+        positions_batch = torch.tensor(
+            [
+                [0.95, 0.50, 1.20],
+                [0.05, 0.50, 0.20],
+                [0.20, 0.20, 1.30],
+                [0.20, 0.20, 0.30],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1)
+        pbc_batch = torch.tensor(
+            [[True, True, False], [True, True, False]],
+            dtype=torch.bool,
+            device=device,
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+
+        cutoff = 0.25
+        max_neighbors = 8
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell_batch, cutoff, pbc_batch
+        )
+
+        neighbor_matrix = torch.full(
+            (positions_batch.shape[0], max_neighbors),
+            -1,
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_matrix_shifts = torch.zeros(
+            (positions_batch.shape[0], max_neighbors, 3),
+            dtype=torch.int32,
+            device=device,
+        )
+        num_neighbors = torch.zeros(
+            positions_batch.shape[0], dtype=torch.int32, device=device
+        )
+
+        batch_naive_neighbor_matrix_pbc(
+            positions=wp.from_torch(positions_batch, dtype=get_wp_vec_dtype(dtype)),
+            cell=wp.from_torch(cell_batch, dtype=get_wp_mat_dtype(dtype)),
+            cutoff=cutoff,
+            batch_ptr=wp.from_torch(batch_ptr, dtype=wp.int32),
+            batch_idx=wp.from_torch(batch_idx, dtype=wp.int32),
+            shift_range=wp.from_torch(shift_range, dtype=wp.vec3i),
+            num_shifts_arr=wp.from_torch(num_shifts, dtype=wp.int32),
+            max_shifts_per_system=max_shifts,
+            neighbor_matrix=wp.from_torch(neighbor_matrix, dtype=wp.int32),
+            neighbor_matrix_shifts=wp.from_torch(
+                neighbor_matrix_shifts, dtype=wp.vec3i
+            ),
+            num_neighbors=wp.from_torch(num_neighbors, dtype=wp.int32),
+            wp_dtype=get_wp_dtype(dtype),
+            device=str(device),
+            max_atoms_per_system=max(atoms_per_system),
+            half_fill=half_fill,
+            pbc=wp.from_torch(pbc_batch, dtype=wp.bool),
+        )
+
+        assert torch.count_nonzero(num_neighbors).item() == 0
+        assert torch.all(neighbor_matrix == -1)
+        assert torch.all(neighbor_matrix_shifts[..., 2] == 0)
+
 
 class TestBatchNaiveSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for batch naive neighbor list warp launchers."""

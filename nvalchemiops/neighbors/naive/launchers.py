@@ -101,6 +101,7 @@ def _wrap_pbc_positions(
     positions: wp.array,
     cell: wp.array,
     inv_cell: wp.array,
+    pbc: wp.array | None,
     positions_wrapped: wp.array,
     per_atom_cell_offsets: wp.array,
     wp_dtype: type,
@@ -122,6 +123,7 @@ def _wrap_pbc_positions(
             per_atom_cell_offsets,
             wp_dtype,
             device,
+            pbc=pbc,
         )
         return
     wrap_positions_single(
@@ -132,12 +134,14 @@ def _wrap_pbc_positions(
         per_atom_cell_offsets,
         wp_dtype,
         device,
+        pbc=pbc,
     )
 
 
 def _prepare_pbc_positions(
     positions: wp.array,
     cell: wp.array,
+    pbc: wp.array | None,
     batch_idx: wp.array | None,
     wp_dtype: type,
     device: str,
@@ -173,6 +177,7 @@ def _prepare_pbc_positions(
         positions,
         cell,
         inv_cell_buffer,
+        pbc,
         positions_wrapped_buffer,
         per_atom_cell_offsets_buffer,
         wp_dtype,
@@ -417,6 +422,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions: wp.array,
     cutoff: float,
     cell: wp.array,
+    pbc: wp.array | None,
     shift_range: wp.array,
     neighbor_matrix: wp.array,
     neighbor_matrix_shifts: wp.array,
@@ -501,6 +507,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
         cell,
+        pbc,
         batch_idx,
         wp_dtype,
         device,
@@ -746,6 +753,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     cutoff1: float,
     cutoff2: float,
     cell: wp.array,
+    pbc: wp.array | None,
     shift_range: wp.array,
     neighbor_matrix1: wp.array,
     neighbor_matrix2: wp.array,
@@ -775,6 +783,7 @@ def _launch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_work, per_atom_cell_offsets = _prepare_pbc_positions(
         positions,
         cell,
+        pbc,
         batch_idx,
         wp_dtype,
         device,
@@ -1206,6 +1215,7 @@ def naive_neighbor_matrix_pbc(
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for naive neighbor matrix construction with PBC.
 
@@ -1285,6 +1295,10 @@ def naive_neighbor_matrix_pbc(
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch buffer for inverse cell matrices
         (only used when ``wrap_positions=True``).
+    pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
+        Per-axis periodic boundary flags.  When supplied, axes marked False
+        are left unwrapped during position wrapping.  When omitted, wrapping
+        uses the existing all-axis behavior.
     positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
         Deprecated aliases of the ``*_buffer`` kwargs above.
 
@@ -1343,6 +1357,7 @@ def naive_neighbor_matrix_pbc(
             positions,
             cutoff,
             cell,
+            pbc,
             shift_range,
             neighbor_matrix,
             neighbor_matrix_shifts,
@@ -1363,6 +1378,7 @@ def naive_neighbor_matrix_pbc(
         positions,
         cutoff,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -1425,6 +1441,7 @@ def batch_naive_neighbor_matrix_pbc(
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for batched naive neighbor matrix construction with PBC.
 
@@ -1504,6 +1521,10 @@ def batch_naive_neighbor_matrix_pbc(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
+        Per-system, per-axis periodic boundary flags.  When supplied, axes
+        marked False are left unwrapped during position wrapping.  When
+        omitted, wrapping uses the existing all-axis behavior.
     positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
         Deprecated aliases of the ``*_buffer`` kwargs above.
 
@@ -1574,6 +1595,7 @@ def batch_naive_neighbor_matrix_pbc(
             positions,
             cutoff,
             cell,
+            pbc,
             shift_range,
             neighbor_matrix,
             neighbor_matrix_shifts,
@@ -1600,6 +1622,7 @@ def batch_naive_neighbor_matrix_pbc(
         positions,
         cutoff,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -1740,6 +1763,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for naive dual cutoff neighbor matrix construction with PBC.
 
@@ -1798,6 +1822,10 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         Caller-supplied scratch for per-atom cell offsets.
     inv_cell_buffer : wp.array, shape (num_systems,), dtype=wp.mat33*, optional
         Caller-supplied scratch for inverse cell matrices.
+    pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
+        Per-axis periodic boundary flags.  When supplied, axes marked False
+        are left unwrapped during position wrapping.  When omitted, wrapping
+        uses the existing all-axis behavior.
     positions_wrapped, per_atom_cell_offsets, inv_cell : deprecated
         Deprecated aliases of the ``*_buffer`` kwargs above.
 
@@ -1846,6 +1874,7 @@ def naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1,
         cutoff2,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix1,
         neighbor_matrix2,
@@ -1925,6 +1954,10 @@ def batch_naive_neighbor_matrix_dual_cutoff(
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
     pair_params : wp.array, optional
         Not supported in dual-cutoff mode; raises ``ValueError`` if provided.
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
+        Per-system, per-axis periodic boundary flags.  When supplied, axes
+        marked False are left unwrapped during position wrapping.  When
+        omitted, wrapping uses the existing all-axis behavior.
 
     Notes
     -----
@@ -1993,6 +2026,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
     inv_cell: wp.array | None = None,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for batched naive dual cutoff neighbor matrix construction with PBC.
 
@@ -2099,6 +2133,7 @@ def batch_naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1,
         cutoff2,
         cell,
+        pbc,
         shift_range,
         neighbor_matrix1,
         neighbor_matrix2,

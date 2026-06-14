@@ -116,6 +116,7 @@ def _naive_neighbor_matrix_pbc_dual_cutoff(
     cutoff1: float,
     cutoff2: float,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     neighbor_matrix1: torch.Tensor,
     neighbor_matrix2: torch.Tensor,
     neighbor_matrix_shifts1: torch.Tensor,
@@ -151,6 +152,7 @@ def _naive_neighbor_matrix_pbc_dual_cutoff(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -208,6 +210,7 @@ def _naive_neighbor_matrix_pbc_dual_cutoff(
         cutoff1=cutoff1,
         cutoff2=cutoff2,
         cell=wp_cell,
+        pbc=wp_pbc,
         shift_range=wp_shift_range,
         num_shifts=max_shifts_per_system,
         neighbor_matrix1=wp_neighbor_matrix1,
@@ -320,6 +323,7 @@ def _naive_neighbor_matrix_pbc_dual_cutoff_selective(
     cutoff1: float,
     cutoff2: float,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     neighbor_matrix1: torch.Tensor,
     neighbor_matrix2: torch.Tensor,
     neighbor_matrix_shifts1: torch.Tensor,
@@ -357,6 +361,7 @@ def _naive_neighbor_matrix_pbc_dual_cutoff_selective(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -426,6 +431,7 @@ def _naive_neighbor_matrix_pbc_dual_cutoff_selective(
         cutoff1=cutoff1,
         cutoff2=cutoff2,
         cell=wp_cell,
+        pbc=wp_pbc,
         shift_range=wp_shift_range,
         num_shifts=max_shifts_per_system,
         neighbor_matrix1=wp_neighbor_matrix1,
@@ -647,6 +653,7 @@ def naive_neighbor_list_dual_cutoff(
                 cutoff1=cutoff1,
                 cutoff2=cutoff2,
                 cell=cell,
+                pbc=pbc,
                 neighbor_matrix1=neighbor_matrix1,
                 neighbor_matrix2=neighbor_matrix2,
                 neighbor_matrix_shifts1=neighbor_matrix_shifts1,
@@ -669,6 +676,7 @@ def naive_neighbor_list_dual_cutoff(
                 cutoff1=cutoff1,
                 cutoff2=cutoff2,
                 cell=cell,
+                pbc=pbc,
                 neighbor_matrix1=neighbor_matrix1,
                 neighbor_matrix2=neighbor_matrix2,
                 neighbor_matrix_shifts1=neighbor_matrix_shifts1,

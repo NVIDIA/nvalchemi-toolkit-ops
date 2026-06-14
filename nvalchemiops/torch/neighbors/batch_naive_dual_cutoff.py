@@ -124,6 +124,7 @@ def _batch_naive_neighbor_matrix_no_pbc_dual_cutoff(
 def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     positions: torch.Tensor,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     cutoff1: float,
     cutoff2: float,
     batch_idx: torch.Tensor,
@@ -164,6 +165,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -232,6 +234,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff(
     batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions=wp_positions,
         cell=wp_cell,
+        pbc=wp_pbc,
         cutoff1=cutoff1,
         cutoff2=cutoff2,
         batch_ptr=wp_batch_ptr,
@@ -349,6 +352,7 @@ def _batch_naive_neighbor_matrix_no_pbc_dual_cutoff_selective(
 def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     positions: torch.Tensor,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     cutoff1: float,
     cutoff2: float,
     batch_idx: torch.Tensor,
@@ -392,6 +396,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -462,6 +467,7 @@ def _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
     batch_naive_neighbor_matrix_pbc_dual_cutoff(
         positions=wp_positions,
         cell=wp_cell,
+        pbc=wp_pbc,
         cutoff1=cutoff1,
         cutoff2=cutoff2,
         batch_ptr=wp_batch_ptr,
@@ -707,6 +713,7 @@ def batch_naive_neighbor_list_dual_cutoff(
             _batch_naive_neighbor_matrix_pbc_dual_cutoff_selective(
                 positions=positions,
                 cell=cell,
+                pbc=pbc,
                 cutoff1=cutoff1,
                 cutoff2=cutoff2,
                 batch_idx=batch_idx,
@@ -732,6 +739,7 @@ def batch_naive_neighbor_list_dual_cutoff(
             _batch_naive_neighbor_matrix_pbc_dual_cutoff(
                 positions=positions,
                 cell=cell,
+                pbc=pbc,
                 cutoff1=cutoff1,
                 cutoff2=cutoff2,
                 batch_idx=batch_idx,

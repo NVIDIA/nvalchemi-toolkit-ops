@@ -29,8 +29,134 @@ from .conftest import requires_gpu
 pytestmark = requires_gpu
 
 
+def _distances_from_neighbor_list(
+    positions: jax.Array,
+    cell: jax.Array,
+    neighbor_list: jax.Array,
+    shifts: jax.Array,
+) -> np.ndarray:
+    """Return sorted reconstructed distances for a COO neighbor list."""
+    positions_np = np.asarray(positions)
+    cell_np = np.asarray(cell)
+    neighbor_list_np = np.asarray(neighbor_list)
+    shifts_np = np.asarray(shifts)
+    idx_i = neighbor_list_np[0].astype(np.int64)
+    idx_j = neighbor_list_np[1].astype(np.int64)
+    disp = (
+        positions_np[idx_j]
+        + shifts_np.astype(positions_np.dtype) @ cell_np
+        - positions_np[idx_i]
+    )
+    return np.sort(np.linalg.norm(disp, axis=1))
+
+
+def _bruteforce_pbc_distances(
+    positions: jax.Array,
+    cell: jax.Array,
+    pbc: jax.Array,
+    cutoff: float,
+) -> np.ndarray:
+    """Vectorized directed distances honoring per-axis PBC flags."""
+    positions_np = np.asarray(positions)
+    cell_np = np.asarray(cell)
+    pbc_np = np.asarray(pbc)
+
+    ranges = []
+    for axis, periodic in enumerate(pbc_np.tolist()):
+        if periodic:
+            axis_len = np.linalg.norm(cell_np[axis])
+            extent = int(np.ceil(cutoff / axis_len)) + 1
+            ranges.append(np.arange(-extent, extent + 1, dtype=np.int64))
+        else:
+            ranges.append(np.zeros(1, dtype=np.int64))
+    shifts = np.stack(np.meshgrid(*ranges, indexing="ij"), axis=-1).reshape(-1, 3)
+
+    pair_disp = positions_np[None, :, :] - positions_np[:, None, :]
+    shift_disp = shifts.astype(positions_np.dtype) @ cell_np
+    disp = pair_disp[:, :, None, :] + shift_disp[None, None, :, :]
+    distances = np.linalg.norm(disp, axis=-1)
+
+    num_atoms = positions_np.shape[0]
+    atom_i = np.arange(num_atoms)[:, None, None]
+    atom_j = np.arange(num_atoms)[None, :, None]
+    zero_shift = (shifts == 0).all(axis=1)[None, None, :]
+    mask = (distances < cutoff) & ~((atom_i == atom_j) & zero_shift)
+    return np.sort(distances[mask])
+
+
 class TestBatchNaiveNeighborList:
     """Test batch_naive_neighbor_list function."""
+
+    def test_nonperiodic_dummy_cell_does_not_wrap_positions(self):
+        """A provided non-periodic cell must not fold molecular coordinates."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.9572, 0.0, 0.0],
+                [-0.2399872, 0.927297, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=positions.dtype).reshape(1, 3, 3)
+        pbc = jnp.array([[False, False, False]], dtype=jnp.bool_)
+        batch_idx = jnp.zeros((positions.shape[0],), dtype=jnp.int32)
+
+        neighbor_list, _, shifts = batch_naive_neighbor_list(
+            positions,
+            5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=16,
+            return_neighbor_list=True,
+        )
+
+        actual = _distances_from_neighbor_list(
+            positions,
+            cell[0],
+            neighbor_list,
+            shifts,
+        )
+        expected = _bruteforce_pbc_distances(positions, cell[0], pbc[0], cutoff=5.0)
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
+        np.testing.assert_array_equal(np.asarray(shifts), 0)
+
+    def test_slab_nonperiodic_axis_is_not_wrapped(self):
+        """Slab PBC must not fold coordinates along the non-periodic axis."""
+        positions = jnp.array(
+            [
+                [x, y, z]
+                for x, y in [(0.0, 0.0), (1.5, 0.0), (0.0, 1.5), (1.5, 1.5)]
+                for z in (0.5, -0.5)
+            ],
+            dtype=jnp.float32,
+        )
+        cell = jnp.array(
+            [[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 20.0]]],
+            dtype=positions.dtype,
+        )
+        pbc = jnp.array([[True, True, False]], dtype=jnp.bool_)
+        batch_idx = jnp.zeros((positions.shape[0],), dtype=jnp.int32)
+
+        neighbor_list, _, shifts = batch_naive_neighbor_list(
+            positions,
+            5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=128,
+            return_neighbor_list=True,
+        )
+
+        actual = _distances_from_neighbor_list(
+            positions,
+            cell[0],
+            neighbor_list,
+            shifts,
+        )
+        expected = _bruteforce_pbc_distances(positions, cell[0], pbc[0], cutoff=5.0)
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
+        np.testing.assert_array_equal(np.asarray(shifts)[:, 2], 0)
 
     def test_two_systems_no_pbc(self):
         """Test with two separate systems without PBC."""

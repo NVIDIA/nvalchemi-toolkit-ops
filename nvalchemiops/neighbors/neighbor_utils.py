@@ -1009,70 +1009,83 @@ def estimate_max_neighbors(
 ###########################################################################################
 
 
-def _make_wrap_positions_kernel(wp_dtype: type, *, batched: bool):
+def _make_wrap_positions_kernel(
+    wp_dtype: type, *, batched: bool, pbc_aware: bool = False
+):
     """Build a position-wrapping kernel for one dtype and batching mode."""
     require_supported_dtype(wp_dtype)
     vec_dtype, mat_dtype = dtype_info(wp_dtype)
     BATCHED = wp.constant(bool(batched))
 
-    @wp.kernel(enable_backward=False, module="unique")
-    def _kernel(
-        positions: wp.array(dtype=vec_dtype),
-        cell: wp.array(dtype=mat_dtype),
-        inv_cell: wp.array(dtype=mat_dtype),
-        batch_idx: wp.array(dtype=wp.int32),
-        positions_wrapped: wp.array(dtype=vec_dtype),
-        per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
-    ) -> None:
-        """Wrap positions into the primary cell and store integer offsets
+    if pbc_aware:
 
-        Parameters
-        ----------
-        positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
-            Cartesian coordinates to wrap.
-        cell : wp.array, shape (num_systems,), dtype=wp.mat33*
-            Cell matrices defining lattice vectors.
-        inv_cell : wp.array, shape (num_systems,), dtype=wp.mat33*
-            Precomputed inverse cell matrices.
-        batch_idx : wp.array, shape (total_atoms,), dtype=wp.int32
-            System index for each atom. Zero-size sentinel in single-system
-            specializations.
-        positions_wrapped : wp.array, shape (total_atoms,), dtype=wp.vec3*
-            OUTPUT: Wrapped Cartesian coordinates.
-        per_atom_cell_offsets : wp.array, shape (total_atoms,), dtype=wp.vec3i
-            OUTPUT: Integer cell offsets removed from each atom.
+        @wp.kernel(enable_backward=False, module="unique")
+        def _kernel(
+            positions: wp.array(dtype=vec_dtype),
+            cell: wp.array(dtype=mat_dtype),
+            inv_cell: wp.array(dtype=mat_dtype),
+            pbc: wp.array2d(dtype=wp.bool),
+            batch_idx: wp.array(dtype=wp.int32),
+            positions_wrapped: wp.array(dtype=vec_dtype),
+            per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
+        ) -> None:
+            """Wrap positions into periodic axes and store integer offsets.
 
-        Returns
-        -------
-        None
-            This function modifies the input arrays in-place.
+            Notes
+            -----
+            - Thread launch: One thread per atom.
+            - Modifies: ``positions_wrapped`` and ``per_atom_cell_offsets``.
+            """
+            i = wp.tid()
+            isys = wp.int32(0)
+            if BATCHED:
+                isys = batch_idx[i]
+            _cell = cell[isys]
+            _inv_cell = inv_cell[isys]
+            _pbc = pbc[isys]
+            _pos = positions[i]
+            _frac = _pos * _inv_cell
+            _int = wp.vec3i(
+                wp.int32(wp.floor(_frac[0])) if _pbc[0] else wp.int32(0),
+                wp.int32(wp.floor(_frac[1])) if _pbc[1] else wp.int32(0),
+                wp.int32(wp.floor(_frac[2])) if _pbc[2] else wp.int32(0),
+            )
+            positions_wrapped[i] = _pos - type(_pos)(_int) * _cell
+            per_atom_cell_offsets[i] = _int
 
-        Notes
-        -----
-        - Thread launch: One thread per atom.
-        - Modifies: ``positions_wrapped`` and ``per_atom_cell_offsets``.
-        ``BATCHED`` is a static specialization. Single-system launchers pass a
-        zero-size ``batch_idx`` sentinel that is not read.
+    else:
 
-        See Also
-        --------
-        get_wrap_positions_kernel : Return the specialized position-wrapping kernel.
-        """
-        i = wp.tid()
-        isys = wp.int32(0)
-        if BATCHED:
-            isys = batch_idx[i]
-        _cell = cell[isys]
-        _inv_cell = inv_cell[isys]
-        _pos = positions[i]
-        _frac = _pos * _inv_cell
-        _int = wp.vec3i(
-            wp.int32(wp.floor(_frac[0])),
-            wp.int32(wp.floor(_frac[1])),
-            wp.int32(wp.floor(_frac[2])),
-        )
-        positions_wrapped[i] = _pos - type(_pos)(_int) * _cell
-        per_atom_cell_offsets[i] = _int
+        @wp.kernel(enable_backward=False, module="unique")
+        def _kernel(
+            positions: wp.array(dtype=vec_dtype),
+            cell: wp.array(dtype=mat_dtype),
+            inv_cell: wp.array(dtype=mat_dtype),
+            batch_idx: wp.array(dtype=wp.int32),
+            positions_wrapped: wp.array(dtype=vec_dtype),
+            per_atom_cell_offsets: wp.array(dtype=wp.vec3i),
+        ) -> None:
+            """Wrap positions into the primary cell and store integer offsets.
+
+            Notes
+            -----
+            - Thread launch: One thread per atom.
+            - Modifies: ``positions_wrapped`` and ``per_atom_cell_offsets``.
+            """
+            i = wp.tid()
+            isys = wp.int32(0)
+            if BATCHED:
+                isys = batch_idx[i]
+            _cell = cell[isys]
+            _inv_cell = inv_cell[isys]
+            _pos = positions[i]
+            _frac = _pos * _inv_cell
+            _int = wp.vec3i(
+                wp.int32(wp.floor(_frac[0])),
+                wp.int32(wp.floor(_frac[1])),
+                wp.int32(wp.floor(_frac[2])),
+            )
+            positions_wrapped[i] = _pos - type(_pos)(_int) * _cell
+            per_atom_cell_offsets[i] = _int
 
     base = (
         "_wrap_positions_batch_kernel" if batched else "_wrap_positions_single_kernel"
@@ -1083,21 +1096,46 @@ def _make_wrap_positions_kernel(wp_dtype: type, *, batched: bool):
         _append_specialization_doc(
             _kernel.__doc__,
             dtype=wp_dtype,
-            entries=(("batched", bool(batched)),),
+            entries=(
+                ("batched", bool(batched)),
+                ("pbc_aware", bool(pbc_aware)),
+            ),
         ),
     )
 
 
 @lru_cache(maxsize=None)
-def get_wrap_positions_kernel(wp_dtype: type, *, batched: bool = False) -> wp.Kernel:
-    """Return the specialized position-wrapping kernel."""
-    return _make_wrap_positions_kernel(wp_dtype, batched=bool(batched))
+def get_wrap_positions_kernel(
+    wp_dtype: type, *, batched: bool = False, pbc_aware: bool = False
+) -> wp.Kernel:
+    """Return the specialized position-wrapping kernel.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        Warp scalar dtype (wp.float32, wp.float64, or wp.float16).
+    batched : bool, optional
+        Whether to build the batched kernel variant.
+    pbc_aware : bool, optional
+        If ``False``, build the existing fold-all-axes kernel signature. If
+        ``True``, build the variant that accepts ``pbc`` and skips wrapping on
+        non-periodic axes.
+
+    Returns
+    -------
+    wp.Kernel
+        Specialized position-wrapping kernel.
+    """
+    return _make_wrap_positions_kernel(
+        wp_dtype, batched=bool(batched), pbc_aware=bool(pbc_aware)
+    )
 
 
 def _launch_wrap_positions(
     positions: wp.array,
     cell: wp.array,
     inv_cell: wp.array,
+    pbc: wp.array | None,
     batch_idx: wp.array,
     positions_wrapped: wp.array,
     per_atom_cell_offsets: wp.array,
@@ -1107,17 +1145,23 @@ def _launch_wrap_positions(
     batched: bool,
 ) -> None:
     """Launch the shared position-wrapping kernel."""
-    wp.launch(
-        kernel=get_wrap_positions_kernel(wp_dtype, batched=batched),
-        dim=positions.shape[0],
-        inputs=[
-            positions,
-            cell,
-            inv_cell,
+    pbc_aware = pbc is not None
+    inputs = [positions, cell, inv_cell]
+    if pbc_aware:
+        inputs.append(pbc)
+    inputs.extend(
+        [
             batch_idx if batched else _empty_sentinel(1, wp.int32, device),
             positions_wrapped,
             per_atom_cell_offsets,
-        ],
+        ]
+    )
+    wp.launch(
+        kernel=get_wrap_positions_kernel(
+            wp_dtype, batched=batched, pbc_aware=pbc_aware
+        ),
+        dim=positions.shape[0],
+        inputs=inputs,
         device=device,
     )
 
@@ -1130,6 +1174,7 @@ def wrap_positions_single(
     per_atom_cell_offsets: wp.array,
     wp_dtype: type,
     device: str,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for wrapping positions into the primary cell (single system).
 
@@ -1155,6 +1200,9 @@ def wrap_positions_single(
         Warp scalar dtype (wp.float32, wp.float64, or wp.float16).
     device : str
         Warp device string (e.g., ``'cuda:0'``, ``'cpu'``).
+    pbc : wp.array, shape (1, 3), dtype=wp.bool, optional
+        Per-axis periodicity flags. If omitted, all axes are wrapped.
+        Non-periodic axes are left unwrapped when provided.
 
     See Also
     --------
@@ -1165,6 +1213,7 @@ def wrap_positions_single(
         positions,
         cell,
         inv_cell,
+        pbc,
         _empty_sentinel(1, wp.int32, device),
         positions_wrapped,
         per_atom_cell_offsets,
@@ -1183,6 +1232,7 @@ def wrap_positions_batch(
     per_atom_cell_offsets: wp.array,
     wp_dtype: type,
     device: str,
+    pbc: wp.array | None = None,
 ) -> None:
     """Core warp launcher for wrapping positions into the primary cell (batch of systems).
 
@@ -1211,6 +1261,9 @@ def wrap_positions_batch(
         Warp scalar dtype (wp.float32, wp.float64, or wp.float16).
     device : str
         Warp device string (e.g., ``'cuda:0'``, ``'cpu'``).
+    pbc : wp.array, shape (num_systems, 3), dtype=wp.bool, optional
+        Per-system periodicity flags. If omitted, all axes are wrapped.
+        Non-periodic axes are left unwrapped when provided.
 
     See Also
     --------
@@ -1221,6 +1274,7 @@ def wrap_positions_batch(
         positions,
         cell,
         inv_cell,
+        pbc,
         batch_idx,
         positions_wrapped,
         per_atom_cell_offsets,

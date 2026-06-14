@@ -138,6 +138,7 @@ def _naive_neighbor_matrix_pbc(
     positions: torch.Tensor,
     cutoff: float,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     neighbor_matrix: torch.Tensor,
     neighbor_matrix_shifts: torch.Tensor,
     num_neighbors: torch.Tensor,
@@ -207,6 +208,7 @@ def _naive_neighbor_matrix_pbc(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -269,6 +271,7 @@ def _naive_neighbor_matrix_pbc(
             positions=wp_positions,
             cutoff=cutoff,
             cell=wp_cell,
+            pbc=wp_pbc,
             shift_range=wp_shift_range,
             num_shifts=max_shifts_per_system,
             neighbor_matrix=wp_neighbor_matrix,
@@ -355,6 +358,7 @@ def _naive_neighbor_matrix_pbc_pair(
     positions: torch.Tensor,
     cutoff: float,
     cell: torch.Tensor,
+    pbc: torch.Tensor,
     neighbor_matrix: torch.Tensor,
     neighbor_matrix_shifts: torch.Tensor,
     num_neighbors: torch.Tensor,
@@ -385,6 +389,7 @@ def _naive_neighbor_matrix_pbc_pair(
     wp_cell = wp.from_torch(
         cell, dtype=wp_mat_dtype, requires_grad=False, return_ctype=True
     )
+    wp_pbc = wp.from_torch(pbc, dtype=wp.bool, requires_grad=False, return_ctype=True)
     wp_shift_range = wp.from_torch(
         shift_range_per_dimension,
         dtype=wp.vec3i,
@@ -413,6 +418,7 @@ def _naive_neighbor_matrix_pbc_pair(
         positions=wp_positions,
         cutoff=cutoff,
         cell=wp_cell,
+        pbc=wp_pbc,
         shift_range=wp_shift_range,
         num_shifts=max_shifts_per_system,
         neighbor_matrix=wp_neighbor_matrix,
@@ -480,6 +486,7 @@ def _naive_pair_outputs_forward(
             positions=positions.detach(),
             cutoff=cutoff,
             cell=cell.detach(),
+            pbc=pbc,
             neighbor_matrix=neighbor_matrix,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
             num_neighbors=num_neighbors,
@@ -563,6 +570,9 @@ def _naive_pair_outputs_forward(
                     dtype=wp_mat_dtype,
                     requires_grad=False,
                     return_ctype=True,
+                ),
+                pbc=wp.from_torch(
+                    pbc, dtype=wp.bool, requires_grad=False, return_ctype=True
                 ),
                 shift_range=wp.from_torch(
                     shift_range_per_dimension,
@@ -1056,6 +1066,7 @@ def naive_neighbor_list(
             positions=positions,
             cutoff=cutoff,
             cell=cell,
+            pbc=pbc,
             neighbor_matrix=neighbor_matrix,
             neighbor_matrix_shifts=neighbor_matrix_shifts,
             num_neighbors=num_neighbors,

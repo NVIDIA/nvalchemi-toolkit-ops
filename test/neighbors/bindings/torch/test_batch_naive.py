@@ -80,8 +80,132 @@ def _active_neighbor_shift_rows(
     return sorted(tuple(row) for row in rows.detach().cpu().tolist())
 
 
+def _distances_from_neighbor_list(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    neighbor_list: torch.Tensor,
+    shifts: torch.Tensor,
+) -> torch.Tensor:
+    """Return sorted reconstructed distances for a COO neighbor list."""
+    idx_i = neighbor_list[0].long()
+    idx_j = neighbor_list[1].long()
+    disp = positions[idx_j] + shifts.to(positions.dtype) @ cell - positions[idx_i]
+    return torch.sort(disp.norm(dim=1)).values.cpu()
+
+
+def _bruteforce_pbc_distances(
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    pbc: torch.Tensor,
+    cutoff: float,
+) -> torch.Tensor:
+    """Vectorized directed distances honoring per-axis PBC flags."""
+    positions_cpu = positions.detach().cpu()
+    cell_cpu = cell.detach().cpu()
+    pbc_cpu = pbc.detach().cpu()
+
+    ranges: list[torch.Tensor] = []
+    for axis, periodic in enumerate(pbc_cpu.tolist()):
+        if periodic:
+            axis_len = cell_cpu[axis].norm()
+            extent = int(torch.ceil(torch.as_tensor(cutoff) / axis_len).item()) + 1
+            ranges.append(torch.arange(-extent, extent + 1, dtype=torch.int64))
+        else:
+            ranges.append(torch.zeros(1, dtype=torch.int64))
+    shifts = torch.cartesian_prod(*ranges).to(dtype=positions_cpu.dtype)
+
+    pair_disp = positions_cpu[None, :, :] - positions_cpu[:, None, :]
+    shift_disp = shifts @ cell_cpu
+    disp = pair_disp[:, :, None, :] + shift_disp[None, None, :, :]
+    distances = disp.norm(dim=-1)
+
+    num_atoms = positions_cpu.shape[0]
+    atom_i = torch.arange(num_atoms)[:, None, None]
+    atom_j = torch.arange(num_atoms)[None, :, None]
+    zero_shift = (shifts == 0).all(dim=1)[None, None, :]
+    mask = (distances < cutoff) & ~((atom_i == atom_j) & zero_shift)
+    selected = distances[mask]
+    if selected.numel() == 0:
+        return torch.empty(0, dtype=positions_cpu.dtype)
+    return torch.sort(selected).values
+
+
 class TestBatchNaiveCorrectness:
     """Tests verifying correctness of batch naive neighbor list implementation."""
+
+    def test_nonperiodic_dummy_cell_does_not_wrap_positions(self, device, dtype):
+        """A provided non-periodic cell must not fold molecular coordinates."""
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.9572, 0.0, 0.0],
+                [-0.2399872, 0.927297, 0.0],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.eye(3, dtype=dtype, device=device).unsqueeze(0)
+        pbc = torch.zeros((1, 3), dtype=torch.bool, device=device)
+        batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+
+        neighbor_list, _, shifts = batch_naive_neighbor_list(
+            positions=positions,
+            cutoff=5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=16,
+            return_neighbor_list=True,
+        )
+
+        actual = _distances_from_neighbor_list(
+            positions,
+            cell[0],
+            neighbor_list,
+            shifts,
+        )
+        expected = _bruteforce_pbc_distances(positions, cell[0], pbc[0], cutoff=5.0)
+        torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-6)
+        assert torch.all(shifts == 0)
+
+    def test_slab_nonperiodic_axis_is_not_wrapped(self, device, dtype):
+        """Slab PBC must not fold coordinates along the non-periodic axis."""
+        positions = torch.tensor(
+            [
+                [x, y, z]
+                for x, y in [(0.0, 0.0), (1.5, 0.0), (0.0, 1.5), (1.5, 1.5)]
+                for z in (0.5, -0.5)
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        cell = torch.tensor(
+            [[[3.0, 0.0, 0.0], [0.0, 3.0, 0.0], [0.0, 0.0, 20.0]]],
+            dtype=dtype,
+            device=device,
+        )
+        pbc = torch.tensor([[True, True, False]], dtype=torch.bool, device=device)
+        batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32, device=device)
+
+        neighbor_list, _, shifts = batch_naive_neighbor_list(
+            positions=positions,
+            cutoff=5.0,
+            batch_idx=batch_idx,
+            cell=cell,
+            pbc=pbc,
+            max_neighbors=128,
+            return_neighbor_list=True,
+        )
+
+        actual = _distances_from_neighbor_list(
+            positions,
+            cell[0],
+            neighbor_list,
+            shifts,
+        )
+        expected = _bruteforce_pbc_distances(positions, cell[0], pbc[0], cutoff=5.0)
+        torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-6)
+        assert torch.all(shifts[:, 2] == 0)
 
     def test_basic_without_pbc(self, device, dtype, half_fill):
         """Test basic neighbor list calculation without periodic boundaries."""

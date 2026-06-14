@@ -622,6 +622,100 @@ class TestBatchNaiveDualCutoffWpLaunchers:
         if len(valid_shifts2) > 0:
             assert torch.all(torch.abs(valid_shifts2) <= 5)
 
+    def test_batch_naive_neighbor_matrix_pbc_dual_cutoff_uses_explicit_axes(
+        self, device, dtype, half_fill
+    ):
+        """Explicit PBC flags leave non-periodic coordinates unwrapped."""
+        atoms_per_system = [2, 2]
+        positions_batch = torch.tensor(
+            [
+                [0.95, 0.50, 1.20],
+                [0.05, 0.50, 0.20],
+                [0.20, 0.20, 1.30],
+                [0.20, 0.20, 0.30],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        cell_batch = torch.eye(3, dtype=dtype, device=device).repeat(2, 1, 1)
+        pbc_batch = torch.tensor(
+            [[True, True, False], [True, True, False]],
+            dtype=torch.bool,
+            device=device,
+        )
+        batch_idx, batch_ptr = create_batch_idx_and_ptr(atoms_per_system, device)
+
+        cutoff1 = 0.25
+        cutoff2 = 0.35
+        max_neighbors1 = 8
+        max_neighbors2 = 8
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(
+            cell_batch, cutoff2, pbc_batch
+        )
+
+        neighbor_matrix1 = torch.full(
+            (positions_batch.shape[0], max_neighbors1),
+            -1,
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_matrix2 = torch.full(
+            (positions_batch.shape[0], max_neighbors2),
+            -1,
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_matrix_shifts1 = torch.zeros(
+            (positions_batch.shape[0], max_neighbors1, 3),
+            dtype=torch.int32,
+            device=device,
+        )
+        neighbor_matrix_shifts2 = torch.zeros(
+            (positions_batch.shape[0], max_neighbors2, 3),
+            dtype=torch.int32,
+            device=device,
+        )
+        num_neighbors1 = torch.zeros(
+            positions_batch.shape[0], dtype=torch.int32, device=device
+        )
+        num_neighbors2 = torch.zeros(
+            positions_batch.shape[0], dtype=torch.int32, device=device
+        )
+
+        batch_naive_neighbor_matrix_pbc_dual_cutoff(
+            positions=wp.from_torch(positions_batch, dtype=get_wp_vec_dtype(dtype)),
+            cell=wp.from_torch(cell_batch, dtype=get_wp_mat_dtype(dtype)),
+            cutoff1=cutoff1,
+            cutoff2=cutoff2,
+            batch_ptr=wp.from_torch(batch_ptr, dtype=wp.int32),
+            batch_idx=wp.from_torch(batch_idx, dtype=wp.int32),
+            shift_range=wp.from_torch(shift_range, dtype=wp.vec3i),
+            num_shifts_arr=wp.from_torch(num_shifts, dtype=wp.int32),
+            max_shifts_per_system=max_shifts,
+            neighbor_matrix1=wp.from_torch(neighbor_matrix1, dtype=wp.int32),
+            neighbor_matrix2=wp.from_torch(neighbor_matrix2, dtype=wp.int32),
+            neighbor_matrix_shifts1=wp.from_torch(
+                neighbor_matrix_shifts1, dtype=wp.vec3i
+            ),
+            neighbor_matrix_shifts2=wp.from_torch(
+                neighbor_matrix_shifts2, dtype=wp.vec3i
+            ),
+            num_neighbors1=wp.from_torch(num_neighbors1, dtype=wp.int32),
+            num_neighbors2=wp.from_torch(num_neighbors2, dtype=wp.int32),
+            wp_dtype=get_wp_dtype(dtype),
+            device=str(device),
+            max_atoms_per_system=max(atoms_per_system),
+            half_fill=half_fill,
+            pbc=wp.from_torch(pbc_batch, dtype=wp.bool),
+        )
+
+        assert torch.count_nonzero(num_neighbors1).item() == 0
+        assert torch.count_nonzero(num_neighbors2).item() == 0
+        assert torch.all(neighbor_matrix1 == -1)
+        assert torch.all(neighbor_matrix2 == -1)
+        assert torch.all(neighbor_matrix_shifts1[..., 2] == 0)
+        assert torch.all(neighbor_matrix_shifts2[..., 2] == 0)
+
 
 class TestBatchNaiveDualCutoffSelectiveRebuildFlags:
     """Test selective rebuild (rebuild_flags) for batch naive dual cutoff warp launchers."""

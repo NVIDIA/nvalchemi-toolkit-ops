@@ -445,13 +445,13 @@ def _get_jax_batch_naive_pair_fn_kernel(
 
 # Wrap positions batch kernel wrappers
 _jax_wrap_positions_batch_f32 = jax_kernel(
-    get_wrap_positions_kernel(wp.float32, batched=True),
+    get_wrap_positions_kernel(wp.float32, batched=True, pbc_aware=True),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
 )
 _jax_wrap_positions_batch_f64 = jax_kernel(
-    get_wrap_positions_kernel(wp.float64, batched=True),
+    get_wrap_positions_kernel(wp.float64, batched=True, pbc_aware=True),
     num_outputs=2,
     in_out_argnames=["positions_wrapped", "per_atom_cell_offsets"],
     enable_backward=False,
@@ -566,6 +566,7 @@ def _batch_naive_tile_no_pbc_f64(
 def _batch_naive_tile_pbc_wrapped_f32(
     positions: wp.array(dtype=wp.vec3f),
     cell: wp.array(dtype=wp.mat33f),
+    pbc: wp.array2d(dtype=wp.bool),
     shift_range: wp.array(dtype=wp.vec3i),
     num_shifts_arr: wp.array(dtype=wp.int32),
     batch_idx: wp.array(dtype=wp.int32),
@@ -582,6 +583,7 @@ def _batch_naive_tile_pbc_wrapped_f32(
         positions,
         float(cutoff),
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -603,6 +605,7 @@ def _batch_naive_tile_pbc_wrapped_f32(
 def _batch_naive_tile_pbc_wrapped_f64(
     positions: wp.array(dtype=wp.vec3d),
     cell: wp.array(dtype=wp.mat33d),
+    pbc: wp.array2d(dtype=wp.bool),
     shift_range: wp.array(dtype=wp.vec3i),
     num_shifts_arr: wp.array(dtype=wp.int32),
     batch_idx: wp.array(dtype=wp.int32),
@@ -619,6 +622,7 @@ def _batch_naive_tile_pbc_wrapped_f64(
         positions,
         float(cutoff),
         cell,
+        pbc,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -830,6 +834,7 @@ def _batch_naive_pair_outputs_forward(
             positions,
             cell,
             inv_cell,
+            pbc,
             batch_idx_i32,
             positions_wrapped,
             per_atom_cell_offsets,
@@ -1369,6 +1374,7 @@ def batch_naive_neighbor_list(
             neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
                 positions,
                 cell,
+                pbc,
                 shift_range_per_dimension,
                 num_shifts_per_system,
                 batch_idx_i32,
@@ -1474,6 +1480,7 @@ def batch_naive_neighbor_list(
                 positions,
                 cell,
                 inv_cell,
+                pbc,
                 batch_idx_i32,
                 positions_wrapped,
                 per_atom_cell_offsets,
