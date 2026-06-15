@@ -1296,10 +1296,11 @@ def _graph_naive_tile_no_pbc_f64(
     )
 
 
+# Prewrapped PBC kernels consume precomputed shift ranges; ``pbc`` only affects
+# position wrapping, so these callables intentionally omit it.
 def _graph_naive_tile_pbc_prewrapped_f32(
     positions: wp.array(dtype=wp.vec3f),
     cell: wp.array(dtype=wp.mat33f),
-    pbc: wp.array2d(dtype=wp.bool),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
@@ -1312,7 +1313,7 @@ def _graph_naive_tile_pbc_prewrapped_f32(
         positions,
         float(cutoff),
         cell,
-        pbc,
+        None,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -1330,7 +1331,6 @@ def _graph_naive_tile_pbc_prewrapped_f32(
 def _graph_naive_tile_pbc_prewrapped_f64(
     positions: wp.array(dtype=wp.vec3d),
     cell: wp.array(dtype=wp.mat33d),
-    pbc: wp.array2d(dtype=wp.bool),
     shift_range: wp.array(dtype=wp.vec3i),
     neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
     neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
@@ -1343,7 +1343,7 @@ def _graph_naive_tile_pbc_prewrapped_f64(
         positions,
         float(cutoff),
         cell,
-        pbc,
+        None,
         shift_range,
         neighbor_matrix,
         neighbor_matrix_shifts,
@@ -2316,10 +2316,11 @@ def naive_neighbor_list(
             tile_callable = _GRAPH_NAIVE_TILE_CALLABLES[
                 (True, bool(wrap_positions), positions.dtype)
             ]
+            pbc_arg = (pbc,) if wrap_positions else ()
             neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(
                 positions,
                 cell,
-                pbc,
+                *pbc_arg,
                 shift_range_per_dimension,
                 neighbor_matrix,
                 neighbor_matrix_shifts,
