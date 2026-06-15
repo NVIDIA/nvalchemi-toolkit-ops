@@ -860,7 +860,15 @@ def _parse_electrostatics_filename(
     -----
     Filenames follow the pattern: electrostatics_benchmark_<method>_<backend>_<dtype>_<gpu_sku>.csv
     """
-    known_methods = ["ewald_slab", "pme_slab", "ewald", "pme", "dsf"]
+    known_methods = [
+        "multipole_ewald",
+        "multipole_pme",
+        "ewald_slab",
+        "pme_slab",
+        "ewald",
+        "pme",
+        "dsf",
+    ]
     known_backends = ["torch_dsf", "torchpme", "torch", "jax"]
     known_dtypes = ["float32", "float64"]
 
@@ -925,7 +933,15 @@ def generate_electrostatics_plots(results_dir: Path, output_dir: Path) -> None:
 
     # Group files by method while preserving multiple files per backend
     # (for example float32 and float64 outputs).
-    known_methods = ["ewald", "ewald_slab", "pme", "pme_slab", "dsf"]
+    known_methods = [
+        "ewald",
+        "ewald_slab",
+        "pme",
+        "pme_slab",
+        "dsf",
+        "multipole_ewald",
+        "multipole_pme",
+    ]
     files_by_method: dict[str, list[ElectrostaticsCsvFile]] = {
         method: [] for method in known_methods
     }

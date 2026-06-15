@@ -286,6 +286,16 @@ def resolve_derivative_contract(
     return contract
 
 
+def resolve_torch_compile(
+    cli_torch_compile: bool | None,
+    config_compile: bool | None,
+) -> bool:
+    """Return whether Torch benchmark callables should use ``torch.compile``."""
+    if cli_torch_compile is not None:
+        return bool(cli_torch_compile)
+    return bool(config_compile)
+
+
 def benchmark_workloads(
     *,
     method: str,
@@ -3858,10 +3868,13 @@ def main():
     parser.add_argument(
         "--torch-compile",
         action="store_true",
+        default=None,
         help=(
             "Wrap each torch-backend bench callable in "
             "``torch.compile(fullgraph=True)`` and "
             "record the framework-compile cost in a separate CSV column. "
+            "When omitted, the config-level ``compile`` field controls the "
+            "default. "
             "The pre-warm pass calls the raw bench_fn once first so warp "
             "NVRTC compile and torch.compile (Dynamo + Inductor) costs "
             "appear in distinct columns. JAX backend always JITs; the "
@@ -3954,6 +3967,10 @@ def main():
     derivative_contract = resolve_derivative_contract(
         args.derivative_contract,
         config.get("derivative_contract"),
+    )
+    torch_compile = resolve_torch_compile(
+        args.torch_compile,
+        config.get("compile"),
     )
     # Max multipole order for the multipole_* methods: --l-max > config > 1.
     l_max = args.l_max if args.l_max is not None else int(config.get("l_max", 1))
@@ -4177,7 +4194,7 @@ def main():
                                             neighbor_format=nf,
                                             derivative_contract=derivative_contract,
                                             workload=workload,
-                                            torch_compile=args.torch_compile,
+                                            torch_compile=torch_compile,
                                         )
                                         annotate_result_row(
                                             result,
@@ -4213,7 +4230,7 @@ def main():
                                             derivative_contract=derivative_contract,
                                             workload=workload,
                                             neighbor_format=nf,
-                                            torch_compile=args.torch_compile,
+                                            torch_compile=torch_compile,
                                             success=False,
                                             error=str(oom).split(".")[0],
                                             error_type=type(oom).__name__,
@@ -4388,7 +4405,7 @@ def main():
                                             neighbor_format=nf,
                                             derivative_contract=derivative_contract,
                                             workload=workload,
-                                            torch_compile=args.torch_compile,
+                                            torch_compile=torch_compile,
                                         )
                                         annotate_result_row(
                                             result,
@@ -4424,7 +4441,7 @@ def main():
                                             derivative_contract=derivative_contract,
                                             workload=workload,
                                             neighbor_format=nf,
-                                            torch_compile=args.torch_compile,
+                                            torch_compile=torch_compile,
                                             success=False,
                                             error=str(oom).split(".")[0],
                                             error_type=type(oom).__name__,
