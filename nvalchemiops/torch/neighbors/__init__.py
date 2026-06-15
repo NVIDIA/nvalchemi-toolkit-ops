@@ -144,11 +144,11 @@ def neighbor_list(
         and only convert to a neighbor list format if absolutely necessary.
     method : str | None, optional
         Method to use for neighbor list computation.
-        Choices: "naive", "cell_list", "cluster_tile", "batch_naive",
+        Choices: "auto", "naive", "cell_list", "cluster_tile", "batch_naive",
         "batch_cell_list", "batch_cluster_tile", "naive_dual_cutoff",
-        "batch_naive_dual_cutoff". If None, a default method is chosen by
-        comparing estimated work from per-system atom counts and cell (or
-        bounding-box) volumes and can select cluster-tile when the CUDA,
+        "batch_naive_dual_cutoff". If None or "auto", a default method is
+        chosen by comparing estimated work from per-system atom counts and cell
+        (or bounding-box) volumes and can select cluster-tile when the CUDA,
         float32, fully-periodic, contiguous-batch, and output-option guards
         allow it. Method names that do not start with ``batch_`` refer to
         single-system algorithms. When ``batch_idx`` or ``batch_ptr`` (batch
@@ -322,6 +322,8 @@ def neighbor_list(
             "Pass a boolean tensor of shape (3,) or (num_systems, 3), "
             "e.g. pbc=torch.tensor([True, True, True])."
         )
+    if method == "auto":
+        method = None
 
     if batch_ptr is not None and batch_ptr.shape[0] < 2:
         raise ValueError("batch_ptr must have length at least 2")

@@ -104,6 +104,98 @@ def assert_neighbor_matrix_equal_jax(result1, result2):
 class TestNeighborListAutoSelection:
     """Test automatic method selection based on system size."""
 
+    def test_method_auto_aliases_none_for_unbatched_dispatch(self, monkeypatch):
+        """method='auto' follows the same unbatched auto-selection path as None."""
+        routes = []
+
+        def fake_auto_method_from_geometry(*args, **kwargs):
+            del args, kwargs
+            return "naive_scalar"
+
+        def fake_naive(positions, cutoff, **kwargs):
+            del positions, cutoff
+            routes.append(kwargs["native_strategy"])
+            return ("naive", kwargs["native_strategy"])
+
+        monkeypatch.setattr(
+            neighbor_module,
+            "_auto_method_from_geometry",
+            fake_auto_method_from_geometry,
+        )
+        monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fake_naive)
+
+        positions = jnp.zeros((8, 3), dtype=jnp.float32)
+        cell = jnp.eye(3, dtype=jnp.float32) * 10.0
+        pbc = jnp.zeros((3,), dtype=bool)
+
+        expected = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            method=None,
+        )
+        actual = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            method="auto",
+        )
+
+        assert actual == expected == ("naive", "scalar")
+        assert routes == ["scalar", "scalar"]
+
+    def test_method_auto_aliases_none_for_batched_dispatch(self, monkeypatch):
+        """method='auto' never reaches the invalid batch_auto method."""
+        routes = []
+
+        def fake_auto_method_from_geometry(*args, **kwargs):
+            del args, kwargs
+            return "cell_list_pair_centric"
+
+        def fake_batch_cell_list(
+            positions, cutoff, cell, pbc, batch_idx, *args, **kwargs
+        ):
+            del positions, cutoff, cell, pbc, batch_idx, args
+            routes.append((kwargs["strategy"], kwargs["atom_centric_path"]))
+            return ("batch_cell_list", kwargs["strategy"], kwargs["atom_centric_path"])
+
+        monkeypatch.setattr(
+            neighbor_module,
+            "_auto_method_from_geometry",
+            fake_auto_method_from_geometry,
+        )
+        monkeypatch.setattr(neighbor_module, "batch_cell_list", fake_batch_cell_list)
+
+        positions = jnp.zeros((8, 3), dtype=jnp.float32)
+        cell = jnp.repeat(jnp.eye(3, dtype=jnp.float32)[None, :, :] * 10.0, 2, axis=0)
+        pbc = jnp.zeros((2, 3), dtype=bool)
+        batch_idx = jnp.array([0, 0, 0, 0, 1, 1, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 4, 8], dtype=jnp.int32)
+
+        expected = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method=None,
+        )
+        actual = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="auto",
+        )
+
+        assert actual == expected == ("batch_cell_list", "pair_centric", "sorted")
+        assert routes == [("pair_centric", "sorted"), ("pair_centric", "sorted")]
+
     @pytest.mark.parametrize("dtype", [jnp.float32, jnp.float64])
     def test_auto_select_cell_list_sparse_no_cell(self, dtype, device):
         """Cell-less auto dispatch is correct at method-dependent COO arity.

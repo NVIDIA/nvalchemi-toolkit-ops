@@ -49,6 +49,98 @@ from ...test_utils import (
 class TestNeighborListAutoSelection:
     """Test automatic method selection based on estimated neighbor density."""
 
+    def test_method_auto_aliases_none_for_unbatched_dispatch(self, monkeypatch):
+        """method='auto' follows the same unbatched auto-selection path as None."""
+        routes = []
+
+        def fake_auto_method_from_geometry(*args, **kwargs):
+            del args, kwargs
+            return "naive_scalar"
+
+        def fake_naive(positions, cutoff, **kwargs):
+            del positions, cutoff
+            routes.append(kwargs["native_strategy"])
+            return ("naive", kwargs["native_strategy"])
+
+        monkeypatch.setattr(
+            neighbor_module,
+            "_auto_method_from_geometry",
+            fake_auto_method_from_geometry,
+        )
+        monkeypatch.setattr(neighbor_module, "naive_neighbor_list", fake_naive)
+
+        positions = torch.zeros(8, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32) * 10.0
+        pbc = torch.zeros(3, dtype=torch.bool)
+
+        expected = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            method=None,
+        )
+        actual = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            method="auto",
+        )
+
+        assert actual == expected == ("naive", "scalar")
+        assert routes == ["scalar", "scalar"]
+
+    def test_method_auto_aliases_none_for_batched_dispatch(self, monkeypatch):
+        """method='auto' never reaches the invalid batch_auto method."""
+        routes = []
+
+        def fake_auto_method_from_geometry(*args, **kwargs):
+            del args, kwargs
+            return "cell_list_pair_centric"
+
+        def fake_batch_cell_list(
+            positions, cutoff, cell, pbc, batch_idx, *args, **kwargs
+        ):
+            del positions, cutoff, cell, pbc, batch_idx, args
+            routes.append((kwargs["strategy"], kwargs["atom_centric_path"]))
+            return ("batch_cell_list", kwargs["strategy"], kwargs["atom_centric_path"])
+
+        monkeypatch.setattr(
+            neighbor_module,
+            "_auto_method_from_geometry",
+            fake_auto_method_from_geometry,
+        )
+        monkeypatch.setattr(neighbor_module, "batch_cell_list", fake_batch_cell_list)
+
+        positions = torch.zeros(8, 3, dtype=torch.float32)
+        cell = torch.eye(3, dtype=torch.float32).repeat(2, 1, 1) * 10.0
+        pbc = torch.zeros(2, 3, dtype=torch.bool)
+        batch_idx = torch.tensor([0, 0, 0, 0, 1, 1, 1, 1], dtype=torch.int32)
+        batch_ptr = torch.tensor([0, 4, 8], dtype=torch.int32)
+
+        expected = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method=None,
+        )
+        actual = neighbor_module.neighbor_list(
+            positions,
+            2.0,
+            cell=cell,
+            pbc=pbc,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            method="auto",
+        )
+
+        assert actual == expected == ("batch_cell_list", "pair_centric", "sorted")
+        assert routes == [("pair_centric", "sorted"), ("pair_centric", "sorted")]
+
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     @pytest.mark.parametrize("device", ["cpu", "cuda"])
     def test_auto_select_cell_list_sparse_no_cell(self, dtype, device):
