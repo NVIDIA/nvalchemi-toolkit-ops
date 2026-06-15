@@ -433,6 +433,19 @@ def _rank_to_group_kernel(
 
 
 @wp.func
+def _bbox_distance_sq(
+    d: wp.vec3f,
+    rg_ext: wp.vec3f,
+    cg_ext: wp.vec3f,
+) -> wp.float32:
+    """Return squared distance between two Cartesian axis-aligned boxes."""
+    dx = wp.max(wp.abs(d[0]) - rg_ext[0] - cg_ext[0], wp.float32(0.0))
+    dy = wp.max(wp.abs(d[1]) - rg_ext[1] - cg_ext[1], wp.float32(0.0))
+    dz = wp.max(wp.abs(d[2]) - rg_ext[2] - cg_ext[2], wp.float32(0.0))
+    return dx * dx + dy * dy + dz * dz
+
+
+@wp.func
 def _bbox_valid(
     col_idx: wp.int32,
     row_group: wp.int32,
@@ -485,12 +498,24 @@ def _bbox_valid(
         rg_ctr[2] - cg_ctr[2],
     )
     d_wrapped, _s = _wrap_triclinic(d_ctr, cell, inv_cell)
-    dx = wp.max(wp.abs(d_wrapped[0]) - rg_ext[0] - cg_ext[0], wp.float32(0.0))
-    dy = wp.max(wp.abs(d_wrapped[1]) - rg_ext[1] - cg_ext[1], wp.float32(0.0))
-    dz = wp.max(wp.abs(d_wrapped[2]) - rg_ext[2] - cg_ext[2], wp.float32(0.0))
-    bbox_dist_sq = dx * dx + dy * dy + dz * dz
-    if bbox_dist_sq < cutoff_sq:
+    if _bbox_distance_sq(d_wrapped, rg_ext, cg_ext) < cutoff_sq:
         return 1
+
+    cell_T = wp.transpose(cell)
+    for ia in range(3):
+        shift_a = wp.float32(ia - 1)
+        for ib in range(3):
+            shift_b = wp.float32(ib - 1)
+            for ic in range(3):
+                if ia != 1 or ib != 1 or ic != 1:
+                    shift_c = wp.float32(ic - 1)
+                    d_image = d_wrapped + cell_T * wp.vec3f(
+                        shift_a,
+                        shift_b,
+                        shift_c,
+                    )
+                    if _bbox_distance_sq(d_image, rg_ext, cg_ext) < cutoff_sq:
+                        return 1
     return 0
 
 
