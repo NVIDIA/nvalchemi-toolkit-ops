@@ -32,6 +32,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     build_cluster_tile_list,
     query_cluster_tile,
 )
+from nvalchemiops.neighbors.cluster_tile.kernels import _bbox_distance_sq
 from nvalchemiops.neighbors.cluster_tile.launchers import (
     _compute_morton,
     _permute_gather_soa,
@@ -39,6 +40,18 @@ from nvalchemiops.neighbors.cluster_tile.launchers import (
 )
 
 pytestmark = pytest.mark.gpu
+
+
+@wp.kernel(enable_backward=False)
+def _bbox_distance_sq_test_kernel(
+    d: wp.array(dtype=wp.vec3f),
+    rg_ext: wp.array(dtype=wp.vec3f),
+    cg_ext: wp.array(dtype=wp.vec3f),
+    out: wp.array(dtype=wp.float32),
+) -> None:
+    """Evaluate ``_bbox_distance_sq`` for test vectors."""
+    i = wp.tid()
+    out[i] = _bbox_distance_sq(d[i], rg_ext[i], cg_ext[i])
 
 
 def _mat33f_from_torch(mat: torch.Tensor):
@@ -61,6 +74,54 @@ def device():
     if not torch.cuda.is_available():
         pytest.skip("cluster_tile kernel tests require torch CUDA tensors")
     return "cuda:0"
+
+
+class TestBBoxDistanceSqHelper:
+    """Tests for the cluster bounding-box distance helper."""
+
+    def test_overlap_and_gap_cases(self, device):
+        """Helper returns zero for overlap and squared gap otherwise."""
+        d = torch.tensor(
+            [
+                [1.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+                [4.0, 5.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        rg_ext = torch.tensor(
+            [
+                [1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        cg_ext = torch.tensor(
+            [
+                [1.0, 1.0, 1.0],
+                [1.0, 1.0, 1.0],
+                [1.5, 2.0, 1.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        out = torch.empty(3, dtype=torch.float32, device=device)
+        wp.launch(
+            kernel=_bbox_distance_sq_test_kernel,
+            dim=3,
+            inputs=[
+                wp.from_torch(d, dtype=wp.vec3f, return_ctype=True),
+                wp.from_torch(rg_ext, dtype=wp.vec3f, return_ctype=True),
+                wp.from_torch(cg_ext, dtype=wp.vec3f, return_ctype=True),
+                wp.from_torch(out, dtype=wp.float32, return_ctype=True),
+            ],
+            device=device,
+        )
+        expected = torch.tensor([0.0, 1.0, 6.25], dtype=torch.float32, device=device)
+        torch.testing.assert_close(out, expected)
 
 
 class TestComputeMortonLauncher:

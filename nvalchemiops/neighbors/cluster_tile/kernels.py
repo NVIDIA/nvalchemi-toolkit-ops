@@ -438,7 +438,22 @@ def _bbox_distance_sq(
     rg_ext: wp.vec3f,
     cg_ext: wp.vec3f,
 ) -> wp.float32:
-    """Return squared distance between two Cartesian axis-aligned boxes."""
+    """Return squared distance between two Cartesian axis-aligned boxes.
+
+    Parameters
+    ----------
+    d : wp.vec3f
+        Cartesian displacement between the two box centers.
+    rg_ext : wp.vec3f
+        Half-extents of the row-group bounding box.
+    cg_ext : wp.vec3f
+        Half-extents of the column-group bounding box.
+
+    Returns
+    -------
+    wp.float32
+        Squared gap distance between the two boxes, or zero when they overlap.
+    """
     dx = wp.max(wp.abs(d[0]) - rg_ext[0] - cg_ext[0], wp.float32(0.0))
     dy = wp.max(wp.abs(d[1]) - rg_ext[1] - cg_ext[1], wp.float32(0.0))
     dz = wp.max(wp.abs(d[2]) - rg_ext[2] - cg_ext[2], wp.float32(0.0))
