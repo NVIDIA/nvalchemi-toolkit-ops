@@ -3868,6 +3868,7 @@ def main():
     parser.add_argument(
         "--torch-compile",
         action="store_true",
+        dest="torch_compile",
         default=None,
         help=(
             "Wrap each torch-backend bench callable in "
@@ -3879,6 +3880,15 @@ def main():
             "NVRTC compile and torch.compile (Dynamo + Inductor) costs "
             "appear in distinct columns. JAX backend always JITs; the "
             "first-call XLA trace cost is recorded under the same column."
+        ),
+    )
+    parser.add_argument(
+        "--no-torch-compile",
+        action="store_false",
+        dest="torch_compile",
+        help=(
+            "Disable torch.compile for torch-backend benchmark callables, "
+            "overriding any config-level ``compile: true`` setting."
         ),
     )
     parser.add_argument(
