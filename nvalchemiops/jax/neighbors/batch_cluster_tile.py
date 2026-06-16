@@ -1202,10 +1202,9 @@ def batch_query_cluster_tile(
     """Convert the batched tile pair list to dense neighbor-matrix form.
 
     Cluster-tile does not support partial neighbor lists; no
-    ``target_indices`` kwarg.  Pair-output kwargs raise
-    ``NotImplementedError`` — see
-    :func:`nvalchemiops.jax.neighbors.cluster_tile.query_cluster_tile` for
-    the rationale.  Use the torch binding when these axes are needed.
+    ``target_indices`` kwarg.  Pair-output kwargs are supported on the
+    eager-cutoff fp32 matrix path and rejected with ``cutoff2`` /
+    ``rebuild_flags`` because those JAX cluster-tile paths are topology-only.
     """
 
     if pair_fn is not None and pair_params is None:
@@ -1689,8 +1688,9 @@ def batch_cluster_tile_neighbor_list(
         If True, append per-pair displacement vectors / scalar distances
         to the matrix-format return tuple. Matrix format only.
     pair_fn, pair_params, neighbor_vectors, neighbor_distances, pair_energies, pair_forces : optional
-        Reserved for parity with the torch binding. Raise
-        ``NotImplementedError`` on the JAX path.
+        Pair-output buffers and inline pair potential. Supported on the
+        eager-cutoff fp32 matrix/COO paths; rejected with ``cutoff2``,
+        ``rebuild_flags``, or ``format="tile"``.
 
     Returns
     -------

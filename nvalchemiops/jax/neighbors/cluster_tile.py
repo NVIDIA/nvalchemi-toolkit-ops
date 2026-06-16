@@ -1065,15 +1065,10 @@ def query_cluster_tile(
 
     Cluster-tile does not support partial neighbor lists; there is no
     ``target_indices`` kwarg.  Pair-output kwargs (``return_vectors`` /
-    ``return_distances`` / ``pair_fn`` and associated buffers) are
-    rejected with ``NotImplementedError`` when set because the JAX
-    ``jax_callable`` pathway here cannot carry a
-    callable ``pair_fn`` across the trace boundary.  Callers needing
-    these axes should use the torch binding
-    (:func:`nvalchemiops.torch.neighbors.cluster_tile.query_cluster_tile`)
-    or call
-    :func:`nvalchemiops.neighbors.cluster_tile.query_cluster_tile` directly
-    on Warp arrays.
+    ``return_distances`` / ``pair_fn`` and associated buffers) are supported
+    on the eager-cutoff fp32 matrix path.  They are rejected when combined
+    with ``cutoff2`` or ``rebuild_flags`` because those JAX cluster-tile paths
+    are topology-only.
     """
 
     if pair_fn is not None and pair_params is None:
@@ -1602,10 +1597,9 @@ def cluster_tile_neighbor_list(
         If True, append per-pair displacement vectors / scalar distances
         to the matrix-format return tuple. Matrix format only.
     pair_fn, pair_params, neighbor_vectors, neighbor_distances, pair_energies, pair_forces : optional
-        Reserved for parity with the torch binding. Raise
-        ``NotImplementedError`` on the JAX path because the JAX
-        ``jax_callable`` pathway cannot carry a callable ``pair_fn`` across
-        the trace boundary.
+        Pair-output buffers and inline pair potential. Supported on the
+        eager-cutoff fp32 matrix/COO paths; rejected with ``cutoff2``,
+        ``rebuild_flags``, or ``format="tile"``.
 
     Returns
     -------

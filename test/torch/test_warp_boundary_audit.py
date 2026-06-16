@@ -263,6 +263,10 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::_batch_query_cluster_tile_optional",
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::batch_cluster_tile_neighbor_list",
     "nvalchemiops/torch/neighbors/batch_cluster_tile.py::batch_query_cluster_tile",
+    # Compiled pair_fn registration factories: raw Warp calls are confined to
+    # nested torch.library.custom_op runtime bodies with registered fake behavior.
+    "nvalchemiops/torch/neighbors/batch_naive.py::_register_compiled_batch_naive_no_pbc_pair_op",
+    "nvalchemiops/torch/neighbors/batch_naive.py::_register_compiled_batch_naive_pbc_pair_op",
     "nvalchemiops/torch/neighbors/batch_naive.py::_batch_naive_pair_outputs_forward",
     "nvalchemiops/torch/neighbors/cell_list.py::_query_cell_list_direct_eager",
     "nvalchemiops/torch/neighbors/cell_list.py::_query_cell_list_optional",
@@ -272,6 +276,8 @@ APPROVED_RAW_WARP_FUNCTIONS = {
     "nvalchemiops/torch/neighbors/cluster_tile.py::_query_cluster_tile_coo_optional",
     "nvalchemiops/torch/neighbors/cluster_tile.py::_query_cluster_tile_optional",
     "nvalchemiops/torch/neighbors/cluster_tile.py::cluster_tile_neighbor_list",
+    "nvalchemiops/torch/neighbors/naive.py::_register_compiled_naive_no_pbc_pair_op",
+    "nvalchemiops/torch/neighbors/naive.py::_register_compiled_naive_pbc_pair_op",
     "nvalchemiops/torch/neighbors/naive.py::_naive_pair_outputs_forward",
     "nvalchemiops/torch/neighbors/neighbor_utils.py::compute_naive_num_shifts",
 }

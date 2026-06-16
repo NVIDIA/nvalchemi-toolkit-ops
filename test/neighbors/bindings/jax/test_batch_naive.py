@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from nvalchemiops.jax.neighbors.batch_naive import batch_naive_neighbor_list
+from nvalchemiops.jax.neighbors.neighbor_utils import compute_naive_num_shifts
 
 from .conftest import requires_gpu
 
@@ -86,6 +87,27 @@ def _bruteforce_pbc_distances(
 
 class TestBatchNaiveNeighborList:
     """Test batch_naive_neighbor_list function."""
+
+    def test_pair_buffers_without_pair_fn_raise(self):
+        """Pair-only kwargs should not be silently ignored."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+        batch_idx = jnp.zeros((2,), dtype=jnp.int32)
+        with pytest.raises(ValueError, match="pair_params requires pair_fn"):
+            batch_naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                batch_idx=batch_idx,
+                max_neighbors=4,
+                pair_params=jnp.ones((2, 1), dtype=jnp.float32),
+            )
+        with pytest.raises(ValueError, match="pair_energies requires pair_fn"):
+            batch_naive_neighbor_list(
+                positions,
+                cutoff=1.0,
+                batch_idx=batch_idx,
+                max_neighbors=4,
+                pair_energies=jnp.zeros((2, 4), dtype=jnp.float32),
+            )
 
     def test_nonperiodic_dummy_cell_does_not_wrap_positions(self):
         """A provided non-periodic cell must not fold molecular coordinates."""
@@ -180,6 +202,184 @@ class TestBatchNaiveNeighborList:
 
         assert neighbor_matrix.shape == (4, 10)
         assert num_neighbors.shape == (4,)
+
+    def test_target_indices_matrix_compact_rows(self):
+        """target_indices returns compact rows for selected batched atoms."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        target_indices = jnp.array([2, 0], dtype=jnp.int32)
+
+        full_nm, full_nn = batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+        )
+        partial_nm, partial_nn = batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            target_indices=target_indices,
+        )
+
+        assert partial_nm.shape == (2, 4)
+        np.testing.assert_array_equal(
+            np.asarray(partial_nn),
+            np.asarray(full_nn)[np.asarray(target_indices)],
+        )
+        for row, atom in enumerate(np.asarray(target_indices)):
+            count = int(partial_nn[row])
+            np.testing.assert_array_equal(
+                np.sort(np.asarray(partial_nm[row, :count])),
+                np.sort(np.asarray(full_nm[atom, : int(full_nn[atom])])),
+            )
+
+    def test_target_indices_jit_uses_compact_user_buffers(self):
+        """target_indices works under jax.jit with compact caller buffers."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        target_indices = jnp.array([2, 0], dtype=jnp.int32)
+        neighbor_matrix = jnp.full((2, 4), positions.shape[0], dtype=jnp.int32)
+        num_neighbors = jnp.zeros((2,), dtype=jnp.int32)
+
+        @jax.jit
+        def _run(pos, nm, nn):
+            return batch_naive_neighbor_list(
+                pos,
+                0.75,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix=nm,
+                num_neighbors=nn,
+                target_indices=target_indices,
+            )
+
+        partial_nm, partial_nn = _run(positions, neighbor_matrix, num_neighbors)
+        full_nm, full_nn = batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+        )
+
+        assert partial_nm.shape == (2, 4)
+        np.testing.assert_array_equal(
+            np.asarray(partial_nn),
+            np.asarray(full_nn)[np.asarray(target_indices)],
+        )
+        for row, atom in enumerate(np.asarray(target_indices)):
+            count = int(partial_nn[row])
+            np.testing.assert_array_equal(
+                np.sort(np.asarray(partial_nm[row, :count])),
+                np.sort(np.asarray(full_nm[atom, : int(full_nn[atom])])),
+            )
+
+    def test_target_indices_jit_pbc_uses_precomputed_shift_metadata(self):
+        """PBC batched target_indices JIT path uses caller shift metadata."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [9.5, 0.0, 0.0],
+                [20.0, 0.0, 0.0],
+                [29.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        cell = jnp.stack([jnp.eye(3, dtype=jnp.float32) * 10.0] * 2)
+        pbc = jnp.array([[True, True, True], [True, True, True]])
+        target_indices = jnp.array([0, 2], dtype=jnp.int32)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+        neighbor_matrix = jnp.full((2, 8), positions.shape[0], dtype=jnp.int32)
+        num_neighbors = jnp.zeros((2,), dtype=jnp.int32)
+        shifts = jnp.zeros((2, 8, 3), dtype=jnp.int32)
+
+        @jax.jit
+        def _run(pos, nm, nn, nms):
+            return batch_naive_neighbor_list(
+                pos,
+                1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                pbc=pbc,
+                neighbor_matrix=nm,
+                num_neighbors=nn,
+                neighbor_matrix_shifts=nms,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                max_atoms_per_system=2,
+                target_indices=target_indices,
+            )
+
+        partial_nm, partial_nn, partial_shifts = _run(
+            positions, neighbor_matrix, num_neighbors, shifts
+        )
+        assert partial_nm.shape == (2, 8)
+        assert partial_shifts.shape == (2, 8, 3)
+        assert np.asarray(partial_nn).min() >= 1
+
+    def test_target_indices_rejects_full_size_user_buffers(self):
+        """Partial batch lists require compact user buffers."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        batch_idx = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
+        batch_ptr = jnp.array([0, 2, 4], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="neighbor_matrix"):
+            batch_naive_neighbor_list(
+                positions,
+                0.75,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix=jnp.full((4, 4), 4, dtype=jnp.int32),
+                num_neighbors=jnp.zeros((2,), dtype=jnp.int32),
+                target_indices=jnp.array([2, 0], dtype=jnp.int32),
+            )
+
+    def test_target_indices_rejects_tile_strategy(self):
+        """Explicit tiled batch naive mode does not support partial rows."""
+        positions = jnp.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], dtype=jnp.float32)
+        batch_idx = jnp.array([0, 0], dtype=jnp.int32)
+        with pytest.raises(NotImplementedError, match="target_indices"):
+            batch_naive_neighbor_list(
+                positions,
+                1.0,
+                batch_idx=batch_idx,
+                max_neighbors=4,
+                target_indices=jnp.array([0], dtype=jnp.int32),
+                native_strategy="tile",
+            )
 
     def test_topology_only_grad_no_pbc_is_zero(self):
         """Topology-only batch outputs do not differentiate through Warp FFI."""

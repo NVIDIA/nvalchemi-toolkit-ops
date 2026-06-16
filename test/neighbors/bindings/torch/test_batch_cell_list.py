@@ -1348,6 +1348,43 @@ class TestBatchCellListAutograd:
         )
         assert d.requires_grad and v.requires_grad
 
+    def test_return_tuple_shape_extends_with_flags(self, device):
+        """Tuple shape changes only when pair-output flags are set."""
+        pos, cell, pbc, batch_idx = self._make_two_systems(device)
+        out_default = batch_cell_list(pos, 1.5, cell, pbc, batch_idx)
+        assert len(out_default) == 3
+
+        out_d = batch_cell_list(
+            pos,
+            1.5,
+            cell,
+            pbc,
+            batch_idx,
+            return_distances=True,
+        )
+        assert len(out_d) == 4
+
+        out_v = batch_cell_list(
+            pos,
+            1.5,
+            cell,
+            pbc,
+            batch_idx,
+            return_vectors=True,
+        )
+        assert len(out_v) == 4
+
+        out_dv = batch_cell_list(
+            pos,
+            1.5,
+            cell,
+            pbc,
+            batch_idx,
+            return_distances=True,
+            return_vectors=True,
+        )
+        assert len(out_dv) == 5
+
     @pytest.mark.slow
     def test_gradcheck_distances_wrt_positions(self, device):
         pos, cell, pbc, batch_idx = self._make_two_systems(device)

@@ -17,9 +17,9 @@
 family.
 
 Forward calls a family-specific closure that runs the warp neighbor-list
-launcher with ``return_distances=True`` / ``return_vectors=True``.  The
-closure returns a :class:`_NeighborForwardOutput` containing the user-visible
-``distances`` and ``vectors`` plus the integer indices and shifts needed to
+launcher for the requested per-pair outputs.  The closure returns a
+:class:`_NeighborForwardOutput` containing the requested user-visible
+``distances`` / ``vectors`` plus the integer indices and shifts needed to
 reconstruct ``r = x_j - x_i + S @ cell`` in the backward.
 
 Backward is a single pure-torch pass: gather, subtract, matmul with cell,
@@ -55,17 +55,19 @@ _DISTANCE_DERIVATIVE_EPSILON: dict[torch.dtype, float] = {
 class _NeighborForwardOutput(NamedTuple):
     """Uniform forward result returned by each family's closure."""
 
-    distances: torch.Tensor
-    """Per-pair scalar distances. Matrix layout ``(K, M)`` or COO ``(P,)``."""
+    distances: torch.Tensor | None
+    """Per-pair scalar distances, or ``None`` when not requested."""
 
-    vectors: torch.Tensor
-    """Per-pair displacement vectors. Matrix ``(K, M, 3)`` or COO ``(P, 3)``."""
+    vectors: torch.Tensor | None
+    """Per-pair displacement vectors, or ``None`` when not requested."""
 
     extra_outputs: tuple[torch.Tensor, ...]
     """Non-differentiable user-visible tensors the wrapper returns alongside
     ``distances`` / ``vectors``: typically the neighbor matrix / list, the
     per-atom counts / CSR pointers, and the integer shift tensor.  Order is
     family-specific; the wrapper re-packages them into its public return.
+    ``distances`` or ``vectors`` can be ``None`` when the corresponding public
+    output was not requested.
     """
 
     i_idx_flat: torch.Tensor
@@ -299,12 +301,12 @@ def _route_pair_outputs(
     cell: torch.Tensor | None,
     forward_fn: Callable[..., _NeighborForwardOutput],
     forward_kwargs: dict,
-) -> tuple[torch.Tensor, ...]:
+) -> tuple[torch.Tensor | None, ...]:
     """Route to the autograd Function iff any input requires grad.
 
     Returns ``(distances, vectors, *extra_outputs)`` in the order the
     family's forward closure emits.  The caller repackages this into its
-    public return tuple.
+    public return tuple; unrequested geometry entries are ``None``.
     """
     needs_grad = positions.requires_grad or (cell is not None and cell.requires_grad)
     if needs_grad:

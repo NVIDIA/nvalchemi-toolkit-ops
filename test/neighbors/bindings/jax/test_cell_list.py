@@ -127,6 +127,75 @@ class TestCellList:
         assert neighbor_ptr.shape == (3,)  # 2 atoms + 1
         assert shifts.shape[1] == 3
 
+    def test_query_cell_list_target_indices_matches_combined_wrapper(self):
+        """Low-level query_cell_list supports target_indices and distances."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [2.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 6.0
+        pbc = jnp.array([[True, True, True]])
+        target_indices = jnp.array([2, 0], dtype=jnp.int32)
+        build_out = build_cell_list(positions, 0.75, cell, pbc)
+
+        query_out = query_cell_list(
+            positions,
+            0.75,
+            cell,
+            pbc,
+            *build_out,
+            max_neighbors=4,
+            target_indices=target_indices,
+            return_distances=True,
+            strategy="atom_centric",
+        )
+        combined_out = cell_list(
+            positions,
+            0.75,
+            cell,
+            pbc,
+            max_neighbors=4,
+            target_indices=target_indices,
+            return_distances=True,
+            strategy="atom_centric",
+        )
+
+        assert query_out[0].shape == (2, 4)
+        for actual, expected in zip(query_out, combined_out, strict=True):
+            np.testing.assert_array_equal(np.asarray(actual), np.asarray(expected))
+
+    def test_query_cell_list_pair_outputs_validate_strategy(self):
+        """Optional-output query path validates strategy like topology-only."""
+        positions = jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [2.5, 0.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        cell = jnp.eye(3, dtype=jnp.float32).reshape(1, 3, 3) * 6.0
+        pbc = jnp.array([[True, True, True]])
+        build_out = build_cell_list(positions, 0.75, cell, pbc)
+
+        with pytest.raises(ValueError, match="strategy must be"):
+            query_cell_list(
+                positions,
+                0.75,
+                cell,
+                pbc,
+                *build_out,
+                max_neighbors=4,
+                return_distances=True,
+                strategy="bad",
+            )
+
     def test_no_pbc(self):
         """Test cell_list without PBC."""
         positions = jnp.array(
@@ -1511,6 +1580,114 @@ class TestJaxCellListAutograd:
         nl = np.asarray(nl)
         if nl.shape[1] > 0:
             assert int(nl[0].max()) < nt
+
+    def test_target_indices_rejects_full_size_user_buffers(self):
+        """Partial cell-list buffers must use compact target rows."""
+        positions, cell, pbc = self._make_system()
+        n = positions.shape[0]
+        targets = jnp.array([0, 2], dtype=jnp.int32)
+        mn = 16
+
+        with pytest.raises(ValueError, match="compact target rows"):
+            cell_list(
+                positions,
+                1.5,
+                cell,
+                pbc,
+                max_neighbors=mn,
+                target_indices=targets,
+                neighbor_matrix=jnp.full((n, mn), n, dtype=jnp.int32),
+                neighbor_matrix_shifts=jnp.zeros((n, mn, 3), dtype=jnp.int32),
+                num_neighbors=jnp.zeros((n,), dtype=jnp.int32),
+            )
+
+        with pytest.raises(ValueError, match="compact target rows"):
+            cell_list(
+                positions,
+                1.5,
+                cell,
+                pbc,
+                max_neighbors=mn,
+                target_indices=targets,
+                return_distances=True,
+                neighbor_distances=jnp.zeros((n, mn), dtype=positions.dtype),
+            )
+
+    def test_query_target_indices_rejects_full_size_user_buffers(self):
+        """Low-level query buffers must use compact target rows."""
+        positions, cell, pbc = self._make_system()
+        n = positions.shape[0]
+        targets = jnp.array([0, 2], dtype=jnp.int32)
+        mn = 16
+        build_out = build_cell_list(positions, 1.5, cell, pbc)
+
+        with pytest.raises(ValueError, match="compact target rows"):
+            query_cell_list(
+                positions,
+                1.5,
+                cell,
+                pbc,
+                *build_out,
+                max_neighbors=mn,
+                target_indices=targets,
+                neighbor_matrix=jnp.full((n, mn), n, dtype=jnp.int32),
+                neighbor_matrix_shifts=jnp.zeros((n, mn, 3), dtype=jnp.int32),
+                num_neighbors=jnp.zeros((n,), dtype=jnp.int32),
+            )
+
+    def test_pair_buffers_without_pair_fn_raise(self):
+        """Pair-only kwargs should not be silently ignored."""
+        positions, cell, pbc = self._make_system()
+        with pytest.raises(ValueError, match="pair_energies requires pair_fn"):
+            cell_list(
+                positions,
+                1.5,
+                cell,
+                pbc,
+                max_neighbors=8,
+                pair_energies=jnp.zeros((positions.shape[0], 8), dtype=positions.dtype),
+            )
+
+        build_out = build_cell_list(positions, 1.5, cell, pbc)
+        with pytest.raises(ValueError, match="pair_params requires pair_fn"):
+            query_cell_list(
+                positions,
+                1.5,
+                cell,
+                pbc,
+                *build_out,
+                max_neighbors=8,
+                pair_params=jnp.ones((positions.shape[0], 1), dtype=positions.dtype),
+            )
+
+    def test_default_cell_pair_geometry_matches_explicit_default(self):
+        """Differentiable geometry uses the normalized default cell."""
+        positions = jnp.array(
+            [[0.1, 0.1, 0.1], [0.35, 0.1, 0.1], [0.8, 0.8, 0.8]],
+            dtype=jnp.float32,
+        )
+        explicit_cell = jnp.eye(3, dtype=jnp.float32)[jnp.newaxis, :, :]
+        explicit_pbc = jnp.ones((1, 3), dtype=jnp.bool_)
+
+        *_, d_default, v_default = cell_list(
+            positions,
+            0.4,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+        *_, d_explicit, v_explicit = cell_list(
+            positions,
+            0.4,
+            explicit_cell,
+            explicit_pbc,
+            max_neighbors=8,
+            return_distances=True,
+            return_vectors=True,
+        )
+
+        np.testing.assert_allclose(np.asarray(d_default), np.asarray(d_explicit))
+        np.testing.assert_allclose(np.asarray(v_default), np.asarray(v_explicit))
 
     def test_graph_mode_warp_rejected_with_pair_outputs(self):
         """graph_mode='warp' with pair outputs raises (CUDA-graph follow-up)."""

@@ -408,8 +408,50 @@ _jax_fill_naive_pbc_pair_half_f64 = jax_kernel(
 
 
 @functools.cache
+def _get_jax_naive_pair_kernel(
+    wp_dtype, pbc_mode: str, half_fill: bool = False, partial: bool = False
+):
+    """Build a geometry-output naive kernel for optional partial rows."""
+    kernel = _get_naive_kernel(
+        wp_dtype,
+        pbc_mode=pbc_mode,
+        batched=False,
+        selective=False,
+        partial=partial,
+        return_vectors=True,
+        return_distances=True,
+        half_fill=half_fill,
+    )
+    if pbc_mode == "none":
+        in_out_argnames = [
+            "neighbor_matrix1",
+            "num_neighbors1",
+            "neighbor_vectors",
+            "neighbor_distances",
+        ]
+    else:
+        in_out_argnames = [
+            "neighbor_matrix1",
+            "neighbor_matrix_shifts1",
+            "num_neighbors1",
+            "neighbor_vectors",
+            "neighbor_distances",
+        ]
+    return jax_kernel(
+        kernel,
+        num_outputs=len(in_out_argnames),
+        in_out_argnames=in_out_argnames,
+        enable_backward=False,
+    )
+
+
+@functools.cache
 def _get_jax_naive_pair_fn_kernel(
-    pair_fn, wp_dtype, pbc_mode: str, half_fill: bool = False
+    pair_fn,
+    wp_dtype,
+    pbc_mode: str,
+    half_fill: bool = False,
+    partial: bool = False,
 ):
     """Build (and cache) a ``jax_kernel`` for a ``pair_fn``-specialized naive kernel.
 
@@ -430,6 +472,7 @@ def _get_jax_naive_pair_fn_kernel(
         pbc_mode=pbc_mode,
         batched=False,
         selective=False,
+        partial=partial,
         return_vectors=True,
         return_distances=True,
         pair_fn=pair_fn,
@@ -1483,8 +1526,17 @@ def _naive_pair_outputs_forward(
     cutoff: float,
     max_neighbors: int,
     fill_value: int,
+    neighbor_matrix: jax.Array | None = None,
+    neighbor_matrix_shifts: jax.Array | None = None,
+    num_neighbors: jax.Array | None = None,
+    neighbor_vectors: jax.Array | None = None,
+    neighbor_distances: jax.Array | None = None,
+    shift_range_per_dimension: jax.Array | None = None,
+    num_shifts_per_system: jax.Array | None = None,
+    max_shifts_per_system: int | None = None,
     pair_fn=None,
     pair_params: jax.Array | None = None,
+    target_indices: jax.Array | None = None,
     half_fill: bool = False,
 ) -> _NeighborForwardOutput:
     """Forward closure for the naive autograd path.
@@ -1505,9 +1557,16 @@ def _naive_pair_outputs_forward(
         cell = jax.lax.stop_gradient(cell)
 
     total_atoms = positions.shape[0]
+    is_partial = target_indices is not None
+    if is_partial:
+        target_indices = jnp.asarray(target_indices, dtype=jnp.int32)
+        num_rows = int(target_indices.shape[0])
+    else:
+        num_rows = total_atoms
     f64 = positions.dtype == jnp.float64
-    cutoff_sq = jnp.asarray(cutoff * cutoff, dtype=positions.dtype)
-    zero_dt = jnp.asarray(0.0, dtype=positions.dtype)
+    wp_dtype = wp.float64 if f64 else wp.float32
+    cutoff_sq = float(cutoff * cutoff)
+    zero_dt = float(0.0)
     (
         empty_offsets,
         empty_cell,
@@ -1527,10 +1586,27 @@ def _naive_pair_outputs_forward(
         empty_rebuild_flags,
     ) = _jax_scalar_sentinels(positions.dtype)
 
-    nm = jnp.full((total_atoms, max_neighbors), fill_value, dtype=jnp.int32)
-    nn = jnp.zeros(total_atoms, dtype=jnp.int32)
-    nv = jnp.zeros((total_atoms, max_neighbors, 3), dtype=positions.dtype)
-    nd = jnp.zeros((total_atoms, max_neighbors), dtype=positions.dtype)
+    ti_arg = target_indices if is_partial else empty_target_indices
+    if neighbor_matrix is None:
+        nm = jnp.full((num_rows, max_neighbors), fill_value, dtype=jnp.int32)
+    else:
+        nm = neighbor_matrix.at[:].set(jnp.int32(fill_value))
+    if num_neighbors is None:
+        nn = jnp.zeros(num_rows, dtype=jnp.int32)
+    else:
+        nn = num_neighbors.at[:].set(jnp.int32(0))
+    if neighbor_matrix_shifts is None:
+        nms = jnp.zeros((num_rows, max_neighbors, 3), dtype=jnp.int32)
+    else:
+        nms = neighbor_matrix_shifts.at[:].set(jnp.int32(0))
+    if neighbor_vectors is None:
+        nv = jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
+    else:
+        nv = neighbor_vectors.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
+    if neighbor_distances is None:
+        nd = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+    else:
+        nd = neighbor_distances.at[:].set(jnp.asarray(0.0, dtype=positions.dtype))
 
     # ``pair_fn`` path: real per-atom params + auto-allocated energy/force buffers.
     # (JAX is functional, so user-supplied energy/force buffers cannot be written
@@ -1538,10 +1614,9 @@ def _naive_pair_outputs_forward(
     # matches torch, the in-place-buffer aspect does not.)
     has_pair_fn = pair_fn is not None
     if has_pair_fn:
-        wp_dtype = wp.float64 if f64 else wp.float32
         pp_arg = jnp.asarray(pair_params, dtype=positions.dtype)
-        pe = jnp.zeros((total_atoms, max_neighbors), dtype=positions.dtype)
-        pf = jnp.zeros((total_atoms, max_neighbors, 3), dtype=positions.dtype)
+        pe = jnp.zeros((num_rows, max_neighbors), dtype=positions.dtype)
+        pf = jnp.zeros((num_rows, max_neighbors, 3), dtype=positions.dtype)
     else:
         pp_arg = empty_pair_params
         pe = None
@@ -1549,7 +1624,11 @@ def _naive_pair_outputs_forward(
 
     if pbc is None:
         if has_pair_fn:
-            kernel = _get_jax_naive_pair_fn_kernel(pair_fn, wp_dtype, "none", half_fill)
+            kernel = _get_jax_naive_pair_fn_kernel(
+                pair_fn, wp_dtype, "none", half_fill, is_partial
+            )
+        elif is_partial:
+            kernel = _get_jax_naive_pair_kernel(wp_dtype, "none", half_fill, is_partial)
         elif half_fill:
             kernel = (
                 _jax_fill_naive_pair_half_f64 if f64 else _jax_fill_naive_pair_half_f32
@@ -1566,7 +1645,7 @@ def _naive_pair_outputs_forward(
             empty_num_shifts,
             empty_batch_idx,
             empty_batch_ptr,
-            empty_target_indices,
+            ti_arg,
             nm,
             empty_shifts,
             nn,
@@ -1579,17 +1658,20 @@ def _naive_pair_outputs_forward(
             pe if has_pair_fn else empty_energies,
             pf if has_pair_fn else empty_forces,
             empty_rebuild_flags,
-            launch_dims=(1, 1, total_atoms),
+            launch_dims=(1, 1, num_rows),
         )
         if has_pair_fn:
             nm, nn, nv, nd, pe, pf = outs
         else:
             nm, nn, nv, nd = outs
-        nms = jnp.zeros((total_atoms, max_neighbors, 3), dtype=jnp.int32)
     else:
         if has_pair_fn:
             kernel = _get_jax_naive_pair_fn_kernel(
-                pair_fn, wp_dtype, "wrap_on_entry", half_fill
+                pair_fn, wp_dtype, "wrap_on_entry", half_fill, is_partial
+            )
+        elif is_partial:
+            kernel = _get_jax_naive_pair_kernel(
+                wp_dtype, "wrap_on_entry", half_fill, is_partial
             )
         elif half_fill:
             kernel = (
@@ -1610,22 +1692,31 @@ def _naive_pair_outputs_forward(
         # loop), so the launch must enumerate every shift.  Pinning it to 1 would
         # silently drop all non-zero images (only ``ishift == 0`` runs), matching
         # neighbors only in the R==1 regime.
-        shift_range, num_shifts_arr, max_shifts = compute_naive_num_shifts(
-            cell, cutoff, pbc
-        )
-        nms = jnp.zeros((total_atoms, max_neighbors, 3), dtype=jnp.int32)
+        if (
+            shift_range_per_dimension is None
+            or num_shifts_per_system is None
+            or max_shifts_per_system is None
+        ):
+            (
+                shift_range_per_dimension,
+                num_shifts_per_system,
+                max_shifts_per_system,
+            ) = compute_naive_num_shifts(cell, cutoff, pbc)
         offs = jnp.zeros((total_atoms, 3), dtype=jnp.int32)
+        active_shift_dim = int(max_shifts_per_system)
+        if is_partial and not half_fill:
+            active_shift_dim = 2 * active_shift_dim - 1
         outs = kernel(
             positions,
             offs,
             cutoff_sq,
             zero_dt,
             cell,
-            shift_range,
-            num_shifts_arr,
+            shift_range_per_dimension,
+            num_shifts_per_system,
             empty_batch_idx,
             empty_batch_ptr,
-            empty_target_indices,
+            ti_arg,
             nm,
             nms,
             nn,
@@ -1638,14 +1729,19 @@ def _naive_pair_outputs_forward(
             pe if has_pair_fn else empty_energies,
             pf if has_pair_fn else empty_forces,
             empty_rebuild_flags,
-            launch_dims=(1, int(max_shifts), total_atoms),
+            launch_dims=(1, active_shift_dim, num_rows),
         )
         if has_pair_fn:
             nm, nms, nn, nv, nd, pe, pf = outs
         else:
             nm, nms, nn, nv, nd = outs
 
-    i_idx, j_idx, shifts_ret, _, mask_ = _build_index_residuals(nm, nn, nms)
+    i_idx, j_idx, shifts_ret, _, mask_ = _build_index_residuals(
+        nm,
+        nn,
+        nms,
+        target_indices=target_indices if is_partial else None,
+    )
     K, M = nm.shape
     extra_outputs = (nm, nn, nms, pe, pf) if has_pair_fn else (nm, nn, nms)
     return _NeighborForwardOutput(
@@ -1659,6 +1755,25 @@ def _naive_pair_outputs_forward(
         active_mask=mask_,
         matrix_shape=(K, M),
     )
+
+
+def _validate_pair_output_buffer(
+    name: str,
+    array: jax.Array | None,
+    expected_shape: tuple[int, ...],
+    expected_dtype=None,
+) -> None:
+    """Validate optional matrix-shaped output buffers for pair-output paths."""
+    if array is None:
+        return
+    if tuple(array.shape) != expected_shape:
+        raise ValueError(
+            f"{name} must have shape {expected_shape}; got {tuple(array.shape)}.",
+        )
+    if expected_dtype is not None and array.dtype != expected_dtype:
+        raise ValueError(
+            f"{name} dtype must be {expected_dtype}; got {array.dtype}.",
+        )
 
 
 def naive_neighbor_list(
@@ -1685,9 +1800,9 @@ def naive_neighbor_list(
     *,
     return_distances: bool = False,
     return_vectors: bool = False,
-    # Pair-output / partial kwargs accepted for signature parity with the torch
-    # binding so misuse raises a clear NotImplementedError instead of a bare
-    # TypeError; none are wired through the JAX naive binding yet.
+    neighbor_vectors: jax.Array | None = None,
+    neighbor_distances: jax.Array | None = None,
+    # Pair-output / partial kwargs.
     target_indices: jax.Array | None = None,
     pair_fn=None,
     pair_params: jax.Array | None = None,
@@ -1732,15 +1847,17 @@ def naive_neighbor_list(
         If False, store all neighbor relationships symmetrically. Default is False.
     fill_value : int, optional
         Value to fill the neighbor matrix with. Default is total_atoms.
-    neighbor_matrix : jax.Array, shape (total_atoms, max_neighbors), dtype=int32, optional
+    neighbor_matrix : jax.Array, shape (num_rows, max_neighbors), dtype=int32, optional
         Neighbor matrix to be filled. Pass in a pre-shaped array to hint buffer reuse
         to XLA; note that JAX returns a new array rather than mutating the input.
+        ``num_rows`` is ``total_atoms`` normally and ``len(target_indices)`` when
+        partial rows are requested.
         Must be provided if max_neighbors is not provided.
-    neighbor_matrix_shifts : jax.Array, shape (total_atoms, max_neighbors, 3), dtype=int32, optional
+    neighbor_matrix_shifts : jax.Array, shape (num_rows, max_neighbors, 3), dtype=int32, optional
         Shift vectors for each neighbor relationship. Pass in a pre-shaped array to hint
         buffer reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
-    num_neighbors : jax.Array, shape (total_atoms,), dtype=int32, optional
+    num_neighbors : jax.Array, shape (num_rows,), dtype=int32, optional
         Number of neighbors found for each atom. Pass in a pre-shaped array to hint buffer
         reuse to XLA; note that JAX returns a new array rather than mutating the input.
         Must be provided if max_neighbors is not provided.
@@ -1756,6 +1873,14 @@ def naive_neighbor_list(
     return_neighbor_list : bool, optional - default = False
         If True, convert the neighbor matrix to a neighbor list (idx_i, idx_j) format by
         creating a mask over the fill_value, which can incur a performance penalty.
+    neighbor_distances : jax.Array, shape (num_rows, max_neighbors), optional
+        Pre-shaped distance output for ``return_distances=True`` or ``pair_fn``.
+    neighbor_vectors : jax.Array, shape (num_rows, max_neighbors, 3), optional
+        Pre-shaped vector output for ``return_vectors=True`` or ``pair_fn``.
+    target_indices : jax.Array, shape (num_targets,), dtype=int32, optional
+        Compact partial-list source rows. Output row ``r`` maps to atom
+        ``target_indices[r]``; COO source rows remain compact row ids. User
+        buffers must be compact-row shaped, not full atom-row shaped.
     wrap_positions : bool, default=True
         If True, wrap input positions into the primary cell before
         neighbor search. Set to False when positions are already
@@ -1818,25 +1943,27 @@ def naive_neighbor_list(
         - **neighbor_data** (array): Neighbor indices, format depends on ``return_neighbor_list``:
 
             * If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix``
-              with shape (total_atoms, max_neighbors), dtype int32. Each row i contains
-              indices of atom i's neighbors.
+              with shape (num_rows, max_neighbors), dtype int32. Row ``r`` contains
+              neighbors for atom ``r`` or ``target_indices[r]`` when partial rows
+              are requested.
             * If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_atoms, target_atoms].
+              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
+              With ``target_indices``, source rows are compact row ids.
 
         - **num_neighbor_data** (array): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
 
-            * If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (total_atoms,), dtype int32.
+            * If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (num_rows,), dtype int32.
               Count of neighbors found for each atom. Always returned.
-            * If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (total_atoms + 1,), dtype int32.
+            * If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (num_rows + 1,), dtype int32.
               CSR-style pointer arrays where ``neighbor_ptr_data[i]`` to ``neighbor_ptr_data[i+1]`` gives the range of
-              neighbors for atom i in the flattened neighbor list.
+              neighbors for row i in the flattened neighbor list.
 
         - **neighbor_shift_data** (array, optional): Periodic shift vectors, only when ``pbc`` is provided:
           format depends on ``return_neighbor_list``:
 
             * If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix_shifts`` with
-              shape (total_atoms, max_neighbors, 3), dtype int32.
+              shape (num_rows, max_neighbors, 3), dtype int32.
             * If ``return_neighbor_list=True``: Returns ``unit_shifts`` with shape
               (num_pairs, 3), dtype int32.
 
@@ -1938,15 +2065,6 @@ def naive_neighbor_list(
             f"got {native_strategy!r}",
         )
 
-    # ``target_indices`` (partial / selective query) is not yet wired through the
-    # JAX naive binding (task 5); reject it with a clear message. ``pair_fn`` and
-    # friends ARE wired below via the autograd path.
-    if target_indices is not None:
-        raise NotImplementedError(
-            "target_indices (partial neighbor lists) is not yet wired through the "
-            "JAX naive binding. Use the torch binding or the warp factory "
-            "directly.",
-        )
     # ``pair_fn`` requires per-atom ``pair_params``.  Note: under JAX (functional
     # arrays) any user-supplied ``pair_energies`` / ``pair_forces`` cannot be written
     # in-place — they are auto-allocated and returned, so the *return* contract
@@ -1955,6 +2073,13 @@ def naive_neighbor_list(
         raise ValueError(
             "pair_fn requires pair_params (a per-atom (n_atoms, K) parameter array).",
         )
+    if pair_fn is None:
+        if pair_params is not None:
+            raise ValueError("pair_params requires pair_fn.")
+        if pair_energies is not None:
+            raise ValueError("pair_energies requires pair_fn.")
+        if pair_forces is not None:
+            raise ValueError("pair_forces requires pair_fn.")
 
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")
@@ -1971,10 +2096,15 @@ def naive_neighbor_list(
                 "naive kernel cannot run on a CPU device (Warp forces "
                 "block_dim=1). Use native_strategy='scalar' or 'auto' on CPU.",
             )
-        if bool(return_distances) or bool(return_vectors):
+        if bool(return_distances) or bool(return_vectors) or pair_fn is not None:
             raise NotImplementedError(
                 "native_strategy='tile' has no pair-output (return_distances / "
-                "return_vectors) variant; use native_strategy='scalar'.",
+                "return_vectors / pair_fn) variant; use native_strategy='scalar'.",
+            )
+        if target_indices is not None:
+            raise NotImplementedError(
+                "native_strategy='tile' has no target_indices (partial "
+                "neighbor-list) variant; use native_strategy='scalar'.",
             )
         if rebuild_flags is not None:
             raise NotImplementedError(
@@ -1989,17 +2119,58 @@ def naive_neighbor_list(
             )
 
     has_pair_outputs = (
-        bool(return_distances) or bool(return_vectors) or pair_fn is not None
+        bool(return_distances)
+        or bool(return_vectors)
+        or pair_fn is not None
+        or target_indices is not None
     )
     if has_pair_outputs:
         if graph_mode != "none" or rebuild_flags is not None:
             raise NotImplementedError(
                 "Pair outputs require graph_mode='none' and no rebuild_flags.",
             )
+        num_rows = (
+            int(target_indices.shape[0])
+            if target_indices is not None
+            else int(positions.shape[0])
+        )
+        if max_neighbors is None and neighbor_matrix is not None:
+            max_neighbors = int(neighbor_matrix.shape[1])
         if max_neighbors is None:
             max_neighbors = estimate_max_neighbors(cutoff)
         if fill_value is None:
             fill_value = positions.shape[0]
+        _validate_pair_output_buffer(
+            "neighbor_matrix",
+            neighbor_matrix,
+            (num_rows, int(max_neighbors)),
+            jnp.int32,
+        )
+        _validate_pair_output_buffer(
+            "num_neighbors",
+            num_neighbors,
+            (num_rows,),
+            jnp.int32,
+        )
+        if pbc is not None:
+            _validate_pair_output_buffer(
+                "neighbor_matrix_shifts",
+                neighbor_matrix_shifts,
+                (num_rows, int(max_neighbors), 3),
+                jnp.int32,
+            )
+        _validate_pair_output_buffer(
+            "neighbor_distances",
+            neighbor_distances,
+            (num_rows, int(max_neighbors)),
+            positions.dtype,
+        )
+        _validate_pair_output_buffer(
+            "neighbor_vectors",
+            neighbor_vectors,
+            (num_rows, int(max_neighbors), 3),
+            positions.dtype,
+        )
         if cell is not None and cell.ndim == 2:
             cell_norm = cell[jnp.newaxis, :, :]
         else:
@@ -2009,13 +2180,48 @@ def naive_neighbor_list(
         pbc_norm = None
         if pbc is not None:
             pbc_norm = pbc if pbc.ndim == 2 else pbc[jnp.newaxis, :]
+        if pbc_norm is not None:
+            if (
+                shift_range_per_dimension is None
+                or num_shifts_per_system is None
+                or max_shifts_per_system is None
+            ):
+                (
+                    shift_range_per_dimension,
+                    num_shifts_per_system,
+                    max_shifts_per_system,
+                ) = compute_naive_num_shifts(
+                    jax.lax.stop_gradient(cell_norm),
+                    cutoff,
+                    pbc_norm,
+                )
+            try:
+                max_shifts_per_system = int(max_shifts_per_system)
+            except (
+                jax.errors.ConcretizationTypeError,
+                jax.errors.TracerIntegerConversionError,
+            ) as exc:
+                raise ValueError(
+                    "max_shifts_per_system must be passed as a concrete int when "
+                    "calling naive_neighbor_list under jax.jit with PBC and "
+                    "target_indices / pair outputs.",
+                ) from exc
         forward_kwargs = {
             "pbc": pbc_norm,
             "cutoff": float(cutoff),
             "max_neighbors": int(max_neighbors),
             "fill_value": int(fill_value),
+            "neighbor_matrix": neighbor_matrix,
+            "neighbor_matrix_shifts": neighbor_matrix_shifts,
+            "num_neighbors": num_neighbors,
+            "neighbor_vectors": neighbor_vectors,
+            "neighbor_distances": neighbor_distances,
+            "shift_range_per_dimension": shift_range_per_dimension,
+            "num_shifts_per_system": num_shifts_per_system,
+            "max_shifts_per_system": max_shifts_per_system,
             "pair_fn": pair_fn,
             "pair_params": pair_params,
+            "target_indices": target_indices,
             "half_fill": bool(half_fill),
         }
         route_out = _route_pair_outputs(

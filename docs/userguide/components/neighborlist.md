@@ -217,7 +217,8 @@ use `cell_list`.  This avoids routing large high-cutoff systems to the
 CUDA float32 fully-periodic workloads with compatible outputs and contiguous
 batch metadata.  The same estimate is exposed publicly via
 `suggest_neighbor_list_method` / `estimate_neighbor_list_costs` (see
-[](#estimating-and-running-a-strategy-explicitly)); call one once on per-system
+[Estimating and Running a Strategy Explicitly](#estimating-and-running-a-strategy-explicitly));
+call one once on per-system
 geometry (`batch_ptr`, `cell`, `pbc`, `cutoff`) and reuse the returned strategy
 name explicitly when repeated calls should avoid auto-dispatch syncs.  The
 crossover constants are env-overridable (`NVALCHEMI_NEIGHLIST_CELL_SHELL`,
@@ -323,6 +324,8 @@ method-dependent: `"naive"` returns a 2-tuple `(neighbor_list, neighbor_ptr)`
 (non-periodic, no shifts), while `"cell_list"` synthesizes a non-PBC cell and
 returns a 3-tuple `(neighbor_list, neighbor_ptr, shifts)` with zeroed shifts.
 Pass an explicit `cell`+`pbc` (or use the matrix format) for a stable 3-tuple.
+
+(estimating-and-running-a-strategy-explicitly)=
 
 ### Estimating and running a strategy explicitly
 
@@ -465,7 +468,8 @@ uniform neighbor counts. It is the default when the cost model estimates it chea
 than `naive`. It supports periodic boundaries with arbitrary (including triclinic)
 cells, half-fill, partial lists (`target_indices`), and inline pair-potential
 evaluation through `pair_fn`; build and query are separate launchers so the bin
-structure can be cached across steps (see [](#build-query-separation)). It has no
+structure can be cached across steps (see [Build/Query Separation](#build-query-separation)).
+It has no
 dual-cutoff variant — use `naive_dual_cutoff` for two-cutoff queries.
 
 The query has two CUDA kernel strategies, `atom_centric` (default) and `pair_centric`,
@@ -694,10 +698,11 @@ neighbor_matrix, num_neighbors, shifts = neighbor_list(
 :::{tab-item} JAX
 :sync: jax
 
-Because JAX returns new arrays rather than mutating inputs in place, there is no
-output buffer to pre-allocate. Instead pass the size controls — `max_neighbors`, and
-`max_total_cells` for cell lists — as static ints so the output shapes are fixed for
-`jax.jit`.
+JAX returns new arrays rather than mutating inputs in place. For fixed
+`jax.jit` layouts, pass size controls such as `max_neighbors` and
+`max_total_cells` as static ints; on APIs that accept caller-owned arrays, pass
+pre-shaped arrays to define the returned buffer layout and allow XLA donation or
+reuse. With `target_indices`, those arrays must have compact `num_targets` rows.
 
 ```python
 from nvalchemiops.jax.neighbors import neighbor_list
@@ -1269,9 +1274,10 @@ nm, num_neighbors, shifts = neighbor_list(
 ```
 
 Supported on the `naive` / `cell_list` paths and their batched forms across Warp,
-PyTorch, and JAX; `cluster_tile` does not support `target_indices`. On JAX,
-`cell_list` `target_indices` runs through the `atom_centric` strategy (`pair_centric`
-plus `target_indices` is rejected — identical results via `atom_centric`).
+PyTorch, and JAX, including low-level JAX cell-list query wrappers; `cluster_tile`
+does not support `target_indices`. On JAX, `cell_list` `target_indices` runs through
+the `atom_centric` strategy (`pair_centric` plus `target_indices` is rejected;
+identical results are available via `atom_centric`).
 
 ### Per-Pair Distances and Vectors
 
@@ -1378,11 +1384,19 @@ loss through `pair_energies` / `pair_forces` returns a **zero** gradient under J
 auto-allocated and returned (functional arrays cannot be filled in place), and — like
 the differentiable-geometry path — a traced (jit'd) cutoff is not yet supported.
 
-On JAX, `cell_list` / `batch_cell_list` also support `target_indices` (partial
-neighbor lists) combined with pair outputs: the compact output has `num_targets`
-rows (row `r` → atom `target_indices[r]`), and in COO mode the source index
-`nl[0]` is the compact row in `[0, num_targets)` (mapped back via
-`target_indices`), matching the Torch contract.
+On JAX, `naive` / `batch_naive` and `cell_list` / `batch_cell_list` support
+`target_indices` (partial neighbor lists) combined with pair outputs: the
+compact output has `num_targets` rows (row `r` → atom `target_indices[r]`), and
+in COO mode the source index `nl[0]` is the compact row in `[0, num_targets)`
+(mapped back via `target_indices`), matching the Torch contract.
+
+For PyTorch `torch.compile(fullgraph=True)`, pass a pre-specialized wrapper from
+`nvalchemiops.torch.neighbors.compile_pair_fn(pair_fn)` instead of the raw
+`wp.Function`. The compiled wrapper registers fixed-shape matrix custom ops for
+Torch `naive`, `batch_naive`, `cell_list`, and `batch_cell_list`, including
+compact `target_indices` rows on the naive paths. Raw `wp.Function` pair outputs
+remain eager-only under fullgraph, and COO pair-output packing remains outside
+the compiled matrix path.
 ```
 
 ---

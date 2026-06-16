@@ -239,9 +239,205 @@ class TestBatchNaiveCorrectness:
         assert neighbor_matrix.device == torch.device(device)
         assert num_neighbors.device == torch.device(device)
 
-        # Check neighbor counts are reasonable
-        assert torch.all(num_neighbors >= 0)
-        assert torch.all(num_neighbors <= max_neighbors)
+    def test_target_indices_matrix_compact_rows(self, device):
+        """target_indices returns compact rows for selected batched atoms."""
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        target_indices = torch.tensor([2, 0], dtype=torch.int32, device=device)
+
+        full_nm, full_nn = batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+        )
+        partial_nm, partial_nn = batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            target_indices=target_indices,
+        )
+
+        assert partial_nm.shape == (2, 4)
+        torch.testing.assert_close(partial_nn, full_nn[target_indices.long()])
+        for row, atom in enumerate(target_indices.cpu().tolist()):
+            count = int(partial_nn[row])
+            torch.testing.assert_close(
+                torch.sort(partial_nm[row, :count].cpu()).values,
+                torch.sort(full_nm[atom, : int(full_nn[atom])].cpu()).values,
+            )
+
+    def test_target_indices_compile_fullgraph_with_compact_buffers(self, device):
+        """Batched target_indices without pair_fn supports fullgraph compile."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for torch.compile fullgraph Warp check")
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        target_indices = torch.tensor([2, 0], dtype=torch.int32, device=device)
+        neighbor_matrix = torch.full((2, 4), 4, dtype=torch.int32, device=device)
+        num_neighbors = torch.zeros((2,), dtype=torch.int32, device=device)
+
+        @torch.compile(fullgraph=True)
+        def _run(pos, nm, nn):
+            return batch_naive_neighbor_list(
+                pos,
+                0.75,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix=nm,
+                num_neighbors=nn,
+                target_indices=target_indices,
+            )
+
+        partial_nm, partial_nn = _run(
+            positions, neighbor_matrix.clone(), num_neighbors.clone()
+        )
+        full_nm, full_nn = batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+        )
+        assert partial_nm.shape == (2, 4)
+        torch.testing.assert_close(partial_nn, full_nn[target_indices.long()])
+        for row, atom in enumerate(target_indices.cpu().tolist()):
+            count = int(partial_nn[row])
+            torch.testing.assert_close(
+                torch.sort(partial_nm[row, :count].cpu()).values,
+                torch.sort(full_nm[atom, : int(full_nn[atom])].cpu()).values,
+            )
+
+    def test_target_indices_compile_fullgraph_pbc_pair_geometry(self, device):
+        """Batched PBC target_indices fullgraph path supports geometry buffers."""
+        if not str(device).startswith("cuda"):
+            pytest.skip("CUDA is required for torch.compile fullgraph Warp check")
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [9.5, 0.0, 0.0],
+                [20.0, 0.0, 0.0],
+                [29.5, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        cell = torch.stack(
+            [torch.eye(3, dtype=torch.float32, device=device) * 10.0] * 2
+        )
+        pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
+        target_indices = torch.tensor([0, 2], dtype=torch.int32, device=device)
+        shift_range, num_shifts, max_shifts = compute_naive_num_shifts(cell, 1.0, pbc)
+        neighbor_matrix = torch.full((2, 8), 4, dtype=torch.int32, device=device)
+        num_neighbors = torch.zeros((2,), dtype=torch.int32, device=device)
+        shifts = torch.zeros((2, 8, 3), dtype=torch.int32, device=device)
+        distances = torch.zeros((2, 8), dtype=torch.float32, device=device)
+        vectors = torch.zeros((2, 8, 3), dtype=torch.float32, device=device)
+
+        @torch.compile(fullgraph=True)
+        def _run(pos, nm, nn, nms, dist, vec):
+            return batch_naive_neighbor_list(
+                pos,
+                1.0,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                cell=cell,
+                pbc=pbc,
+                neighbor_matrix=nm,
+                num_neighbors=nn,
+                neighbor_matrix_shifts=nms,
+                shift_range_per_dimension=shift_range,
+                num_shifts_per_system=num_shifts,
+                max_shifts_per_system=max_shifts,
+                max_atoms_per_system=2,
+                target_indices=target_indices,
+                return_distances=True,
+                return_vectors=True,
+                neighbor_distances=dist,
+                neighbor_vectors=vec,
+            )
+
+        partial_nm, partial_nn, partial_shifts, partial_dist, partial_vec = _run(
+            positions,
+            neighbor_matrix.clone(),
+            num_neighbors.clone(),
+            shifts.clone(),
+            distances.clone(),
+            vectors.clone(),
+        )
+        assert partial_nm.shape == (2, 8)
+        assert partial_shifts.shape == (2, 8, 3)
+        assert partial_dist.shape == (2, 8)
+        assert partial_vec.shape == (2, 8, 3)
+        assert int(partial_nn.min()) >= 1
+
+    def test_target_indices_rejects_full_size_user_buffers(self, device):
+        """Partial batch lists require compact user buffers."""
+        positions = torch.tensor(
+            [
+                [0.0, 0.0, 0.0],
+                [0.5, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [10.5, 0.0, 0.0],
+            ],
+            dtype=torch.float32,
+            device=device,
+        )
+        batch_idx = torch.tensor([0, 0, 1, 1], dtype=torch.int32, device=device)
+        batch_ptr = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+        with pytest.raises(ValueError, match="neighbor_matrix"):
+            batch_naive_neighbor_list(
+                positions,
+                0.75,
+                batch_idx=batch_idx,
+                batch_ptr=batch_ptr,
+                neighbor_matrix=torch.full((4, 4), 4, dtype=torch.int32, device=device),
+                num_neighbors=torch.zeros((2,), dtype=torch.int32, device=device),
+                target_indices=torch.tensor([2, 0], dtype=torch.int32, device=device),
+            )
+
+    def test_target_indices_rejects_tile_strategy(self, device):
+        """Explicit tiled batch naive mode does not support partial rows."""
+        positions = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]],
+            dtype=torch.float32,
+            device=device,
+        )
+        batch_idx = torch.tensor([0, 0], dtype=torch.int32, device=device)
+        with pytest.raises(NotImplementedError, match="target_indices"):
+            batch_naive_neighbor_list(
+                positions,
+                1.0,
+                batch_idx=batch_idx,
+                max_neighbors=4,
+                target_indices=torch.tensor([0], dtype=torch.int32, device=device),
+                native_strategy="tile",
+            )
 
     def test_basic_with_pbc(self, device, dtype, half_fill):
         """Test basic neighbor list calculation with periodic boundaries."""

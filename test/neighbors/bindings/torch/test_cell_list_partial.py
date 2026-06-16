@@ -24,6 +24,8 @@ clean error (the pre-launch shape guard) instead of an out-of-bounds write.
 import pytest
 import torch
 
+from nvalchemiops.torch.neighbors import neighbor_list
+from nvalchemiops.torch.neighbors.batch_cell_list import batch_cell_list
 from nvalchemiops.torch.neighbors.cell_list import cell_list
 
 from ...test_utils import brute_force_neighbors, create_simple_cubic_system
@@ -83,6 +85,79 @@ def test_cell_list_target_indices_matches_brute_force(device, dtype):
     }
 
     assert _partial_pair_sets(nm_p, nn_p, targets) == ref_pairs
+
+
+def test_cell_list_target_indices_auto_allocates_compact_rows(device, dtype):
+    """High-level partial cell_list auto-allocation returns compact rows."""
+    positions, cell, pbc = create_simple_cubic_system(
+        num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+    )
+    pbc = pbc.reshape(3)
+    targets = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+
+    nm, nn, shifts = cell_list(
+        positions,
+        1.1,
+        cell,
+        pbc,
+        max_neighbors=24,
+        target_indices=targets,
+    )
+
+    assert nm.shape[0] == int(targets.shape[0])
+    assert nn.shape == (int(targets.shape[0]),)
+    assert shifts.shape[0] == int(targets.shape[0])
+
+
+def test_batch_cell_list_target_indices_auto_allocates_compact_rows(device, dtype):
+    """High-level partial batch_cell_list auto-allocation returns compact rows."""
+    positions, cell, pbc = create_simple_cubic_system(
+        num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+    )
+    cell = cell.unsqueeze(0)
+    pbc = pbc.reshape(1, 3)
+    batch_idx = torch.zeros((positions.shape[0],), dtype=torch.int32, device=device)
+    targets = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+
+    nm, nn, shifts = batch_cell_list(
+        positions,
+        1.1,
+        cell,
+        pbc,
+        batch_idx,
+        max_neighbors=24,
+        target_indices=targets,
+    )
+
+    assert nm.shape[0] == int(targets.shape[0])
+    assert nn.shape == (int(targets.shape[0]),)
+    assert shifts.shape[0] == int(targets.shape[0])
+
+
+def test_neighbor_list_cell_list_target_indices_auto_allocates_compact_rows(
+    device,
+    dtype,
+):
+    """Top-level method='cell_list' keeps compact partial rows."""
+    positions, cell, pbc = create_simple_cubic_system(
+        num_atoms=8, cell_size=2.0, dtype=dtype, device=device
+    )
+    pbc = pbc.reshape(3)
+    targets = torch.tensor([0, 2, 4], dtype=torch.int32, device=device)
+
+    nm, nn, shifts = neighbor_list(
+        positions,
+        1.1,
+        cell,
+        pbc,
+        method="cell_list",
+        max_neighbors=24,
+        target_indices=targets,
+    )
+
+    assert nm.shape[0] == int(targets.shape[0])
+    assert nn.shape == (int(targets.shape[0]),)
+    assert shifts.shape[0] == int(targets.shape[0])
 
 
 def test_cell_list_target_indices_undersized_buffer_raises(device, dtype):

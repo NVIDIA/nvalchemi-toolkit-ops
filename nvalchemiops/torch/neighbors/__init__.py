@@ -26,6 +26,10 @@ from nvalchemiops.neighbors.base_dispatch import (
     NEIGHBOR_LIST_STRATEGIES,
     neighbor_list_strategy_run_args,
 )
+from nvalchemiops.torch.neighbors._compiled_pair_fn import (
+    CompiledPairFn,
+    compile_pair_fn,
+)
 from nvalchemiops.torch.neighbors._dispatch import (
     _auto_method_from_geometry,
     _reject_unsupported_cluster_tile_combo,
@@ -177,13 +181,15 @@ def neighbor_list(
             Maximum number of neighbors per atom within cutoff2.
             Can be provided to aid in allocation for naive dual cutoff method.
         neighbor_matrix : torch.Tensor, optional
-            Pre-allocated tensor of shape (total_atoms, max_neighbors) for neighbor indices.
+            Pre-allocated tensor of shape (num_rows, max_neighbors) for neighbor indices,
+            where ``num_rows`` is ``total_atoms`` normally and
+            ``len(target_indices)`` for partial lists.
             Can be provided to avoid reallocation for both naive and cell list methods.
         neighbor_matrix_shifts : torch.Tensor, optional
-            Pre-allocated tensor of shape (total_atoms, max_neighbors, 3) for shift vectors.
+            Pre-allocated tensor of shape (num_rows, max_neighbors, 3) for shift vectors.
             Can be provided to avoid reallocation for both naive and cell list methods.
         num_neighbors : torch.Tensor, optional
-            Pre-allocated tensor of shape (total_atoms,) for neighbor counts.
+            Pre-allocated tensor of shape (num_rows,) for neighbor counts.
             Can be provided to avoid reallocation for both naive and cell list methods.
         shift_range_per_dimension : torch.Tensor, optional
             Pre-allocated tensor of shape (1, 3) for shift range in each dimension.
@@ -223,25 +229,29 @@ def neighbor_list(
             Can be provided to avoid CUDA synchronization.
         target_indices : torch.Tensor, optional
             Restrict the source rows of the neighbor list to this subset of atom
-            indices (partial neighbor list). Supported by naive and cell-list
-            methods; not by cluster_tile.
+            indices (partial neighbor list). Matrix outputs use
+            ``len(target_indices)`` compact rows; COO source rows are compact row
+            ids. Supported by naive and cell-list methods; not by cluster_tile.
         return_distances : bool, default=False
             Also return per-pair distances ``|r_ij|`` in matrix layout
-            ``(total_atoms, max_neighbors)``, differentiable w.r.t. positions
-            (and cell). See the user guide for layout notes.
+            ``(num_rows, max_neighbors)``, where ``num_rows`` is
+            ``total_atoms`` normally and ``len(target_indices)`` for partial
+            lists, differentiable w.r.t. positions (and cell). See the user
+            guide for layout notes.
         return_vectors : bool, default=False
             Also return per-pair displacement vectors ``r_ij`` in matrix layout
-            ``(total_atoms, max_neighbors, 3)``, differentiable w.r.t. positions
+            ``(num_rows, max_neighbors, 3)``, differentiable w.r.t. positions
             (and cell).
         rebuild_flags : torch.Tensor, optional
             Boolean flags selecting which systems to re-enumerate; systems whose
             flag is ``False`` keep their previous output (per-system skip for the
             batched methods, whole-list flag for single-system methods).
-        pair_fn : warp.Function, optional
+        pair_fn : warp.Function or CompiledPairFn, optional
             Inline Warp pair potential evaluated as neighbors are enumerated;
             requires ``pair_params`` and fills ``pair_energies`` / ``pair_forces``.
-            Forward-only (not differentiable). See
-            ``examples/neighbors/06_pair_outputs_lj.py``.
+            Forward-only (not differentiable). Pass ``compile_pair_fn(pair_fn)``
+            before ``torch.compile(fullgraph=True)`` to use fixed-shape matrix
+            outputs in compiled regions. See ``examples/neighbors/06_pair_outputs_lj.py``.
         pair_params, pair_energies, pair_forces : torch.Tensor, optional
             Per-atom parameter table and per-pair energy / force output buffers
             consumed and filled by ``pair_fn``.
@@ -268,25 +278,28 @@ def neighbor_list(
         - **neighbor_data** (tensor): Neighbor indices, format depends on ``return_neighbor_list``:
 
             - If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix``
-              with shape (total_atoms, max_neighbors), dtype int32. Each row i contains
-              indices of atom i's neighbors.
+              with shape (num_rows, max_neighbors), dtype int32, where
+              ``num_rows`` is ``total_atoms`` normally and ``len(target_indices)``
+              for partial lists. Row ``r`` contains neighbors for atom ``r`` or
+              ``target_indices[r]`` respectively.
             - If ``return_neighbor_list=True``: Returns ``neighbor_list`` with shape
-              (2, num_pairs), dtype int32, in COO format [source_atoms, target_atoms].
+              (2, num_pairs), dtype int32, in COO format [source_rows, target_atoms].
+              With ``target_indices``, source rows are compact row ids.
 
         - **num_neighbor_data** (tensor): Information about the number of neighbors for each atom,
           format depends on ``return_neighbor_list``:
 
-            - If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (total_atoms,), dtype int32.
+            - If ``return_neighbor_list=False`` (default): Returns ``num_neighbors`` with shape (num_rows,), dtype int32.
               Count of neighbors found for each atom.
-            - If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (total_atoms + 1,), dtype int32.
+            - If ``return_neighbor_list=True``: Returns ``neighbor_ptr`` with shape (num_rows + 1,), dtype int32.
               CSR-style pointer arrays where ``neighbor_ptr_data[i]`` to ``neighbor_ptr_data[i+1]`` gives the range of
-              neighbors for atom i in the flattened neighbor list.
+              neighbors for row i in the flattened neighbor list.
 
         - **neighbor_shift_data** (tensor, optional): Periodic shift vectors, only when ``pbc`` is provided:
           format depends on ``return_neighbor_list``:
 
             - If ``return_neighbor_list=False`` (default): Returns ``neighbor_matrix_shifts`` with
-              shape (total_atoms, max_neighbors, 3), dtype int32.
+              shape (num_rows, max_neighbors, 3), dtype int32.
             - If ``return_neighbor_list=True``: Returns ``unit_shifts`` with shape
               (num_pairs, 3), dtype int32.
 
@@ -554,6 +567,8 @@ __all__ = [
     "neighbor_list",
     "estimate_neighbor_list_costs",
     "suggest_neighbor_list_method",
+    "CompiledPairFn",
+    "compile_pair_fn",
     # Unbatched algorithms
     "cell_list",
     "naive_neighbor_list",

@@ -68,10 +68,15 @@ from nvalchemiops.neighbors.neighbor_utils import (
 from nvalchemiops.neighbors.output_args import (
     _has_partial_or_pair_outputs,
 )
+from nvalchemiops.torch._warp_op_helpers import register_noop_fake
 from nvalchemiops.torch.neighbors._autograd import (
     _flatten_active_pairs,
     _NeighborForwardOutput,
     _route_pair_outputs,
+)
+from nvalchemiops.torch.neighbors._compiled_pair_fn import (
+    CompiledPairFn,
+    is_compiled_pair_fn,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
     allocate_cell_list,
@@ -756,7 +761,7 @@ def query_cell_list(
     target_indices: torch.Tensor | None = None,
     return_vectors: bool = False,
     return_distances: bool = False,
-    pair_fn: wp.Function | None = None,
+    pair_fn: wp.Function | CompiledPairFn | None = None,
     pair_params: torch.Tensor | None = None,
     neighbor_vectors: torch.Tensor | None = None,
     neighbor_distances: torch.Tensor | None = None,
@@ -903,6 +908,42 @@ def query_cell_list(
                 target_indices,
                 neighbor_vectors,
                 neighbor_distances,
+                half_fill,
+                fill_value,
+                strategy,
+                atom_centric_path,
+                return_vectors,
+                return_distances,
+            )
+        if is_compiled_pair_fn(pair_fn):
+            op = pair_fn.get_or_register(
+                "query_cell_list_optional_pair",
+                _register_compiled_query_cell_list_optional_pair_op,
+            )
+            return op(
+                positions,
+                cutoff,
+                cell,
+                pbc,
+                cells_per_dimension,
+                neighbor_search_radius,
+                atom_periodic_shifts,
+                atom_to_cell_mapping,
+                atoms_per_cell_count,
+                cell_atom_start_indices,
+                cell_atom_list,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                rebuild_flags,
+                sorted_positions,
+                sorted_shifts,
+                target_indices,
+                neighbor_vectors,
+                neighbor_distances,
+                pair_params,
+                pair_energies,
+                pair_forces,
                 half_fill,
                 fill_value,
                 strategy,
@@ -1258,6 +1299,89 @@ def _(
     return None
 
 
+def _register_compiled_query_cell_list_optional_pair_op(compiled: CompiledPairFn):
+    """Register a pair_fn-specialized cell-list query custom op."""
+
+    @torch.library.custom_op(
+        f"nvalchemiops::{compiled.op_name('query_cell_list_optional_pair')}",
+        mutates_args=(
+            "neighbor_matrix",
+            "neighbor_matrix_shifts",
+            "num_neighbors",
+            "neighbor_vectors",
+            "neighbor_distances",
+            "pair_energies",
+            "pair_forces",
+        ),
+    )
+    def _compiled_query_cell_list_optional_pair(
+        positions: torch.Tensor,
+        cutoff: float,
+        cell: torch.Tensor,
+        pbc: torch.Tensor,
+        cells_per_dimension: torch.Tensor,
+        neighbor_search_radius: torch.Tensor,
+        atom_periodic_shifts: torch.Tensor,
+        atom_to_cell_mapping: torch.Tensor,
+        atoms_per_cell_count: torch.Tensor,
+        cell_atom_start_indices: torch.Tensor,
+        cell_atom_list: torch.Tensor,
+        neighbor_matrix: torch.Tensor,
+        neighbor_matrix_shifts: torch.Tensor,
+        num_neighbors: torch.Tensor,
+        rebuild_flags: torch.Tensor | None,
+        sorted_positions: torch.Tensor | None,
+        sorted_shifts: torch.Tensor | None,
+        target_indices: torch.Tensor | None,
+        neighbor_vectors: torch.Tensor,
+        neighbor_distances: torch.Tensor,
+        pair_params: torch.Tensor,
+        pair_energies: torch.Tensor,
+        pair_forces: torch.Tensor,
+        half_fill: bool,
+        fill_value: int | None,
+        strategy: str,
+        atom_centric_path: str,
+        return_vectors: bool,
+        return_distances: bool,
+    ) -> None:
+        _query_cell_list_optional(
+            positions,
+            cutoff,
+            cell,
+            pbc,
+            cells_per_dimension,
+            neighbor_search_radius,
+            atom_periodic_shifts,
+            atom_to_cell_mapping,
+            atoms_per_cell_count,
+            cell_atom_start_indices,
+            cell_atom_list,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            half_fill=half_fill,
+            rebuild_flags=rebuild_flags,
+            fill_value=fill_value,
+            sorted_positions=sorted_positions,
+            sorted_shifts=sorted_shifts,
+            strategy=strategy,
+            atom_centric_path=atom_centric_path,
+            target_indices=target_indices,
+            return_vectors=return_vectors,
+            return_distances=return_distances,
+            pair_fn=compiled.pair_fn,
+            pair_params=pair_params,
+            neighbor_vectors=neighbor_vectors,
+            neighbor_distances=neighbor_distances,
+            pair_energies=pair_energies,
+            pair_forces=pair_forces,
+        )
+
+    register_noop_fake(_compiled_query_cell_list_optional_pair)
+    return _compiled_query_cell_list_optional_pair
+
+
 def _query_cell_list_optional(
     positions: torch.Tensor,
     cutoff: float,
@@ -1563,7 +1687,7 @@ def cell_list(
     target_indices: torch.Tensor | None = None,
     return_vectors: bool = False,
     return_distances: bool = False,
-    pair_fn: wp.Function | None = None,
+    pair_fn: wp.Function | CompiledPairFn | None = None,
     pair_params: torch.Tensor | None = None,
     neighbor_vectors: torch.Tensor | None = None,
     neighbor_distances: torch.Tensor | None = None,
@@ -1690,24 +1814,61 @@ def cell_list(
     cell = cell if cell.ndim == 3 else cell.unsqueeze(0)
     pbc = pbc.reshape(3)
 
+    if is_compiled_pair_fn(pair_fn) and torch.compiler.is_compiling():
+        if return_neighbor_list:
+            raise NotImplementedError(
+                "CompiledPairFn supports torch.compile(fullgraph=True) for "
+                "matrix neighbor-list output only; use return_neighbor_list=False.",
+            )
+        missing = [
+            name
+            for name, value in (
+                ("neighbor_matrix", neighbor_matrix),
+                ("neighbor_matrix_shifts", neighbor_matrix_shifts),
+                ("num_neighbors", num_neighbors),
+                ("cells_per_dimension", cells_per_dimension),
+                ("neighbor_search_radius", neighbor_search_radius),
+                ("atom_periodic_shifts", atom_periodic_shifts),
+                ("atom_to_cell_mapping", atom_to_cell_mapping),
+                ("atoms_per_cell_count", atoms_per_cell_count),
+                ("cell_atom_start_indices", cell_atom_start_indices),
+                ("cell_atom_list", cell_atom_list),
+                ("sorted_positions", sorted_positions),
+                ("sorted_shifts", sorted_shifts),
+                ("neighbor_vectors", neighbor_vectors),
+                ("neighbor_distances", neighbor_distances),
+                ("pair_params", pair_params),
+                ("pair_energies", pair_energies),
+                ("pair_forces", pair_forces),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                "CompiledPairFn under torch.compile(fullgraph=True) requires "
+                "fixed-shape caller-provided buffers/metadata; missing "
+                f"{', '.join(missing)}.",
+            )
+
     if fill_value is None:
         fill_value = total_atoms
+    num_rows = (
+        int(target_indices.shape[0]) if target_indices is not None else total_atoms
+    )
 
     # Handle empty case
     if total_atoms <= 0 or cutoff <= 0:
         if return_neighbor_list:
             return (
                 torch.zeros((2, 0), dtype=torch.int32, device=device),
-                torch.zeros((total_atoms + 1,), dtype=torch.int32, device=device),
+                torch.zeros((num_rows + 1,), dtype=torch.int32, device=device),
                 torch.zeros((0, 3), dtype=torch.int32, device=device),
             )
         else:
             return (
-                torch.full(
-                    (total_atoms, 0), fill_value, dtype=torch.int32, device=device
-                ),
-                torch.zeros((total_atoms,), dtype=torch.int32, device=device),
-                torch.zeros((total_atoms, 0, 3), dtype=torch.int32, device=device),
+                torch.full((num_rows, 0), fill_value, dtype=torch.int32, device=device),
+                torch.zeros((num_rows,), dtype=torch.int32, device=device),
+                torch.zeros((num_rows, 0, 3), dtype=torch.int32, device=device),
             )
 
     if max_neighbors is None and (
@@ -1722,23 +1883,23 @@ def cell_list(
     if neighbor_matrix is None:
         if is_cpu:
             neighbor_matrix = torch.full(
-                (total_atoms, max_neighbors),
+                (num_rows, max_neighbors),
                 fill_value,
                 dtype=torch.int32,
                 device=device,
             )
         else:
             neighbor_matrix = torch.empty(
-                (total_atoms, max_neighbors), dtype=torch.int32, device=device
+                (num_rows, max_neighbors), dtype=torch.int32, device=device
             )
     elif is_cpu and rebuild_flags is None:
         neighbor_matrix.fill_(fill_value)
     if neighbor_matrix_shifts is None:
         neighbor_matrix_shifts = torch.empty(
-            (total_atoms, max_neighbors, 3), dtype=torch.int32, device=device
+            (num_rows, max_neighbors, 3), dtype=torch.int32, device=device
         )
     if num_neighbors is None:
-        num_neighbors = torch.zeros((total_atoms,), dtype=torch.int32, device=device)
+        num_neighbors = torch.zeros((num_rows,), dtype=torch.int32, device=device)
     elif rebuild_flags is None:
         num_neighbors.zero_()
 
@@ -1796,21 +1957,16 @@ def cell_list(
         min_cells_per_dimension=cell_list_min_cells,
     )
 
-    if return_vectors or return_distances:
-        # Allocate the distance / vector outputs if the caller didn't supply
-        # them.  These tensors become the differentiable outputs in the
-        # autograd path; the user-passed buffer (if any) is reused so its
-        # storage is updated in place AND returned.
-        # Use zeros (not empty) so inactive slots have deterministic values;
-        # the kernel only writes active slots and downstream sum / norm ops
-        # would otherwise propagate uninitialized memory.
+    if return_vectors or return_distances or pair_fn is not None:
+        # Pair_fn receives distance/vector values as local kernel variables;
+        # these matrix buffers are only public geometry outputs.
         if return_distances and neighbor_distances is None:
             neighbor_distances = torch.zeros(
-                (total_atoms, max_neighbors), dtype=positions.dtype, device=device
+                (num_rows, max_neighbors), dtype=positions.dtype, device=device
             )
         if return_vectors and neighbor_vectors is None:
             neighbor_vectors = torch.zeros(
-                (total_atoms, max_neighbors, 3),
+                (num_rows, max_neighbors, 3),
                 dtype=positions.dtype,
                 device=device,
             )
@@ -1819,13 +1975,12 @@ def cell_list(
         # returned.
         if pair_fn is not None and pair_energies is None:
             pair_energies = torch.zeros(
-                (total_atoms, max_neighbors), dtype=positions.dtype, device=device
+                (num_rows, max_neighbors), dtype=positions.dtype, device=device
             )
         if pair_fn is not None and pair_forces is None:
             pair_forces = torch.zeros(
-                (total_atoms, max_neighbors, 3), dtype=positions.dtype, device=device
+                (num_rows, max_neighbors, 3), dtype=positions.dtype, device=device
             )
-
         forward_kwargs = {
             "cutoff": cutoff,
             "pbc": pbc,

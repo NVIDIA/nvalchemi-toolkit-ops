@@ -144,6 +144,43 @@ def test_naive_pair_fn_no_pbc_matrix(dtype):
     _check_pair_matrix(nm, nn, nv, nd, pe, pf, pp)
 
 
+def test_naive_pair_fn_target_indices_compact_rows():
+    """JAX naive ``target_indices + pair_fn`` uses compact source rows."""
+    positions = jnp.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.5, 0.0, 0.0],
+        ],
+        dtype=jnp.float32,
+    )
+    target_indices = jnp.array([2, 0], dtype=jnp.int32)
+    pp = _pair_params(4, jnp.float32)
+
+    nm, nn, nd, nv, pe, pf = naive_neighbor_list(
+        positions,
+        0.75,
+        max_neighbors=4,
+        target_indices=target_indices,
+        return_distances=True,
+        return_vectors=True,
+        pair_fn=_PAIR_FN[jnp.float32],
+        pair_params=pp,
+    )
+
+    assert pe.shape == (2, 4)
+    nm, nn, nd, nv, pe, pf, pp = (np.asarray(x) for x in (nm, nn, nd, nv, pe, pf, pp))
+    for row, atom in enumerate(np.asarray(target_indices)):
+        for slot in range(int(nn[row])):
+            j = int(nm[row, slot])
+            expected_energy = (
+                float(pp[atom, 0]) + float(pp[j, 0]) + float(nd[row, slot])
+            )
+            assert pe[row, slot] == pytest.approx(expected_energy, rel=1e-5, abs=1e-5)
+            assert np.allclose(pf[row, slot], -nv[row, slot], rtol=1e-5, atol=1e-5)
+
+
 @pytest.mark.parametrize("dtype", _DTYPES, ids=["f32", "f64"])
 def test_naive_pair_fn_coo_outputs_aligned(dtype):
     """JAX naive ``pair_fn`` energies/forces are COO-packed and aligned with the
