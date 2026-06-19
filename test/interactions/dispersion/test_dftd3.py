@@ -2084,10 +2084,12 @@ def _run_dftd3_pbc_s5(
     }
 
 
-def _assert_s5_fd_forces(runner, system, element_tables, functional_params, device):
+def _assert_s5_fd_forces(
+    dftd3_runner, system, element_tables, functional_params, device
+):
     """
-    Compare analytic forces from ``runner`` to the central-difference gradient
-    of the S5-switched energy.
+    Compare forces returned by ``dftd3_runner`` to the central-difference
+    gradient of the S5-switched energy.
 
     The window puts every C-H pair (r = 2.0 Bohr) strictly inside the
     transition ``(1.0, 3.0)``, so ``sw`` is well away from both 0 and 1.
@@ -2102,7 +2104,7 @@ def _assert_s5_fd_forces(runner, system, element_tables, functional_params, devi
     base_system = dict(system)
     base_system["coord"] = base_coord
 
-    analytic = runner(
+    actual_forces = dftd3_runner(
         base_system,
         element_tables,
         functional_params,
@@ -2113,7 +2115,7 @@ def _assert_s5_fd_forces(runner, system, element_tables, functional_params, devi
 
     B = system["B"]
     h = 2e-3
-    num_forces = np.zeros((B, 3), dtype=np.float64)
+    expected_fd_forces = np.zeros((B, 3), dtype=np.float64)
     for atom in range(B):
         for comp in range(3):
             idx = atom * 3 + comp
@@ -2122,7 +2124,7 @@ def _assert_s5_fd_forces(runner, system, element_tables, functional_params, devi
             coord_plus[idx] += h
             sys_plus = dict(system)
             sys_plus["coord"] = coord_plus
-            e_plus = runner(
+            e_plus = dftd3_runner(
                 sys_plus,
                 element_tables,
                 functional_params,
@@ -2135,7 +2137,7 @@ def _assert_s5_fd_forces(runner, system, element_tables, functional_params, devi
             coord_minus[idx] -= h
             sys_minus = dict(system)
             sys_minus["coord"] = coord_minus
-            e_minus = runner(
+            e_minus = dftd3_runner(
                 sys_minus,
                 element_tables,
                 functional_params,
@@ -2145,15 +2147,15 @@ def _assert_s5_fd_forces(runner, system, element_tables, functional_params, devi
             )["energy"][0]
 
             # Force is the negative gradient of the energy
-            num_forces[atom, comp] = -(e_plus - e_minus) / (2.0 * h)
+            expected_fd_forces[atom, comp] = -(e_plus - e_minus) / (2.0 * h)
 
     np.testing.assert_allclose(
-        analytic,
-        num_forces,
+        actual_forces,
+        expected_fd_forces,
         rtol=2e-2,
         atol=2e-4,
         err_msg=(
-            "Analytic forces do not match the finite-difference gradient of "
+            "Returned forces do not match the finite-difference gradient of "
             "the S5-switched energy (dE/dCN missing the sw factor?)"
         ),
     )
@@ -2163,7 +2165,7 @@ class TestS5EnergySwitchForces:
     """
     Finite-difference force tests for the S5 energy-side cutoff switch.
 
-    Each ``runner`` exercises a different Pass-2 kernel touched by the
+    Each ``dftd3_runner`` exercises a different Pass-2 kernel touched by the
     ``dE/dCN * sw`` fix, so all four kernels (neighbor-matrix / neighbor-list,
     plain / virial) are covered:
 
@@ -2174,7 +2176,7 @@ class TestS5EnergySwitchForces:
     """
 
     @pytest.mark.parametrize(
-        "runner",
+        "dftd3_runner",
         [
             _run_dftd3_matrix_s5,
             _run_dftd3_s5,
@@ -2186,15 +2188,17 @@ class TestS5EnergySwitchForces:
     @pytest.mark.usefixtures(
         "ch4_like_system", "element_tables", "functional_params", "device"
     )
-    def test_force_matches_energy_gradient_with_s5_smoothing(self, request, runner):
+    def test_force_matches_energy_gradient_with_s5_smoothing(
+        self, request, dftd3_runner
+    ):
         """
-        Analytic forces must equal the numerical gradient of the *switched*
+        Returned forces must equal the numerical gradient of the *switched*
         energy when S5 energy-side smoothing is active.
 
         The S5 switch multiplies each pair energy by ``sw`` in [0, 1]. The
         CN-route (Pass-3) force is driven by the per-atom ``dE/dCN`` accumulator
         built in Pass 2. If that accumulator omits the ``sw`` factor, it is the
-        gradient of the *un-switched* energy and the total analytic force no
+        gradient of the *un-switched* energy and the returned force no
         longer matches the gradient of the switched energy; the error scales
         with ``(1 - sw)``.
         """
@@ -2204,5 +2208,5 @@ class TestS5EnergySwitchForces:
         device = request.getfixturevalue("device")
 
         _assert_s5_fd_forces(
-            runner, ch4_like_system, element_tables, functional_params, device
+            dftd3_runner, ch4_like_system, element_tables, functional_params, device
         )
