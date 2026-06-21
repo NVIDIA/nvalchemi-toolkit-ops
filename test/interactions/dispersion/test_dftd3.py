@@ -1984,8 +1984,9 @@ def _assert_s5_fd_forces(
     np.testing.assert_allclose(
         actual_forces,
         expected_fd_forces,
-        rtol=2e-2,
-        atol=2e-4,
+        # atol dominates for this system's small forces.
+        rtol=1e-4,
+        atol=5e-6,
         err_msg=(
             "Returned forces do not match the finite-difference gradient of "
             "the S5-switched energy (dE/dCN missing the sw factor?)"
