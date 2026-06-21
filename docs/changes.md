@@ -143,15 +143,11 @@ deprecated shims).  New code should import directly from the subpackages.
   positions/cell, so gradients of all orders are exact (matching PyTorch and the
   analytic Hessian). Affects all JAX `return_distances`/`return_vectors` bindings
   (`naive`, `cell_list`, `cluster_tile`, batched).
-- **DFT-D3 S5 energy-side smoothing made the CN-route force inconsistent with the
-  switched energy.** The S5 switch scales each pair's dispersion energy by `sw`,
-  and the direct-force path already included it, but the four Pass-2 kernels
-  accumulated `dE/dCN` from the *unswitched* pair energy. With smoothing active
-  (`sw < 1`) the coordination-number chain-rule force (Pass 3), and the
-  corresponding virial, no longer matched the gradient of the switched energy,
-  with error scaling as `(1 - sw)`. `dE/dCN` is now scaled by `sw` in all four
-  kernels (neighbor-matrix / neighbor-list, plain / virial). Results are
-  unchanged when smoothing is disabled (`sw == 1`, the default).
+- **Fixed DFT-D3 forces and virials with S5 smoothing.** When smoothing was
+  active, the CN-chain `dE/dCN` used the unswitched pair energy, so CN-chain
+  forces and virials did not exactly match the gradient of the switched energy.
+  Only runs with S5 smoothing enabled were affected; the default (smoothing
+  disabled) was already correct and is unchanged.
 
 ## Version 0.3.0
 

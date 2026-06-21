@@ -645,8 +645,8 @@ def _dispersion_energy_force(
     F_direct : vec3f
         Direct force vector
     sw : float32
-        S5 energy-side switch value, so callers can scale the CN-route
-        derivative dE/dCN consistently with the switched energy.
+        S5 switch value, so callers can scale the CN-route derivative
+        dE/dCN consistently with the switched energy.
     """
     e_ij = -c6_ij * damp_sum
 
