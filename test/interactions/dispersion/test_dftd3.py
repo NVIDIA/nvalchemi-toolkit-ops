@@ -82,6 +82,32 @@ def neighbor_matrix_to_csr(
     return idx_j, neighbor_ptr
 
 
+def _element_tables_to_warp(element_tables: dict, device: str) -> tuple:
+    """
+    Convert the shared DFT-D3 element parameter tables to float32 warp arrays.
+
+    Returns ``(covalent_radii, r4r2, c6_reference, coord_num_ref)``; the C6 and CN
+    reference grids are reshaped to ``(max_Z+1, max_Z+1, 5, 5)``. Shared by all
+    ``run_dftd3*`` launcher helpers, which only differ in neighbor format and
+    periodicity.
+    """
+    scalar_dtype = wp.float32
+    max_z_inc = element_tables["z_max_inc"]
+    rcov_wp = to_warp(element_tables["rcov"], scalar_dtype, device)
+    r4r2_wp = to_warp(element_tables["r4r2"], scalar_dtype, device)
+    c6_reference_wp = to_warp(
+        element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
+        scalar_dtype,
+        device,
+    )
+    coord_num_ref_wp = to_warp(
+        element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
+        scalar_dtype,
+        device,
+    )
+    return rcov_wp, r4r2_wp, c6_reference_wp, coord_num_ref_wp
+
+
 def run_dftd3_matrix(
     system: dict,
     element_tables: dict,
@@ -89,6 +115,8 @@ def run_dftd3_matrix(
     device: str,
     batch_indices: np.ndarray | None = None,
     wp_dtype=wp.float32,
+    s5_smoothing_on: float = 0.0,
+    s5_smoothing_off: float = 0.0,
 ) -> dict:
     """
     Run dftd3_matrix warp launcher for a system.
@@ -107,11 +135,14 @@ def run_dftd3_matrix(
         Batch indices for atoms
     wp_dtype : warp dtype
         Scalar dtype (wp.float32 or wp.float64)
+    s5_smoothing_on, s5_smoothing_off : float
+        S5 energy-side cutoff smoothing window. The default ``0.0 / 0.0``
+        disables smoothing (``off <= on`` -> ``sw == 1``).
 
     Returns
     -------
     dict
-        Results with 'energy', 'forces', 'coord_num' (numpy arrays)
+        Results with 'energy', 'forces', 'coord_num', 'virial' (numpy arrays)
     """
     # Derive vector dtype from scalar dtype
     if wp_dtype == wp.float64:
@@ -131,20 +162,8 @@ def run_dftd3_matrix(
     neighbor_matrix_wp = to_warp(nbmat, wp.int32, device)
 
     # Prepare element tables as warp arrays
-    scalar_dtype = wp.float32
-    max_z_inc = element_tables["z_max_inc"]
-
-    rcov_wp = to_warp(element_tables["rcov"], scalar_dtype, device)
-    r4r2_wp = to_warp(element_tables["r4r2"], scalar_dtype, device)
-    c6_reference_wp = to_warp(
-        element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-    coord_num_ref_wp = to_warp(
-        element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
+    rcov_wp, r4r2_wp, c6_reference_wp, coord_num_ref_wp = _element_tables_to_warp(
+        element_tables, device
     )
 
     # Determine number of systems and batch_idx
@@ -190,6 +209,8 @@ def run_dftd3_matrix(
         k1=functional_params["k1"],
         k3=functional_params["k3"],
         s6=functional_params["s6"],
+        s5_smoothing_on=s5_smoothing_on,
+        s5_smoothing_off=s5_smoothing_off,
     )
 
     # Convert back to numpy
@@ -197,6 +218,7 @@ def run_dftd3_matrix(
         "energy": from_warp(energy_wp),
         "forces": from_warp(forces_wp),
         "coord_num": from_warp(coord_num_wp),
+        "virial": from_warp(virial_wp),
     }
 
 
@@ -207,6 +229,8 @@ def run_dftd3(
     device: str,
     batch_indices: np.ndarray | None = None,
     wp_dtype=wp.float32,
+    s5_smoothing_on: float = 0.0,
+    s5_smoothing_off: float = 0.0,
 ) -> dict:
     """
     Run dftd3 warp launcher for a system (neighbor list / CSR format).
@@ -225,11 +249,14 @@ def run_dftd3(
         Batch indices for atoms
     wp_dtype : warp dtype
         Scalar dtype (wp.float32 or wp.float64)
+    s5_smoothing_on, s5_smoothing_off : float
+        S5 energy-side cutoff smoothing window. The default ``0.0 / 0.0``
+        disables smoothing (``off <= on`` -> ``sw == 1``).
 
     Returns
     -------
     dict
-        Results with 'energy', 'forces', 'coord_num' (numpy arrays)
+        Results with 'energy', 'forces', 'coord_num', 'virial' (numpy arrays)
     """
     # Derive vector dtype from scalar dtype
     if wp_dtype == wp.float64:
@@ -254,20 +281,8 @@ def run_dftd3(
     neighbor_ptr_wp = to_warp(neighbor_ptr, wp.int32, device)
 
     # Prepare element tables as warp arrays
-    scalar_dtype = wp.float32
-    max_z_inc = element_tables["z_max_inc"]
-
-    rcov_wp = to_warp(element_tables["rcov"], scalar_dtype, device)
-    r4r2_wp = to_warp(element_tables["r4r2"], scalar_dtype, device)
-    c6_reference_wp = to_warp(
-        element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-    coord_num_ref_wp = to_warp(
-        element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
+    rcov_wp, r4r2_wp, c6_reference_wp, coord_num_ref_wp = _element_tables_to_warp(
+        element_tables, device
     )
 
     # Determine number of systems and batch_idx
@@ -314,6 +329,8 @@ def run_dftd3(
         k1=functional_params["k1"],
         k3=functional_params["k3"],
         s6=functional_params["s6"],
+        s5_smoothing_on=s5_smoothing_on,
+        s5_smoothing_off=s5_smoothing_off,
     )
 
     # Convert back to numpy
@@ -321,6 +338,194 @@ def run_dftd3(
         "energy": from_warp(energy_wp),
         "forces": from_warp(forces_wp),
         "coord_num": from_warp(coord_num_wp),
+        "virial": from_warp(virial_wp),
+    }
+
+
+def _isolating_cell() -> np.ndarray:
+    """Large cubic cell so periodic images fall outside the dispersion range."""
+    return (np.eye(3, dtype=np.float64) * 50.0)[None]  # shape (1, 3, 3)
+
+
+def run_dftd3_matrix_pbc(
+    system: dict,
+    element_tables: dict,
+    functional_params: dict,
+    device: str,
+    wp_dtype=wp.float32,
+    s5_smoothing_on: float = 0.0,
+    s5_smoothing_off: float = 0.0,
+    compute_virial: bool = True,
+) -> dict:
+    """
+    Run dftd3_matrix_pbc warp launcher for a single cell-less system.
+
+    A large isolating cell with zero shifts keeps the physics identical to the
+    non-periodic system, but routes Pass 2 through the periodic, virial-enabled
+    matrix kernel (``_direct_forces_and_dE_dCN_kernel_matrix_virial``).
+
+    Parameters mirror :func:`run_dftd3_matrix`; ``s5_smoothing_on`` /
+    ``s5_smoothing_off`` default to ``0.0 / 0.0`` (smoothing disabled).
+
+    Returns
+    -------
+    dict
+        Results with 'energy', 'forces', 'coord_num', 'virial' (numpy arrays)
+    """
+    vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
+    mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+
+    B = system["B"]
+    coord_flat = system["coord"]
+    numbers = system["numbers"]
+    nbmat = system["nbmat"]
+    max_neighbors = nbmat.shape[1]
+
+    positions = to_warp(coord_flat.reshape(B, 3), vec_dtype, device)
+    numbers_wp = to_warp(numbers, wp.int32, device)
+    neighbor_matrix_wp = to_warp(nbmat, wp.int32, device)
+    cell_wp = to_warp(_isolating_cell(), mat_dtype, device)
+    shifts_wp = to_warp(
+        np.zeros((B, max_neighbors, 3), dtype=np.int32), wp.vec3i, device
+    )
+
+    rcov_wp, r4r2_wp, c6_reference_wp, coord_num_ref_wp = _element_tables_to_warp(
+        element_tables, device
+    )
+
+    batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
+    coord_num_wp = wp.zeros(B, dtype=wp.float32, device=device)
+    forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
+    energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
+    virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
+    cartesian_shifts_wp = wp.zeros((B, max_neighbors), dtype=vec_dtype, device=device)
+    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
+
+    dftd3_matrix_pbc(
+        positions=positions,
+        numbers=numbers_wp,
+        neighbor_matrix=neighbor_matrix_wp,
+        cell=cell_wp,
+        neighbor_matrix_shifts=shifts_wp,
+        covalent_radii=rcov_wp,
+        r4r2=r4r2_wp,
+        c6_reference=c6_reference_wp,
+        coord_num_ref=coord_num_ref_wp,
+        a1=functional_params["a1"],
+        a2=functional_params["a2"],
+        s8=functional_params["s8"],
+        coord_num=coord_num_wp,
+        forces=forces_wp,
+        energy=energy_wp,
+        virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
+        wp_dtype=wp_dtype,
+        device=device,
+        k1=functional_params["k1"],
+        k3=functional_params["k3"],
+        s6=functional_params["s6"],
+        s5_smoothing_on=s5_smoothing_on,
+        s5_smoothing_off=s5_smoothing_off,
+        compute_virial=compute_virial,
+    )
+
+    return {
+        "energy": from_warp(energy_wp),
+        "forces": from_warp(forces_wp),
+        "coord_num": from_warp(coord_num_wp),
+        "virial": from_warp(virial_wp),
+    }
+
+
+def run_dftd3_pbc(
+    system: dict,
+    element_tables: dict,
+    functional_params: dict,
+    device: str,
+    wp_dtype=wp.float32,
+    s5_smoothing_on: float = 0.0,
+    s5_smoothing_off: float = 0.0,
+    compute_virial: bool = True,
+) -> dict:
+    """
+    Run dftd3_pbc warp launcher for a single cell-less system (neighbor list).
+
+    Like :func:`run_dftd3_matrix_pbc` but routes Pass 2 through the neighbor-list
+    virial kernel (``_direct_forces_and_dE_dCN_kernel_virial``).
+
+    Returns
+    -------
+    dict
+        Results with 'energy', 'forces', 'coord_num', 'virial' (numpy arrays)
+    """
+    vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
+    mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
+
+    B = system["B"]
+    coord_flat = system["coord"]
+    numbers = system["numbers"]
+    nbmat = system["nbmat"]
+
+    idx_j, neighbor_ptr = neighbor_matrix_to_csr(nbmat, B)
+    num_edges = idx_j.shape[0]
+
+    positions = to_warp(coord_flat.reshape(B, 3), vec_dtype, device)
+    numbers_wp = to_warp(numbers, wp.int32, device)
+    idx_j_wp = to_warp(idx_j, wp.int32, device)
+    neighbor_ptr_wp = to_warp(neighbor_ptr, wp.int32, device)
+    cell_wp = to_warp(_isolating_cell(), mat_dtype, device)
+    unit_shifts_wp = to_warp(np.zeros((num_edges, 3), dtype=np.int32), wp.vec3i, device)
+
+    rcov_wp, r4r2_wp, c6_reference_wp, coord_num_ref_wp = _element_tables_to_warp(
+        element_tables, device
+    )
+
+    batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
+    coord_num_wp = wp.zeros(B, dtype=wp.float32, device=device)
+    forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
+    energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
+    virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
+    cartesian_shifts_wp = wp.zeros(num_edges, dtype=vec_dtype, device=device)
+    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
+
+    dftd3_pbc(
+        positions=positions,
+        numbers=numbers_wp,
+        idx_j=idx_j_wp,
+        neighbor_ptr=neighbor_ptr_wp,
+        cell=cell_wp,
+        unit_shifts=unit_shifts_wp,
+        covalent_radii=rcov_wp,
+        r4r2=r4r2_wp,
+        c6_reference=c6_reference_wp,
+        coord_num_ref=coord_num_ref_wp,
+        a1=functional_params["a1"],
+        a2=functional_params["a2"],
+        s8=functional_params["s8"],
+        coord_num=coord_num_wp,
+        forces=forces_wp,
+        energy=energy_wp,
+        virial=virial_wp,
+        batch_idx=batch_idx_wp,
+        cartesian_shifts=cartesian_shifts_wp,
+        dE_dCN=dE_dCN_wp,
+        wp_dtype=wp_dtype,
+        device=device,
+        k1=functional_params["k1"],
+        k3=functional_params["k3"],
+        s6=functional_params["s6"],
+        s5_smoothing_on=s5_smoothing_on,
+        s5_smoothing_off=s5_smoothing_off,
+        compute_virial=compute_virial,
+    )
+
+    return {
+        "energy": from_warp(energy_wp),
+        "forces": from_warp(forces_wp),
+        "coord_num": from_warp(coord_num_wp),
+        "virial": from_warp(virial_wp),
     }
 
 
@@ -1708,382 +1913,6 @@ class TestPaddingAtoms:
 # ==============================================================================
 
 
-def _run_dftd3_matrix_s5(
-    system: dict,
-    element_tables: dict,
-    functional_params: dict,
-    device: str,
-    s5_smoothing_on: float,
-    s5_smoothing_off: float,
-    wp_dtype=wp.float64,
-) -> dict:
-    """
-    Run dftd3_matrix with S5 energy-side cutoff smoothing enabled.
-
-    Self-contained helper that mirrors ``run_dftd3_matrix`` but additionally
-    forwards the ``s5_smoothing_on`` / ``s5_smoothing_off`` window to the warp
-    launcher. The shared ``run_dftd3_matrix`` helper is deliberately left
-    untouched (it does not expose smoothing parameters).
-
-    Returns
-    -------
-    dict
-        Results with 'energy', 'forces', 'coord_num' (numpy arrays).
-    """
-    vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
-
-    B = system["B"]
-    coord_flat = system["coord"]
-    numbers = system["numbers"]
-    nbmat = system["nbmat"]
-
-    positions = to_warp(coord_flat.reshape(B, 3), vec_dtype, device)
-    numbers_wp = to_warp(numbers, wp.int32, device)
-    neighbor_matrix_wp = to_warp(nbmat, wp.int32, device)
-
-    scalar_dtype = wp.float32
-    max_z_inc = element_tables["z_max_inc"]
-
-    rcov_wp = to_warp(element_tables["rcov"], scalar_dtype, device)
-    r4r2_wp = to_warp(element_tables["r4r2"], scalar_dtype, device)
-    c6_reference_wp = to_warp(
-        element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-    coord_num_ref_wp = to_warp(
-        element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-
-    batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
-    num_systems = 1
-
-    coord_num_wp = wp.zeros(B, dtype=wp.float32, device=device)
-    forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
-    energy_wp = wp.zeros(num_systems, dtype=wp.float32, device=device)
-    virial_wp = wp.zeros(num_systems, dtype=wp.mat33f, device=device)
-
-    max_neighbors = nbmat.shape[1] if B > 0 else 0
-    cartesian_shifts_wp = wp.zeros((B, max_neighbors), dtype=vec_dtype, device=device)
-    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
-
-    dftd3_matrix(
-        positions=positions,
-        numbers=numbers_wp,
-        neighbor_matrix=neighbor_matrix_wp,
-        covalent_radii=rcov_wp,
-        r4r2=r4r2_wp,
-        c6_reference=c6_reference_wp,
-        coord_num_ref=coord_num_ref_wp,
-        a1=functional_params["a1"],
-        a2=functional_params["a2"],
-        s8=functional_params["s8"],
-        coord_num=coord_num_wp,
-        forces=forces_wp,
-        energy=energy_wp,
-        virial=virial_wp,
-        batch_idx=batch_idx_wp,
-        cartesian_shifts=cartesian_shifts_wp,
-        dE_dCN=dE_dCN_wp,
-        wp_dtype=wp_dtype,
-        device=device,
-        k1=functional_params["k1"],
-        k3=functional_params["k3"],
-        s6=functional_params["s6"],
-        s5_smoothing_on=s5_smoothing_on,
-        s5_smoothing_off=s5_smoothing_off,
-    )
-
-    return {
-        "energy": from_warp(energy_wp),
-        "forces": from_warp(forces_wp),
-        "coord_num": from_warp(coord_num_wp),
-    }
-
-
-def _run_dftd3_s5(
-    system: dict,
-    element_tables: dict,
-    functional_params: dict,
-    device: str,
-    s5_smoothing_on: float,
-    s5_smoothing_off: float,
-    wp_dtype=wp.float64,
-) -> dict:
-    """
-    Run dftd3 (neighbor-list / CSR, non-PBC) with S5 smoothing enabled.
-
-    Exercises the neighbor-list Pass-2 kernel
-    (``_direct_forces_and_dE_dCN_kernel``).
-    """
-    vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
-
-    B = system["B"]
-    coord_flat = system["coord"]
-    numbers = system["numbers"]
-    nbmat = system["nbmat"]
-
-    idx_j, neighbor_ptr = neighbor_matrix_to_csr(nbmat, B)
-
-    positions = to_warp(coord_flat.reshape(B, 3), vec_dtype, device)
-    numbers_wp = to_warp(numbers, wp.int32, device)
-    idx_j_wp = to_warp(idx_j, wp.int32, device)
-    neighbor_ptr_wp = to_warp(neighbor_ptr, wp.int32, device)
-
-    scalar_dtype = wp.float32
-    max_z_inc = element_tables["z_max_inc"]
-    rcov_wp = to_warp(element_tables["rcov"], scalar_dtype, device)
-    r4r2_wp = to_warp(element_tables["r4r2"], scalar_dtype, device)
-    c6_reference_wp = to_warp(
-        element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-    coord_num_ref_wp = to_warp(
-        element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-
-    batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
-    coord_num_wp = wp.zeros(B, dtype=wp.float32, device=device)
-    forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
-    energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
-    virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
-
-    num_edges = idx_j.shape[0]
-    cartesian_shifts_wp = wp.zeros(num_edges, dtype=vec_dtype, device=device)
-    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
-
-    dftd3(
-        positions=positions,
-        numbers=numbers_wp,
-        idx_j=idx_j_wp,
-        neighbor_ptr=neighbor_ptr_wp,
-        covalent_radii=rcov_wp,
-        r4r2=r4r2_wp,
-        c6_reference=c6_reference_wp,
-        coord_num_ref=coord_num_ref_wp,
-        a1=functional_params["a1"],
-        a2=functional_params["a2"],
-        s8=functional_params["s8"],
-        coord_num=coord_num_wp,
-        forces=forces_wp,
-        energy=energy_wp,
-        virial=virial_wp,
-        batch_idx=batch_idx_wp,
-        cartesian_shifts=cartesian_shifts_wp,
-        dE_dCN=dE_dCN_wp,
-        wp_dtype=wp_dtype,
-        device=device,
-        k1=functional_params["k1"],
-        k3=functional_params["k3"],
-        s6=functional_params["s6"],
-        s5_smoothing_on=s5_smoothing_on,
-        s5_smoothing_off=s5_smoothing_off,
-    )
-
-    return {
-        "energy": from_warp(energy_wp),
-        "forces": from_warp(forces_wp),
-        "coord_num": from_warp(coord_num_wp),
-    }
-
-
-def _isolating_cell() -> np.ndarray:
-    """Large cubic cell so periodic images fall outside the dispersion range."""
-    return (np.eye(3, dtype=np.float64) * 50.0)[None]  # shape (1, 3, 3)
-
-
-def _run_dftd3_matrix_pbc_s5(
-    system: dict,
-    element_tables: dict,
-    functional_params: dict,
-    device: str,
-    s5_smoothing_on: float,
-    s5_smoothing_off: float,
-    wp_dtype=wp.float64,
-) -> dict:
-    """
-    Run dftd3_matrix_pbc with S5 smoothing and ``compute_virial=True``.
-
-    A large isolating cell with zero shifts keeps the physics identical to the
-    non-periodic system, but routes Pass 2 through the periodic, virial-enabled
-    matrix kernel (``_direct_forces_and_dE_dCN_kernel_matrix_virial``).
-    """
-    vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
-    mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-
-    B = system["B"]
-    coord_flat = system["coord"]
-    numbers = system["numbers"]
-    nbmat = system["nbmat"]
-    max_neighbors = nbmat.shape[1]
-
-    positions = to_warp(coord_flat.reshape(B, 3), vec_dtype, device)
-    numbers_wp = to_warp(numbers, wp.int32, device)
-    neighbor_matrix_wp = to_warp(nbmat, wp.int32, device)
-    cell_wp = to_warp(_isolating_cell(), mat_dtype, device)
-    shifts_wp = to_warp(
-        np.zeros((B, max_neighbors, 3), dtype=np.int32), wp.vec3i, device
-    )
-
-    scalar_dtype = wp.float32
-    max_z_inc = element_tables["z_max_inc"]
-    rcov_wp = to_warp(element_tables["rcov"], scalar_dtype, device)
-    r4r2_wp = to_warp(element_tables["r4r2"], scalar_dtype, device)
-    c6_reference_wp = to_warp(
-        element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-    coord_num_ref_wp = to_warp(
-        element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-
-    batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
-    coord_num_wp = wp.zeros(B, dtype=wp.float32, device=device)
-    forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
-    energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
-    virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
-    cartesian_shifts_wp = wp.zeros((B, max_neighbors), dtype=vec_dtype, device=device)
-    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
-
-    dftd3_matrix_pbc(
-        positions=positions,
-        numbers=numbers_wp,
-        neighbor_matrix=neighbor_matrix_wp,
-        cell=cell_wp,
-        neighbor_matrix_shifts=shifts_wp,
-        covalent_radii=rcov_wp,
-        r4r2=r4r2_wp,
-        c6_reference=c6_reference_wp,
-        coord_num_ref=coord_num_ref_wp,
-        a1=functional_params["a1"],
-        a2=functional_params["a2"],
-        s8=functional_params["s8"],
-        coord_num=coord_num_wp,
-        forces=forces_wp,
-        energy=energy_wp,
-        virial=virial_wp,
-        batch_idx=batch_idx_wp,
-        cartesian_shifts=cartesian_shifts_wp,
-        dE_dCN=dE_dCN_wp,
-        wp_dtype=wp_dtype,
-        device=device,
-        k1=functional_params["k1"],
-        k3=functional_params["k3"],
-        s6=functional_params["s6"],
-        s5_smoothing_on=s5_smoothing_on,
-        s5_smoothing_off=s5_smoothing_off,
-        compute_virial=True,
-    )
-
-    return {
-        "energy": from_warp(energy_wp),
-        "forces": from_warp(forces_wp),
-        "coord_num": from_warp(coord_num_wp),
-    }
-
-
-def _run_dftd3_pbc_s5(
-    system: dict,
-    element_tables: dict,
-    functional_params: dict,
-    device: str,
-    s5_smoothing_on: float,
-    s5_smoothing_off: float,
-    wp_dtype=wp.float64,
-) -> dict:
-    """
-    Run dftd3_pbc (neighbor list, PBC) with S5 smoothing and ``compute_virial=True``.
-
-    Routes Pass 2 through the neighbor-list virial kernel
-    (``_direct_forces_and_dE_dCN_kernel_virial``).
-    """
-    vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
-    mat_dtype = wp.mat33d if wp_dtype == wp.float64 else wp.mat33f
-
-    B = system["B"]
-    coord_flat = system["coord"]
-    numbers = system["numbers"]
-    nbmat = system["nbmat"]
-
-    idx_j, neighbor_ptr = neighbor_matrix_to_csr(nbmat, B)
-    num_edges = idx_j.shape[0]
-
-    positions = to_warp(coord_flat.reshape(B, 3), vec_dtype, device)
-    numbers_wp = to_warp(numbers, wp.int32, device)
-    idx_j_wp = to_warp(idx_j, wp.int32, device)
-    neighbor_ptr_wp = to_warp(neighbor_ptr, wp.int32, device)
-    cell_wp = to_warp(_isolating_cell(), mat_dtype, device)
-    unit_shifts_wp = to_warp(np.zeros((num_edges, 3), dtype=np.int32), wp.vec3i, device)
-
-    scalar_dtype = wp.float32
-    max_z_inc = element_tables["z_max_inc"]
-    rcov_wp = to_warp(element_tables["rcov"], scalar_dtype, device)
-    r4r2_wp = to_warp(element_tables["r4r2"], scalar_dtype, device)
-    c6_reference_wp = to_warp(
-        element_tables["c6ref"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-    coord_num_ref_wp = to_warp(
-        element_tables["cnref_i"].reshape(max_z_inc, max_z_inc, 5, 5),
-        scalar_dtype,
-        device,
-    )
-
-    batch_idx_wp = wp.zeros(B, dtype=wp.int32, device=device)
-    coord_num_wp = wp.zeros(B, dtype=wp.float32, device=device)
-    forces_wp = wp.zeros(B, dtype=wp.vec3f, device=device)
-    energy_wp = wp.zeros(1, dtype=wp.float32, device=device)
-    virial_wp = wp.zeros(1, dtype=wp.mat33f, device=device)
-    cartesian_shifts_wp = wp.zeros(num_edges, dtype=vec_dtype, device=device)
-    dE_dCN_wp = wp.zeros(B, dtype=wp.float32, device=device)
-
-    dftd3_pbc(
-        positions=positions,
-        numbers=numbers_wp,
-        idx_j=idx_j_wp,
-        neighbor_ptr=neighbor_ptr_wp,
-        cell=cell_wp,
-        unit_shifts=unit_shifts_wp,
-        covalent_radii=rcov_wp,
-        r4r2=r4r2_wp,
-        c6_reference=c6_reference_wp,
-        coord_num_ref=coord_num_ref_wp,
-        a1=functional_params["a1"],
-        a2=functional_params["a2"],
-        s8=functional_params["s8"],
-        coord_num=coord_num_wp,
-        forces=forces_wp,
-        energy=energy_wp,
-        virial=virial_wp,
-        batch_idx=batch_idx_wp,
-        cartesian_shifts=cartesian_shifts_wp,
-        dE_dCN=dE_dCN_wp,
-        wp_dtype=wp_dtype,
-        device=device,
-        k1=functional_params["k1"],
-        k3=functional_params["k3"],
-        s6=functional_params["s6"],
-        s5_smoothing_on=s5_smoothing_on,
-        s5_smoothing_off=s5_smoothing_off,
-        compute_virial=True,
-    )
-
-    return {
-        "energy": from_warp(energy_wp),
-        "forces": from_warp(forces_wp),
-        "coord_num": from_warp(coord_num_wp),
-    }
-
-
 def _assert_s5_fd_forces(
     dftd3_runner, system, element_tables, functional_params, device
 ):
@@ -2109,8 +1938,9 @@ def _assert_s5_fd_forces(
         element_tables,
         functional_params,
         device,
-        s5_smoothing_on,
-        s5_smoothing_off,
+        s5_smoothing_on=s5_smoothing_on,
+        s5_smoothing_off=s5_smoothing_off,
+        wp_dtype=wp.float64,
     )["forces"]
 
     B = system["B"]
@@ -2129,8 +1959,9 @@ def _assert_s5_fd_forces(
                 element_tables,
                 functional_params,
                 device,
-                s5_smoothing_on,
-                s5_smoothing_off,
+                s5_smoothing_on=s5_smoothing_on,
+                s5_smoothing_off=s5_smoothing_off,
+                wp_dtype=wp.float64,
             )["energy"][0]
 
             coord_minus = base_coord.copy()
@@ -2142,8 +1973,9 @@ def _assert_s5_fd_forces(
                 element_tables,
                 functional_params,
                 device,
-                s5_smoothing_on,
-                s5_smoothing_off,
+                s5_smoothing_on=s5_smoothing_on,
+                s5_smoothing_off=s5_smoothing_off,
+                wp_dtype=wp.float64,
             )["energy"][0]
 
             # Force is the negative gradient of the energy
@@ -2169,19 +2001,19 @@ class TestS5EnergySwitchForces:
     ``dE/dCN * sw`` fix, so all four kernels (neighbor-matrix / neighbor-list,
     plain / virial) are covered:
 
-    - ``matrix``            -> ``_direct_forces_and_dE_dCN_kernel_matrix``
-    - ``neighbor_list``     -> ``_direct_forces_and_dE_dCN_kernel``
-    - ``matrix_pbc``        -> ``_direct_forces_and_dE_dCN_kernel_matrix_virial``
-    - ``neighbor_list_pbc`` -> ``_direct_forces_and_dE_dCN_kernel_virial``
+    - ``run_dftd3_matrix``     -> ``_direct_forces_and_dE_dCN_kernel_matrix``
+    - ``run_dftd3``            -> ``_direct_forces_and_dE_dCN_kernel``
+    - ``run_dftd3_matrix_pbc`` -> ``_direct_forces_and_dE_dCN_kernel_matrix_virial``
+    - ``run_dftd3_pbc``        -> ``_direct_forces_and_dE_dCN_kernel_virial``
     """
 
     @pytest.mark.parametrize(
         "dftd3_runner",
         [
-            _run_dftd3_matrix_s5,
-            _run_dftd3_s5,
-            _run_dftd3_matrix_pbc_s5,
-            _run_dftd3_pbc_s5,
+            run_dftd3_matrix,
+            run_dftd3,
+            run_dftd3_matrix_pbc,
+            run_dftd3_pbc,
         ],
         ids=["matrix", "neighbor_list", "matrix_pbc", "neighbor_list_pbc"],
     )
