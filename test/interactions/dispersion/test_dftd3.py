@@ -142,7 +142,7 @@ def run_dftd3_matrix(
     Returns
     -------
     dict
-        Results with 'energy', 'forces', 'coord_num', 'virial' (numpy arrays)
+        Results with 'energy', 'forces', 'coord_num' (numpy arrays)
     """
     # Derive vector dtype from scalar dtype
     if wp_dtype == wp.float64:
@@ -218,7 +218,6 @@ def run_dftd3_matrix(
         "energy": from_warp(energy_wp),
         "forces": from_warp(forces_wp),
         "coord_num": from_warp(coord_num_wp),
-        "virial": from_warp(virial_wp),
     }
 
 
@@ -256,7 +255,7 @@ def run_dftd3(
     Returns
     -------
     dict
-        Results with 'energy', 'forces', 'coord_num', 'virial' (numpy arrays)
+        Results with 'energy', 'forces', 'coord_num' (numpy arrays)
     """
     # Derive vector dtype from scalar dtype
     if wp_dtype == wp.float64:
@@ -338,7 +337,6 @@ def run_dftd3(
         "energy": from_warp(energy_wp),
         "forces": from_warp(forces_wp),
         "coord_num": from_warp(coord_num_wp),
-        "virial": from_warp(virial_wp),
     }
 
 
