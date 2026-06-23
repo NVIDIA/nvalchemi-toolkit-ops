@@ -2686,7 +2686,7 @@ MD/inference paths and do not warn. Full-API calls that still pass
 
 The examples below use `particle_mesh_ewald`; `ewald_summation` follows the same
 contract. A complete runnable script is in
-{doc}`/examples/electrostatics/07_pme_energy_derivative_training`.
+{doc}`/examples/electrostatics/11_pme_energy_derivative_training`.
 
 ### Force Evaluation
 

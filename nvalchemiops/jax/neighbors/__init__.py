@@ -262,9 +262,14 @@ def neighbor_list(
 
     Note
     ----
-    ``pair_fn`` and ``target_indices`` are not supported by the JAX bindings and
-    raise ``NotImplementedError`` (a Python ``pair_fn`` callable cannot cross the
-    ``jax_callable`` trace boundary); use the PyTorch binding for those.
+    ``pair_fn`` is supported by the JAX bindings for single-cutoff neighbor
+    lists. The naive and atom-centric cell-list paths use JAX kernel wrappers,
+    while tiled paths use ``jax_callable``. Cluster-tile pair outputs are
+    limited to CUDA float32 eligible systems; COO pair outputs on that path are
+    eager-only. ``target_indices`` is supported by cell-list and batched
+    cell-list paths with compact target rows. The ``pair_centric`` strategy
+    rejects ``target_indices``; use ``atom_centric`` for equivalent filtered
+    results.
 
     Returns
     -------
