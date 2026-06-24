@@ -323,6 +323,9 @@ def neighbor_list(
             "e.g. pbc=torch.tensor([True, True, True])."
         )
 
+    if batch_ptr is not None and batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
     explicit_cell_strategy = str(kwargs.pop("strategy", "auto"))
     explicit_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))

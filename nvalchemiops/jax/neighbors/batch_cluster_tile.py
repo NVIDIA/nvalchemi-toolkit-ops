@@ -164,6 +164,8 @@ def estimate_batch_max_tiles_per_group(
         raise ValueError(
             "batch_ptr must be concrete to estimate batch max_tiles_per_group"
         )
+    if len(ptr_values) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
 
     vols = _concrete_cell_batch_volumes(cell_batch)
     if vols is None:
@@ -198,6 +200,8 @@ def estimate_batch_cluster_tile_list_sizes(
     The ``.item()`` syncs are necessary to size buffers; cache the result
     if calling from a hot loop.
     """
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
     natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).astype(jnp.int32)
     natom_padded_per_system = (
@@ -222,6 +226,8 @@ def estimate_batch_cluster_tile_segments(
     Returns ``(tile_capacities, tile_offsets, pair_capacities, pair_offsets)``
     as int32 JAX arrays on the same backend as ``batch_ptr``.
     """
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     tile_caps, tile_offsets, pair_caps, pair_offsets = (
         _warp_estimate_batch_cluster_tile_segments(
             batch_ptr,
@@ -1088,6 +1094,8 @@ def batch_build_cluster_tile_list(
         )
     if batch_ptr.dtype != jnp.int32:
         batch_ptr = batch_ptr.astype(jnp.int32)
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
 
     # Geometry-size the compact tile buffer so dense/high-cutoff systems don't
     # silently overflow; trace-safe ``max_i ngroup_i`` fallback when traced.
@@ -1890,6 +1898,8 @@ def batch_cluster_tile_neighbor_list(
                 "rebuild_flags requires previous batch_cluster_tile state: "
                 + ", ".join(missing)
             )
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     N = positions.shape[0]
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(

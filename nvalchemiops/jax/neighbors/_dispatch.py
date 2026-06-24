@@ -181,6 +181,8 @@ def synthesize_cell_for_cell_list(
     num_systems: int = 1,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Build shifted non-PBC bounding-box cells for JAX cell-list dispatch."""
+    if batch_ptr is not None and int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(num_systems)
     if positions.shape[0] == 0:
         cell = jnp.tile(jnp.eye(3, dtype=positions.dtype), (num_systems, 1, 1))
@@ -291,14 +293,14 @@ def estimate_neighbor_list_costs(
     """
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D array")
-    num_systems = max(int(batch_ptr.shape[0]) - 1, 0)
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+    num_systems = int(batch_ptr.shape[0]) - 1
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.astype(jnp.int32)
     batch_idx_is_provided = batch_idx is not None
     if batch_idx is not None:
         batch_idx = batch_idx.astype(jnp.int32)
-    if num_systems == 0:
-        return [("cell_list_atom_centric", 0.0)]
 
     if max_nbins is None:
         max_nbins = (

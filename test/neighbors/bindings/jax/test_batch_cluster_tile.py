@@ -289,6 +289,13 @@ class TestEstimateBatchSizes:
         assert got == expected
         assert got > 256
 
+    def test_batch_max_tiles_per_group_rejects_short_batch_ptr_length(self):
+        """Direct cluster-tile sizing rejects one-entry batch_ptr."""
+        batch_ptr = jnp.array([0], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            estimate_batch_max_tiles_per_group(batch_ptr, 3.0, cell_batch)
+
     def test_batch_max_tiles_per_group_rejects_bad_cell_shape(self):
         """Public batch max-tile sizing rejects malformed concrete cells."""
         batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
@@ -318,21 +325,6 @@ class TestEstimateBatchSizes:
 
         with pytest.raises(ValueError, match="batch_ptr.*concrete"):
             call_with_traced_batch_ptr(jnp.array([0, 32], dtype=jnp.int32))
-
-    def test_batch_tile_buffer_max_tiles_per_group_empty_batch_fallback(self):
-        """Empty concrete batches fall back without calling the public estimator."""
-        positions = jnp.zeros((0, 3), dtype=jnp.float32)
-        batch_ptr = jnp.array([0], dtype=jnp.int32)
-        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
-
-        got = _batch_tile_buffer_max_tiles_per_group(
-            positions,
-            batch_ptr,
-            2.0,
-            cell_batch,
-        )
-
-        assert got == 1
 
     def test_batch_tile_buffer_max_tiles_per_group_rejects_cell_batch_mismatch(self):
         """Non-empty batch pointers still validate against cell_batch length."""

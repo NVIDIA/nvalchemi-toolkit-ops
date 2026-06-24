@@ -292,7 +292,7 @@ class TestBatchNaiveDualCutoffEdgeCases:
         """Test dual cutoff batch neighbor list with empty system."""
         positions_empty = torch.empty(0, 3, dtype=dtype, device=device)
         batch_idx_empty = torch.empty(0, dtype=torch.int32, device=device)
-        batch_ptr_empty = torch.tensor([0], dtype=torch.int32, device=device)
+        batch_ptr_empty = torch.tensor([0, 0], dtype=torch.int32, device=device)
 
         neighbor_matrix1, num_neighbors1, neighbor_matrix2, num_neighbors2 = (
             batch_naive_neighbor_list_dual_cutoff(

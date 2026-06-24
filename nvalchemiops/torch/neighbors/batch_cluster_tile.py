@@ -147,6 +147,8 @@ def estimate_batch_max_tiles_per_group(
     int
         Shared ``max_tiles_per_group`` for the batched compact tile buffer.
     """
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     volumes = torch.linalg.det(cell_batch.to(torch.float64)).abs().view(-1)
     return wp_estimate_batch_max_tiles_per_group(
         batch_ptr,
@@ -183,6 +185,8 @@ def estimate_batch_cluster_tile_list_sizes(
         Upper bound on the tile pair list size.
     num_systems : int
     """
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
     natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64)
     natom_padded_per_system = (
@@ -210,6 +214,8 @@ def estimate_batch_cluster_tile_segments(
     build / COO query paths; ``tile_counts`` and ``pair_counts`` are separate
     output counters with length ``num_systems``.
     """
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     tile_caps, tile_offsets, pair_caps, pair_offsets = (
         wp_estimate_batch_cluster_tile_segments(
             batch_ptr,
@@ -659,6 +665,8 @@ def batch_build_cluster_tile_list(
         )
     if batch_ptr.dtype != torch.int32 or batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be 1D int32")
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
 
     num_systems = cell_batch.shape[0]
     if batch_ptr.shape[0] != num_systems + 1:
@@ -1808,6 +1816,8 @@ def batch_cluster_tile_neighbor_list(
         raise ValueError("Pass both 'pair_offsets' and 'pair_counts', or neither.")
     if (tile_offsets is None) != (tile_counts is None):
         raise ValueError("Pass both 'tile_offsets' and 'tile_counts', or neither.")
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     device = positions.device
     N = int(batch_ptr[-1].item())
 

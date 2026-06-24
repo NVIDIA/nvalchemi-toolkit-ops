@@ -609,7 +609,7 @@ class TestBatchNaiveEdgeCases:
         """Test with empty batch (no atoms)."""
         positions_empty = torch.empty(0, 3, dtype=dtype, device=device)
         batch_idx_empty = torch.empty(0, dtype=torch.int32, device=device)
-        batch_ptr_empty = torch.tensor([0], dtype=torch.int32, device=device)
+        batch_ptr_empty = torch.tensor([0, 0], dtype=torch.int32, device=device)
 
         neighbor_matrix, num_neighbors = batch_naive_neighbor_list(
             positions=positions_empty,

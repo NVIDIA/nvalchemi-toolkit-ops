@@ -322,6 +322,9 @@ def prepare_batch_idx_ptr(
     if batch_idx is None and batch_ptr is None:
         raise ValueError("Either batch_idx or batch_ptr must be provided.")
 
+    if batch_ptr is not None and batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
     # Validate batch_idx size in eager mode only to avoid graph breaks
     if not torch.compiler.is_compiling():
         if batch_idx is not None and batch_idx.shape[0] != num_atoms:
@@ -417,7 +420,7 @@ def synthesize_cell_for_batch(
     batch_idx : (total_atoms,) int32
         System index per atom.
     batch_ptr : (num_systems + 1,) int32
-        CSR offsets — used only to derive ``num_systems``.
+        CSR offsets — used only to derive ``num_systems``. Must have length at least 2.
     cutoff : float
         Neighbor cutoff.
     padding_fraction : float, default 0.1
@@ -433,6 +436,8 @@ def synthesize_cell_for_batch(
     pbc : (num_systems, 3) bool
         All False — synthesized cells are non-periodic.
     """
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
     if positions.shape[0] == 0:
         cell = (

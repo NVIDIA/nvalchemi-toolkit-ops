@@ -191,6 +191,14 @@ def test_batch_cluster_tile_max_tiles_per_group_bypasses_sizing(monkeypatch):
         )
 
 
+def test_estimate_batch_max_tiles_per_group_rejects_short_batch_ptr_length():
+    """Direct cluster-tile sizing rejects one-entry batch_ptr."""
+    batch_ptr = torch.tensor([0], dtype=torch.int32)
+    cell_batch = torch.zeros((0, 3, 3), dtype=torch.float32)
+    with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+        estimate_batch_max_tiles_per_group(batch_ptr, 3.0, cell_batch)
+
+
 def test_batch_cluster_tile_max_tiles_per_group_vectorized_helper():
     """Batched max-tile sizing should match the scalar estimator."""
     batch_ptr = torch.tensor([0, 32, 32800], dtype=torch.int32)

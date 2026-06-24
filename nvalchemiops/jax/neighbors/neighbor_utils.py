@@ -440,6 +440,9 @@ def prepare_batch_idx_ptr(
     if batch_idx is None and batch_ptr is None:
         raise ValueError("Either batch_idx or batch_ptr must be provided.")
 
+    if batch_ptr is not None and int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
     if batch_idx is None:
         num_systems = batch_ptr.shape[0] - 1
         num_atoms_per_system = batch_ptr[1:] - batch_ptr[:-1]

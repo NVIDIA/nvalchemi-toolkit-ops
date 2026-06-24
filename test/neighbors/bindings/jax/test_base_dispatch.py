@@ -68,9 +68,18 @@ def _clean_env(monkeypatch):
 class TestReportNeighborListCosts:
     """Exercise JAX guarded naive/cell-list auto-dispatch via report/suggest."""
 
-    def test_empty_system_returns_cell_list(self):
-        """Empty per-system metadata selects cell_list."""
-        assert _base_method(_report([], [], cutoff=5.0)) == "cell_list"
+    def test_one_entry_batch_ptr_is_rejected(self):
+        """One-entry batch_ptr is invalid selector metadata."""
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            _report([], [], cutoff=5.0)
+
+    def test_empty_one_system_batch_reports_costs(self):
+        """An empty single-system batch uses batch_ptr=[0, 0]."""
+        rep = _report([0], [1.0], cutoff=5.0)
+        costs = [cost for _, cost in rep]
+        assert rep
+        assert costs == sorted(costs)
+        assert all(math.isfinite(cost) for cost in costs)
 
     def test_small_system_picks_naive(self):
         """Tiny N keeps the direct naive path."""
