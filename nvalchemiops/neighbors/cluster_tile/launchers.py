@@ -21,6 +21,7 @@ GROMACS-style NxM cluster pair list: Morton-sorted atoms grouped into
 compiled kernels and factories live in :mod:`nvalchemiops.neighbors.cluster_tile.kernels`.
 """
 
+from collections.abc import Iterable
 import math
 
 import warp as wp
@@ -107,7 +108,7 @@ def estimate_max_tiles_per_group(
     return max(int(floor), int(math.ceil(safety * n_neigh)))
 
 
-def _host_int_float_list(values) -> list[int | float]:
+def _host_int_float_list(values: Iterable[int | float]) -> list[int | float]:
     if hasattr(values, "detach"):
         return values.detach().cpu().tolist()
     if hasattr(values, "tolist"):
@@ -116,9 +117,9 @@ def _host_int_float_list(values) -> list[int | float]:
 
 
 def estimate_batch_max_tiles_per_group(
-    batch_ptr,
+    batch_ptr: Iterable[int],
     cutoff: float,
-    cell_volumes,
+    cell_volumes: Iterable[float],
     *,
     safety: float = 2.0,
     floor: int = 256,
