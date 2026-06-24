@@ -4370,6 +4370,69 @@ class TestPMEHybridForces:
                 )
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_geometry_dependent_charges_pme_reciprocal_weighted_grad(
+        self, device
+    ):
+        """Hybrid PME reciprocal q(R) supports per-atom weighted energy gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions_base, charges_base, cell = create_dipole_system(device)
+        mesh_dims = (16, 16, 16)
+        weight = torch.tensor(
+            [[0.1, -0.05, 0.02], [-0.1, 0.05, -0.02]],
+            dtype=torch.float64,
+            device=device,
+        )
+
+        positions = positions_base.clone().requires_grad_(True)
+        charges = charges_base + (positions * weight).sum(dim=1)
+        charges = charges - charges.mean()
+        energies, _forces = pme_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+        energy_weights = torch.linspace(
+            1.0,
+            2.0,
+            energies.numel(),
+            dtype=energies.dtype,
+            device=device,
+        )
+        (weighted_grad,) = torch.autograd.grad(
+            energies,
+            positions,
+            grad_outputs=energy_weights,
+        )
+
+        positions_ref = positions_base.clone().requires_grad_(True)
+        charges_ref = charges_base + (positions_ref * weight).sum(dim=1)
+        charges_ref = charges_ref - charges_ref.mean()
+        energies_ref = pme_reciprocal_space(
+            positions_ref,
+            charges_ref,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+        )
+        (weighted_grad_ref,) = torch.autograd.grad(
+            energies_ref,
+            positions_ref,
+            grad_outputs=energy_weights,
+        )
+
+        assert torch.isfinite(weighted_grad).all()
+        torch.testing.assert_close(
+            weighted_grad, weighted_grad_ref, rtol=1e-5, atol=1e-7
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_hybrid_geometry_dependent_charges_particle_mesh_ewald(self, device):
         """Full PME hybrid q(R) force includes the charge chain-rule term once."""
         if device == "cuda" and not torch.cuda.is_available():
@@ -4402,21 +4465,42 @@ class TestPMEHybridForces:
             compute_forces=True,
             hybrid_forces=True,
         )
-        weighted_grad = torch.autograd.grad(
+        energy_weights = torch.linspace(
+            1.0,
+            2.0,
+            energies.numel(),
+            dtype=energies.dtype,
+            device=device,
+        )
+        (weighted_grad,) = torch.autograd.grad(
             energies,
             positions,
-            grad_outputs=torch.linspace(
-                1.0,
-                2.0,
-                energies.numel(),
-                dtype=energies.dtype,
-                device=device,
-            ),
-            allow_unused=True,
+            grad_outputs=energy_weights,
             retain_graph=True,
-        )[0]
-        if weighted_grad is not None:
-            assert torch.isfinite(weighted_grad).all()
+        )
+
+        positions_energy_ref = positions_ref.clone().requires_grad_(True)
+        q_energy_ref = charges_base + (positions_energy_ref * weight).sum(dim=1)
+        q_energy_ref = q_energy_ref - q_energy_ref.mean()
+        energies_ref = particle_mesh_ewald(
+            positions_energy_ref,
+            q_energy_ref,
+            cell,
+            alpha=0.3,
+            mesh_dimensions=mesh_dims,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_matrix_shifts,
+        )
+        (weighted_grad_ref,) = torch.autograd.grad(
+            energies_ref,
+            positions_energy_ref,
+            grad_outputs=energy_weights,
+        )
+
+        assert torch.isfinite(weighted_grad).all()
+        torch.testing.assert_close(
+            weighted_grad, weighted_grad_ref, rtol=1e-5, atol=1e-7
+        )
 
         charge_force = -torch.autograd.grad(
             energies.sum(), positions, retain_graph=True

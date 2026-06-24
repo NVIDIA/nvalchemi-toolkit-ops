@@ -716,8 +716,8 @@ def ewald_real_space(
     and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
     derivatives recompute safe partials or connected gradients as needed to
     avoid double-counting that chain term (issue #115). Hybrid direct-output
-    mode uses :func:`_InjectChargeGrad` because positions and cell are detached
-    and direct forces/virials are forward-only.
+    mode uses the same cached fallback connector so weighted q(R) losses can
+    recover a valid energy gradient when the forward energy was detached.
 
     """
     component_deprecated_flags = tuple(
@@ -799,12 +799,6 @@ def ewald_real_space(
             want_virial=compute_virial,
         )
         if charges.requires_grad:
-            charge_graph_depends_on_positions = (
-                _has_potentially_geometry_dependent_charges(
-                    positions,
-                    charges,
-                )
-            )
 
             def _fallback(p, q, c):
                 return _real_space_energy(
@@ -821,25 +815,17 @@ def ewald_real_space(
                     mask_value=mask_value,
                 )
 
-            if charge_graph_depends_on_positions:
-                energies = _InjectChargeGrad.apply(
-                    energies,
-                    charges,
-                    charge_grads.detach(),
-                    batch_idx,
-                )
-            else:
-                energies = _InjectCachedEvalGradWithFallback.apply(
-                    energies,
-                    positions,
-                    charges,
-                    cell,
-                    None,
-                    charge_grads.detach(),
-                    None,
-                    batch_idx,
-                    _fallback,
-                )
+            energies = _InjectCachedEvalGradWithFallback.apply(
+                energies,
+                positions,
+                charges,
+                cell,
+                None,
+                charge_grads.detach(),
+                None,
+                batch_idx,
+                _fallback,
+            )
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 
     if (
@@ -1182,12 +1168,6 @@ def _ewald_reciprocal_space(
             batch_idx,
         )
         if charges.requires_grad:
-            charge_graph_depends_on_positions = (
-                _has_potentially_geometry_dependent_charges(
-                    positions,
-                    charges,
-                )
-            )
 
             def _fallback(p, q, c):
                 return _reciprocal_space_energy(
@@ -1199,25 +1179,17 @@ def _ewald_reciprocal_space(
                     batch_idx=batch_idx,
                 )
 
-            if charge_graph_depends_on_positions:
-                energies = _InjectChargeGrad.apply(
-                    energies,
-                    charges,
-                    charge_grads.detach(),
-                    batch_idx,
-                )
-            else:
-                energies = _InjectCachedEvalGradWithFallback.apply(
-                    energies,
-                    positions,
-                    charges,
-                    cell,
-                    None,
-                    charge_grads.detach(),
-                    None,
-                    batch_idx,
-                    _fallback,
-                )
+            energies = _InjectCachedEvalGradWithFallback.apply(
+                energies,
+                positions,
+                charges,
+                cell,
+                None,
+                charge_grads.detach(),
+                None,
+                batch_idx,
+                _fallback,
+            )
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 
     differentiable_inputs = (

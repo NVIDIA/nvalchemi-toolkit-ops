@@ -2860,25 +2860,17 @@ def _pme_reciprocal_space_impl(
             )
             return fallback_energies
 
-        if _has_potentially_geometry_dependent_charges(positions, charges):
-            reciprocal_energies = _InjectChargeGrad.apply(
-                reciprocal_energies,
-                charges,
-                charge_grads.detach(),
-                batch_idx,
-            )
-        else:
-            reciprocal_energies = _InjectCachedEvalGradWithFallback.apply(
-                reciprocal_energies,
-                positions,
-                charges,
-                cell,
-                None,
-                charge_grads.detach(),
-                None,
-                batch_idx,
-                _fallback,
-            )
+        reciprocal_energies = _InjectCachedEvalGradWithFallback.apply(
+            reciprocal_energies,
+            positions,
+            charges,
+            cell,
+            None,
+            charge_grads.detach(),
+            None,
+            batch_idx,
+            _fallback,
+        )
 
     if return_cell_inv_t:
         return reciprocal_energies, forces, charge_grads, virial, cell_inv_t
@@ -3870,25 +3862,17 @@ def particle_mesh_ewald(
             )
             return rs_energy + rec_energy
 
-        if _has_potentially_geometry_dependent_charges(positions, charges):
-            energies = _InjectChargeGrad.apply(
-                energies,
-                charges,
-                charge_grads.detach(),
-                batch_idx,
-            )
-        else:
-            energies = _InjectCachedEvalGradWithFallback.apply(
-                energies,
-                positions,
-                charges,
-                cell,
-                None,
-                charge_grads.detach(),
-                None,
-                batch_idx,
-                _fallback,
-            )
+        energies = _InjectCachedEvalGradWithFallback.apply(
+            energies,
+            positions,
+            charges,
+            cell,
+            None,
+            charge_grads.detach(),
+            None,
+            batch_idx,
+            _fallback,
+        )
 
         return _build_electrostatic_result(
             energies,

@@ -1252,6 +1252,78 @@ class TestAutogradRealSpace:
         assert positions.grad.abs().sum() > 0
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_geometry_dependent_charges_weighted_grad(self, device):
+        """Hybrid real-space q(R) supports per-atom weighted energy gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        (
+            positions_base,
+            charges_base,
+            cell,
+            neighbor_list,
+            neighbor_ptr,
+            neighbor_shifts,
+        ) = create_dipole_system(device)
+        weight = torch.tensor(
+            [[0.1, -0.05, 0.02], [-0.1, 0.05, -0.02]],
+            dtype=torch.float64,
+            device=device,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+
+        positions = positions_base.clone().requires_grad_(True)
+        charges = charges_base + (positions * weight).sum(dim=1)
+        charges = charges - charges.mean()
+        energies, _forces = ewald_real_space(
+            positions,
+            charges,
+            cell,
+            alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+        energy_weights = torch.linspace(
+            1.0,
+            2.0,
+            energies.numel(),
+            dtype=energies.dtype,
+            device=device,
+        )
+        (weighted_grad,) = torch.autograd.grad(
+            energies,
+            positions,
+            grad_outputs=energy_weights,
+        )
+
+        positions_ref = positions_base.clone().requires_grad_(True)
+        charges_ref = charges_base + (positions_ref * weight).sum(dim=1)
+        charges_ref = charges_ref - charges_ref.mean()
+        energies_ref = ewald_real_space(
+            positions_ref,
+            charges_ref,
+            cell,
+            alpha,
+            neighbor_list=neighbor_list,
+            neighbor_ptr=neighbor_ptr,
+            neighbor_shifts=neighbor_shifts,
+        )
+        (weighted_grad_ref,) = torch.autograd.grad(
+            energies_ref,
+            positions_ref,
+            grad_outputs=energy_weights,
+        )
+
+        assert torch.isfinite(weighted_grad).all()
+        torch.testing.assert_close(
+            weighted_grad, weighted_grad_ref, rtol=1e-5, atol=1e-7
+        )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     def test_charge_gradients(self, device, dtype):
         """Test gradients w.r.t. charges."""
@@ -2268,6 +2340,68 @@ class TestAutogradReciprocalSpace:
 
         assert positions.grad is not None
         assert torch.isfinite(positions.grad).all()
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_hybrid_geometry_dependent_charges_weighted_grad(self, device):
+        """Hybrid reciprocal q(R) supports per-atom weighted energy gradients."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+
+        positions_base, charges_base, cell, _, _, _ = create_dipole_system(device)
+        weight = torch.tensor(
+            [[0.1, -0.05, 0.02], [-0.1, 0.05, -0.02]],
+            dtype=torch.float64,
+            device=device,
+        )
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=8.0).squeeze(0)
+
+        positions = positions_base.clone().requires_grad_(True)
+        charges = charges_base + (positions * weight).sum(dim=1)
+        charges = charges - charges.mean()
+        energies, _forces = ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            k_vectors,
+            alpha,
+            compute_forces=True,
+            hybrid_forces=True,
+        )
+        energy_weights = torch.linspace(
+            1.0,
+            2.0,
+            energies.numel(),
+            dtype=energies.dtype,
+            device=device,
+        )
+        (weighted_grad,) = torch.autograd.grad(
+            energies,
+            positions,
+            grad_outputs=energy_weights,
+        )
+
+        positions_ref = positions_base.clone().requires_grad_(True)
+        charges_ref = charges_base + (positions_ref * weight).sum(dim=1)
+        charges_ref = charges_ref - charges_ref.mean()
+        energies_ref = ewald_reciprocal_space(
+            positions_ref,
+            charges_ref,
+            cell,
+            k_vectors,
+            alpha,
+        )
+        (weighted_grad_ref,) = torch.autograd.grad(
+            energies_ref,
+            positions_ref,
+            grad_outputs=energy_weights,
+        )
+
+        assert torch.isfinite(weighted_grad).all()
+        torch.testing.assert_close(
+            weighted_grad, weighted_grad_ref, rtol=1e-5, atol=1e-7
+        )
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
