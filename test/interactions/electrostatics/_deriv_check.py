@@ -87,6 +87,8 @@ __all__ = [
     "assert_tape_vs_explicit",
     "fixed_charge_system",
     "toy_charge_model",
+    "qr_manual_chain_gradient",
+    "qr_hvp_positions",
 ]
 
 # Central-difference step. ~ eps_f64**(1/3) balances O(h^2) truncation error
@@ -718,3 +720,165 @@ def toy_charge_model(
     counts = counts.index_add(0, bidx, torch.ones_like(q_raw))
     means = sums / counts
     return q_raw - means.index_select(0, bidx)
+
+
+def qr_manual_chain_gradient(
+    energy_fn: EnergyFn,
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    *,
+    charge_model: Callable[..., torch.Tensor] = toy_charge_model,
+    batch_idx: torch.Tensor | None = None,
+    per_atom_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compare full ``q(R)`` autograd against the manual chain-rule decomposition.
+
+    Parameters
+    ----------
+    energy_fn : EnergyFn
+        ``(positions, charges, cell) -> (N,)`` per-atom energies.
+    positions : torch.Tensor, shape (N, 3)
+        Reference positions (float64 recommended).
+    cell : torch.Tensor
+        Fixed cell.
+    charge_model : callable
+        Differentiable ``q(R)`` mapping; defaults to :func:`toy_charge_model`.
+    batch_idx : torch.Tensor or None
+        Optional per-atom system index passed to ``charge_model``.
+    per_atom_weights : torch.Tensor or None
+        Optional per-atom loss weights. When set, both paths differentiate
+        ``(E * weights).sum()`` to exercise non-uniform CUDA cotangents.
+
+    Returns
+    -------
+    full_grad : torch.Tensor
+        ``grad(loss, positions)`` with ``charges = charge_model(positions)``.
+    manual_grad : torch.Tensor
+        ``dE/dR|_q + (dE/dq)(dq/dR)`` with independent leaf charges.
+    """
+    cell = cell.detach()
+
+    def _reduce(energies: torch.Tensor) -> torch.Tensor:
+        if per_atom_weights is not None:
+            return (energies * per_atom_weights).sum()
+        return energies.sum()
+
+    pos_leaf = positions.detach().clone().requires_grad_(True)
+    if batch_idx is None:
+        q_leaf = charge_model(pos_leaf).detach().requires_grad_(True)
+    else:
+        q_leaf = (
+            charge_model(pos_leaf, batch_idx=batch_idx).detach().requires_grad_(True)
+        )
+    e_leaf = energy_fn(pos_leaf, q_leaf, cell)
+    scalar_leaf = _reduce(e_leaf)
+    d_edr, d_edq = torch.autograd.grad(
+        scalar_leaf,
+        (pos_leaf, q_leaf),
+        retain_graph=False,
+    )
+
+    pos_q = positions.detach().clone().requires_grad_(True)
+    if batch_idx is None:
+        (chain,) = torch.autograd.grad(
+            charge_model(pos_q),
+            pos_q,
+            grad_outputs=d_edq.detach(),
+        )
+    else:
+        (chain,) = torch.autograd.grad(
+            charge_model(pos_q, batch_idx=batch_idx),
+            pos_q,
+            grad_outputs=d_edq.detach(),
+        )
+    manual_grad = d_edr + chain
+
+    pos_full = positions.detach().clone().requires_grad_(True)
+    if batch_idx is None:
+        q_full = charge_model(pos_full)
+    else:
+        q_full = charge_model(pos_full, batch_idx=batch_idx)
+    e_full = energy_fn(pos_full, q_full, cell)
+    (full_grad,) = torch.autograd.grad(_reduce(e_full), pos_full)
+
+    return full_grad, manual_grad
+
+
+def qr_hvp_positions(
+    energy_fn: EnergyFn,
+    positions: torch.Tensor,
+    cell: torch.Tensor,
+    direction: torch.Tensor,
+    *,
+    charge_model: Callable[..., torch.Tensor] = toy_charge_model,
+    batch_idx: torch.Tensor | None = None,
+    per_atom_weights: torch.Tensor | None = None,
+    eps: float = DEFAULT_FD_EPS,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """HVP of the full ``q(R)`` position gradient along ``direction``.
+
+    Compares autograd ``grad(grad(loss, p), p, grad_outputs=v)`` against a
+    central finite difference of the manual first-gradient chain rule.
+
+    Parameters
+    ----------
+    energy_fn : EnergyFn
+        ``(positions, charges, cell) -> (N,)`` per-atom energies.
+    positions : torch.Tensor, shape (N, 3)
+        Reference positions (float64 recommended).
+    cell : torch.Tensor
+        Fixed cell.
+    direction : torch.Tensor, shape (N, 3)
+        Direction vector for the Hessian-vector product.
+    charge_model : callable
+        Differentiable ``q(R)`` mapping; defaults to :func:`toy_charge_model`.
+    batch_idx : torch.Tensor or None
+        Optional per-atom system index passed to ``charge_model``.
+    per_atom_weights : torch.Tensor or None
+        Optional per-atom loss weights for non-uniform cotangent coverage.
+    eps : float
+        Finite-difference step size for the manual-gradient oracle.
+
+    Returns
+    -------
+    hvp_ad : torch.Tensor
+        Autograd Hessian-vector product of the full ``q(R)`` position gradient.
+    hvp_fd : torch.Tensor
+        Finite-difference oracle for the same quantity.
+    """
+    cell = cell.detach()
+    v = direction.detach()
+
+    def first_grad_manual(p: torch.Tensor) -> torch.Tensor:
+        full, manual = qr_manual_chain_gradient(
+            energy_fn,
+            p,
+            cell,
+            charge_model=charge_model,
+            batch_idx=batch_idx,
+            per_atom_weights=per_atom_weights,
+        )
+        del full
+        return manual
+
+    def loss_scalar(p: torch.Tensor) -> torch.Tensor:
+        if batch_idx is None:
+            q = charge_model(p)
+        else:
+            q = charge_model(p, batch_idx=batch_idx)
+        energies = energy_fn(p, q, cell)
+        if per_atom_weights is not None:
+            return (energies * per_atom_weights).sum()
+        return energies.sum()
+
+    p = positions.detach().clone().requires_grad_(True)
+    (grad_p,) = torch.autograd.grad(loss_scalar(p), p, create_graph=True)
+    (hvp_ad,) = torch.autograd.grad(grad_p, p, grad_outputs=v, retain_graph=False)
+
+    def grad_dot_v(p_in: torch.Tensor) -> torch.Tensor:
+        g = first_grad_manual(p_in)
+        return (g * v).sum()
+
+    hvp_fd = finite_difference_jacobian(grad_dot_v, positions.detach(), eps)
+
+    return hvp_ad, hvp_fd

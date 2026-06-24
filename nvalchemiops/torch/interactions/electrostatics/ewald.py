@@ -44,7 +44,7 @@ The full ``ewald_summation`` API treats energy autograd as the differentiable
 contract; its direct-output flags warn and are deprecated. The component APIs
 (``ewald_real_space`` and ``ewald_reciprocal_space``) intentionally retain direct
 forces as no-autograd MD/inference escape hatches. Component charge-gradient,
-virial, and hybrid direct outputs are legacy training-style outputs and warn.
+virial, and hybrid direct outputs are deprecated training-style outputs and warn.
 
 Examples
 --------
@@ -109,6 +109,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _component_direct_output_deprecation_msg,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
+    _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
@@ -213,7 +214,7 @@ def _prepare_cell(cell: torch.Tensor) -> tuple[torch.Tensor, int]:
 #     the reciprocal ``cell`` gradient through Torch.
 #
 # When nothing requires grad, the forward-only ``_DerivState.E`` kernel runs with no
-# derivative state (inference performance preserved). The legacy direct flags
+# derivative state (inference performance preserved). The deprecated direct flags
 # (``compute_forces`` / ``compute_charge_gradients`` / ``compute_virial`` /
 # ``hybrid_forces``) are served by :mod:`_ewald_direct` (tape-free forward kernels).
 
@@ -254,9 +255,9 @@ def _attach_virial_charge_grad(
 ) -> torch.Tensor:
     """Give the direct (kernel) ``virial`` a charge gradient via strain autograd.
 
-    The legacy ``compute_virial`` output is differentiable w.r.t. ``charges``
-    (the historical tape connected it). The direct factory kernel output is
-    forward-only, so this re-attaches the charge gradient with a straight-through:
+    The deprecated ``compute_virial`` output remains differentiable w.r.t.
+    ``charges``. The direct factory kernel output is forward-only, so this
+    re-attaches the charge gradient with a straight-through:
     the value stays the kernel ``virial_value`` while the gradient comes from the
     row-vector displacement virial ``W = -dE/dstrain`` of the autograd-connected
     energy, recomputed with ``positions`` / ``cell`` detached so only the
@@ -321,12 +322,12 @@ def _real_space_energy_outputs(
     want_charge_grad: bool = False,
     want_virial: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
-    """Per-atom real-space Ewald energy plus optional legacy direct outputs.
+    """Per-atom real-space Ewald energy plus optional deprecated direct outputs.
 
     Differentiable in ``positions`` / ``charges`` through the explicit chain and in ``cell``
     through :func:`real_space_cell_connect` (literal ``dE/dcell``). When no input
     requires grad, the plain forward-only chain op runs (no derivative state).
-    Legacy direct outputs reuse the same forward launch and remain forward-only.
+    Deprecated direct outputs reuse the same forward launch and remain forward-only.
     """
     num_atoms = positions.shape[0]
     device = positions.device
@@ -710,6 +711,14 @@ def ewald_real_space(
     Energies are always float64 for numerical stability during accumulation.
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
 
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (q = q(R)), ordinary first-order losses may use cached partial derivatives
+    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    derivatives recompute safe partials or connected gradients as needed to
+    avoid double-counting that chain term (issue #115). Hybrid direct-output
+    mode uses :func:`_InjectChargeGrad` because positions and cell are detached
+    and direct forces/virials are forward-only.
+
     """
     component_deprecated_flags = tuple(
         name
@@ -790,6 +799,12 @@ def ewald_real_space(
             want_virial=compute_virial,
         )
         if charges.requires_grad:
+            charge_graph_depends_on_positions = (
+                _has_potentially_geometry_dependent_charges(
+                    positions,
+                    charges,
+                )
+            )
 
             def _fallback(p, q, c):
                 return _real_space_energy(
@@ -806,17 +821,25 @@ def ewald_real_space(
                     mask_value=mask_value,
                 )
 
-            energies = _InjectCachedEvalGradWithFallback.apply(
-                energies,
-                positions,
-                charges,
-                cell,
-                None,
-                charge_grads.detach(),
-                None,
-                batch_idx,
-                _fallback,
-            )
+            if charge_graph_depends_on_positions:
+                energies = _InjectChargeGrad.apply(
+                    energies,
+                    charges,
+                    charge_grads.detach(),
+                    batch_idx,
+                )
+            else:
+                energies = _InjectCachedEvalGradWithFallback.apply(
+                    energies,
+                    positions,
+                    charges,
+                    cell,
+                    None,
+                    charge_grads.detach(),
+                    None,
+                    batch_idx,
+                    _fallback,
+                )
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 
     if (
@@ -824,6 +847,7 @@ def ewald_real_space(
         and not cell.requires_grad
         and not alpha.requires_grad
         and (positions.requires_grad or charges.requires_grad)
+        and not _has_potentially_geometry_dependent_charges(positions, charges)
     ):
         # Ordinary scalar first-derivative evaluations can use detached direct
         # caches. Weighted losses and create_graph=True rebuild the true energy
@@ -873,7 +897,7 @@ def ewald_real_space(
         )
         return energies
 
-    # Differentiable energy plus optional legacy direct outputs from one chain
+    # Differentiable energy plus optional deprecated direct outputs from one chain
     # forward launch. Autograd still propagates only from the energy output.
     energies, forces, charge_grads, virial = _real_space_energy_outputs(
         positions,
@@ -895,7 +919,7 @@ def ewald_real_space(
     if not want_direct:
         return energies
 
-    # The legacy direct virial is differentiable w.r.t. charges; re-attach that
+    # The deprecated direct virial is differentiable w.r.t. charges; re-attach that
     # gradient (value stays the kernel output) via the strain virial of the
     # autograd-connected real-space energy.
     if compute_virial and charges.requires_grad:
@@ -1010,6 +1034,12 @@ def ewald_reciprocal_space(
     Forces, virial, and charge gradients match the input dtype (float32 or float64).
     ``k_vectors`` are setup metadata. Caller-supplied vectors are treated as
     static values that correspond to the current ``cell``.
+
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (q = q(R)), ordinary first-order losses may use cached partial derivatives
+    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    derivatives recompute safe partials or connected gradients as needed to
+    avoid double-counting that chain term (issue #115).
     """
     return _ewald_reciprocal_space(
         positions=positions,
@@ -1152,6 +1182,12 @@ def _ewald_reciprocal_space(
             batch_idx,
         )
         if charges.requires_grad:
+            charge_graph_depends_on_positions = (
+                _has_potentially_geometry_dependent_charges(
+                    positions,
+                    charges,
+                )
+            )
 
             def _fallback(p, q, c):
                 return _reciprocal_space_energy(
@@ -1163,17 +1199,25 @@ def _ewald_reciprocal_space(
                     batch_idx=batch_idx,
                 )
 
-            energies = _InjectCachedEvalGradWithFallback.apply(
-                energies,
-                positions,
-                charges,
-                cell,
-                None,
-                charge_grads.detach(),
-                None,
-                batch_idx,
-                _fallback,
-            )
+            if charge_graph_depends_on_positions:
+                energies = _InjectChargeGrad.apply(
+                    energies,
+                    charges,
+                    charge_grads.detach(),
+                    batch_idx,
+                )
+            else:
+                energies = _InjectCachedEvalGradWithFallback.apply(
+                    energies,
+                    positions,
+                    charges,
+                    cell,
+                    None,
+                    charge_grads.detach(),
+                    None,
+                    batch_idx,
+                    _fallback,
+                )
         return _build_result(energies, forces, charge_grads.to(positions.dtype), virial)
 
     differentiable_inputs = (
@@ -1381,6 +1425,12 @@ def ewald_summation(
     Energies are accumulated in float64 for numerical stability. Deprecated
     direct forces, charge gradients, and virials match the input dtype where the
     underlying component path returns typed outputs.
+
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (q = q(R)), ordinary first-order losses may use cached partial derivatives
+    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    derivatives recompute safe partials or connected gradients as needed to
+    avoid double-counting that chain term (issue #115).
 
     Enabled output flags are appended in order: energies, [forces],
     [charge_gradients], [virial]. A single output is returned unwrapped;

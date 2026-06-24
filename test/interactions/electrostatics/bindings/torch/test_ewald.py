@@ -80,6 +80,8 @@ from test.interactions.electrostatics._deriv_check import (
     finite_difference_jacobian,
     gradgradcheck_energy,
     max_abs_rel,
+    qr_hvp_positions,
+    qr_manual_chain_gradient,
     toy_charge_model,
 )
 from test.interactions.electrostatics.bindings.torch.test_utils import (
@@ -110,7 +112,7 @@ def _torchpme_smearing(alpha: float | torch.Tensor) -> float:
 
 
 def _ewald_summation_without_direct_output_deprecation(*args, **kwargs):
-    """Call legacy direct-output Ewald paths without polluting warning summaries."""
+    """Call deprecated direct-output Ewald paths without polluting warning summaries."""
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",
@@ -7763,8 +7765,8 @@ class TestEwaldEnergyDerivativeContract:
         )
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_qR_legacy_direct_equals_fixed_partial(self, device):
-        """Legacy direct force == fixed-charge partial; full q(R) force differs by dE/dq.dq/dR."""
+    def test_qR_direct_output_equals_fixed_partial(self, device):
+        """Direct force equals the fixed-charge partial; full q(R) force includes dE/dq.dq/dR."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
@@ -7780,8 +7782,8 @@ class TestEwaldEnergyDerivativeContract:
         k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0)
         q_fixed = toy_charge_model(positions).detach()
 
-        # Legacy direct force: kernel -dE/dR at fixed (detached) q(R).
-        _, legacy_force = ewald_summation(
+        # Direct-output force: kernel -dE/dR at fixed (detached) q(R).
+        _, direct_force = ewald_summation(
             positions,
             q_fixed,
             cell,
@@ -7809,11 +7811,11 @@ class TestEwaldEnergyDerivativeContract:
         partial_force = -gp
 
         torch.testing.assert_close(
-            legacy_force,
+            direct_force,
             partial_force,
             rtol=1e-5,
             atol=1e-7,
-            msg="legacy direct force must equal the fixed-charge partial",
+            msg="direct-output force must equal the fixed-charge partial",
         )
 
         # Full q(R) force (charges graph-connected) differs by the chain-rule term.
@@ -7901,6 +7903,128 @@ class TestEwaldEnergyDerivativeContract:
         max_abs, max_rel = max_abs_rel(fd, ad)
         assert torch.allclose(fd, ad, rtol=C_VIRIAL_RTOL, atol=C_VIRIAL_ATOL), (
             f"batch strain-virial FD vs autograd: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
+        )
+
+
+class TestEwaldQRGeometryFallback:
+    """q(R) manual-chain and HVP guards for CUDA non-uniform cotangent fallback."""
+
+    def _neighbors(self, positions, cell, device):
+        return cell_list(
+            positions,
+            5.0,
+            cell,
+            torch.tensor([[True, True, True]], device=device),
+            return_neighbor_list=True,
+        )
+
+    def _real_energy_fn(self, positions, cell, device, alpha, nl, nptr, ns):
+        def energy_fn(p, q, c):
+            return ewald_real_space(
+                p,
+                q,
+                c,
+                alpha=alpha,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+            )
+
+        return energy_fn
+
+    def _recip_energy_fn(self, positions, cell, device, alpha):
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0).squeeze(0)
+
+        def energy_fn(p, q, c):
+            return ewald_reciprocal_space(p, q, c, k_vectors, alpha)
+
+        return energy_fn
+
+    def _summation_energy_fn(self, positions, cell, device, alpha, nl, nptr, ns):
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0)
+
+        def energy_fn(p, q, c):
+            return ewald_summation(
+                p,
+                q,
+                c,
+                alpha=alpha,
+                k_vectors=k_vectors,
+                neighbor_list=nl,
+                neighbor_ptr=nptr,
+                neighbor_shifts=ns,
+            )
+
+        return energy_fn
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    @pytest.mark.parametrize("which", ["real", "recip", "summation"])
+    def test_qR_manual_chain_weighted_loss(self, device, which):
+        """Weighted q(R) loss: full autograd == manual chain (CUDA fallback path)."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, _, cell = _contract_dipole(device)
+        nl, nptr, ns = self._neighbors(positions, cell, device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        if which == "real":
+            energy_fn = self._real_energy_fn(
+                positions, cell, device, alpha, nl, nptr, ns
+            )
+        elif which == "recip":
+            energy_fn = self._recip_energy_fn(positions, cell, device, alpha)
+        else:
+            energy_fn = self._summation_energy_fn(
+                positions, cell, device, alpha, nl, nptr, ns
+            )
+        weights = torch.tensor([1.2, 0.8], dtype=torch.float64, device=device)
+        full, manual = qr_manual_chain_gradient(
+            energy_fn,
+            positions,
+            cell,
+            per_atom_weights=weights,
+        )
+        max_abs, max_rel = max_abs_rel(full, manual)
+        rtol = 2e-3 if which == "summation" else 1e-4
+        assert torch.allclose(full, manual, rtol=rtol, atol=1e-6), (
+            f"{which} q(R) manual chain weighted: max_abs={max_abs:.3e} "
+            f"max_rel={max_rel:.3e}"
+        )
+
+    @pytest.mark.parametrize("device", ["cuda"])
+    @pytest.mark.parametrize("which", ["real", "summation"])
+    def test_qR_hvp_weighted_loss(self, device, which):
+        """q(R) HVP along random direction matches FD of manual first gradient."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, _, cell = _contract_dipole(device)
+        nl, nptr, ns = self._neighbors(positions, cell, device)
+        alpha = torch.tensor([0.3], dtype=torch.float64, device=device)
+        if which == "real":
+            energy_fn = self._real_energy_fn(
+                positions, cell, device, alpha, nl, nptr, ns
+            )
+        else:
+            energy_fn = self._summation_energy_fn(
+                positions, cell, device, alpha, nl, nptr, ns
+            )
+        weights = torch.tensor([1.2, 0.8], dtype=torch.float64, device=device)
+        gen = torch.Generator(device=device)
+        gen.manual_seed(115)
+        direction = torch.randn_like(positions, generator=gen)
+        direction = direction / direction.norm()
+        hvp_ad, hvp_fd = qr_hvp_positions(
+            energy_fn,
+            positions,
+            cell,
+            direction,
+            per_atom_weights=weights,
+        )
+        max_abs, max_rel = max_abs_rel(hvp_ad, hvp_fd)
+        rtol = 2e-3 if which == "summation" else 1e-4
+        assert torch.allclose(hvp_ad, hvp_fd, rtol=rtol, atol=1e-5), (
+            f"{which} q(R) HVP weighted: max_abs={max_abs:.3e} max_rel={max_rel:.3e}"
         )
 
 
@@ -8357,11 +8481,9 @@ class TestEwaldDoubleBackward:
 
         Regression guard for the energy-autograd ``q(R)`` higher-order contract in
         the batched / asymmetric regime: the single-system near-symmetric
-        ``_energy_fn`` cases (``_contract_dipole``) do not exercise it, and this is
-        exactly the regime the PR85-compare flagged (the disagreement there is a
-        legacy direct/tape vs energy-autograd *contract* difference, not a bug --
-        finite difference is the oracle here). ``charges = toy_charge_model(p)``
-        stays in the graph so ``loss.backward()`` must compose the
+        ``_energy_fn`` cases (``_contract_dipole``) do not exercise it. Finite
+        difference over the full ``q(R)`` energy is the oracle here: ``charges =
+        toy_charge_model(p)`` stays in the graph so ``loss.backward()`` must compose the
         ``dE/dq * dq/dR`` chain-rule second order; FD over positions is the oracle.
         """
         if device == "cuda" and not torch.cuda.is_available():
@@ -8542,8 +8664,8 @@ class TestDirectOutputDeprecation:
         torch.testing.assert_close(e_flag, e_no_flag, rtol=0, atol=1e-10)
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
-    def test_legacy_tuple_ordering_unchanged(self, device):
-        """Legacy direct outputs keep their documented (E, F, dQ, virial) ordering."""
+    def test_direct_output_tuple_ordering_unchanged(self, device):
+        """Deprecated direct outputs keep their documented (E, F, dQ, virial) ordering."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
