@@ -135,7 +135,7 @@ def test_cell_list_query_kernel_uses_pair_fn_object_cache_key():
 
 
 def test_pair_centric_launch_guard_rejects_large_batched_shape():
-    """The guard rejects the OMat24 :60 cutoff-15 pair-centric launch shape."""
+    """The guard rejects an oversized batched pair-centric launch shape."""
     n_outer = compute_batch_pair_centric_n_outer((23, 25, 23), half_fill=False)
     launch_size = pair_centric_launch_size(3840, n_outer, 64)
 

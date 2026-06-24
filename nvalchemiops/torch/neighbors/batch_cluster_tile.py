@@ -46,6 +46,9 @@ from nvalchemiops.neighbors.cluster_tile import (
 from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_cluster_tile_segments as wp_estimate_batch_cluster_tile_segments,
 )
+from nvalchemiops.neighbors.cluster_tile import (
+    estimate_batch_max_tiles_per_group as wp_estimate_batch_max_tiles_per_group,
+)
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
     estimate_max_neighbors,
@@ -64,6 +67,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "TILE_GROUP_SIZE",
+    "estimate_batch_max_tiles_per_group",
     "estimate_batch_cluster_tile_list_sizes",
     "estimate_batch_cluster_tile_segments",
     "allocate_batch_cluster_tile_list",
@@ -115,48 +119,42 @@ def _(
 # =============================================================================
 # Sizing + allocation helpers
 # =============================================================================
-def _batch_max_tiles_per_group(
+def estimate_batch_max_tiles_per_group(
     batch_ptr: torch.Tensor,
     cutoff: float,
     cell_batch: torch.Tensor,
+    *,
+    safety: float = 2.0,
+    floor: int = 256,
 ) -> int:
-    """Geometry-aware ``max_tiles_per_group`` for the batched compact buffer.
+    """Estimate batched ``max_tiles_per_group`` from per-system cells.
 
-    The compact buffer is ``ngroup_total * min(ngroup_total, mtpg)``, so the
-    cross-system ``mtpg`` must cover the densest system's neighbor-group count.
-    Returns the max of the per-system estimates (floored at the old default).
+    Parameters
+    ----------
+    batch_ptr : torch.Tensor, shape (num_systems + 1,)
+        Cumulative atom counts.
+    cutoff : float
+        Cartesian cutoff used for cluster-tile construction.
+    cell_batch : torch.Tensor, shape (num_systems, 3, 3)
+        Per-system cell matrices.
+    safety : float, default 2.0
+        Multiplier on the volumetric estimate.
+    floor : int, default 256
+        Minimum returned value for batched compact buffers.
+
+    Returns
+    -------
+    int
+        Shared ``max_tiles_per_group`` for the batched compact tile buffer.
     """
-    floor = 256
-    counts = (batch_ptr[1:] - batch_ptr[:-1]).to(torch.int64)
-    if counts.numel() == 0:
-        return floor
-
-    ngroup = torch.div(
-        counts + TILE_GROUP_SIZE - 1,
-        TILE_GROUP_SIZE,
-        rounding_mode="floor",
+    volumes = torch.linalg.det(cell_batch).abs().view(-1)
+    return wp_estimate_batch_max_tiles_per_group(
+        batch_ptr,
+        cutoff,
+        volumes,
+        safety=safety,
+        floor=floor,
     )
-    volumes = torch.linalg.det(cell_batch.to(torch.float64)).abs().reshape(-1)
-    valid_density = (ngroup > 1) & (volumes > 0.0) & (float(cutoff) > 0.0)
-
-    cluster_volumes = torch.where(
-        valid_density,
-        volumes / ngroup.clamp_min(1).to(torch.float64),
-        torch.ones_like(volumes),
-    )
-    cluster_extents = cluster_volumes.pow(1.0 / 3.0)
-    radii = float(cutoff) + 2.0 * cluster_extents
-    neighbor_estimates = (
-        torch.ceil(
-            2.0 * (4.0 / 3.0) * torch.pi * radii * radii * radii / cluster_volumes,
-        )
-        .to(torch.int64)
-        .clamp_min(floor)
-    )
-    fallback_estimates = torch.minimum(ngroup, torch.full_like(ngroup, floor))
-    per_system = torch.where(valid_density, neighbor_estimates, fallback_estimates)
-    per_system = torch.where(ngroup <= 1, torch.ones_like(per_system), per_system)
-    return int(per_system.max().clamp_min(floor).item())
 
 
 def estimate_batch_cluster_tile_list_sizes(
@@ -1882,7 +1880,7 @@ def batch_cluster_tile_neighbor_list(
 
     if sorted_atom_index is None:
         if max_tiles_per_group is None:
-            max_tiles_per_group = _batch_max_tiles_per_group(
+            max_tiles_per_group = estimate_batch_max_tiles_per_group(
                 batch_ptr, build_cutoff, cell_batch
             )
         (

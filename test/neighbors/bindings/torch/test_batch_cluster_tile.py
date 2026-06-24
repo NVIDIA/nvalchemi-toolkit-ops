@@ -19,7 +19,12 @@ import pytest
 import torch
 
 import nvalchemiops.torch.neighbors.batch_cluster_tile as batch_cluster_tile_module
-from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
+from nvalchemiops.neighbors.cluster_tile import (
+    estimate_batch_max_tiles_per_group as estimate_core_batch_max_tiles_per_group,
+)
+from nvalchemiops.neighbors.cluster_tile import (
+    estimate_max_tiles_per_group,
+)
 from nvalchemiops.neighbors.neighbor_utils import NeighborOverflowError
 from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
@@ -28,6 +33,7 @@ from nvalchemiops.torch.neighbors.batch_cluster_tile import (
     batch_cluster_tile_neighbor_list,
     batch_query_cluster_tile,
     estimate_batch_cluster_tile_list_sizes,
+    estimate_batch_max_tiles_per_group,
 )
 
 from ...test_utils import (
@@ -157,7 +163,7 @@ def test_batch_cluster_tile_max_tiles_per_group_bypasses_sizing(monkeypatch):
 
     def fail_sizing(*args, **kwargs):
         del args, kwargs
-        raise AssertionError("_batch_max_tiles_per_group should not be called")
+        raise AssertionError("estimate_batch_max_tiles_per_group should not be called")
 
     def fake_allocate(batch_ptr, device, *, dtype, max_tiles_per_group):
         del batch_ptr, device, dtype
@@ -165,7 +171,7 @@ def test_batch_cluster_tile_max_tiles_per_group_bypasses_sizing(monkeypatch):
         raise RuntimeError("allocation reached")
 
     monkeypatch.setattr(
-        batch_cluster_tile_module, "_batch_max_tiles_per_group", fail_sizing
+        batch_cluster_tile_module, "estimate_batch_max_tiles_per_group", fail_sizing
     )
     monkeypatch.setattr(
         batch_cluster_tile_module, "allocate_batch_cluster_tile_list", fake_allocate
@@ -207,7 +213,7 @@ def test_batch_cluster_tile_max_tiles_per_group_vectorized_helper():
             ),
         )
 
-    got = batch_cluster_tile_module._batch_max_tiles_per_group(
+    got = estimate_batch_max_tiles_per_group(
         batch_ptr,
         cutoff,
         cell_batch,
@@ -215,6 +221,29 @@ def test_batch_cluster_tile_max_tiles_per_group_vectorized_helper():
 
     assert got == expected
     assert got > 256
+
+
+def test_core_batch_max_tiles_per_group_keeps_batch_floor_for_small_systems():
+    """Small batched systems keep the historical compact-buffer floor."""
+    assert (
+        estimate_core_batch_max_tiles_per_group([0, 1, 2], 2.0, [1000.0, 1000.0]) == 256
+    )
+
+
+def test_core_batch_max_tiles_per_group_validates_cell_volume_count():
+    """The core estimator requires one cell volume per batch segment."""
+    with pytest.raises(ValueError, match="cell_volumes"):
+        estimate_core_batch_max_tiles_per_group([0, 32, 64], 2.0, [1000.0])
+
+
+def test_core_batch_max_tiles_per_group_validates_monotonic_batch_ptr():
+    """The core estimator rejects decreasing batch pointers."""
+    with pytest.raises(ValueError, match="non-decreasing"):
+        estimate_core_batch_max_tiles_per_group(
+            [0, 64, 32],
+            2.0,
+            [1000.0, 1000.0],
+        )
 
 
 def _canonicalize_matrix_full(

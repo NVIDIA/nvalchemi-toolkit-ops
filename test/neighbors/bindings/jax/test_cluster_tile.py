@@ -741,8 +741,8 @@ class TestJaxClusterTileTileSizing:
     """The JAX tile buffer must geometry-size (concrete) / fall back (traced).
 
     Guards the fix that stopped the JAX default/auto-select path from silently
-    undercounting dense high-cutoff systems (fixed ``max_tiles_per_group=256``
-    overflowed; e.g. ammonia ngroup=1024 at 20/25 A).
+    undercounting dense high-cutoff systems where a fixed
+    ``max_tiles_per_group=256`` cannot cover all neighboring row groups.
     """
 
     def test_geometry_sizing_scales_with_cutoff_when_concrete(self):

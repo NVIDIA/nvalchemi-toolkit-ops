@@ -49,6 +49,7 @@ from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     batch_query_cluster_tile_coo,
     estimate_batch_cluster_tile_list_sizes,
     estimate_batch_cluster_tile_segments,
+    estimate_batch_max_tiles_per_group,
 )
 
 # Batch naive functions
@@ -622,6 +623,7 @@ __all__ = [
     "batch_query_cell_list",
     "batch_cell_list",
     "estimate_batch_cluster_tile_list_sizes",
+    "estimate_batch_max_tiles_per_group",
     "estimate_batch_cluster_tile_segments",
     "allocate_batch_cluster_tile_list",
     "batch_build_cluster_tile_list",
