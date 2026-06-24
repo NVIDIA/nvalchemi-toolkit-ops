@@ -24,6 +24,7 @@ import pytest
 
 from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
+    _batch_tile_buffer_max_tiles_per_group,
     allocate_batch_cluster_tile_list,
     batch_cluster_tile_neighbor_list,
     estimate_batch_cluster_tile_list_sizes,
@@ -317,6 +318,35 @@ class TestEstimateBatchSizes:
 
         with pytest.raises(ValueError, match="batch_ptr.*concrete"):
             call_with_traced_batch_ptr(jnp.array([0, 32], dtype=jnp.int32))
+
+    def test_batch_tile_buffer_max_tiles_per_group_empty_batch_fallback(self):
+        """Empty concrete batches fall back without calling the public estimator."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+
+        got = _batch_tile_buffer_max_tiles_per_group(
+            positions,
+            batch_ptr,
+            2.0,
+            cell_batch,
+        )
+
+        assert got == 1
+
+    def test_batch_tile_buffer_max_tiles_per_group_rejects_cell_batch_mismatch(self):
+        """Non-empty batch pointers still validate against cell_batch length."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="cell_volumes"):
+            _batch_tile_buffer_max_tiles_per_group(
+                positions,
+                batch_ptr,
+                2.0,
+                cell_batch,
+            )
 
     def test_aligned_two_systems(self):
         batch_ptr = jnp.array([0, 64, 192], dtype=jnp.int32)

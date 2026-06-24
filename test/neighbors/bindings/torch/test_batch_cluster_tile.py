@@ -223,6 +223,45 @@ def test_batch_cluster_tile_max_tiles_per_group_vectorized_helper():
     assert got > 256
 
 
+def test_batch_max_tiles_per_group_uses_float64_volumes_for_float32_cells():
+    """Float32 cell inputs should size from float64 determinant volumes."""
+    batch_ptr = torch.tensor([0, 100000], dtype=torch.int32)
+    cell_batch = torch.tensor(
+        [
+            [
+                [10.0, 0.1, 0.05],
+                [0.0, 10.0, 0.08],
+                [0.02, 0.03, 10.0],
+            ],
+        ],
+        dtype=torch.float32,
+    )
+    cutoff = 25.0
+    volumes_f64 = torch.linalg.det(cell_batch.to(torch.float64)).abs().view(-1)
+    volumes_f32 = torch.linalg.det(cell_batch).abs().view(-1)
+    assert volumes_f32.item() != volumes_f64.item()
+
+    expected = estimate_core_batch_max_tiles_per_group(
+        batch_ptr,
+        cutoff,
+        volumes_f64,
+    )
+    old_estimate = estimate_core_batch_max_tiles_per_group(
+        batch_ptr,
+        cutoff,
+        volumes_f32,
+    )
+    assert old_estimate != expected
+    got = estimate_batch_max_tiles_per_group(
+        batch_ptr,
+        cutoff,
+        cell_batch,
+    )
+
+    assert got == expected
+    assert got > 256
+
+
 def test_core_batch_max_tiles_per_group_keeps_batch_floor_for_small_systems():
     """Small batched systems keep the historical compact-buffer floor."""
     assert (

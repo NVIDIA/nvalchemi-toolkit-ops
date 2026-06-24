@@ -91,7 +91,13 @@ def _batch_tile_buffer_max_tiles_per_group(
     max_ng = max(ngroups) if ngroups else 1
     cutoff_concrete = not isinstance(cutoff, jax.core.Tracer)
     vols = _concrete_cell_batch_volumes(cell_batch)
-    if isinstance(positions, jax.core.Tracer) or vols is None or not cutoff_concrete:
+    empty_batch = len(per_sys) == 0 and vols == []
+    if (
+        isinstance(positions, jax.core.Tracer)
+        or vols is None
+        or empty_batch
+        or not cutoff_concrete
+    ):
         return max(max_ng, 1)
     return estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_batch)
 
@@ -169,9 +175,6 @@ def estimate_batch_max_tiles_per_group(
             ) from exc
         if arr.ndim != 3 or arr.shape[1:] != (3, 3):
             raise ValueError("cell_batch must have shape (num_systems, 3, 3)")
-        raise ValueError(
-            "cell_batch must be concrete to estimate batch max_tiles_per_group"
-        )
 
     return _estimate_batch_max_tiles_per_group(
         ptr_values,

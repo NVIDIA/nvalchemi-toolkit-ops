@@ -147,7 +147,7 @@ def estimate_batch_max_tiles_per_group(
     int
         Shared ``max_tiles_per_group`` for the batched compact tile buffer.
     """
-    volumes = torch.linalg.det(cell_batch).abs().view(-1)
+    volumes = torch.linalg.det(cell_batch.to(torch.float64)).abs().view(-1)
     return wp_estimate_batch_max_tiles_per_group(
         batch_ptr,
         cutoff,
