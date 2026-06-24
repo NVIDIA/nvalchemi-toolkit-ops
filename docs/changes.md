@@ -43,7 +43,7 @@
 
 ### Fixed
 
-- Fixed an issue with JAX `naive` PBC pair-output paths that dropped non-zero 
+- Fixed an issue with JAX `naive` PBC pair-output paths that dropped non-zero
   periodic images. The  JAX `naive_neighbor_list` pair-output path (`return_distances` /
   `return_vectors`, and now `pair_fn`) launched its periodic kernel with the
   shift axis pinned to 1, so when `cutoff` exceeded half the cell width (R>1)
