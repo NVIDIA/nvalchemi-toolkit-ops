@@ -828,12 +828,9 @@ direct-output escape hatch for no-autograd MD/inference loops. Snippets in this
 section that still request full-API direct outputs show compatibility behavior
 and emit `DeprecationWarning`.
 
-For JAX PME under `jax.jit` or other JAX transformations, pass explicit
-`mesh_dimensions` when `cell`, `alpha`, or batch metadata are traced. For JAX
-Ewald under `jax.jit`, pass `miller_bounds` as a concrete static tuple or build
-`k_vectors` outside jit; dynamic `miller_bounds` changes the reciprocal array
-shape and is not traceable.
-`mesh_spacing` and `accuracy`-based mesh sizing need concrete mesh setup values.
+For hot-path and JIT setup guidance, including when to pass explicit mesh and
+reciprocal metadata, see {ref}`sync-free-electrostatics`. The examples below use
+explicit `mesh_dimensions` unless they are demonstrating setup inference.
 
 #### Basic Usage
 
@@ -1967,6 +1964,11 @@ neighbor_list_coo, neighbor_ptr, neighbor_shifts = neighbor_list(
 # Per-system alpha values (optional)
 alphas = torch.tensor([0.3, 0.35, 0.3], dtype=torch.float64, device=positions.device)
 
+# Upper bound on per-system atom counts (for sync-free batched reciprocal)
+max_atoms_per_system = max(
+    len(pos_system0), len(pos_system1), len(pos_system2)
+)
+
 # Batched calculation
 energies, forces = ewald_summation(
     positions=positions,
@@ -1979,6 +1981,7 @@ energies, forces = ewald_summation(
     neighbor_ptr=neighbor_ptr,
     neighbor_shifts=neighbor_shifts,
     compute_forces=True,
+    max_atoms_per_system=max_atoms_per_system,
 )
 
 # energies: (total_atoms,) - per-atom energies
@@ -1990,7 +1993,8 @@ energy_per_system.scatter_add_(0, batch_idx.long(), energies)
 Batch mode uses one shared set of Miller indices for the reciprocal-space
 calculation. If `k_cutoff` is supplied per system, either directly or via
 `estimate_ewald_parameters`, `nvalchemiops` uses the maximum cutoff across the
-batch to build that shared set.
+batch to build that shared set. For cross-framework sync-free setup guidance,
+see {ref}`sync-free-electrostatics`.
 
 :::
 
@@ -2613,6 +2617,42 @@ intended loss.
 Second-order support means differentiating scalar losses through these energy
 paths with Torch/JAX autograd. Electrostatics does not expose public Hessian or
 Jacobian tensors/functions.
+
+(sync-free-electrostatics)=
+
+### Sync-Free Electrostatics Calls
+
+Here, sync-free means avoiding known Toolkit-Ops host/device reads for
+shape, launch-size, or setup inference on Torch CUDA or JAX tracing hot paths. It is
+not a blanket guarantee that PyTorch, JAX, Warp, CUDA kernels, FFT libraries, or
+user-side logging never synchronize internally. The guidance below applies to
+energy-returning autograd paths unless stated otherwise; deprecated full-API
+direct-output flags and component direct outputs are compatibility or
+MD/inference paths, not the primary differentiable sync-free contract.
+
+For Torch batched Ewald reciprocal calls, pass a host-known
+`max_atoms_per_system` upper bound to `ewald_reciprocal_space` or
+`ewald_summation`. When this argument is omitted, the reciprocal kernel infers
+the launch bound from `atom_start` / `atom_end` and may synchronize on CUDA.
+For Torch PME, pass explicit `mesh_dimensions` in hot training loops; deriving
+mesh dimensions from `mesh_spacing` is setup inference and can require a host
+read. For fixed-cell Ewald/PME loops, precompute `k_vectors`, PME reciprocal
+metadata, and B-spline moduli outside the training step when the cell is fixed.
+
+For JAX under `jax.jit` or other transformations, pass concrete/static setup
+values: `max_atoms_per_system` for batched Ewald, explicit `mesh_dimensions` for
+PME, and static `miller_bounds` or prebuilt `k_vectors` for Ewald reciprocal
+shapes. Avoid parameter estimation and mesh-spacing-to-dimensions inference
+inside traced or hot derivative functions; run setup once outside the transformed
+function and pass constants into the energy call.
+
+These setup rules do not change derivative support. Torch Ewald/PME first and
+second derivatives for training losses come from scalar energy autograd; use
+`torch.autograd.grad(..., create_graph=True)` when differentiating through
+forces or stress. JAX Ewald/PME first-order energy autograd supports positions,
+charges, and strain-first virials. Higher-order JAX support is limited to tested
+position and charge scalar losses; JAX PME cell/stress/strain HVPs remain
+unsupported.
 
 ### Fixed-Cell Metadata Recipes
 

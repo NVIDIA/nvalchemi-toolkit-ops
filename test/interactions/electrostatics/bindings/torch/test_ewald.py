@@ -8900,5 +8900,205 @@ class TestDirectOutputDeprecation:
         assert torch.isfinite(recip_energy).all()
 
 
+class TestMaxAtomsPerSystem:
+    """Explicit ``max_atoms_per_system`` avoids launch-bound inference on batched recip."""
+
+    @staticmethod
+    def _batch_recip_inputs(device):
+        """Return batch inputs for reciprocal-space tests."""
+        positions, charges, cell, batch_idx = _contract_batch(device)
+        alpha = torch.tensor([0.3, 0.3], dtype=torch.float64, device=device)
+        k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=2.0)
+        return positions, charges, cell, batch_idx, alpha, k_vectors
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batched_reciprocal_energy_matches_inferred(self, device):
+        """Explicit launch bound matches the legacy inferred path."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, batch_idx, alpha, k_vectors = (
+            self._batch_recip_inputs(device)
+        )
+        inferred = ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha, batch_idx=batch_idx
+        )
+        explicit = ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            k_vectors,
+            alpha,
+            batch_idx=batch_idx,
+            max_atoms_per_system=2,
+        )
+        torch.testing.assert_close(inferred, explicit, rtol=0, atol=0)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batched_reciprocal_first_derivative_matches_inferred(self, device):
+        """First derivatives match when an explicit launch bound is supplied."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, batch_idx, alpha, k_vectors = (
+            self._batch_recip_inputs(device)
+        )
+        pos_inf = positions.clone().requires_grad_(True)
+        pos_exp = positions.clone().requires_grad_(True)
+        e_inf = ewald_reciprocal_space(
+            pos_inf, charges, cell, k_vectors, alpha, batch_idx=batch_idx
+        )
+        e_exp = ewald_reciprocal_space(
+            pos_exp,
+            charges,
+            cell,
+            k_vectors,
+            alpha,
+            batch_idx=batch_idx,
+            max_atoms_per_system=2,
+        )
+        (g_inf,) = torch.autograd.grad(e_inf.sum(), pos_inf)
+        (g_exp,) = torch.autograd.grad(e_exp.sum(), pos_exp)
+        torch.testing.assert_close(g_inf, g_exp, rtol=1e-10, atol=1e-10)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_batched_reciprocal_second_derivative_matches_inferred(self, device):
+        """Second derivatives match when an explicit launch bound is supplied."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, batch_idx, alpha, k_vectors = (
+            self._batch_recip_inputs(device)
+        )
+        pos_inf = positions.clone().requires_grad_(True)
+        pos_exp = positions.clone().requires_grad_(True)
+        e_inf = ewald_reciprocal_space(
+            pos_inf, charges, cell, k_vectors, alpha, batch_idx=batch_idx
+        )
+        e_exp = ewald_reciprocal_space(
+            pos_exp,
+            charges,
+            cell,
+            k_vectors,
+            alpha,
+            batch_idx=batch_idx,
+            max_atoms_per_system=2,
+        )
+        (f_inf,) = torch.autograd.grad(e_inf.sum(), pos_inf, create_graph=True)
+        (f_exp,) = torch.autograd.grad(e_exp.sum(), pos_exp, create_graph=True)
+        loss_inf = f_inf.pow(2).sum()
+        loss_exp = f_exp.pow(2).sum()
+        (g2_inf,) = torch.autograd.grad(loss_inf, pos_inf)
+        (g2_exp,) = torch.autograd.grad(loss_exp, pos_exp)
+        torch.testing.assert_close(g2_inf, g2_exp, rtol=1e-8, atol=1e-8)
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_ewald_summation_threads_max_atoms_per_system(self, device):
+        """Full summation accepts and threads the explicit launch bound."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, batch_idx = _contract_batch(device)
+        pbc = torch.tensor([[True, True, True], [True, True, True]], device=device)
+        nl, nptr, ns = batch_cell_list(
+            positions,
+            5.0,
+            cell,
+            pbc,
+            batch_idx=batch_idx,
+            return_neighbor_list=True,
+        )
+        alpha = torch.tensor([0.3, 0.3], dtype=torch.float64, device=device)
+        inferred = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_cutoff=2.0,
+            batch_idx=batch_idx,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+        )
+        explicit = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_cutoff=2.0,
+            batch_idx=batch_idx,
+            neighbor_list=nl,
+            neighbor_ptr=nptr,
+            neighbor_shifts=ns,
+            max_atoms_per_system=2,
+        )
+        torch.testing.assert_close(inferred, explicit, rtol=0, atol=0)
+
+    @pytest.mark.parametrize(
+        ("bad_value", "match"),
+        [
+            (0, "must be positive"),
+            (-1, "must be positive"),
+            (5, "cannot exceed"),
+        ],
+    )
+    def test_invalid_max_atoms_per_system_raises(self, bad_value, match):
+        """Host-known invalid bounds raise before launching kernels."""
+        device = torch.device("cpu")
+        positions, charges, cell, batch_idx, alpha, k_vectors = (
+            self._batch_recip_inputs(device)
+        )
+        with pytest.raises(ValueError, match=match):
+            ewald_reciprocal_space(
+                positions,
+                charges,
+                cell,
+                k_vectors,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=bad_value,
+            )
+
+    @pytest.mark.parametrize("device", ["cuda", "cpu"])
+    def test_explicit_bound_skips_inference_fallback(self, device, monkeypatch):
+        """Positive hint bypasses ``_resolve_max_atoms_per_system`` inference."""
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        device = torch.device(device)
+        positions, charges, cell, batch_idx, alpha, k_vectors = (
+            self._batch_recip_inputs(device)
+        )
+        inference_calls = 0
+        original = _ewald_recip_chain._resolve_max_atoms_per_system
+
+        def _counting_resolve(hint, atom_start, atom_end, num_atoms):
+            nonlocal inference_calls
+            if int(hint) <= 0 and num_atoms:
+                inference_calls += 1
+            return original(hint, atom_start, atom_end, num_atoms)
+
+        monkeypatch.setattr(
+            _ewald_recip_chain,
+            "_resolve_max_atoms_per_system",
+            _counting_resolve,
+        )
+        ewald_reciprocal_space(
+            positions,
+            charges,
+            cell,
+            k_vectors,
+            alpha,
+            batch_idx=batch_idx,
+            max_atoms_per_system=2,
+        )
+        assert inference_calls == 0
+
+        inference_calls = 0
+        ewald_reciprocal_space(
+            positions, charges, cell, k_vectors, alpha, batch_idx=batch_idx
+        )
+        assert inference_calls >= 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -244,6 +244,26 @@ def _atom_ranges(
     return starts.to(torch.int32), ends.to(torch.int32)
 
 
+def _normalize_max_atoms_per_system(
+    max_atoms_per_system: int | None,
+    positions: torch.Tensor,
+    batch_idx: torch.Tensor | None,
+) -> int:
+    """Convert public ``max_atoms_per_system`` to a custom-op hint (0 = infer)."""
+    if batch_idx is None or max_atoms_per_system is None:
+        return 0
+    value = int(max_atoms_per_system)
+    if positions.shape[0] == 0:
+        if value < 0:
+            raise ValueError("max_atoms_per_system must be non-negative")
+        return value
+    if value <= 0:
+        raise ValueError("max_atoms_per_system must be positive for non-empty batches")
+    if value > positions.shape[0]:
+        raise ValueError("max_atoms_per_system cannot exceed the total number of atoms")
+    return value
+
+
 def _attach_virial_charge_grad(
     virial_value: torch.Tensor,
     charges: torch.Tensor,
@@ -549,6 +569,7 @@ def _reciprocal_space_energy(
     alpha: torch.Tensor,
     *,
     batch_idx: torch.Tensor | None,
+    max_atoms_per_system: int | None = None,
 ) -> torch.Tensor:
     """Per-atom reciprocal-space Ewald energy, connected to autograd via the chain.
 
@@ -604,6 +625,9 @@ def _reciprocal_space_energy(
         )
         volume = torch.abs(torch.linalg.det(cell)).to(torch.float64)
         atom_start, atom_end = _atom_ranges(batch_idx, num_systems)
+        max_atoms_hint = _normalize_max_atoms_per_system(
+            max_atoms_per_system, positions, batch_idx
+        )
         e_ksum, _, _, _ = torch.ops.nvalchemiops.ewald_recip_energy_batch(
             positions,
             charges,
@@ -617,6 +641,7 @@ def _reciprocal_space_energy(
             need_pos,
             need_charge,
             need_cell,
+            max_atoms_hint,
         )
 
     return _apply_reciprocal_corrections(e_ksum, charges, volume, alpha, batch_idx)
@@ -965,6 +990,8 @@ def ewald_reciprocal_space(
     compute_charge_gradients: bool = False,
     compute_virial: bool = False,
     hybrid_forces: bool = False,
+    *,
+    max_atoms_per_system: int | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     r"""Compute reciprocal-space Ewald energy and optionally forces, charge gradients, virial.
 
@@ -1002,6 +1029,13 @@ def ewald_reciprocal_space(
         charge gradients are attached to the energy via a straight-through
         trick.  Forces and virial are forward-only (not differentiable).
         See :func:`ewald_real_space` for details.
+    max_atoms_per_system : int, optional, keyword-only
+        Maximum number of atoms in any single system when ``batch_idx`` is
+        provided. Passing this host-known upper bound avoids CUDA host
+        synchronization from launch-size inference in the reciprocal kernel.
+        Overestimates are safe but may launch extra blocks. When omitted, the
+        bound is inferred from ``atom_start`` / ``atom_end`` and may
+        synchronize on CUDA.
 
     Returns
     -------
@@ -1039,6 +1073,7 @@ def ewald_reciprocal_space(
         compute_virial=compute_virial,
         hybrid_forces=hybrid_forces,
         allow_cell_grad_with_k_vectors=False,
+        max_atoms_per_system=max_atoms_per_system,
     )
 
 
@@ -1054,6 +1089,7 @@ def _ewald_reciprocal_space(
     compute_virial: bool = False,
     hybrid_forces: bool = False,
     allow_cell_grad_with_k_vectors: bool = False,
+    max_atoms_per_system: int | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, ...]:
     """Private reciprocal-space implementation with an internal cell-gradient path."""
     component_deprecated_flags = tuple(
@@ -1177,6 +1213,7 @@ def _ewald_reciprocal_space(
                     k_vectors_hybrid,
                     alpha,
                     batch_idx=batch_idx,
+                    max_atoms_per_system=max_atoms_per_system,
                 )
 
             energies = _InjectCachedEvalGradWithFallback.apply(
@@ -1224,7 +1261,13 @@ def _ewald_reciprocal_space(
         return _build_result(energies, forces, charge_grads_out, virial)
 
     energies = _reciprocal_space_energy(
-        positions, charges, cell, k_vectors_2d, alpha, batch_idx=batch_idx
+        positions,
+        charges,
+        cell,
+        k_vectors_2d,
+        alpha,
+        batch_idx=batch_idx,
+        max_atoms_per_system=max_atoms_per_system,
     )
 
     if not want_direct:
@@ -1250,7 +1293,15 @@ def _ewald_reciprocal_space(
     if compute_virial and charges.requires_grad:
 
         def _rec_energy_fn(p, q, c, k):
-            return _reciprocal_space_energy(p, q, c, k, alpha, batch_idx=batch_idx)
+            return _reciprocal_space_energy(
+                p,
+                q,
+                c,
+                k,
+                alpha,
+                batch_idx=batch_idx,
+                max_atoms_per_system=max_atoms_per_system,
+            )
 
         virial = _attach_virial_charge_grad(
             virial,
@@ -1311,6 +1362,7 @@ def ewald_summation(
     slab_correction: bool = False,
     *,
     miller_bounds: tuple[int, int, int] | torch.Tensor | None = None,
+    max_atoms_per_system: int | None = None,
 ) -> tuple[torch.Tensor, ...] | torch.Tensor:
     """Complete Ewald summation for long-range electrostatics.
 
@@ -1335,6 +1387,10 @@ def ewald_summation(
         Precomputed Miller-index half-bounds used when ``k_vectors`` is not
         supplied. Passing Python integer bounds avoids deriving range sizes from
         device tensors inside regenerated-k-vector loops.
+    max_atoms_per_system : int, optional, keyword-only
+        Maximum number of atoms in any single system when ``batch_idx`` is
+        provided. See :func:`ewald_reciprocal_space` for the sync-free launch
+        contract.
     batch_idx : torch.Tensor, shape (N,), optional
         System index for each atom. When provided, atoms must be grouped by
         system: ``batch_idx`` must be contiguous, nondecreasing, and use system
@@ -1508,6 +1564,7 @@ def ewald_summation(
             compute_virial=compute_virial,
             hybrid_forces=hybrid_forces,
             allow_cell_grad_with_k_vectors=generated_k_vectors,
+            max_atoms_per_system=max_atoms_per_system,
         )
         return real, reciprocal
 
