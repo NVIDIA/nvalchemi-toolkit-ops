@@ -9061,7 +9061,7 @@ class TestMaxAtomsPerSystem:
 
     @pytest.mark.parametrize("device", ["cuda", "cpu"])
     def test_explicit_bound_skips_inference_fallback(self, device, monkeypatch):
-        """Positive hint bypasses ``_resolve_max_atoms_per_system`` inference."""
+        """Positive launch bound bypasses ``_resolve_max_atoms_per_system`` inference."""
         if device == "cuda" and not torch.cuda.is_available():
             pytest.skip("CUDA not available")
         device = torch.device(device)
@@ -9071,11 +9071,11 @@ class TestMaxAtomsPerSystem:
         inference_calls = 0
         original = _ewald_recip_chain._resolve_max_atoms_per_system
 
-        def _counting_resolve(hint, atom_start, atom_end, num_atoms):
+        def _counting_resolve(bound, atom_start, atom_end, num_atoms):
             nonlocal inference_calls
-            if int(hint) <= 0 and num_atoms:
+            if int(bound) <= 0 and num_atoms:
                 inference_calls += 1
-            return original(hint, atom_start, atom_end, num_atoms)
+            return original(bound, atom_start, atom_end, num_atoms)
 
         monkeypatch.setattr(
             _ewald_recip_chain,

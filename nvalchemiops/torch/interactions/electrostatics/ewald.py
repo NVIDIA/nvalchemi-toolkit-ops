@@ -244,26 +244,6 @@ def _atom_ranges(
     return starts.to(torch.int32), ends.to(torch.int32)
 
 
-def _normalize_max_atoms_per_system(
-    max_atoms_per_system: int | None,
-    positions: torch.Tensor,
-    batch_idx: torch.Tensor | None,
-) -> int:
-    """Convert public ``max_atoms_per_system`` to a custom-op hint (0 = infer)."""
-    if batch_idx is None or max_atoms_per_system is None:
-        return 0
-    value = int(max_atoms_per_system)
-    if positions.shape[0] == 0:
-        if value < 0:
-            raise ValueError("max_atoms_per_system must be non-negative")
-        return value
-    if value <= 0:
-        raise ValueError("max_atoms_per_system must be positive for non-empty batches")
-    if value > positions.shape[0]:
-        raise ValueError("max_atoms_per_system cannot exceed the total number of atoms")
-    return value
-
-
 def _attach_virial_charge_grad(
     virial_value: torch.Tensor,
     charges: torch.Tensor,
@@ -625,9 +605,20 @@ def _reciprocal_space_energy(
         )
         volume = torch.abs(torch.linalg.det(cell)).to(torch.float64)
         atom_start, atom_end = _atom_ranges(batch_idx, num_systems)
-        max_atoms_hint = _normalize_max_atoms_per_system(
-            max_atoms_per_system, positions, batch_idx
-        )
+        max_atoms_bound = 0
+        if max_atoms_per_system is not None:
+            max_atoms_bound = int(max_atoms_per_system)
+            if positions.shape[0] == 0:
+                if max_atoms_bound < 0:
+                    raise ValueError("max_atoms_per_system must be non-negative")
+            elif max_atoms_bound <= 0:
+                raise ValueError(
+                    "max_atoms_per_system must be positive for non-empty batches"
+                )
+            elif max_atoms_bound > positions.shape[0]:
+                raise ValueError(
+                    "max_atoms_per_system cannot exceed the total number of atoms"
+                )
         e_ksum, _, _, _ = torch.ops.nvalchemiops.ewald_recip_energy_batch(
             positions,
             charges,
@@ -641,7 +632,7 @@ def _reciprocal_space_energy(
             need_pos,
             need_charge,
             need_cell,
-            max_atoms_hint,
+            max_atoms_bound,
         )
 
     return _apply_reciprocal_corrections(e_ksum, charges, volume, alpha, batch_idx)

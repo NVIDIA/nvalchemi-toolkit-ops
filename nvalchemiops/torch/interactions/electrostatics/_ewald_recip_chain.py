@@ -214,15 +214,15 @@ def _recip_ksum_energy_torch(
 
 
 def _resolve_max_atoms_per_system(
-    max_atoms_per_system_hint: int,
+    max_atoms_per_system_bound: int,
     atom_start: torch.Tensor,
     atom_end: torch.Tensor,
     num_atoms: int,
 ) -> int:
-    """Resolve batched launch bound; hint ``0`` infers from atom ranges (may sync)."""
+    """Resolve batched launch bound; bound ``0`` infers from atom ranges (may sync)."""
     if num_atoms == 0:
         return 0
-    value = int(max_atoms_per_system_hint)
+    value = int(max_atoms_per_system_bound)
     if value > 0:
         return value
     return int((atom_end - atom_start).max().item())
@@ -254,7 +254,7 @@ def _run_fill(
     wp_vec,
     device,
     want_cellgrad=False,
-    max_atoms_per_system_hint: int = 0,
+    max_atoms_per_system_bound: int = 0,
 ):
     """Launch the (reused hand-written) fill kernel; return cos/sin/S_real/S_imag.
 
@@ -282,7 +282,7 @@ def _run_fill(
             wp_as = _wp(atom_start, wp.int32)
             wp_ae = _wp(atom_end, wp.int32)
             max_atoms = _resolve_max_atoms_per_system(
-                max_atoms_per_system_hint, atom_start, atom_end, num_atoms
+                max_atoms_per_system_bound, atom_start, atom_end, num_atoms
             )
             max_blocks = (max_atoms + BATCH_BLOCK_SIZE - 1) // BATCH_BLOCK_SIZE
             max_blocks = max(max_blocks, 1)
@@ -475,7 +475,7 @@ def _forward_impl(
     need_pos,
     need_charge,
     need_cell,
-    max_atoms_per_system_hint: int = 0,
+    max_atoms_per_system_bound: int = 0,
 ):
     """Fused recip forward: energy (always) + detached ``dE/dR`` / ``dE/dq`` caches.
 
@@ -537,7 +537,7 @@ def _forward_impl(
         wp_vec,
         device,
         want_cellgrad=want_cellgrad,
-        max_atoms_per_system_hint=max_atoms_per_system_hint,
+        max_atoms_per_system_bound=max_atoms_per_system_bound,
     )
     if cellgrad_fill is not None:
         cellgrad_cache = cellgrad_fill.detach()
@@ -593,7 +593,7 @@ def _backward_impl(
     need_pos,
     need_charge,
     need_cell,
-    max_atoms_per_system_hint: int = 0,
+    max_atoms_per_system_bound: int = 0,
 ):
     """First backward: scale the cached atom-major dE/dR / dE/dq; recompute k/V on demand.
 
@@ -793,7 +793,7 @@ def _double_backward_impl(
     need_pos,
     need_charge,
     need_cell,
-    max_atoms_per_system_hint: int = 0,
+    max_atoms_per_system_bound: int = 0,
 ):
     # ``dEdR_cache`` / ``dEdq_cache`` (the backward op's leading first-order caches) and
     # the trailing ``need_*`` flags are accepted for positional alignment but unused: the
@@ -832,7 +832,7 @@ def _double_backward_impl(
     use_cell_db = bool(need_cell)
     if batched and num_atoms:
         max_atoms = _resolve_max_atoms_per_system(
-            max_atoms_per_system_hint, atom_start, atom_end, num_atoms
+            max_atoms_per_system_bound, atom_start, atom_end, num_atoms
         )
     else:
         max_atoms = num_atoms
@@ -1094,7 +1094,7 @@ def _recip_forward_batch(
     need_pos: bool,
     need_charge: bool,
     need_cell: bool,
-    max_atoms_per_system_hint: int = 0,
+    max_atoms_per_system_bound: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return _forward_impl(
         positions,
@@ -1109,7 +1109,7 @@ def _recip_forward_batch(
         need_pos,
         need_charge,
         need_cell,
-        max_atoms_per_system_hint,
+        max_atoms_per_system_bound,
     )
 
 
@@ -1130,7 +1130,7 @@ def _recip_backward_batch(
     need_pos: bool,
     need_charge: bool,
     need_cell: bool,
-    max_atoms_per_system_hint: int = 0,
+    max_atoms_per_system_bound: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return _backward_impl(
         dEdR_cache,
@@ -1149,7 +1149,7 @@ def _recip_backward_batch(
         need_pos,
         need_charge,
         need_cell,
-        max_atoms_per_system_hint,
+        max_atoms_per_system_bound,
     )
 
 
@@ -1174,7 +1174,7 @@ def _recip_double_backward_batch(
     need_pos: bool,
     need_charge: bool,
     need_cell: bool,
-    max_atoms_per_system_hint: int = 0,
+    max_atoms_per_system_bound: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return _double_backward_impl(
         v_pos,
@@ -1197,7 +1197,7 @@ def _recip_double_backward_batch(
         need_pos,
         need_charge,
         need_cell,
-        max_atoms_per_system_hint,
+        max_atoms_per_system_bound,
     )
 
 
@@ -1306,7 +1306,7 @@ def register_ewald_recip_ops() -> None:
 
     # Batched forward inputs (13): 0 positions, 1 charges, 2 cell, 3 k_vectors,
     #   4 volume, 5 alpha, 6 batch_idx, 7 atom_start, 8 atom_end, 9 need_pos,
-    #   10 need_charge, 11 need_cell, 12 max_atoms_per_system_hint.
+    #   10 need_charge, 11 need_cell, 12 max_atoms_per_system_bound.
     _RECIP_BATCH = register_warp_op_chain(
         name="nvalchemiops::ewald_recip_energy_batch",
         forward=_recip_forward_batch,

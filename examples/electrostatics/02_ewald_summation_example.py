@@ -496,6 +496,7 @@ charges_batch = torch.cat(all_charges, dim=0)
 cells_batch = torch.cat(all_cells, dim=0)
 pbc_batch = torch.cat(all_pbc, dim=0)
 batch_idx = torch.tensor(batch_idx_list, dtype=torch.int32, device=device)
+# Host-known launch bound from the systems constructed above.
 max_atoms_per_system = max(atom_counts)
 
 # Estimate parameters for the batch with desired accuracy
@@ -545,7 +546,7 @@ for i in range(n_systems):
 
 # %%
 # Preferred training recipe: derive batched forces from the scalar energy.
-# Pass max_atoms_per_system to avoid CUDA launch-bound inference sync.
+# Passing max_atoms_per_system avoids reciprocal-kernel launch-bound inference.
 
 positions_batch_ag = positions_batch.detach().clone().requires_grad_(True)
 energies_batch_ag = ewald_summation(
