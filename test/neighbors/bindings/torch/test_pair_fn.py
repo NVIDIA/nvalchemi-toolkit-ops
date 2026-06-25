@@ -32,6 +32,7 @@ import warp as wp
 from nvalchemiops.torch.neighbors import compile_pair_fn
 from nvalchemiops.torch.neighbors.batch_cell_list import (
     batch_cell_list,
+    batch_query_cell_list,
     estimate_batch_cell_list_sizes,
 )
 from nvalchemiops.torch.neighbors.batch_naive import batch_naive_neighbor_list
@@ -39,6 +40,7 @@ from nvalchemiops.torch.neighbors.cell_list import (
     allocate_query_sort_scratch,
     cell_list,
     estimate_cell_list_sizes,
+    query_cell_list,
 )
 from nvalchemiops.torch.neighbors.naive import naive_neighbor_list
 from nvalchemiops.torch.neighbors.neighbor_utils import (
@@ -47,6 +49,35 @@ from nvalchemiops.torch.neighbors.neighbor_utils import (
 )
 
 from ...test_utils import create_simple_cubic_system
+
+_PAIR_PARAMS_REQUIRED = "pair_params is required when pair_fn is provided"
+
+
+def _missing_pair_params_cpu_fixtures():
+    """Small CPU tensors for missing-``pair_params`` validation tests."""
+    positions = _two_cluster_positions("cpu")
+    cell = torch.eye(3, dtype=torch.float32).reshape(1, 3, 3) * 3.0
+    pbc = torch.tensor([[True, True, True]], dtype=torch.bool)
+    batch_idx = torch.zeros(positions.shape[0], dtype=torch.int32)
+    batch_ptr = torch.tensor([0, positions.shape[0]], dtype=torch.int32)
+    return positions, cell, pbc, batch_idx, batch_ptr
+
+
+def _alloc_query_neighbor_buffers(n_atoms: int, max_neighbors: int, device: str):
+    """Allocate minimal neighbor-matrix buffers for query-wrapper tests."""
+    neighbor_matrix = torch.full(
+        (n_atoms, max_neighbors),
+        n_atoms,
+        dtype=torch.int32,
+        device=device,
+    )
+    neighbor_matrix_shifts = torch.zeros(
+        (n_atoms, max_neighbors, 3),
+        dtype=torch.int32,
+        device=device,
+    )
+    num_neighbors = torch.zeros((n_atoms,), dtype=torch.int32, device=device)
+    return neighbor_matrix, neighbor_matrix_shifts, num_neighbors
 
 
 @wp.func
@@ -1189,3 +1220,178 @@ def test_batch_naive_pair_fn_target_indices_compact_rows(device):
     assert pe.shape == (2, 4)
     assert pf.shape == (2, 4, 3)
     _check_target_pair_outputs(nm, nn, nv, nd, pe, pf, pp, target_indices)
+
+
+def test_compiled_naive_missing_pair_params_raises():
+    """Compiled naive rejects omitted ``pair_params`` before custom-op dispatch."""
+    positions, _cell, _pbc, _batch_idx, _batch_ptr = _missing_pair_params_cpu_fixtures()
+    cpf = _compiled_pair_fn("missing_pair_params_naive")
+    with pytest.raises(ValueError, match=_PAIR_PARAMS_REQUIRED):
+        naive_neighbor_list(positions, 0.75, max_neighbors=4, pair_fn=cpf)
+
+
+def test_compiled_batch_naive_missing_pair_params_raises():
+    """Compiled batch naive rejects omitted ``pair_params`` before dispatch."""
+    positions, _cell, _pbc, batch_idx, batch_ptr = _missing_pair_params_cpu_fixtures()
+    cpf = _compiled_pair_fn("missing_pair_params_batch_naive")
+    with pytest.raises(ValueError, match=_PAIR_PARAMS_REQUIRED):
+        batch_naive_neighbor_list(
+            positions,
+            0.75,
+            batch_idx=batch_idx,
+            batch_ptr=batch_ptr,
+            max_neighbors=4,
+            pair_fn=cpf,
+        )
+
+
+def test_compiled_cell_list_missing_pair_params_raises():
+    """Compiled cell list rejects omitted ``pair_params`` before dispatch."""
+    positions, cell, pbc, _batch_idx, _batch_ptr = _missing_pair_params_cpu_fixtures()
+    cpf = _compiled_pair_fn("missing_pair_params_cell_list")
+    with pytest.raises(ValueError, match=_PAIR_PARAMS_REQUIRED):
+        cell_list(
+            positions,
+            0.75,
+            cell,
+            pbc.reshape(3),
+            max_neighbors=4,
+            pair_fn=cpf,
+        )
+
+
+def test_compiled_batch_cell_list_missing_pair_params_raises():
+    """Compiled batch cell list rejects omitted ``pair_params`` before dispatch."""
+    positions, cell, pbc, batch_idx, _batch_ptr = _missing_pair_params_cpu_fixtures()
+    cpf = _compiled_pair_fn("missing_pair_params_batch_cell_list")
+    with pytest.raises(ValueError, match=_PAIR_PARAMS_REQUIRED):
+        batch_cell_list(
+            positions,
+            0.75,
+            cell,
+            pbc,
+            batch_idx,
+            max_neighbors=4,
+            pair_fn=cpf,
+        )
+
+
+def test_compiled_query_cell_list_missing_pair_params_raises():
+    """Compiled query wrapper rejects omitted ``pair_params`` before dispatch."""
+    positions, cell, pbc, _batch_idx, _batch_ptr = _missing_pair_params_cpu_fixtures()
+    max_neighbors = 4
+    max_total_cells, neighbor_search_radius = estimate_cell_list_sizes(
+        cell,
+        pbc.reshape(3),
+        0.75,
+    )
+    cell_list_cache = allocate_cell_list(
+        positions.shape[0],
+        max_total_cells,
+        neighbor_search_radius,
+        positions.device,
+    )
+    neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
+        _alloc_query_neighbor_buffers(
+            positions.shape[0],
+            max_neighbors,
+            positions.device,
+        )
+    )
+    cpf = _compiled_pair_fn("missing_pair_params_query_cell_list")
+    with pytest.raises(ValueError, match=_PAIR_PARAMS_REQUIRED):
+        query_cell_list(
+            positions,
+            0.75,
+            cell,
+            pbc.reshape(3),
+            *cell_list_cache,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            pair_fn=cpf,
+        )
+
+
+def test_compiled_batch_query_cell_list_missing_pair_params_raises():
+    """Compiled batch query wrapper rejects omitted ``pair_params`` before dispatch."""
+    positions, cell, pbc, batch_idx, _batch_ptr = _missing_pair_params_cpu_fixtures()
+    max_neighbors = 4
+    max_total_cells, neighbor_search_radius = estimate_batch_cell_list_sizes(
+        cell,
+        pbc,
+        0.75,
+    )
+    cell_list_cache = allocate_cell_list(
+        positions.shape[0],
+        max_total_cells,
+        neighbor_search_radius,
+        positions.device,
+    )
+    neighbor_matrix, neighbor_matrix_shifts, num_neighbors = (
+        _alloc_query_neighbor_buffers(
+            positions.shape[0],
+            max_neighbors,
+            positions.device,
+        )
+    )
+    cpf = _compiled_pair_fn("missing_pair_params_batch_query_cell_list")
+    with pytest.raises(ValueError, match=_PAIR_PARAMS_REQUIRED):
+        batch_query_cell_list(
+            positions,
+            cell,
+            pbc,
+            0.75,
+            batch_idx,
+            *cell_list_cache,
+            neighbor_matrix,
+            neighbor_matrix_shifts,
+            num_neighbors,
+            pair_fn=cpf,
+        )
+
+
+def test_naive_pair_fn_missing_pair_params_raises():
+    """Raw ``pair_fn`` also rejects omitted ``pair_params`` at the torch wrapper."""
+    positions, _cell, _pbc, _batch_idx, _batch_ptr = _missing_pair_params_cpu_fixtures()
+    with pytest.raises(ValueError, match=_PAIR_PARAMS_REQUIRED):
+        naive_neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=4,
+            pair_fn=_sum_pair_fn,
+        )
+
+
+def test_compiled_naive_fullgraph_missing_pair_params_diagnostic(device):
+    """Fullgraph keeps the specific missing-buffer diagnostic for ``pair_params``."""
+    _skip_without_cuda(device)
+    positions = _two_cluster_positions(device)
+    max_neighbors = 4
+    cpf = _compiled_pair_fn("missing_pair_params_naive_fullgraph")
+    nm, _nms, nn, nv, nd, pe, pf, _pp = _alloc_pair_buffers(
+        positions.shape[0], max_neighbors, device
+    )
+
+    @torch.compile(fullgraph=True)
+    def run(positions, nm, nn, nv, nd, pe, pf):
+        return naive_neighbor_list(
+            positions,
+            0.75,
+            max_neighbors=max_neighbors,
+            neighbor_matrix=nm,
+            num_neighbors=nn,
+            return_distances=True,
+            return_vectors=True,
+            neighbor_vectors=nv,
+            neighbor_distances=nd,
+            pair_fn=cpf,
+            pair_energies=pe,
+            pair_forces=pf,
+        )
+
+    with pytest.raises(
+        Exception,
+        match=r"CompiledPairFn under torch\.compile\(fullgraph=True\).*missing .*pair_params",
+    ):
+        run(positions, nm, nn, nv, nd, pe, pf)

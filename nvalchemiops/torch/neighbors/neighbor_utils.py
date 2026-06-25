@@ -53,6 +53,15 @@ def _raise_if_compiling_host_only(name: str, replacement: str) -> None:
         )
 
 
+def _validate_pair_params_present(
+    pair_fn: object,
+    pair_params: torch.Tensor | None,
+) -> None:
+    """Validate the torch pair-function parameter contract."""
+    if pair_fn is not None and pair_params is None:
+        raise ValueError("pair_params is required when pair_fn is provided")
+
+
 def compute_naive_num_shifts(
     cell: torch.Tensor,
     cutoff: float,

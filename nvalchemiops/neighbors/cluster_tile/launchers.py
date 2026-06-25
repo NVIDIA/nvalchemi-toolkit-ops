@@ -21,8 +21,8 @@ GROMACS-style NxM cluster pair list: Morton-sorted atoms grouped into
 compiled kernels and factories live in :mod:`nvalchemiops.neighbors.cluster_tile.kernels`.
 """
 
-from collections.abc import Iterable
 import math
+from collections.abc import Iterable
 
 import warp as wp
 

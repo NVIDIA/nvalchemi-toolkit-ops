@@ -79,6 +79,7 @@ from nvalchemiops.torch.neighbors._compiled_pair_fn import (
     is_compiled_pair_fn,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
+    _validate_pair_params_present,
     allocate_cell_list,
     coo_pack_pair_geometry,
     get_neighbor_list_from_neighbor_matrix,
@@ -881,6 +882,7 @@ def query_cell_list(
         pair_energies=pair_energies,
         pair_forces=pair_forces,
     ):
+        _validate_pair_params_present(pair_fn, pair_params)
         if (
             pair_fn is None
             and pair_params is None
@@ -1849,6 +1851,7 @@ def cell_list(
                 "fixed-shape caller-provided buffers/metadata; missing "
                 f"{', '.join(missing)}.",
             )
+    _validate_pair_params_present(pair_fn, pair_params)
 
     if fill_value is None:
         fill_value = total_atoms

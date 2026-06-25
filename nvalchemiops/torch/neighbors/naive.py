@@ -39,6 +39,7 @@ from nvalchemiops.torch.neighbors._compiled_pair_fn import (
     is_compiled_pair_fn,
 )
 from nvalchemiops.torch.neighbors.neighbor_utils import (
+    _validate_pair_params_present,
     compute_naive_num_shifts,
     coo_pack_pair_geometry,
     get_neighbor_list_from_neighbor_matrix,
@@ -1337,6 +1338,7 @@ def naive_neighbor_list(
                     "fixed-shape caller-provided buffers/metadata; missing "
                     f"{', '.join(missing)}.",
                 )
+        _validate_pair_params_present(pair_fn, pair_params)
         if rebuild_flags is not None:
             raise NotImplementedError(
                 "Pair outputs are not supported with rebuild_flags.",
