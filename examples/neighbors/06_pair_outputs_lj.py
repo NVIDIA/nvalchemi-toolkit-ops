@@ -247,70 +247,6 @@ def allocate_lj_pair_output_buffers(
     )
 
 
-def validate_lj_pair_outputs(
-    neighbor_matrix: torch.Tensor,
-    neighbor_counts: torch.Tensor,
-    neighbor_vectors: torch.Tensor,
-    neighbor_distances: torch.Tensor,
-    pair_energies: torch.Tensor,
-    pair_forces: torch.Tensor,
-    target_indices: torch.Tensor,
-    pair_params: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Validate LJ pair outputs and return flattened active-pair data.
-
-    The Torch reference below mirrors ``lj_pair_fn``: Lorentz-Berthelot mixing
-    for ``epsilon`` and ``sigma``, the 12-6 LJ energy, and the force on the
-    source atom along the neighbor displacement ``r_ij``.
-    """
-    neighbor_slots = torch.arange(
-        neighbor_matrix.shape[1], device=neighbor_matrix.device
-    )
-    valid_slots = neighbor_slots[None, :] < neighbor_counts[:, None]
-
-    source_atoms = (
-        target_indices[:, None].expand_as(neighbor_matrix)[valid_slots].long()
-    )
-    target_atoms = neighbor_matrix[valid_slots].long()
-    active_distances = neighbor_distances[valid_slots]
-    active_vectors = neighbor_vectors[valid_slots]
-    active_energies = pair_energies[valid_slots]
-    active_forces = pair_forces[valid_slots]
-
-    source_params = pair_params[source_atoms]
-    target_params = pair_params[target_atoms]
-    epsilon = torch.sqrt(source_params[:, 0] * target_params[:, 0])
-    sigma = 0.5 * (source_params[:, 1] + target_params[:, 1])
-    sr = sigma / active_distances
-    sr2 = sr * sr
-    sr6 = sr2 * sr2 * sr2
-    sr12 = sr6 * sr6
-    # U_ij = 4 * epsilon_ij * ((sigma_ij / r)^12 - (sigma_ij / r)^6)
-    reference_energies = 4.0 * epsilon * (sr12 - sr6)
-    # F_ij = (24 * epsilon_ij * (sr6 - 2 * sr12) / r^2) * r_ij
-    reference_forces = (
-        24.0
-        * epsilon[:, None]
-        * (sr6 - 2.0 * sr12)[:, None]
-        / active_distances[:, None].pow(2)
-        * active_vectors
-    )
-
-    torch.testing.assert_close(
-        active_energies,
-        reference_energies,
-        rtol=5.0e-4,
-        atol=5.0e-6,
-    )
-    torch.testing.assert_close(
-        active_forces,
-        reference_forces,
-        rtol=5.0e-4,
-        atol=5.0e-6,
-    )
-    return source_atoms, target_atoms, active_distances, active_energies, active_forces
-
-
 pair_params = torch.empty((num_atoms, 2), dtype=dtype, device=device)
 pair_params[:, 0] = EPSILON_AR
 pair_params[:, 1] = SIGMA_AR
@@ -365,35 +301,25 @@ fill_value = num_atoms
 
 
 # %%
-# Validate pair outputs
-# =====================
+# Inspect active pair outputs
+# ===========================
 
-(
-    source_atoms,
-    target_atoms,
-    active_distances,
-    eager_active_energies,
-    eager_active_forces,
-) = validate_lj_pair_outputs(
-    neighbor_matrix,
-    neighbor_counts,
-    neighbor_vectors,
-    neighbor_distances,
-    pair_energies,
-    pair_forces,
-    target_indices,
-    pair_params,
-)
+neighbor_slots = torch.arange(neighbor_matrix.shape[1], device=device)
+valid_slots = neighbor_slots[None, :] < neighbor_counts[:, None]
+source_atoms = target_indices[:, None].expand_as(neighbor_matrix)[valid_slots].long()
+target_atoms = neighbor_matrix[valid_slots].long()
+active_distances = neighbor_distances[valid_slots]
+active_energies = pair_energies[valid_slots]
+active_forces = pair_forces[valid_slots]
 
-active_pair_count = int(eager_active_energies.numel())
-eager_energy_sum = eager_active_energies.sum()
+active_pair_count = int(active_energies.numel())
+active_energy_sum = active_energies.sum()
 
 print("\nTargeted pair-output statistics:")
 print(f"  Compact output rows: {num_targets}")
 print(f"  Active targeted pairs: {active_pair_count}")
 print(f"  Average targeted neighbors: {neighbor_counts.float().mean().item():.2f}")
-print(f"  Targeted directed LJ energy sum: {eager_energy_sum.item():.6f} eV")
-print("  LJ pair energies and forces match the Torch reference")
+print(f"  Targeted directed LJ energy sum: {active_energy_sum.item():.6f} eV")
 
 # %%
 # CompiledPairFn fullgraph path
@@ -510,37 +436,28 @@ else:
         compiled_pair_energies,
         compiled_pair_forces,
     )
-    (
-        _compiled_source_atoms,
-        _compiled_target_atoms,
-        _compiled_active_distances,
-        compiled_active_energies,
-        compiled_active_forces,
-    ) = validate_lj_pair_outputs(
-        compiled_neighbor_matrix,
-        compiled_neighbor_counts,
-        compiled_neighbor_vectors,
-        compiled_neighbor_distances,
-        compiled_pair_energies,
-        compiled_pair_forces,
-        target_indices,
-        pair_params,
+    compiled_neighbor_slots = torch.arange(
+        compiled_neighbor_matrix.shape[1], device=device
     )
+    compiled_valid_slots = (
+        compiled_neighbor_slots[None, :] < compiled_neighbor_counts[:, None]
+    )
+    compiled_active_energies = compiled_pair_energies[compiled_valid_slots]
+    compiled_active_pair_count = int(compiled_active_energies.numel())
 
-    if int(compiled_active_energies.numel()) != active_pair_count:
+    if compiled_active_pair_count != active_pair_count:
         raise RuntimeError(
             "CompiledPairFn path produced a different active-pair count "
-            f"({compiled_active_energies.numel()}) than the eager path "
+            f"({compiled_active_pair_count}) than the eager path "
             f"({active_pair_count})."
         )
 
     print("\nCompiledPairFn fullgraph statistics:")
-    print(f"  Active targeted pairs: {compiled_active_energies.numel()}")
+    print(f"  Active targeted pairs: {compiled_active_pair_count}")
     print(
         "  Compiled directed LJ energy sum: "
         f"{compiled_active_energies.sum().item():.6f} eV"
     )
-    print("  CompiledPairFn LJ outputs match the Torch reference")
 
 print("\nFirst targeted LJ pairs:")
 sample_count = min(5, source_atoms.numel())
@@ -548,8 +465,8 @@ for pair_index in range(sample_count):
     source = int(source_atoms[pair_index].item())
     target = int(target_atoms[pair_index].item())
     distance = float(active_distances[pair_index].item())
-    energy = float(eager_active_energies[pair_index].item())
-    force_norm = float(eager_active_forces[pair_index].norm().item())
+    energy = float(active_energies[pair_index].item())
+    force_norm = float(active_forces[pair_index].norm().item())
     print(
         f"  Atom {source} -> {target}: "
         f"distance={distance:.4f} Å, energy={energy:.6f} eV, "

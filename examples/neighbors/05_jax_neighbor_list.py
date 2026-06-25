@@ -354,29 +354,29 @@ print("PARTIAL NEIGHBOR LISTS (target_indices)")
 print("=" * 70)
 
 target_indices = jnp.array([0, 4, 9], dtype=jnp.int32)
-partial_nm, partial_counts, _ = cell_list(
+partial_nm, partial_counts, _ = neighbor_list(
     positions,
     cutoff,
-    cell,
-    pbc,
+    cell=cell,
+    pbc=pbc,
+    method="cell_list_atom_centric",
     max_neighbors=128,
     target_indices=target_indices,
-    strategy="atom_centric",
 )
 print(f"\nSelected atoms: {target_indices.tolist()}")
 print(f"Partial matrix shape: {partial_nm.shape}")
 for row, atom in enumerate(target_indices.tolist()):
     print(f"  compact row {row} -> atom {atom}: {int(partial_counts[row])} neighbors")
 
-partial_coo, partial_ptr, _ = cell_list(
+partial_coo, partial_ptr, _ = neighbor_list(
     positions,
     cutoff,
-    cell,
-    pbc,
+    cell=cell,
+    pbc=pbc,
+    method="cell_list_atom_centric",
     max_neighbors=128,
     target_indices=target_indices,
     return_neighbor_list=True,
-    strategy="atom_centric",
 )
 num_partial_pairs = int(partial_ptr[-1])
 compact_rows = jnp.unique(partial_coo[0, :num_partial_pairs])
