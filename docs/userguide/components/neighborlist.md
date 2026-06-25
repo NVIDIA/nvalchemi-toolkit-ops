@@ -306,6 +306,43 @@ both formats, compute the matrix format first and convert as needed.
 
 ## Method Dispatch
 
+### Method and Strategy
+
+`method` is the high-level `neighbor_list(...)` selector. A family method such as
+`method="naive"` or `method="cell_list"` chooses the neighbor-list algorithm family
+and lets that family choose its direct strategy automatically. A strategy-pinned
+method such as `method="naive_tile"` or `method="cell_list_pair_centric"` chooses
+both the algorithm family and the direct strategy.
+
+`neighbor_list(..., method="naive")` does not resolve to `"scalar"` or `"tile"` in
+the high-level dispatcher. It forwards `strategy="auto"` to the direct naive
+implementation, where the scalar/tile strategy is selected.
+
+`cluster_tile` and `batch_cluster_tile` are complete high-level methods with a
+single implementation. There is no `strategy` choice available for them.
+
+`strategy` is only for direct algorithm calls such as `naive_neighbor_list(...)` or
+`cell_list(...)`. For direct naive calls, `strategy` selects `"auto"`, `"scalar"`,
+or `"tile"`. For direct cell-list calls, `strategy` selects `"auto"`,
+`"atom_centric"`, or `"pair_centric"`.
+
+Use `method=` when calling `neighbor_list(...)`. Use `strategy=` only when calling
+a direct algorithm function.
+
+Strategy-pinned high-level methods:
+
+```python
+neighbor_list(positions, cutoff, method="naive_tile")
+neighbor_list(positions, cutoff, cell=cell, pbc=pbc, method="cell_list_pair_centric")
+```
+
+Direct algorithm strategy:
+
+```python
+naive_neighbor_list(positions, cutoff, strategy="tile")
+cell_list(positions, cutoff, cell=cell, pbc=pbc, strategy="pair_centric")
+```
+
 When `method=None`, `neighbor_list` selects an algorithm using the following
 logic:
 
@@ -389,9 +426,9 @@ lowering it favors `cell_list`.
 
 ### Available Methods
 
-`method=` accepts the coarse algorithm names below and the fine-grained strategy
+`method=` accepts the family method names below and the strategy-pinned method
 names returned by `suggest_neighbor_list_method` / `estimate_neighbor_list_costs`.
-The coarse names resolve to a default fine-grained strategy (`"naive"` → scalar,
+Family methods resolve to a default direct strategy (`"naive"` → scalar,
 `"cell_list"` → atom-centric); prefix any name with `batch_` for multi-system
 batched inputs.
 
@@ -947,7 +984,7 @@ neighbor_matrix_half, num_neighbors_half, shifts_half = neighbor_list(
 ```{note}
 In JAX, `half_fill` and `fill_value` are supported by `naive`, `batch_naive`,
 `cell_list`, and `batch_cell_list` (the cell-list paths use `graph_mode="none"`
-for `half_fill`).  The `naive` tiled kernel (`native_strategy="tile"`) is
+for `half_fill`).  The `naive` tiled kernel (`strategy="tile"`) is
 CUDA-only and opt-in; JAX `naive` auto-selection still uses the scalar kernel.
 ```
 

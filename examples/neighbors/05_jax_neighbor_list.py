@@ -329,9 +329,9 @@ print("=" * 70)
 
 batch_ptr = jnp.array([0, num_atoms], dtype=jnp.int32)
 cost_report = estimate_neighbor_list_costs(batch_ptr, cell, pbc, cutoff)
-print("\nFeasible strategies (cheapest first):")
-for strategy, cost in cost_report:
-    print(f"  {strategy:24s} estimated cost (arbitrary units): {cost:.3g}")
+print("\nFeasible methods (cheapest first):")
+for method_name, cost in cost_report:
+    print(f"  {method_name:24s} estimated cost (arbitrary units): {cost:.3g}")
 
 suggested_method = suggest_neighbor_list_method(batch_ptr, cell, pbc, cutoff)
 print(f"\nSuggested method: {suggested_method}")

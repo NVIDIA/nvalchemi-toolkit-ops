@@ -351,9 +351,7 @@ def neighbor_list(
     batch_cluster_tile_neighbor_list : Batched cluster-pair tile algorithm
     """
     use_pair_fn_option = bool(kwargs.pop("use_pair_fn", False))
-    explicit_cell_strategy = str(kwargs.pop("strategy", "auto"))
-    explicit_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
-    explicit_native_strategy = str(kwargs.pop("native_strategy", "auto"))
+    selected_atom_centric_path = str(kwargs.pop("atom_centric_path", "auto"))
     target_indices = kwargs.get("target_indices")
     return_vectors = bool(kwargs.get("return_vectors", False))
     return_distances = bool(kwargs.get("return_distances", False))
@@ -365,18 +363,17 @@ def neighbor_list(
         or kwargs.get("pair_forces") is not None
     )
     rebuild_flags = kwargs.get("rebuild_flags")
-    selected_native_strategy = explicit_native_strategy
-    selected_cell_strategy = explicit_cell_strategy
-    selected_atom_centric_path = explicit_atom_centric_path
-    explicit_pair_centric = explicit_cell_strategy == "pair_centric"
+    selected_naive_strategy = "auto"
+    selected_cell_strategy = "auto"
+    explicit_pair_centric = False
 
     def _apply_auto_suboptions(
-        native_strategy: str, cell_strategy: str, path: str
+        naive_strategy: str, cell_strategy: str, path: str
     ) -> None:
-        nonlocal selected_native_strategy, selected_cell_strategy
+        nonlocal selected_naive_strategy, selected_cell_strategy
         nonlocal selected_atom_centric_path
-        if selected_native_strategy == "auto" and native_strategy != "auto":
-            selected_native_strategy = native_strategy
+        if selected_naive_strategy == "auto" and naive_strategy != "auto":
+            selected_naive_strategy = naive_strategy
         if selected_cell_strategy == "auto" and cell_strategy != "auto":
             selected_cell_strategy = cell_strategy
         if selected_atom_centric_path == "auto" and path != "auto":
@@ -469,7 +466,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
-                native_strategy=selected_native_strategy,
+                strategy=selected_naive_strategy,
                 **kwargs,
             )
         case "cell_list":
@@ -501,7 +498,7 @@ def neighbor_list(
                 fill_value=fill_value,
                 return_neighbor_list=return_neighbor_list,
                 wrap_positions=wrap_positions,
-                native_strategy=selected_native_strategy,
+                strategy=selected_naive_strategy,
                 **kwargs,
             )
         case "batch_cell_list":

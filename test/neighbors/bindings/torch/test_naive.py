@@ -350,7 +350,7 @@ class TestNaiveCorrectness:
                 1.0,
                 max_neighbors=4,
                 target_indices=torch.tensor([0], dtype=torch.int32, device=device),
-                native_strategy="tile",
+                strategy="tile",
             )
 
 

@@ -378,7 +378,7 @@ class TestBatchNaiveNeighborList:
                 batch_idx=batch_idx,
                 max_neighbors=4,
                 target_indices=jnp.array([0], dtype=jnp.int32),
-                native_strategy="tile",
+                strategy="tile",
             )
 
     def test_topology_only_grad_no_pbc_is_zero(self):

@@ -436,7 +436,7 @@ class TestBatchNaiveCorrectness:
                 batch_idx=batch_idx,
                 max_neighbors=4,
                 target_indices=torch.tensor([0], dtype=torch.int32, device=device),
-                native_strategy="tile",
+                strategy="tile",
             )
 
     def test_basic_with_pbc(self, device, dtype, half_fill):

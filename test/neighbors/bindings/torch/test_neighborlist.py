@@ -861,12 +861,12 @@ class TestNeighborListExplicitMethod:
     @pytest.mark.parametrize(
         ("method", "expected_route", "expected_options"),
         [
-            ("naive", "batch_naive", {"native_strategy": "auto"}),
+            ("naive", "batch_naive", {"strategy": "auto"}),
             ("cell_list", "batch_cell_list", {"strategy": "auto"}),
             ("cluster_tile", "batch_cluster_tile", {}),
             ("naive_dual_cutoff", "batch_naive_dual_cutoff", {}),
-            ("naive_scalar", "batch_naive", {"native_strategy": "scalar"}),
-            ("naive_tile", "batch_naive", {"native_strategy": "tile"}),
+            ("naive_scalar", "batch_naive", {"strategy": "scalar"}),
+            ("naive_tile", "batch_naive", {"strategy": "tile"}),
             (
                 "cell_list_atom_centric",
                 "batch_cell_list",

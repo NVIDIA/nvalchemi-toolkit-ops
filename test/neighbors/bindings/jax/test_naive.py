@@ -151,7 +151,7 @@ class TestNaiveNeighborList:
             pbc=pbc,
             max_neighbors=8,
             return_neighbor_list=False,
-            native_strategy="scalar",
+            strategy="scalar",
             wrap_positions=False,
         )
         tile_result = naive_neighbor_list(
@@ -161,7 +161,7 @@ class TestNaiveNeighborList:
             pbc=pbc,
             max_neighbors=8,
             return_neighbor_list=False,
-            native_strategy="tile",
+            strategy="tile",
             wrap_positions=False,
         )
 
@@ -392,7 +392,7 @@ class TestNaiveNeighborList:
                 1.0,
                 max_neighbors=4,
                 target_indices=jnp.array([0], dtype=jnp.int32),
-                native_strategy="tile",
+                strategy="tile",
             )
 
     def test_with_pbc(self):

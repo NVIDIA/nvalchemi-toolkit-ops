@@ -130,25 +130,7 @@ print(f"Estimated max_neighbors: {max_neighbors}")
 # Dispatch estimate
 # =================
 
-
-def _dispatch_report(
-    label: str,
-    batch_ptr: torch.Tensor,
-    cell: torch.Tensor,
-    pbc: torch.Tensor,
-    cutoff: float,
-    **kwargs,
-) -> str:
-    """Print sorted Torch neighbor-list strategy costs and return the cheapest."""
-    report = estimate_neighbor_list_costs(batch_ptr, cell, pbc, cutoff, **kwargs)
-    print(f"\n{label}")
-    for strategy, cost in report:
-        print(f"  {strategy:24s} estimated cost (arbitrary units): {cost:.3g}")
-    return report[0][0]
-
-
-selected_strategy = _dispatch_report(
-    "Torch dispatch estimate for targeted LJ outputs:",
+cost_report = estimate_neighbor_list_costs(
     batch_ptr,
     cell,
     pbc,
@@ -159,7 +141,11 @@ selected_strategy = _dispatch_report(
     use_pair_fn=True,
     positions_dtype=positions.dtype,
 )
-print(f"Selected strategy: {selected_strategy}")
+print("\nTorch dispatch estimate for targeted LJ outputs:")
+for method_name, cost in cost_report:
+    print(f"  {method_name:24s} estimated cost (arbitrary units): {cost:.3g}")
+selected_method = cost_report[0][0]
+print(f"Selected method: {selected_method}")
 
 
 # %%
@@ -282,7 +268,7 @@ fill_value = num_atoms
     CUTOFF,
     cell=cell,
     pbc=pbc,
-    method=selected_strategy,
+    method=selected_method,
     target_indices=target_indices,
     fill_value=fill_value,
     max_neighbors=max_neighbors,

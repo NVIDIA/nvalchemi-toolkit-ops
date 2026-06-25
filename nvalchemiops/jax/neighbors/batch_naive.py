@@ -524,12 +524,12 @@ def _jax_scalar_sentinels(dtype):
 
 
 # ==============================================================================
-# Tiled-kernel callables (``native_strategy="tile"``, CUDA-only)
+# Tiled-kernel callables (``strategy="tile"``, CUDA-only)
 # ==============================================================================
 #
 # These wrap the *inner* warp launchers ``_launch_naive_neighbor_matrix_no_pbc``
 # / ``_launch_naive_neighbor_matrix_pbc`` (with ``batched=True``) inside a
-# ``jax_callable`` body and pass ``native_strategy="tile"`` explicitly, so the
+# ``jax_callable`` body and pass ``strategy="tile"`` explicitly, so the
 # tile-cooperative ``wp.launch_tiled`` kernel is honored unconditionally
 # (unlike the "auto" heuristic, which only tiles for few-large-systems).
 #
@@ -547,7 +547,7 @@ def _jax_scalar_sentinels(dtype):
 #
 # Batched PREWRAPPED PBC has no tiled kernel (``_make_tile_kernel`` raises), so
 # only no-PBC and wrapped-PBC are wired here; the dispatch site rejects
-# ``native_strategy="tile"`` + ``wrap_positions=False`` for PBC.
+# ``strategy="tile"`` + ``wrap_positions=False`` for PBC.
 #
 # These run only on the eager path, where ``batch_naive_neighbor_list`` already
 # pre-fills ``neighbor_matrix=fill_value`` and zeroes ``num_neighbors`` /
@@ -578,7 +578,7 @@ def _batch_naive_tile_no_pbc_f32(
         batch_idx=batch_idx,
         batch_ptr=batch_ptr,
         half_fill=bool(half_fill),
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -602,7 +602,7 @@ def _batch_naive_tile_no_pbc_f64(
         batch_idx=batch_idx,
         batch_ptr=batch_ptr,
         half_fill=bool(half_fill),
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -641,7 +641,7 @@ def _batch_naive_tile_pbc_wrapped_f32(
         max_atoms_per_system=int(max_atoms_per_system),
         half_fill=bool(half_fill),
         wrap_positions=True,
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -680,13 +680,13 @@ def _batch_naive_tile_pbc_wrapped_f64(
         max_atoms_per_system=int(max_atoms_per_system),
         half_fill=bool(half_fill),
         wrap_positions=True,
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
 # Keyed by ``(has_pbc, wrap_positions)``.  Only no-PBC and wrapped-PBC are
 # present; batched prewrapped PBC has no tiled kernel.  Tile has no selective
-# variant, so the selective axis is omitted; ``native_strategy="tile"`` rejects
+# variant, so the selective axis is omitted; ``strategy="tile"`` rejects
 # ``rebuild_flags`` at the dispatch site.
 _BATCH_NAIVE_TILE_NO_PBC_IN_OUT_ARGS = ("neighbor_matrix", "num_neighbors")
 _BATCH_NAIVE_TILE_PBC_IN_OUT_ARGS = (
@@ -1022,7 +1022,7 @@ def batch_naive_neighbor_list(
     positions_wrapped_buffer: jax.Array | None = None,
     per_atom_cell_offsets_buffer: jax.Array | None = None,
     inv_cell_buffer: jax.Array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
     *,
     return_distances: bool = False,
     return_vectors: bool = False,
@@ -1082,7 +1082,7 @@ def batch_naive_neighbor_list(
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
-    native_strategy : {"auto", "scalar", "tile"}, default="auto"
+    strategy : {"auto", "scalar", "tile"}, default="auto"
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
@@ -1090,7 +1090,7 @@ def batch_naive_neighbor_list(
         and PBC-wrapped (``wrap_positions=True``) cases and ``half_fill``, but
         has no pair-output (``return_distances`` / ``return_vectors``) or
         selective (``rebuild_flags``) variant, and there is **no batched
-        prewrapped-PBC tiled kernel**: requesting ``native_strategy="tile"``
+        prewrapped-PBC tiled kernel**: requesting ``strategy="tile"``
         with PBC and ``wrap_positions=False`` raises ``NotImplementedError``
         (use ``"scalar"`` for that combination). ``"auto"`` and ``"scalar"``
         preserve the current scalar-dispatch behavior; ``"auto"`` never selects
@@ -1146,10 +1146,9 @@ def batch_naive_neighbor_list(
     nvalchemiops.jax.neighbors.naive.naive_neighbor_list : Non-batched version
     batch_cell_list : Cell list method for large systems
     """
-    if native_strategy not in {"auto", "scalar", "tile"}:
+    if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
-            "native_strategy must be 'auto' | 'scalar' | 'tile', "
-            f"got {native_strategy!r}",
+            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
 
     if pbc is None and cell is not None:
@@ -1157,37 +1156,37 @@ def batch_naive_neighbor_list(
     if pbc is not None and cell is None:
         raise ValueError("If pbc is provided, cell must also be provided")
 
-    if native_strategy == "tile":
+    if strategy == "tile":
         # The tile-cooperative kernel is CUDA-only and has no pair-output or
         # selective (rebuild_flags) variant, and no batched prewrapped-PBC
         # tiled kernel.  Gate here, before any launch, mirroring the warp
         # launcher CPU guard and the single-system tile guards.
         if _is_jax_cpu_array(positions):
             raise ValueError(
-                "native_strategy='tile' requires CUDA; the tile-cooperative "
+                "strategy='tile' requires CUDA; the tile-cooperative "
                 "naive kernel cannot run on a CPU device (Warp forces "
-                "block_dim=1). Use native_strategy='scalar' or 'auto' on CPU.",
+                "block_dim=1). Use strategy='scalar' or 'auto' on CPU.",
             )
         if bool(return_distances) or bool(return_vectors) or pair_fn is not None:
             raise NotImplementedError(
-                "native_strategy='tile' has no pair-output (return_distances / "
-                "return_vectors / pair_fn) variant; use native_strategy='scalar'.",
+                "strategy='tile' has no pair-output (return_distances / "
+                "return_vectors / pair_fn) variant; use strategy='scalar'.",
             )
         if target_indices is not None:
             raise NotImplementedError(
-                "native_strategy='tile' has no target_indices (partial "
-                "neighbor-list) variant; use native_strategy='scalar'.",
+                "strategy='tile' has no target_indices (partial "
+                "neighbor-list) variant; use strategy='scalar'.",
             )
         if rebuild_flags is not None:
             raise NotImplementedError(
-                "native_strategy='tile' has no selective (rebuild_flags) "
-                "variant; use native_strategy='scalar'.",
+                "strategy='tile' has no selective (rebuild_flags) "
+                "variant; use strategy='scalar'.",
             )
         if pbc is not None and not wrap_positions:
             raise NotImplementedError(
-                "native_strategy='tile' has no batched prewrapped-PBC tiled "
+                "strategy='tile' has no batched prewrapped-PBC tiled "
                 "kernel (wrap_positions=False with PBC). Use "
-                "native_strategy='scalar', or wrap_positions=True for the "
+                "strategy='scalar', or wrap_positions=True for the "
                 "tile path.",
             )
 
@@ -1539,10 +1538,10 @@ def batch_naive_neighbor_list(
         empty_rebuild_flags,
     ) = _jax_scalar_sentinels(positions.dtype)
 
-    if native_strategy == "tile":
+    if strategy == "tile":
         # CUDA-only tile-cooperative path (eager only). Output buffers were
         # already pre-filled above; the callable bodies wrap the batched inner
-        # warp launchers with native_strategy="tile". The launchers square the
+        # warp launchers with strategy="tile". The launchers square the
         # cutoff internally, so the RAW cutoff is threaded as a static scalar
         # (NOT cutoff*cutoff, unlike the scalar arms below).
         cutoff_static = float(cutoff)
@@ -1573,7 +1572,7 @@ def batch_naive_neighbor_list(
                     raise ValueError(
                         "Cannot infer max_atoms_per_system inside jax.jit. "
                         "Please provide max_atoms_per_system explicitly when "
-                        "using jax.jit with native_strategy='tile'."
+                        "using jax.jit with strategy='tile'."
                     ) from None
             tile_callable = _BATCH_NAIVE_TILE_CALLABLES[(True, True, positions.dtype)]
             neighbor_matrix, neighbor_matrix_shifts, num_neighbors = tile_callable(

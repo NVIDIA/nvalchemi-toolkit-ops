@@ -77,7 +77,7 @@ def _skip_if_cpu(device: str) -> None:
     """Skip tiled kernel tests on CPU."""
     if "cpu" in str(device):
         pytest.skip(
-            "native_strategy='tile' uses wp.launch_tiled and is CUDA-only; "
+            "strategy='tile' uses wp.launch_tiled and is CUDA-only; "
             "CPU parameter is not supported"
         )
 

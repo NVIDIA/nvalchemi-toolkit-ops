@@ -908,7 +908,7 @@ def _skip_if_cpu(device):
     """Skip tiled kernel tests on CPU because wp.launch_tiled is CUDA-only."""
     if "cpu" in str(device):
         pytest.skip(
-            "native_strategy='tile' uses wp.launch_tiled and is CUDA-only; "
+            "strategy='tile' uses wp.launch_tiled and is CUDA-only; "
             "CPU parameter is not supported"
         )
 
@@ -963,7 +963,7 @@ class TestNaiveTiledMatchesScalar:
             wp.from_torch(nn_ref, dtype=wp.int32),
             wp_dtype,
             wp_device,
-            native_strategy="scalar",
+            strategy="scalar",
         )
 
         # Tiled
@@ -978,7 +978,7 @@ class TestNaiveTiledMatchesScalar:
             wp.from_torch(nn_tiled, dtype=wp.int32),
             wp_dtype,
             wp_device,
-            native_strategy="tile",
+            strategy="tile",
         )
 
         assert torch.equal(nn_tiled, nn_ref), (
@@ -1011,7 +1011,7 @@ class TestNaiveTiledMatchesScalar:
             wp.from_torch(nn_ref, dtype=wp.int32),
             wp_dtype,
             wp_device,
-            native_strategy="scalar",
+            strategy="scalar",
         )
 
         nm_tiled = torch.full(
@@ -1025,7 +1025,7 @@ class TestNaiveTiledMatchesScalar:
             wp.from_torch(nn_tiled, dtype=wp.int32),
             wp_dtype,
             wp_device,
-            native_strategy="tile",
+            strategy="tile",
         )
 
         assert torch.equal(nn_tiled, nn_ref), (
@@ -1073,7 +1073,7 @@ class TestNaiveTiledMatchesScalar:
             wp.from_torch(nn_ref, dtype=wp.int32),
             wp_dtype,
             wp_device,
-            native_strategy="scalar",
+            strategy="scalar",
         )
 
         # Tiled
@@ -1095,7 +1095,7 @@ class TestNaiveTiledMatchesScalar:
             wp.from_torch(nn_tiled, dtype=wp.int32),
             wp_dtype,
             wp_device,
-            native_strategy="tile",
+            strategy="tile",
         )
 
         assert torch.equal(nn_tiled, nn_ref), (
@@ -1158,7 +1158,7 @@ class TestNaiveTiledMatchesScalar:
             wrap_positions=wrap_positions,
             return_distances=True,
             neighbor_distances=wp.from_torch(distances, dtype=wp_dtype),
-            native_strategy="scalar",
+            strategy="scalar",
         )
 
         nm_tiled = torch.full(
@@ -1181,7 +1181,7 @@ class TestNaiveTiledMatchesScalar:
             wp_device,
             half_fill=half_fill,
             wrap_positions=wrap_positions,
-            native_strategy="tile",
+            strategy="tile",
         )
 
         assert _neighbor_shift_sets(nm_tiled, ns_tiled, nn_tiled) == (
@@ -1214,7 +1214,7 @@ class TestNaiveTiledMatchesScalar:
             wp_dtype,
             wp_device,
             half_fill=True,
-            native_strategy="scalar",
+            strategy="scalar",
         )
 
         # Tiled
@@ -1230,7 +1230,7 @@ class TestNaiveTiledMatchesScalar:
             wp_dtype,
             wp_device,
             half_fill=True,
-            native_strategy="tile",
+            strategy="tile",
         )
 
         assert torch.equal(nn_tiled, nn_ref), (
@@ -1269,7 +1269,7 @@ class TestNaiveTiledSelectiveRebuild:
             wp_nn,
             wp_dtype,
             wp_device,
-            native_strategy="tile",
+            strategy="tile",
         )
         saved_nn = nn.clone()
 
@@ -1284,7 +1284,7 @@ class TestNaiveTiledSelectiveRebuild:
             wp_dtype,
             wp_device,
             rebuild_flags=wp_rebuild_flags,
-            native_strategy="tile",
+            strategy="tile",
         )
 
         assert torch.equal(nn, saved_nn), "num_neighbors unchanged when flag=False"
@@ -1314,7 +1314,7 @@ class TestNaiveTiledSelectiveRebuild:
             wp.from_torch(nn_ref, dtype=wp.int32),
             wp_dtype,
             wp_device,
-            native_strategy="tile",
+            strategy="tile",
         )
 
         # Selective build with flag=True
@@ -1331,7 +1331,7 @@ class TestNaiveTiledSelectiveRebuild:
             wp_dtype,
             wp_device,
             rebuild_flags=wp.from_torch(rebuild_flags, dtype=wp.bool),
-            native_strategy="tile",
+            strategy="tile",
         )
 
         assert torch.equal(nn_sel, nn_ref), (

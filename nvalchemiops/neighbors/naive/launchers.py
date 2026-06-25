@@ -233,7 +233,7 @@ def _launch_naive_neighbor_matrix_no_pbc(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff no-PBC naive neighbor-matrix path."""
     if batched and (batch_idx is None or batch_ptr is None):
@@ -258,17 +258,16 @@ def _launch_naive_neighbor_matrix_no_pbc(
     # ``use_tiled`` heuristic: the tile-cooperative kernel wins for
     # few-large-systems but the scalar thread-local-counter kernel wins for
     # many-small-systems, so dispatch on the atoms-per-system density.
-    if native_strategy not in {"auto", "scalar", "tile"}:
+    if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
-            "native_strategy must be 'auto' | 'scalar' | 'tile', "
-            f"got {native_strategy!r}",
+            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
-    if native_strategy == "scalar":
+    if strategy == "scalar":
         strategy = "scalar"
-    elif native_strategy == "tile":
+    elif strategy == "tile":
         if has_pair_outputs or _is_cpu_device(device):
             raise ValueError(
-                "native_strategy='tile' requires CUDA and no pair-output or "
+                "strategy='tile' requires CUDA and no pair-output or "
                 "target_indices path",
             )
         strategy = "tile"
@@ -452,7 +451,7 @@ def _launch_naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Launch the single-cutoff PBC naive neighbor-matrix path."""
     if batched:
@@ -480,24 +479,23 @@ def _launch_naive_neighbor_matrix_pbc(
     )
     partial = target_indices is not None
     pbc_mode = _pbc_mode_from_wrap(wrap_positions)
-    if native_strategy not in {"auto", "scalar", "tile"}:
+    if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
-            "native_strategy must be 'auto' | 'scalar' | 'tile', "
-            f"got {native_strategy!r}",
+            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
     can_tile = (
         not has_pair_outputs
         and not _is_cpu_device(device)
         and (not batched or wrap_positions)
     )
-    if native_strategy == "tile":
+    if strategy == "tile":
         if not can_tile:
             raise ValueError(
-                "native_strategy='tile' requires CUDA, no pair-output or "
+                "strategy='tile' requires CUDA, no pair-output or "
                 "target_indices path, and wrap_positions=True for batched PBC",
             )
         strategy = "tile"
-    elif native_strategy == "scalar":
+    elif strategy == "scalar":
         strategy = "scalar"
     elif can_tile:
         strategy = "tile"
@@ -889,7 +887,7 @@ def naive_neighbor_matrix(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Core warp launcher for naive neighbor matrix construction (no PBC).
 
@@ -1020,7 +1018,7 @@ def naive_neighbor_matrix(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
-        native_strategy=native_strategy,
+        strategy=strategy,
     )
 
 
@@ -1044,7 +1042,7 @@ def batch_naive_neighbor_matrix(
     neighbor_distances: wp.array | None = None,
     pair_energies: wp.array | None = None,
     pair_forces: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Core warp launcher for batched naive neighbor matrix construction (no PBC).
 
@@ -1180,7 +1178,7 @@ def batch_naive_neighbor_matrix(
         neighbor_distances=neighbor_distances,
         pair_energies=pair_energies,
         pair_forces=pair_forces,
-        native_strategy=native_strategy,
+        strategy=strategy,
     )
 
 
@@ -1210,7 +1208,7 @@ def naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,
@@ -1402,7 +1400,7 @@ def naive_neighbor_matrix_pbc(
         positions_wrapped_buffer=positions_wrapped_buffer,
         per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
         inv_cell_buffer=inv_cell_buffer,
-        native_strategy=native_strategy,
+        strategy=strategy,
     )
 
 
@@ -1436,7 +1434,7 @@ def batch_naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: wp.array | None = None,
     per_atom_cell_offsets_buffer: wp.array | None = None,
     inv_cell_buffer: wp.array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
     # Deprecated kwarg aliases:
     positions_wrapped: wp.array | None = None,
     per_atom_cell_offsets: wp.array | None = None,

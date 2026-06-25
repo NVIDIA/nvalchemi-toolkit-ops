@@ -1273,14 +1273,14 @@ _GRAPH_NAIVE_WARP_CALLABLES = _register_graph_naive_callables()
 
 
 # ==============================================================================
-# Tiled-kernel callables (``native_strategy="tile"``, CUDA-only)
+# Tiled-kernel callables (``strategy="tile"``, CUDA-only)
 # ==============================================================================
 #
 # These wrap the *inner* warp launchers ``_launch_naive_neighbor_matrix_no_pbc``
 # / ``_launch_naive_neighbor_matrix_pbc`` inside a ``jax_callable`` body and
-# pass ``native_strategy="tile"`` explicitly, so the tile-cooperative
+# pass ``strategy="tile"`` explicitly, so the tile-cooperative
 # ``wp.launch_tiled`` kernel is honored unconditionally (unlike the high-level
-# ``naive_neighbor_matrix`` launchers, which drop ``native_strategy`` on the
+# ``naive_neighbor_matrix`` launchers, which drop ``strategy`` on the
 # non-pair branch and would only reach tile via the "auto" heuristic).
 #
 # The inner launchers own the 2D tile ``dim`` math (``[1, N]`` no-PBC,
@@ -1315,7 +1315,7 @@ def _graph_naive_tile_no_pbc_f32(
         str(positions.device),
         batched=False,
         half_fill=bool(half_fill),
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -1335,7 +1335,7 @@ def _graph_naive_tile_no_pbc_f64(
         str(positions.device),
         batched=False,
         half_fill=bool(half_fill),
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -1367,7 +1367,7 @@ def _graph_naive_tile_pbc_prewrapped_f32(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=False,
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -1397,7 +1397,7 @@ def _graph_naive_tile_pbc_prewrapped_f64(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=False,
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -1428,7 +1428,7 @@ def _graph_naive_tile_pbc_wrapped_f32(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=True,
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
@@ -1459,12 +1459,12 @@ def _graph_naive_tile_pbc_wrapped_f64(
         num_shifts=int(num_shifts),
         half_fill=bool(half_fill),
         wrap_positions=True,
-        native_strategy="tile",
+        strategy="tile",
     )
 
 
 # Keyed by ``(has_pbc, wrap_positions)``.  Tile has no selective variant, so the
-# selective axis is omitted here; ``native_strategy="tile"`` rejects
+# selective axis is omitted here; ``strategy="tile"`` rejects
 # ``rebuild_flags`` at the dispatch site.
 _GRAPH_NAIVE_TILE_NO_PBC_IN_OUT_ARGS = ("neighbor_matrix", "num_neighbors")
 _GRAPH_NAIVE_TILE_PBC_IN_OUT_ARGS = (
@@ -1796,7 +1796,7 @@ def naive_neighbor_list(
     inv_cell_buffer: jax.Array | None = None,
     positions_wrapped_buffer: jax.Array | None = None,
     per_atom_cell_offsets_buffer: jax.Array | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
     *,
     return_distances: bool = False,
     return_vectors: bool = False,
@@ -1886,14 +1886,14 @@ def naive_neighbor_list(
         neighbor search. Set to False when positions are already
         wrapped (e.g. by a preceding integration step) to save two
         GPU kernel launches per call.
-    native_strategy : {"auto", "scalar", "tile"}, default="auto"
+    strategy : {"auto", "scalar", "tile"}, default="auto"
         Selects the underlying Warp kernel variant. ``"scalar"`` uses the
         per-atom scalar kernel. ``"tile"`` uses the tile-cooperative
         ``wp.launch_tiled`` kernel and is **CUDA-only**: requesting it on a
         CPU device raises ``ValueError``. The tile path has no pair-output /
         ``target_indices`` / selective (``rebuild_flags``) variant and is not
         supported with ``graph_mode="warp"`` in this binding; requesting any
-        of those with ``native_strategy="tile"`` raises. ``"auto"`` preserves
+        of those with ``strategy="tile"`` raises. ``"auto"`` preserves
         the current JAX behavior (scalar dispatch) and never selects tile —
         tile is opt-in in the JAX binding (unlike the torch single-system
         binding, whose ``"auto"`` tiles by default). The tile and scalar
@@ -2059,10 +2059,9 @@ def naive_neighbor_list(
     """
     graph_mode = _validate_graph_mode(graph_mode)
 
-    if native_strategy not in {"auto", "scalar", "tile"}:
+    if strategy not in {"auto", "scalar", "tile"}:
         raise ValueError(
-            "native_strategy must be 'auto' | 'scalar' | 'tile', "
-            f"got {native_strategy!r}",
+            f"strategy must be 'auto' | 'scalar' | 'tile', got {strategy!r}",
         )
 
     # ``pair_fn`` requires per-atom ``pair_params``.  Note: under JAX (functional
@@ -2086,34 +2085,34 @@ def naive_neighbor_list(
     if pbc is not None and cell is None:
         raise ValueError("If pbc is provided, cell must also be provided")
 
-    if native_strategy == "tile":
+    if strategy == "tile":
         # The tile-cooperative kernel is CUDA-only and has no pair-output,
         # selective (rebuild_flags), or CUDA-graph (graph_mode="warp") variant.
         # Gate here, before any launch, mirroring the warp launcher CPU guard.
         if _is_jax_cpu_array(positions):
             raise ValueError(
-                "native_strategy='tile' requires CUDA; the tile-cooperative "
+                "strategy='tile' requires CUDA; the tile-cooperative "
                 "naive kernel cannot run on a CPU device (Warp forces "
-                "block_dim=1). Use native_strategy='scalar' or 'auto' on CPU.",
+                "block_dim=1). Use strategy='scalar' or 'auto' on CPU.",
             )
         if bool(return_distances) or bool(return_vectors) or pair_fn is not None:
             raise NotImplementedError(
-                "native_strategy='tile' has no pair-output (return_distances / "
-                "return_vectors / pair_fn) variant; use native_strategy='scalar'.",
+                "strategy='tile' has no pair-output (return_distances / "
+                "return_vectors / pair_fn) variant; use strategy='scalar'.",
             )
         if target_indices is not None:
             raise NotImplementedError(
-                "native_strategy='tile' has no target_indices (partial "
-                "neighbor-list) variant; use native_strategy='scalar'.",
+                "strategy='tile' has no target_indices (partial "
+                "neighbor-list) variant; use strategy='scalar'.",
             )
         if rebuild_flags is not None:
             raise NotImplementedError(
-                "native_strategy='tile' has no selective (rebuild_flags) "
-                "variant; use native_strategy='scalar'.",
+                "strategy='tile' has no selective (rebuild_flags) "
+                "variant; use strategy='scalar'.",
             )
         if graph_mode != "none":
             raise NotImplementedError(
-                "native_strategy='tile' is only supported with "
+                "strategy='tile' is only supported with "
                 "graph_mode='none'; CUDA-graph capture of the tile kernel is a "
                 "follow-up.",
             )
@@ -2500,10 +2499,10 @@ def naive_neighbor_list(
         empty_rebuild_flags,
     ) = _jax_scalar_sentinels(positions.dtype)
 
-    if native_strategy == "tile":
+    if strategy == "tile":
         # CUDA-only tile-cooperative path (eager / graph_mode="none" only).
         # Output buffers were already pre-filled above; the callable bodies
-        # call the inner warp launchers with native_strategy="tile" and rely on
+        # call the inner warp launchers with strategy="tile" and rely on
         # the host-static cutoff / half_fill / num_shifts scalars (no new sync).
         cutoff_static = float(cutoff)
         if pbc is None:

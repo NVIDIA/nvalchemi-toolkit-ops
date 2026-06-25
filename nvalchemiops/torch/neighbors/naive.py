@@ -59,7 +59,7 @@ def _naive_neighbor_matrix_no_pbc(
     num_neighbors: torch.Tensor,
     half_fill: bool = False,
     rebuild_flags: torch.Tensor | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Fill neighbor matrix for atoms using naive O(N^2) algorithm.
 
@@ -130,7 +130,7 @@ def _naive_neighbor_matrix_no_pbc(
             device=str(device),
             half_fill=half_fill,
             rebuild_flags=wp_rebuild_flags,
-            native_strategy=native_strategy,
+            strategy=strategy,
         )
 
 
@@ -155,7 +155,7 @@ def _naive_neighbor_matrix_pbc(
     positions_wrapped_buffer: torch.Tensor | None = None,
     per_atom_cell_offsets_buffer: torch.Tensor | None = None,
     inv_cell_buffer: torch.Tensor | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
 ) -> None:
     """Compute neighbor matrix with periodic boundary conditions using naive O(N^2) algorithm.
 
@@ -289,7 +289,7 @@ def _naive_neighbor_matrix_pbc(
             positions_wrapped_buffer=wp_positions_wrapped,
             per_atom_cell_offsets_buffer=wp_per_atom_cell_offsets,
             inv_cell_buffer=wp_inv_cell,
-            native_strategy=native_strategy,
+            strategy=strategy,
         )
 
 
@@ -1121,7 +1121,7 @@ def naive_neighbor_list(
     pair_params: torch.Tensor | None = None,
     pair_energies: torch.Tensor | None = None,
     pair_forces: torch.Tensor | None = None,
-    native_strategy: str = "auto",
+    strategy: str = "auto",
     target_indices: torch.Tensor | None = None,
 ) -> (
     tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
@@ -1295,10 +1295,10 @@ def naive_neighbor_list(
         or pair_forces is not None
         or target_indices is not None
     )
-    if native_strategy == "tile" and target_indices is not None:
+    if strategy == "tile" and target_indices is not None:
         raise NotImplementedError(
-            "native_strategy='tile' has no target_indices (partial "
-            "neighbor-list) variant; use native_strategy='scalar'.",
+            "strategy='tile' has no target_indices (partial "
+            "neighbor-list) variant; use strategy='scalar'.",
         )
     if has_pair_outputs:
         if is_compiled_pair_fn(pair_fn) and torch.compiler.is_compiling():
@@ -1603,7 +1603,7 @@ def naive_neighbor_list(
             num_neighbors=num_neighbors,
             half_fill=half_fill,
             rebuild_flags=rebuild_flags,
-            native_strategy=native_strategy,
+            strategy=strategy,
         )
         if return_neighbor_list:
             neighbor_list, neighbor_ptr = get_neighbor_list_from_neighbor_matrix(
@@ -1632,7 +1632,7 @@ def naive_neighbor_list(
             positions_wrapped_buffer=positions_wrapped_buffer,
             per_atom_cell_offsets_buffer=per_atom_cell_offsets_buffer,
             inv_cell_buffer=inv_cell_buffer,
-            native_strategy=native_strategy,
+            strategy=strategy,
         )
         if return_neighbor_list:
             neighbor_list, neighbor_ptr, neighbor_list_shifts = (
