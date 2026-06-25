@@ -825,7 +825,7 @@ def _validate_selector_inputs(
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D wp.array")
     if batch_ptr.shape[0] < 2:
-        return 0
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0] - 1)
     if cell.shape[0] != num_systems:
         raise ValueError("cell must contain one matrix per system")
@@ -935,8 +935,6 @@ def estimate_neighbor_list_costs(
     the chosen name as an explicit ``method=`` to run compiled.
     """
     num_systems = _validate_selector_inputs(batch_ptr, cell, pbc, cutoff, batch_idx)
-    if num_systems == 0:
-        return [("cell_list_atom_centric", 0.0)]
 
     if max_nbins is None:
         max_nbins = (

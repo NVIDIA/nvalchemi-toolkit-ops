@@ -1430,3 +1430,10 @@ class TestNeighborListEdgeCases:
         assert neighbor_list_coo.shape[1] == 0  # No pairs
         assert neighbor_ptr.shape[0] == 2  # 1 atom + 1
         assert int(neighbor_ptr[0]) == 0
+
+    def test_neighbor_list_rejects_short_batch_ptr_length(self):
+        """Top-level neighbor_list rejects one-entry batch_ptr."""
+        positions = jnp.zeros((0, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            neighbor_list(positions, 3.0, batch_ptr=batch_ptr)

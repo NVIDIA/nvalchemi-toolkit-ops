@@ -10,6 +10,7 @@ alone may not provide sufficient information.
 :maxdepth: 2
 
 torch/neighbors.rst
+torch/segment_ops.rst
 torch/dispersion.rst
 torch/electrostatics.rst
 torch/dynamics.rst
@@ -22,6 +23,7 @@ torch/autograd.rst
 :maxdepth: 2
 
 jax/neighbors.rst
+jax/segment_ops.rst
 jax/dispersion.rst
 jax/electrostatics.rst
 ```

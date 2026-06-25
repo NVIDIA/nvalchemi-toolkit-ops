@@ -634,7 +634,7 @@ def _dispersion_energy_force(
     s5_smoothing_on: wp.float32,
     s5_smoothing_off: wp.float32,
     inv_w: wp.float32,
-) -> tuple[wp.float32, wp.vec3f]:
+) -> tuple[wp.float32, wp.vec3f, wp.float32]:
     """
     Compute dispersion energy and direct force with S5 switching.
 
@@ -644,6 +644,9 @@ def _dispersion_energy_force(
         Smoothed energy
     F_direct : vec3f
         Direct force vector
+    sw : float32
+        S5 switch value, so callers can scale the CN-route derivative
+        dE/dCN consistently with the switched energy.
     """
     e_ij = -c6_ij * damp_sum
 
@@ -659,7 +662,7 @@ def _dispersion_energy_force(
 
     F_direct = dE_dr_direct_sw * r_hat  # NOSONAR (S125) "math formula"
 
-    return e_ij_sw, F_direct
+    return e_ij_sw, F_direct, sw
 
 
 @wp.func
@@ -1014,7 +1017,7 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
                     )
 
                     # Energy and direct force
-                    e_ij_sw, F_direct = _dispersion_energy_force(
+                    e_ij_sw, F_direct, sw = _dispersion_energy_force(
                         c6_ij,
                         r,
                         r_hat,
@@ -1036,7 +1039,9 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
                     F_acc_y += F_direct[1]  # NOSONAR (S117) "math formula"
                     F_acc_z += F_direct[2]  # NOSONAR (S117) "math formula"
                     energy_acc += wp.float64(e_ij_sw)
-                    dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
+                    dE_dCN_acc += (
+                        -damp_sum * dC6_dCNi * sw
+                    )  # NOSONAR (S117) "math formula"
 
         neighbor_idx += block_stride
 
@@ -1136,7 +1141,7 @@ def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math for
                     damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
                         r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
                     )
-                    e_ij_sw, F_direct = _dispersion_energy_force(
+                    e_ij_sw, F_direct, sw = _dispersion_energy_force(
                         c6_ij,
                         r,
                         r_hat,
@@ -1156,7 +1161,9 @@ def _direct_forces_and_dE_dCN_kernel_matrix_virial(  # NOSONAR (S1542) "math for
                     F_acc_y += F_direct[1]  # NOSONAR (S117) "math formula"
                     F_acc_z += F_direct[2]  # NOSONAR (S117) "math formula"
                     energy_acc += wp.float64(e_ij_sw)
-                    dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
+                    dE_dCN_acc += (
+                        -damp_sum * dC6_dCNi * sw
+                    )  # NOSONAR (S117) "math formula"
                     virial_acc_xx += F_direct[0] * r_ij[0]
                     virial_acc_xy += F_direct[0] * r_ij[1]
                     virial_acc_xz += F_direct[0] * r_ij[2]
@@ -1638,7 +1645,7 @@ def _direct_forces_and_dE_dCN_kernel(  # NOSONAR (S1542) "math formula"
                     damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
                         r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
                     )
-                    e_ij_sw, F_direct = _dispersion_energy_force(
+                    e_ij_sw, F_direct, sw = _dispersion_energy_force(
                         c6_ij,
                         r,
                         r_hat,
@@ -1658,7 +1665,9 @@ def _direct_forces_and_dE_dCN_kernel(  # NOSONAR (S1542) "math formula"
                     F_acc_y += F_direct[1]  # NOSONAR (S117) "math formula"
                     F_acc_z += F_direct[2]  # NOSONAR (S117) "math formula"
                     energy_acc += wp.float64(e_ij_sw)
-                    dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
+                    dE_dCN_acc += (
+                        -damp_sum * dC6_dCNi * sw
+                    )  # NOSONAR (S117) "math formula"
 
         edge_idx += block_stride
 
@@ -1757,7 +1766,7 @@ def _direct_forces_and_dE_dCN_kernel_virial(  # NOSONAR (S1542) "math formula"
                     damp_sum, r4r2_ij, r6, r4, den6_inv, den8_inv = _bj_damping(
                         r, r4r2_i, r4r2[z_j], a1, a2, s6, s8
                     )
-                    e_ij_sw, F_direct = _dispersion_energy_force(
+                    e_ij_sw, F_direct, sw = _dispersion_energy_force(
                         c6_ij,
                         r,
                         r_hat,
@@ -1777,7 +1786,9 @@ def _direct_forces_and_dE_dCN_kernel_virial(  # NOSONAR (S1542) "math formula"
                     F_acc_y += F_direct[1]  # NOSONAR (S117) "math formula"
                     F_acc_z += F_direct[2]  # NOSONAR (S117) "math formula"
                     energy_acc += wp.float64(e_ij_sw)
-                    dE_dCN_acc += -damp_sum * dC6_dCNi  # NOSONAR (S117) "math formula"
+                    dE_dCN_acc += (
+                        -damp_sum * dC6_dCNi * sw
+                    )  # NOSONAR (S117) "math formula"
                     virial_acc_xx += F_direct[0] * r_ij[0]
                     virial_acc_xy += F_direct[0] * r_ij[1]
                     virial_acc_xz += F_direct[0] * r_ij[2]

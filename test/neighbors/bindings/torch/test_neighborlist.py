@@ -2260,6 +2260,13 @@ class TestNeighborListEdgeCases:
         assert neighbor_ptr.shape[0] == 2
         assert neighbor_ptr[0] == 0
 
+    def test_neighbor_list_rejects_short_batch_ptr_length(self):
+        """Top-level neighbor_list rejects one-entry batch_ptr."""
+        positions = torch.zeros((0, 3), dtype=torch.float32)
+        batch_ptr = torch.tensor([0], dtype=torch.int32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            neighbor_list(positions, 3.0, batch_ptr=batch_ptr)
+
 
 class TestPrepareBatchIdxPtr:
     """Test prepare_batch_idx_ptr function."""
@@ -2300,6 +2307,12 @@ class TestPrepareBatchIdxPtr:
             )
             torch.cumsum(num_atoms_per_system, dim=0, out=calculated_ptr[1:])
             assert torch.all(batch_ptr == calculated_ptr)
+
+    def test_prepare_batch_idx_ptr_rejects_short_batch_ptr_length(self):
+        """Exported prepare_batch_idx_ptr rejects one-entry batch_ptr."""
+        batch_ptr = torch.tensor([0], dtype=torch.int32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            prepare_batch_idx_ptr(None, batch_ptr, 0, torch.device("cpu"))
 
 
 def test_suggest_then_run_under_torch_compile():

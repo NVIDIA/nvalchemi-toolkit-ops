@@ -451,7 +451,11 @@ python benchmark_electrostatics.py \
 
 `--torch-compile`
 : Time torch backends through `torch.compile(fullgraph=True)` and record
-  framework compile costs.
+  framework compile costs. When the flag is omitted, the YAML `compile:` field
+  controls the default.
+
+`--no-torch-compile`
+: Disable `torch.compile` for torch backends, overriding YAML `compile: true`.
 
 `--derivative-contract {energy_autograd,legacy_direct}`
 : Select the nvalchemiops Ewald/PME derivative contract. The default

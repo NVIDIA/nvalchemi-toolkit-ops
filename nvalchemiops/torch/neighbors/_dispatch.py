@@ -198,7 +198,9 @@ def estimate_neighbor_list_costs(
     )
     if batch_ptr.ndim != 1:
         raise ValueError("batch_ptr must be a 1-D tensor")
-    num_systems = max(int(batch_ptr.shape[0]) - 1, 0)
+    if batch_ptr.shape[0] < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+    num_systems = int(batch_ptr.shape[0]) - 1
     cell, pbc = _normalize_selector_cell_pbc(cell, pbc, num_systems)
     batch_ptr = batch_ptr.detach().to(dtype=torch.int32).contiguous()
     if batch_idx is not None:

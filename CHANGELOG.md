@@ -69,6 +69,8 @@
   the existing tuple order. Component `compute_forces=True` remains available for
   no-autograd MD/inference use; component charge-gradient, virial, and hybrid
   direct outputs warn as legacy training-style outputs.
+- `nvalchemiops.neighbors.zero_array` now emits a `DeprecationWarning` and
+  forwards to `array.zero_()`. Call `array.zero_()` directly.
 - `cells_inv` argument on `compute_cell_kinetic_energy`,
   `npt_velocity_half_step{,_out}`, `npt_position_update{,_out}`,
   `nph_velocity_half_step{,_out}`, `nph_position_update{,_out}`,
@@ -88,6 +90,7 @@
   `ḣ = dh/dt`. Kernel signatures unchanged.
 - `npt_barostat_half_step{,_aniso,_triclinic}` drop the `eta_dots`
   argument; thermostat coupling is now a separate Trotter operator.
+- The internal `make_outer_neigh_offsets` helper was removed.
 
 ### Added (neighbors)
 

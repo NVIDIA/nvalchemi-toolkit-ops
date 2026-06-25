@@ -213,6 +213,30 @@ def _recip_ksum_energy_torch(
     return energy
 
 
+def _resolve_max_atoms_per_system(
+    max_atoms_per_system_bound: int,
+    atom_start: torch.Tensor,
+    atom_end: torch.Tensor,
+    num_atoms: int,
+) -> int:
+    """Resolve batched launch bound; bound ``0`` infers from atom ranges (may sync)."""
+    if num_atoms == 0:
+        return 0
+    value = int(max_atoms_per_system_bound)
+    if value > 0:
+        return value
+    return int((atom_end - atom_start).max().item())
+
+
+def _fake_need_flags(args: tuple) -> tuple[bool, bool, bool]:
+    """Parse trailing ``need_pos``, ``need_charge``, ``need_cell`` from forward fakes."""
+    if len(args) == 8:
+        return bool(args[-3]), bool(args[-2]), bool(args[-1])
+    if len(args) == 12:
+        return bool(args[-4]), bool(args[-3]), bool(args[-2])
+    raise RuntimeError(f"Unexpected Ewald reciprocal fake signature length {len(args)}")
+
+
 def _run_fill(
     bundle,
     positions,
@@ -230,6 +254,7 @@ def _run_fill(
     wp_vec,
     device,
     want_cellgrad=False,
+    max_atoms_per_system_bound: int = 0,
 ):
     """Launch the (reused hand-written) fill kernel; return cos/sin/S_real/S_imag.
 
@@ -256,7 +281,9 @@ def _run_fill(
             total_charges = _wp_zeros_f64(num_systems, positions.device)
             wp_as = _wp(atom_start, wp.int32)
             wp_ae = _wp(atom_end, wp.int32)
-            max_atoms = int((atom_end - atom_start).max().item()) if num_atoms else 0
+            max_atoms = _resolve_max_atoms_per_system(
+                max_atoms_per_system_bound, atom_start, atom_end, num_atoms
+            )
             max_blocks = (max_atoms + BATCH_BLOCK_SIZE - 1) // BATCH_BLOCK_SIZE
             max_blocks = max(max_blocks, 1)
             use_tiled_fill = can_tile_ewald_recip_on_device(
@@ -448,6 +475,7 @@ def _forward_impl(
     need_pos,
     need_charge,
     need_cell,
+    max_atoms_per_system_bound: int = 0,
 ):
     """Fused recip forward: energy (always) + detached ``dE/dR`` / ``dE/dq`` caches.
 
@@ -509,6 +537,7 @@ def _forward_impl(
         wp_vec,
         device,
         want_cellgrad=want_cellgrad,
+        max_atoms_per_system_bound=max_atoms_per_system_bound,
     )
     if cellgrad_fill is not None:
         cellgrad_cache = cellgrad_fill.detach()
@@ -564,6 +593,7 @@ def _backward_impl(
     need_pos,
     need_charge,
     need_cell,
+    max_atoms_per_system_bound: int = 0,
 ):
     """First backward: scale the cached atom-major dE/dR / dE/dq; recompute k/V on demand.
 
@@ -763,6 +793,7 @@ def _double_backward_impl(
     need_pos,
     need_charge,
     need_cell,
+    max_atoms_per_system_bound: int = 0,
 ):
     # ``dEdR_cache`` / ``dEdq_cache`` (the backward op's leading first-order caches) and
     # the trailing ``need_*`` flags are accepted for positional alignment but unused: the
@@ -800,7 +831,9 @@ def _double_backward_impl(
     use_charge_db = bool(need_charge)
     use_cell_db = bool(need_cell)
     if batched and num_atoms:
-        max_atoms = int((atom_end - atom_start).max().item())
+        max_atoms = _resolve_max_atoms_per_system(
+            max_atoms_per_system_bound, atom_start, atom_end, num_atoms
+        )
     else:
         max_atoms = num_atoms
     use_tiled_reduce = (
@@ -1061,6 +1094,7 @@ def _recip_forward_batch(
     need_pos: bool,
     need_charge: bool,
     need_cell: bool,
+    max_atoms_per_system_bound: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return _forward_impl(
         positions,
@@ -1075,6 +1109,7 @@ def _recip_forward_batch(
         need_pos,
         need_charge,
         need_cell,
+        max_atoms_per_system_bound,
     )
 
 
@@ -1095,6 +1130,7 @@ def _recip_backward_batch(
     need_pos: bool,
     need_charge: bool,
     need_cell: bool,
+    max_atoms_per_system_bound: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return _backward_impl(
         dEdR_cache,
@@ -1113,6 +1149,7 @@ def _recip_backward_batch(
         need_pos,
         need_charge,
         need_cell,
+        max_atoms_per_system_bound,
     )
 
 
@@ -1137,6 +1174,7 @@ def _recip_double_backward_batch(
     need_pos: bool,
     need_charge: bool,
     need_cell: bool,
+    max_atoms_per_system_bound: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return _double_backward_impl(
         v_pos,
@@ -1159,6 +1197,7 @@ def _recip_double_backward_batch(
         need_pos,
         need_charge,
         need_cell,
+        max_atoms_per_system_bound,
     )
 
 
@@ -1176,10 +1215,9 @@ def _recip_double_backward_batch(
 def _recip_forward_fake(positions, *args):
     """Forward fake: ``(energy, dE/dR cache, dE/dq cache, cellgrad cache)``.
 
-    Cache shapes gated by the ``need_pos`` / ``need_charge`` booleans (the last three
-    trailing args are ``need_pos, need_charge, need_cell``).
+    Cache shapes gated by the ``need_pos`` / ``need_charge`` booleans.
     """
-    need_pos, need_charge = bool(args[-3]), bool(args[-2])
+    need_pos, need_charge, _need_cell = _fake_need_flags(args)
     n = positions.shape[0]
     energy = positions.new_empty(n, dtype=torch.float64)
     dEdR = positions.new_empty(n if need_pos else 0, 3, dtype=positions.dtype)
@@ -1266,9 +1304,9 @@ def register_ewald_recip_ops() -> None:
         double_backward_return_arity=5,
     )
 
-    # Batched forward inputs (12): 0 positions, 1 charges, 2 cell, 3 k_vectors,
+    # Batched forward inputs (13): 0 positions, 1 charges, 2 cell, 3 k_vectors,
     #   4 volume, 5 alpha, 6 batch_idx, 7 atom_start, 8 atom_end, 9 need_pos,
-    #   10 need_charge, 11 need_cell.
+    #   10 need_charge, 11 need_cell, 12 max_atoms_per_system_bound.
     _RECIP_BATCH = register_warp_op_chain(
         name="nvalchemiops::ewald_recip_energy_batch",
         forward=_recip_forward_batch,
@@ -1281,10 +1319,10 @@ def register_ewald_recip_ops() -> None:
         propagate_outputs=(0,),
         save_forward_outputs=(1, 2, 3),
         diff_input_positions=(0, 1, 3, 4),
-        n_forward_inputs=12,
+        n_forward_inputs=13,
         backward_return_arity=4,
         second_order_diff_positions=(3, 4, 5, 7, 8),
-        n_backward_inputs=16,
+        n_backward_inputs=17,
         double_backward_return_arity=5,
         batch_match=True,
     )

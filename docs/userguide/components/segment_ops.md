@@ -55,7 +55,9 @@ out = segmented_sum(x, idx, num_segments=3)
 
 The full set of operations covers sums, dot products, scaled-broadcasts, mean,
 RMS norm, max norm, and matrix-vector products — all first- and second-order
-differentiable.  See the API reference for the complete list.
+differentiable. See the {doc}`Torch </modules/torch/segment_ops>` and
+{doc}`JAX </modules/jax/segment_ops>` segment-op API reference pages for the
+complete public signatures.
 
 (segment_ops_cuda_graphs)=
 
@@ -95,31 +97,19 @@ our launchers already beat torch by 10-25×).
 ### What About `torch.compile`?
 
 A natural first question is whether ``torch.compile(segmented_sum,
-fullgraph=True)`` does this for you automatically. **Today, no.** The Torch
-wrapper validates ``idx`` on the host with ``idx.min().item()`` /
-``idx.max().item()``, which is a data-dependent op that
-``torch.compile(..., fullgraph=True)`` refuses to trace:
+fullgraph=True)`` captures the public wrappers. In this release, it does:
+the Torch segment ops are registered as custom op chains, so TorchDynamo sees
+each public wrapper as an opaque graph node. Eager calls still validate
+``idx`` on the host, including range checks, while compiled calls skip the
+range check under ``torch.compiler.is_compiling()`` to avoid a data-dependent
+host sync. Pass pre-validated segment indices when compiling with
+``fullgraph=True``.
 
-```python
->>> torch.compile(segmented_sum, fullgraph=True)(x, idx, M)
-torch._dynamo.exc.UserError: Could not guard on data-dependent expression
-u0 < 0 (unhinted: u0 < 0)
-```
-
-``mode="reduce-overhead"`` (Torch's own CUDA-graph mode) does run, but the
-graph break around the validation forces Torch back into eager between
-subgraphs — empirically it ends up **~2-3× slower than plain eager** at
-N=10k, M=1000 (236 µs vs 96 µs in our measurements). The wins reported in
-the table above come from explicit ``wp.ScopedCapture`` around the raw
-launchers, not from ``torch.compile``.
-
-If you really want a single-call ``torch.compile``-friendly entry point
-today, the working recipe is to call the renamed launcher
-(``segmented_sum_backward`` and friends) directly: those are pure kernel
-dispatchers with no host-side validation. Wrap them in
-``wp.ScopedCapture`` as shown below for the speedups above. A future
-release that registers the public ops via ``torch.library.custom_op``
-would make ``torch.compile`` capable too, but that work isn't in this PR.
+``mode="reduce-overhead"`` can reduce Torch's own launch overhead, but the
+speedups reported in the table above come from explicit ``wp.ScopedCapture``
+around the raw launchers. Use ``torch.compile`` when the segment op is part
+of a larger compiled PyTorch model; use ``wp.ScopedCapture`` when repeatedly
+replaying the same fixed-shape Warp launcher sequence.
 
 ### Minimal Pattern
 

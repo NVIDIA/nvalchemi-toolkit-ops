@@ -24,11 +24,14 @@ import pytest
 
 from nvalchemiops.jax.neighbors.batch_cluster_tile import (
     TILE_GROUP_SIZE,
+    _batch_tile_buffer_max_tiles_per_group,
     allocate_batch_cluster_tile_list,
     batch_cluster_tile_neighbor_list,
     estimate_batch_cluster_tile_list_sizes,
     estimate_batch_cluster_tile_segments,
+    estimate_batch_max_tiles_per_group,
 )
+from nvalchemiops.neighbors.cluster_tile import estimate_max_tiles_per_group
 
 from .conftest import requires_gpu
 
@@ -253,6 +256,89 @@ class TestBatchTileNeighborListErrors:
 
 class TestEstimateBatchSizes:
     """Pure-Python sizing helper tests."""
+
+    def test_batch_max_tiles_per_group_matches_scalar_max(self):
+        """Batched max-tile sizing should match the scalar estimator."""
+        batch_ptr = jnp.array([0, 32, 32800], dtype=jnp.int32)
+        cell_batch = jnp.asarray(
+            np.stack(
+                [
+                    np.eye(3, dtype=np.float32) * 10.0,
+                    np.eye(3, dtype=np.float32) * 10.0,
+                ],
+            ),
+        )
+        cutoff = 20.0
+        expected = 256
+        for start, stop, cell in zip(
+            np.asarray(batch_ptr[:-1]),
+            np.asarray(batch_ptr[1:]),
+            np.asarray(cell_batch),
+        ):
+            expected = max(
+                expected,
+                estimate_max_tiles_per_group(
+                    int(stop - start),
+                    cutoff,
+                    float(abs(np.linalg.det(cell))),
+                ),
+            )
+
+        got = estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_batch)
+
+        assert got == expected
+        assert got > 256
+
+    def test_batch_max_tiles_per_group_rejects_short_batch_ptr_length(self):
+        """Direct cluster-tile sizing rejects one-entry batch_ptr."""
+        batch_ptr = jnp.array([0], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            estimate_batch_max_tiles_per_group(batch_ptr, 3.0, cell_batch)
+
+    def test_batch_max_tiles_per_group_rejects_bad_cell_shape(self):
+        """Public batch max-tile sizing rejects malformed concrete cells."""
+        batch_ptr = jnp.array([0, 32, 64], dtype=jnp.int32)
+        cell_batch = jnp.arange(18, dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="cell_batch.*shape"):
+            estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
+
+    def test_batch_max_tiles_per_group_rejects_traced_cell_batch(self):
+        """Public batch max-tile sizing requires concrete cell_batch."""
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+
+        @jax.jit
+        def call_with_traced_cell(cell_batch):
+            return estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
+
+        with pytest.raises(ValueError, match="cell_batch.*concrete"):
+            call_with_traced_cell(jnp.eye(3, dtype=jnp.float32)[None])
+
+    def test_batch_max_tiles_per_group_rejects_traced_batch_ptr(self):
+        """Public batch max-tile sizing requires concrete batch_ptr."""
+        cell_batch = jnp.eye(3, dtype=jnp.float32)[None]
+
+        @jax.jit
+        def call_with_traced_batch_ptr(batch_ptr):
+            return estimate_batch_max_tiles_per_group(batch_ptr, 2.0, cell_batch)
+
+        with pytest.raises(ValueError, match="batch_ptr.*concrete"):
+            call_with_traced_batch_ptr(jnp.array([0, 32], dtype=jnp.int32))
+
+    def test_batch_tile_buffer_max_tiles_per_group_rejects_cell_batch_mismatch(self):
+        """Non-empty batch pointers still validate against cell_batch length."""
+        positions = jnp.zeros((32, 3), dtype=jnp.float32)
+        batch_ptr = jnp.array([0, 32], dtype=jnp.int32)
+        cell_batch = jnp.zeros((0, 3, 3), dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="cell_volumes"):
+            _batch_tile_buffer_max_tiles_per_group(
+                positions,
+                batch_ptr,
+                2.0,
+                cell_batch,
+            )
 
     def test_aligned_two_systems(self):
         batch_ptr = jnp.array([0, 64, 192], dtype=jnp.int32)

@@ -49,7 +49,7 @@ from nvalchemiops.neighbors.cluster_tile import (
     estimate_batch_cluster_tile_segments as _warp_estimate_batch_cluster_tile_segments,
 )
 from nvalchemiops.neighbors.cluster_tile import (
-    estimate_max_tiles_per_group as _estimate_max_tiles_per_group,
+    estimate_batch_max_tiles_per_group as _estimate_batch_max_tiles_per_group,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     NeighborOverflowError,
@@ -58,6 +58,7 @@ from nvalchemiops.neighbors.neighbor_utils import (
 
 __all__ = [
     "TILE_GROUP_SIZE",
+    "estimate_batch_max_tiles_per_group",
     "allocate_batch_cluster_tile_list",
     "batch_cluster_tile_neighbor_list",
     "batch_query_cluster_tile_coo",
@@ -90,23 +91,100 @@ def _batch_tile_buffer_max_tiles_per_group(
     max_ng = max(ngroups) if ngroups else 1
     cutoff_concrete = not isinstance(cutoff, jax.core.Tracer)
     vols = _concrete_cell_batch_volumes(cell_batch)
-    if isinstance(positions, jax.core.Tracer) or vols is None or not cutoff_concrete:
+    empty_batch = len(per_sys) == 0 and vols == []
+    if (
+        isinstance(positions, jax.core.Tracer)
+        or vols is None
+        or empty_batch
+        or not cutoff_concrete
+    ):
         return max(max_ng, 1)
-    best = 256
-    for n, vol in zip(per_sys, vols):
-        best = max(
-            best, _estimate_max_tiles_per_group(int(n), float(cutoff), float(vol))
-        )
-    return best
+    return estimate_batch_max_tiles_per_group(batch_ptr, cutoff, cell_batch)
 
 
 def _concrete_cell_batch_volumes(cell_batch) -> list[float] | None:
     """Per-system ``abs(det(cell))`` if ``cell_batch`` is concrete, else None."""
     try:
-        arr = np.asarray(cell_batch).reshape(-1, 3, 3)
+        arr = np.asarray(cell_batch)
     except Exception:
         return None
+    if arr.ndim != 3 or arr.shape[1:] != (3, 3):
+        return None
     return [float(abs(np.linalg.det(c))) for c in arr]
+
+
+def _concrete_batch_ptr_values(batch_ptr) -> list[int] | None:
+    """Host ``batch_ptr`` values if concrete, else None."""
+    try:
+        values = np.asarray(batch_ptr).reshape(-1)
+    except Exception:
+        return None
+    try:
+        return [int(v) for v in values]
+    except Exception:
+        return None
+
+
+def estimate_batch_max_tiles_per_group(
+    batch_ptr: jax.Array,
+    cutoff: float,
+    cell_batch: jax.Array,
+    *,
+    safety: float = 2.0,
+    floor: int = 256,
+) -> int:
+    """Estimate batched ``max_tiles_per_group`` from concrete per-system cells.
+
+    Parameters
+    ----------
+    batch_ptr : jax.Array, shape (num_systems + 1,)
+        Concrete cumulative atom counts.
+    cutoff : float
+        Cartesian cutoff used for cluster-tile construction.
+    cell_batch : jax.Array, shape (num_systems, 3, 3)
+        Concrete per-system cell matrices.
+    safety : float, default 2.0
+        Multiplier on the volumetric estimate.
+    floor : int, default 256
+        Minimum returned value for batched compact buffers.
+
+    Returns
+    -------
+    int
+        Shared ``max_tiles_per_group`` for the batched compact tile buffer.
+
+    Raises
+    ------
+    ValueError
+        If ``batch_ptr`` or ``cell_batch`` is traced / not host-concrete, or if
+        ``cell_batch`` does not have shape ``(num_systems, 3, 3)``.
+    """
+    ptr_values = _concrete_batch_ptr_values(batch_ptr)
+    if ptr_values is None:
+        raise ValueError(
+            "batch_ptr must be concrete to estimate batch max_tiles_per_group"
+        )
+    if len(ptr_values) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+
+    vols = _concrete_cell_batch_volumes(cell_batch)
+    if vols is None:
+        try:
+            arr = np.asarray(cell_batch)
+        except Exception as exc:
+            raise ValueError(
+                "cell_batch must be concrete to estimate batch max_tiles_per_group"
+            ) from exc
+        if arr.ndim != 3 or arr.shape[1:] != (3, 3):
+            raise ValueError("cell_batch must have shape (num_systems, 3, 3)")
+
+    return _estimate_batch_max_tiles_per_group(
+        ptr_values,
+        cutoff,
+        vols,
+        safety=safety,
+        floor=floor,
+    )
 
 
 def estimate_batch_cluster_tile_list_sizes(
@@ -122,6 +200,8 @@ def estimate_batch_cluster_tile_list_sizes(
     The ``.item()`` syncs are necessary to size buffers; cache the result
     if calling from a hot loop.
     """
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     num_systems = int(batch_ptr.shape[0]) - 1
     natom_per_system = (batch_ptr[1:] - batch_ptr[:-1]).astype(jnp.int32)
     natom_padded_per_system = (
@@ -146,6 +226,8 @@ def estimate_batch_cluster_tile_segments(
     Returns ``(tile_capacities, tile_offsets, pair_capacities, pair_offsets)``
     as int32 JAX arrays on the same backend as ``batch_ptr``.
     """
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     tile_caps, tile_offsets, pair_caps, pair_offsets = (
         _warp_estimate_batch_cluster_tile_segments(
             batch_ptr,
@@ -1012,6 +1094,8 @@ def batch_build_cluster_tile_list(
         )
     if batch_ptr.dtype != jnp.int32:
         batch_ptr = batch_ptr.astype(jnp.int32)
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
 
     # Geometry-size the compact tile buffer so dense/high-cutoff systems don't
     # silently overflow; trace-safe ``max_i ngroup_i`` fallback when traced.
@@ -1814,6 +1898,8 @@ def batch_cluster_tile_neighbor_list(
                 "rebuild_flags requires previous batch_cluster_tile state: "
                 + ", ".join(missing)
             )
+    if int(batch_ptr.shape[0]) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
     N = positions.shape[0]
     if max_neighbors is None:
         max_neighbors = estimate_max_neighbors(

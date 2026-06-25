@@ -52,7 +52,7 @@ The batch_idx parameter determines kernel dispatch:
 contract; its direct-output flags warn and are deprecated. The
 ``pme_reciprocal_space`` component intentionally retains direct forces as
 no-autograd MD/inference escape hatches. Component charge-gradient, virial,
-and hybrid direct outputs are legacy training-style outputs and warn.
+and hybrid direct outputs are deprecated training-style outputs and warn.
 
 MATHEMATICAL FORMULATION
 ========================
@@ -165,6 +165,7 @@ References
 
 import math
 import warnings
+from contextlib import nullcontext
 
 import torch
 import warp as wp
@@ -195,6 +196,7 @@ from nvalchemiops.torch.interactions.electrostatics._util import (
     _component_direct_output_deprecation_msg,
     _detach_setup_tensor,
     _direct_output_deprecation_msg,
+    _has_potentially_geometry_dependent_charges,
     _InjectCachedEvalGrad,
     _InjectCachedEvalGradWithFallback,
     _InjectChargeGrad,
@@ -320,8 +322,6 @@ def _pme_scoped_warp_stream(device: torch.device):
     up on the stream being captured rather than Warp's default stream.
     """
     if device.type != "cuda":
-        from contextlib import nullcontext
-
         return nullcontext()
     torch_stream = torch.cuda.current_stream(device)
     return wp.ScopedStream(wp.stream_from_torch(torch_stream))
@@ -372,7 +372,7 @@ def pme_green_structure_factor(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     r"""Compute the PME Green's function and B-spline structure-factor correction.
 
-    Compatibility entry point retained for the 0.3.1 public API. Returns the
+    Compatibility entry point for the public PME API. Returns the
     volume-normalized Coulomb Green's function and the squared B-spline structure
     factor used for PME deconvolution:
 
@@ -2168,6 +2168,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_energy):
         """Return cached first gradients or recompute for higher-order fallback."""
+        create_graph = torch.is_grad_enabled()
         (
             positions,
             charges,
@@ -2186,7 +2187,169 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
             cached_dEdcell,
         ) = ctx.saved_tensors
 
-        if torch.is_grad_enabled() or not _is_uniform_cotangent(grad_energy):
+        if create_graph or not _is_uniform_cotangent(grad_energy):
+            if _has_potentially_geometry_dependent_charges(positions, charges):
+                if create_graph:
+                    diff_inputs = []
+                    diff_names = []
+                    for name, tensor in (
+                        ("positions", positions),
+                        ("cell", cell),
+                        ("alpha", alpha),
+                    ):
+                        if tensor.requires_grad:
+                            diff_inputs.append(tensor)
+                            diff_names.append(name)
+
+                    with torch.enable_grad():
+                        recomputed, _forces, _charge_grads, _virial = (
+                            _pme_reciprocal_space_impl(
+                                positions,
+                                charges,
+                                cell,
+                                alpha,
+                                ctx.mesh_dimensions,
+                                ctx.spline_order,
+                                batch_idx,
+                                compute_forces=False,
+                                compute_charge_gradients=False,
+                                compute_virial=False,
+                                k_vectors=k_vectors,
+                                k_squared=k_squared,
+                                volume=volume,
+                                cell_inv_t=cell_inv_t,
+                                moduli_x=moduli_x,
+                                moduli_y=moduli_y,
+                                moduli_z=moduli_z,
+                            )
+                        )
+                        if diff_inputs:
+                            diff_grads = torch.autograd.grad(
+                                recomputed,
+                                tuple(diff_inputs),
+                                grad_outputs=grad_energy,
+                                allow_unused=True,
+                                create_graph=True,
+                            )
+                            grad_map = dict(zip(diff_names, diff_grads, strict=True))
+                        else:
+                            grad_map = {}
+                    return (
+                        grad_map.get("positions"),
+                        None,
+                        grad_map.get("cell"),
+                        grad_map.get("alpha"),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+
+                partial_inputs = []
+                partial_names = []
+                for name, tensor in (
+                    ("positions", positions),
+                    ("cell", cell),
+                    ("alpha", alpha),
+                ):
+                    if tensor.requires_grad:
+                        partial_inputs.append(tensor)
+                        partial_names.append(name)
+
+                with torch.enable_grad():
+                    partial_map = {}
+                    if partial_inputs:
+                        recomputed_partial, _forces, _charge_grads, _virial = (
+                            _pme_reciprocal_space_impl(
+                                positions,
+                                charges.detach(),
+                                cell,
+                                alpha,
+                                ctx.mesh_dimensions,
+                                ctx.spline_order,
+                                batch_idx,
+                                compute_forces=False,
+                                compute_charge_gradients=False,
+                                compute_virial=False,
+                                k_vectors=k_vectors,
+                                k_squared=k_squared,
+                                volume=volume,
+                                cell_inv_t=cell_inv_t,
+                                moduli_x=moduli_x,
+                                moduli_y=moduli_y,
+                                moduli_z=moduli_z,
+                            )
+                        )
+                        partial_grads = torch.autograd.grad(
+                            recomputed_partial,
+                            tuple(partial_inputs),
+                            grad_outputs=grad_energy,
+                            allow_unused=True,
+                            create_graph=create_graph,
+                        )
+                        partial_map = dict(
+                            zip(partial_names, partial_grads, strict=True)
+                        )
+
+                    grad_charges = None
+                    if charges.requires_grad:
+                        recomputed_charge, _forces, _charge_grads, _virial = (
+                            _pme_reciprocal_space_impl(
+                                positions,
+                                charges,
+                                cell,
+                                alpha,
+                                ctx.mesh_dimensions,
+                                ctx.spline_order,
+                                batch_idx,
+                                compute_forces=False,
+                                compute_charge_gradients=False,
+                                compute_virial=False,
+                                k_vectors=k_vectors,
+                                k_squared=k_squared,
+                                volume=volume,
+                                cell_inv_t=cell_inv_t,
+                                moduli_x=moduli_x,
+                                moduli_y=moduli_y,
+                                moduli_z=moduli_z,
+                            )
+                        )
+                        (grad_charges,) = torch.autograd.grad(
+                            recomputed_charge,
+                            charges,
+                            grad_outputs=grad_energy,
+                            allow_unused=True,
+                            create_graph=create_graph,
+                        )
+                return (
+                    partial_map.get("positions"),
+                    grad_charges,
+                    partial_map.get("cell"),
+                    partial_map.get("alpha"),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+
             with torch.enable_grad():
                 recomputed, _forces, _charge_grads, _virial = (
                     _pme_reciprocal_space_impl(
@@ -2225,7 +2388,7 @@ class _PMEReciprocalCachedFirstGrad(torch.autograd.Function):
                     tuple(diff_inputs),
                     grad_outputs=grad_energy,
                     allow_unused=True,
-                    create_graph=torch.is_grad_enabled(),
+                    create_graph=create_graph,
                 )
                 grad_map = dict(zip(diff_names, diff_grads, strict=True))
                 grad_positions = grad_map.get("positions")
@@ -2844,6 +3007,12 @@ def pme_reciprocal_space(
     ``k_vectors``, ``k_squared``, ``volume``, and ``cell_inv_t`` is treated as
     static setup state that corresponds to the current ``cell``.
 
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (q = q(R)), ordinary first-order losses may use cached partial derivatives
+    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    derivatives recompute safe partials or connected gradients as needed to
+    avoid double-counting that chain term (issue #115).
+
     ``torch.compile`` is supported by the public wrapper tests, although custom
     Warp operators and FFTs can still limit compiler fusion for PME workloads.
 
@@ -2944,6 +3113,9 @@ def pme_reciprocal_space(
     charge_grad = bool(charges.requires_grad)
     cell_grad = bool(cell.requires_grad)
     output_grad_requested = compute_forces or compute_charge_gradients or compute_virial
+    # q(R) workloads may keep this cached-first path: _PMEReciprocalCachedFirstGrad.backward
+    # routes non-uniform/create_graph cases through safe partial recompute instead of
+    # returning connected position and charge gradients from the same graph.
     use_cached_first_grad = (
         not output_grad_requested
         and not hybrid_forces
@@ -3249,6 +3421,12 @@ def particle_mesh_ewald(
     ``charges``, and ``cell``. Caller-supplied reciprocal metadata such as
     ``k_vectors``, ``k_squared``, ``volume``, and ``cell_inv_t`` is treated as
     static setup state that corresponds to the current ``cell``.
+
+    When ``charges`` is a non-leaf tensor that may depend on ``positions``
+    (q = q(R)), ordinary first-order losses may use cached partial derivatives
+    and let PyTorch apply dE/dq * dq/dR once. Weighted losses and higher-order
+    derivatives recompute safe partials or connected gradients as needed to
+    avoid double-counting that chain term (issue #115).
 
     Enabled output flags are appended in order: energies, [forces],
     [charge_gradients], [virial]. A single output is returned unwrapped;
@@ -3564,6 +3742,8 @@ def particle_mesh_ewald(
             )
             return rs_energy + rec_energy
 
+        # q(R): shared fallback recompute detaches charges for geometry partials and
+        # returns dE/dq separately so PyTorch chains dq/dR exactly once (issue #115).
         return _InjectCachedEvalGradWithFallback.apply(
             energies,
             positions,

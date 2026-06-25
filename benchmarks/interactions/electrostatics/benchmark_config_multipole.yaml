@@ -34,10 +34,11 @@ methods:
 # Read when --l-max is not passed on the CLI.
 l_max: 1
 
-# Wrap the benchmarked composite in torch.compile. Read when neither --compile
-# nor --no-compile is passed. The multipole torch wrappers are compile-clean
-# (opaque Warp custom ops -> no graph breaks); the first call per input shape
-# pays the compile cost, which the warmup phase absorbs.
+# Wrap the benchmarked composite in torch.compile. Read when neither
+# --torch-compile nor --no-torch-compile is passed. The CLI flags override this
+# config value. The multipole torch wrappers are compile-clean (opaque Warp
+# custom ops -> no graph breaks); the first call per input shape pays the
+# compile cost, which the warmup phase absorbs.
 compile: true
 
 # System configurations. Capped well below the monopole sweep because the

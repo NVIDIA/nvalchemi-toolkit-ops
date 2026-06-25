@@ -21,6 +21,7 @@ GROMACS-style NxM cluster pair list: Morton-sorted atoms grouped into
 compiled kernels and factories live in :mod:`nvalchemiops.neighbors.cluster_tile.kernels`.
 """
 
+from collections.abc import Iterable
 import math
 
 import warp as wp
@@ -50,6 +51,7 @@ from nvalchemiops.neighbors.output_args import (
 __all__ = [
     "TILE_GROUP_SIZE",
     "estimate_max_tiles_per_group",
+    "estimate_batch_max_tiles_per_group",
     "estimate_batch_cluster_tile_segments",
     "batch_query_cluster_tile_coo",
     "batch_query_cluster_tile",
@@ -74,9 +76,10 @@ def estimate_max_tiles_per_group(
 
     The tile-list capacity is ``ngroup * min(ngroup, max_tiles_per_group)``.
     The fixed default (256) silently truncates dense / high-cutoff periodic
-    systems (e.g. ammonia 4:5 at >=20 A, ``ngroup=1024``), so size it from the
-    expected number of 32-atom clusters whose bounding box can fall within
-    ``cutoff`` of a row group.  ``min(ngroup, ...)`` in the capacity formula
+    systems where many cluster bounding boxes fall within the cutoff, so
+    estimate it from the expected number of 32-atom clusters whose bounding box
+    can fall within ``cutoff`` of a row group.  ``min(ngroup, ...)`` in the
+    capacity formula
     clamps the per-row count, so over-estimates cost nothing; the ``floor``
     keeps parity with the old default for sparse / low-cutoff systems.
 
@@ -103,6 +106,72 @@ def estimate_max_tiles_per_group(
     radius = float(cutoff) + 2.0 * cluster_extent
     n_neigh = (4.0 / 3.0) * math.pi * radius * radius * radius / cluster_vol
     return max(int(floor), int(math.ceil(safety * n_neigh)))
+
+
+def _host_int_float_list(values: Iterable[int | float]) -> list[int | float]:
+    if hasattr(values, "detach"):
+        return values.detach().cpu().tolist()
+    if hasattr(values, "tolist"):
+        return values.tolist()
+    return list(values)
+
+
+def estimate_batch_max_tiles_per_group(
+    batch_ptr: Iterable[int],
+    cutoff: float,
+    cell_volumes: Iterable[float],
+    *,
+    safety: float = 2.0,
+    floor: int = 256,
+) -> int:
+    """Estimate batched ``max_tiles_per_group`` from per-system density.
+
+    The compact batched tile buffer is ``ngroup_total * min(ngroup_total,
+    max_tiles_per_group)``, so the shared ``max_tiles_per_group`` must cover
+    the densest system.  Returns the maximum per-system estimate from
+    :func:`estimate_max_tiles_per_group`, floored at ``floor``.
+
+    Parameters
+    ----------
+    batch_ptr : sequence of int
+        CSR atom pointer with length ``num_systems + 1``.
+    cutoff : float
+        Cartesian cutoff (use ``max(cutoff, cutoff2)`` for dual-cutoff).
+    cell_volumes : sequence of float
+        Per-system ``abs(det(cell))`` with one entry per batch segment.
+    safety : float, default 2.0
+        Multiplier on the volumetric estimate passed to each system estimate.
+    floor : int, default 256
+        Minimum returned value for batched compact buffers.
+
+    Returns
+    -------
+    int
+        Shared ``max_tiles_per_group`` for the batched compact tile buffer.
+    """
+    ptr_values = [int(v) for v in _host_int_float_list(batch_ptr)]
+    volume_values = [float(v) for v in _host_int_float_list(cell_volumes)]
+    if len(ptr_values) < 2:
+        raise ValueError("batch_ptr must have length at least 2")
+    if len(volume_values) != len(ptr_values) - 1:
+        raise ValueError("cell_volumes must have one entry per system")
+
+    best = int(floor)
+    for start, stop, volume in zip(ptr_values[:-1], ptr_values[1:], volume_values):
+        natom = int(stop) - int(start)
+        if natom < 0:
+            raise ValueError("batch_ptr must be non-decreasing")
+        best = max(
+            best,
+            estimate_max_tiles_per_group(
+                natom,
+                cutoff,
+                volume,
+                safety=safety,
+                floor=floor,
+            ),
+        )
+    return best
 
 
 def estimate_batch_cluster_tile_segments(

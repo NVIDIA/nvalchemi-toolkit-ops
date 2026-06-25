@@ -293,6 +293,12 @@ class TestPrepareBatchIdxPtr:
         with pytest.raises(ValueError):
             prepare_batch_idx_ptr(batch_idx=None, batch_ptr=None, num_atoms=6)
 
+    def test_prepare_batch_idx_ptr_rejects_short_batch_ptr_length(self):
+        """Exported prepare_batch_idx_ptr rejects one-entry batch_ptr."""
+        batch_ptr = jnp.array([0], dtype=jnp.int32)
+        with pytest.raises(ValueError, match="batch_ptr.*length at least 2"):
+            prepare_batch_idx_ptr(None, batch_ptr, 0)
+
     def test_single_system(self):
         """Test with single system."""
         batch_idx = jnp.array([0, 0, 0], dtype=jnp.int32)
