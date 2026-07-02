@@ -26,6 +26,7 @@ from nvalchemiops.jax.interactions.electrostatics import (
     compute_slab_correction,
     ewald_real_space,
     ewald_reciprocal_space,
+    ewald_summation,
     generate_k_vectors_ewald_summation,
     generate_k_vectors_pme,
     particle_mesh_ewald,
@@ -62,6 +63,48 @@ def _assert_no_cache_warning(records: list[warnings.WarningMessage]) -> None:
     messages = [str(record.message) for record in records]
     assert not any("Precomputed" in message for message in messages)
     assert not any("current cell" in message for message in messages)
+
+
+def test_jax_ewald_reciprocal_reference_avoids_cross_system_phase_expansion() -> None:
+    """Batched reciprocal autodiff scales with atoms, not systems times atoms."""
+    ewald_module = importlib.import_module(
+        "nvalchemiops.jax.interactions.electrostatics.ewald"
+    )
+    num_systems = 3
+    num_k = 5
+    num_atoms = 12
+    positions = jnp.ones((num_atoms, 3), dtype=jnp.float64)
+    charges = jnp.ones((num_atoms,), dtype=jnp.float64)
+    cell = jnp.tile(
+        jnp.eye(3, dtype=jnp.float64)[jnp.newaxis, :, :],
+        (num_systems, 1, 1),
+    )
+    k_vectors = jnp.ones((num_systems, num_k, 3), dtype=jnp.float64)
+    alpha = jnp.ones((num_systems,), dtype=jnp.float64)
+    batch_idx = jnp.repeat(
+        jnp.arange(num_systems, dtype=jnp.int32),
+        num_atoms // num_systems,
+    )
+
+    closed_jaxpr = jax.make_jaxpr(
+        lambda pos, charge: ewald_module._reciprocal_space_energy_reference(
+            pos,
+            charge,
+            cell,
+            k_vectors,
+            alpha,
+            batch_idx,
+        )
+    )(positions, charges)
+    output_shapes = {
+        tuple(variable.aval.shape)
+        for equation in closed_jaxpr.jaxpr.eqns
+        for variable in equation.outvars
+        if hasattr(variable, "aval") and hasattr(variable.aval, "shape")
+    }
+
+    assert (num_systems, num_k, num_atoms) not in output_shapes
+    assert (num_atoms, num_k) in output_shapes
 
 
 def _finite_difference_positions(fn, positions):
@@ -123,6 +166,62 @@ def test_jax_ewald_real_weighted_loss_matches_finite_difference(device) -> None:
     assert jnp.allclose(grad_positions, fd_positions, rtol=1e-4, atol=1e-7)
     assert jnp.allclose(grad_charges, fd_charges, rtol=1e-4, atol=1e-7)
     assert jnp.all(jnp.isfinite(jax.jit(jax.grad(loss_chg))(charges)))
+
+
+def test_jax_batched_ewald_combined_total_gradients_match_explicit(device) -> None:
+    """One batched reverse pass returns position and charge gradients together."""
+    positions_single, charges_single, cell_single, alpha_single = _system(device)
+    positions = jnp.concatenate([positions_single, positions_single], axis=0)
+    charges = jnp.concatenate([charges_single, charges_single], axis=0)
+    cell = jnp.stack([cell_single, cell_single])
+    alpha = jnp.repeat(alpha_single, 2)
+    batch_idx = jnp.repeat(jnp.arange(2, dtype=jnp.int32), 3)
+    neighbor_matrix = jnp.array(
+        [[1, 2], [0, 2], [0, 1], [4, 5], [3, 5], [3, 4]],
+        dtype=jnp.int32,
+    )
+    neighbor_shifts = jnp.zeros((6, 2, 3), dtype=jnp.int32)
+    k_vectors = generate_k_vectors_ewald_summation(cell, k_cutoff=5.0)
+
+    def total_with_aux(pos, chg):
+        energies = ewald_summation(
+            pos,
+            chg,
+            cell,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            batch_idx=batch_idx,
+            max_atoms_per_system=3,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_shifts,
+        )
+        return energies.sum(), energies
+
+    value_and_grad = jax.jit(
+        jax.value_and_grad(total_with_aux, argnums=(0, 1), has_aux=True)
+    )
+    (_, energies), (grad_positions, grad_charges) = value_and_grad(
+        positions,
+        charges,
+    )
+    with pytest.warns(DeprecationWarning):
+        direct_energies, direct_forces, direct_charge_grads = ewald_summation(
+            positions,
+            charges,
+            cell,
+            alpha=alpha,
+            k_vectors=k_vectors,
+            batch_idx=batch_idx,
+            max_atoms_per_system=3,
+            neighbor_matrix=neighbor_matrix,
+            neighbor_matrix_shifts=neighbor_shifts,
+            compute_forces=True,
+            compute_charge_gradients=True,
+        )
+
+    assert jnp.allclose(energies, direct_energies, rtol=1e-12, atol=1e-12)
+    assert jnp.allclose(-grad_positions, direct_forces, rtol=1e-5, atol=1e-7)
+    assert jnp.allclose(grad_charges, direct_charge_grads, rtol=1e-5, atol=1e-7)
 
 
 def test_jax_pme_ignores_alpha_tangent(device) -> None:

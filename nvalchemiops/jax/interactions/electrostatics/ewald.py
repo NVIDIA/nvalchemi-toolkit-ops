@@ -1591,14 +1591,11 @@ def _reciprocal_space_energy_reference(
         if batch_idx is None
         else batch_idx.astype(jnp.int32)
     )
-    system_mask = atom_system[jnp.newaxis, :] == jnp.arange(num_systems)[:, jnp.newaxis]
     volumes = jnp.abs(jnp.linalg.det(cell_3d)).astype(jnp.float64)
-    phase = jnp.einsum(
-        "skd,nd->skn", kv.astype(jnp.float64), positions.astype(jnp.float64)
-    )
+    atom_k_vectors = kv[atom_system].astype(jnp.float64)
+    phase = jnp.einsum("nkd,nd->nk", atom_k_vectors, positions.astype(jnp.float64))
     cos_phase = jnp.cos(phase)
     sin_phase = jnp.sin(phase)
-    masked_charges = charges[jnp.newaxis, :] * system_mask.astype(jnp.float64)
     k_sq = jnp.sum(kv.astype(jnp.float64) * kv.astype(jnp.float64), axis=-1)
     active_k = k_sq > 1e-10
     safe_k_sq = jnp.where(active_k, k_sq, 1.0)
@@ -1609,17 +1606,20 @@ def _reciprocal_space_energy_reference(
         / safe_k_sq
     )
     green = jnp.where(active_k, green, 0.0)
-    real_sf = green * jnp.sum(masked_charges[:, jnp.newaxis, :] * cos_phase, axis=2)
-    imag_sf = green * jnp.sum(masked_charges[:, jnp.newaxis, :] * sin_phase, axis=2)
+    weighted_cos = charges[:, jnp.newaxis] * cos_phase
+    weighted_sin = charges[:, jnp.newaxis] * sin_phase
+    real_sf = green * jnp.zeros((num_systems, kv.shape[1]), dtype=jnp.float64).at[
+        atom_system
+    ].add(weighted_cos)
+    imag_sf = green * jnp.zeros((num_systems, kv.shape[1]), dtype=jnp.float64).at[
+        atom_system
+    ].add(weighted_sin)
 
-    atom_phase = jnp.swapaxes(phase, 1, 2)[atom_system, jnp.arange(num_atoms)]
-    atom_cos = jnp.cos(atom_phase)
-    atom_sin = jnp.sin(atom_phase)
     raw = (
         0.5
         * charges
         * jnp.sum(
-            real_sf[atom_system] * atom_cos + imag_sf[atom_system] * atom_sin,
+            real_sf[atom_system] * cos_phase + imag_sf[atom_system] * sin_phase,
             axis=1,
         )
     )
