@@ -655,6 +655,7 @@ def fire2_step(
     tmax: float = 0.08,
     tmin: float = 0.005,
     maxstep: float = 0.1,
+    compute_reductions: bool = True,
 ) -> None:
     """Complete FIRE2 optimization step.
 
@@ -690,6 +691,13 @@ def fire2_step(
         Timestep bounds.
     maxstep : float
         Maximum step magnitude per system.
+    compute_reductions : bool, default True
+        If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally. If False,
+        use the caller-supplied values for the mixing and parameter update. Note
+        that the final ``maxstep`` clamp still uses the ``max_norm`` produced by
+        this call's mixing kernel; for a clamp reduced across a caller-side
+        partition, drive the mixing via ``fire2_update`` and apply the clamp
+        after reducing ``max_norm``.
 
     Notes
     -----
@@ -742,6 +750,7 @@ def fire2_step(
         alpha0=alpha0,
         tmax=tmax,
         tmin=tmin,
+        compute_reductions=compute_reductions,
     )
 
     # Kernel 3: recompute step + clamp + position update + velocity zeroing
@@ -757,6 +766,120 @@ def fire2_step(
             vf,  # vf holds v.f; uphill if <= 0
             maxstep,
         ],
+        device=device,
+    )
+
+
+def fire2_reduce(
+    velocities: wp.array,
+    forces: wp.array,
+    dt: wp.array,
+    batch_idx: wp.array,
+    vf: wp.array,
+    v_sumsq: wp.array,
+    f_sumsq: wp.array,
+) -> None:
+    """Fill the FIRE2 per-system reductions over the half-stepped velocities.
+
+    Computes, per system s:
+    ``vf[s]      = sum_i (v_i + f_i*dt[s]) . f_i``,
+    ``v_sumsq[s] = sum_i (v_i + f_i*dt[s]) . (v_i + f_i*dt[s])``,
+    ``f_sumsq[s] = sum_i f_i . f_i`` — the same reduction ``fire2_update``
+    performs internally (the ``v + f*dt`` half-step is applied in registers,
+    velocities are not modified). Exposed so a caller can build the reductions
+    over a subset of the degrees of freedom and combine them.
+
+    Parameters
+    ----------
+    velocities, forces : wp.array, shape (N,), dtype vec3f/vec3d
+        Velocities and forces (read-only).
+    dt : wp.array, shape (M,), dtype float*
+        Per-system timestep used for the half-step.
+    batch_idx : wp.array, shape (N,), dtype int32
+        Sorted system index per element.
+    vf, v_sumsq, f_sumsq : wp.array, shape (M,), dtype float*
+        Outputs. Zeroed internally before accumulation.
+    """
+    vf.zero_()
+    v_sumsq.zero_()
+    f_sumsq.zero_()
+    N = velocities.shape[0]
+    if N == 0:
+        return
+    if batch_idx is None:
+        raise ValueError("batch_idx is required for fire2_reduce")
+    vec_dtype = velocities.dtype
+    device = velocities.device
+    sm = max(device.sm_count, 1)
+    ept = compute_ept(N, sm, True)
+    dim = (N + ept - 1) // ept
+    wp.launch(
+        _fire2_reduce_only_overloads[vec_dtype],
+        dim=dim,
+        inputs=[velocities, forces, dt, batch_idx, vf, v_sumsq, f_sumsq, N, ept],
+        device=device,
+    )
+
+
+def fire2_apply_step(
+    positions: wp.array,
+    velocities: wp.array,
+    dt: wp.array,
+    batch_idx: wp.array,
+    max_norm: wp.array,
+    vf: wp.array,
+    maxstep: float = 0.1,
+) -> None:
+    """Apply the final FIRE2 clamp + position update from mixed velocities.
+
+    This is the third phase of :func:`fire2_step`, exposed on its own so a
+    caller can interpose between the velocity mix and the displacement clamp.
+    It recomputes each atom's step from the (already mixed) velocities, clamps
+    it by ``min(1, maxstep / max_norm[s])``, updates ``positions``, scales
+    ``dt`` by the same factor, and zeroes velocities for uphill systems
+    (``vf[s] <= 0``).
+
+    Pairing with :func:`fire2_update` reproduces :func:`fire2_step` exactly::
+
+        fire2_update(velocities, forces, batch_idx, alpha, dt, nsteps_inc,
+                     vf, v_sumsq, f_sumsq, max_norm, ...)  # mix, fill max_norm
+        fire2_apply_step(positions, velocities, dt, batch_idx, max_norm, vf,
+                         maxstep=maxstep)
+
+    Splitting the two lets a caller post-process ``max_norm`` (e.g. combine the
+    per-partition maxima with a MAX reduction) before the clamp so every
+    partition scales the step identically.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype vec3f/vec3d
+        Atomic positions, modified in-place.
+    velocities : wp.array, shape (N,), dtype vec3f/vec3d
+        Mixed velocities (from ``fire2_update``), modified in-place (zeroed for
+        uphill systems).
+    dt : wp.array, shape (M,), dtype float*
+        Per-system timestep, scaled in-place by the clamp factor.
+    batch_idx : wp.array, shape (N,), dtype int32
+        Sorted system index per atom.
+    max_norm : wp.array, shape (M,), dtype float*
+        Maximum step norm per system used for the clamp. Supply the
+        post-processed value here to override the one ``fire2_update`` produced.
+    vf : wp.array, shape (M,), dtype float*
+        Per-system ``v . f``; a system is uphill when ``vf[s] <= 0``.
+    maxstep : float
+        Maximum allowed step size.
+    """
+    N = positions.shape[0]
+    if N == 0:
+        return
+    if batch_idx is None:
+        raise ValueError("batch_idx is required for fire2_apply_step")
+    vec_dtype = positions.dtype
+    device = positions.device
+    wp.launch(
+        _fire2_clamp_apply_recompute_overloads[vec_dtype],
+        dim=N,
+        inputs=[positions, velocities, dt, batch_idx, max_norm, vf, maxstep],
         device=device,
     )
 
@@ -781,6 +904,7 @@ def fire2_update(
     tmax: float = 0.08,
     tmin: float = 0.005,
     compute_max_norm: bool = True,
+    compute_reductions: bool = True,
 ) -> None:
     """Run FIRE2 reduction, parameter update, and velocity mixing only.
 
@@ -830,6 +954,14 @@ def fire2_update(
         Whether to compute the extended-DOF maximum raw final-step norm into
         ``max_norm``. Set to false when a custom final apply phase will
         overwrite ``max_norm`` with a different physical displacement norm.
+    compute_reductions : bool, default True
+        If True, recompute ``vf``/``v_sumsq``/``f_sumsq`` internally from the
+        post-half-step velocities and forces. If False, use the caller-supplied
+        values already in those buffers for the mixing and parameter update
+        (they are not zeroed). ``max_norm`` is produced by the mixing kernel and
+        is unaffected by this flag; a caller that needs the displacement clamp
+        reduced across a caller-side partition should leave the final clamp to
+        itself (see ``compute_max_norm`` and the Notes).
 
     Notes
     -----
@@ -858,9 +990,10 @@ def fire2_update(
     vec_dtype = velocities.dtype
     device = velocities.device
 
-    vf.zero_()
-    v_sumsq.zero_()
-    f_sumsq.zero_()
+    if compute_reductions:
+        vf.zero_()
+        v_sumsq.zero_()
+        f_sumsq.zero_()
     if compute_max_norm or N == 0:
         max_norm.zero_()
     if N == 0:
@@ -870,14 +1003,15 @@ def fire2_update(
 
     sm = max(device.sm_count, 1)
 
-    ept1 = compute_ept(N, sm, True)
-    dim1 = (N + ept1 - 1) // ept1
-    wp.launch(
-        _fire2_reduce_only_overloads[vec_dtype],
-        dim=dim1,
-        inputs=[velocities, forces, dt, batch_idx, vf, v_sumsq, f_sumsq, N, ept1],
-        device=device,
-    )
+    if compute_reductions:
+        ept1 = compute_ept(N, sm, True)
+        dim1 = (N + ept1 - 1) // ept1
+        wp.launch(
+            _fire2_reduce_only_overloads[vec_dtype],
+            dim=dim1,
+            inputs=[velocities, forces, dt, batch_idx, vf, v_sumsq, f_sumsq, N, ept1],
+            device=device,
+        )
 
     ept2 = compute_ept(N, sm, True)
     dim2 = (N + ept2 - 1) // ept2

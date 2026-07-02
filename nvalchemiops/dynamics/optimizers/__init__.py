@@ -61,17 +61,26 @@ from nvalchemiops.dynamics.optimizers.fire import (
     _fire_update_params_downhill_ptr_kernel,
     _fire_update_params_no_downhill_ptr_kernel,
     # Unified API
+    fire_compute_vf_vv_ff,
     fire_step,
     fire_update,
 )
-from nvalchemiops.dynamics.optimizers.fire2 import fire2_step, fire2_update
+from nvalchemiops.dynamics.optimizers.fire2 import (
+    fire2_apply_step,
+    fire2_reduce,
+    fire2_step,
+    fire2_update,
+)
 
 __all__ = [
     # Unified API
     "fire_step",
     "fire_update",
+    "fire_compute_vf_vv_ff",
     "fire2_step",
     "fire2_update",
+    "fire2_apply_step",
+    "fire2_reduce",
     # Low-level kernels
     "_fire_step_no_downhill_ptr_kernel",
     "_fire_step_downhill_ptr_kernel",

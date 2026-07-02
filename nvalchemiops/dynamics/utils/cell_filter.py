@@ -1810,12 +1810,56 @@ def _apply_fire2_coord_cell_step(
     atomic + cell DOFs and then applies the physically coupled position/cell
     update on the unpacked tensors.
     """
+    _fire2_coord_cell_compute_max_norm(
+        positions,
+        velocities,
+        cell,
+        cell_velocities,
+        dt,
+        vf,
+        ext_batch_idx,
+        ext_atom_ptr,
+        max_norm,
+        device=device,
+    )
+    _fire2_coord_cell_clamp_apply(
+        positions,
+        velocities,
+        cell,
+        cell_velocities,
+        dt,
+        vf,
+        ext_batch_idx,
+        ext_atom_ptr,
+        max_norm,
+        maxstep,
+        device=device,
+    )
+
+
+def _fire2_coord_cell_compute_max_norm(
+    positions: wp.array,
+    velocities: wp.array,
+    cell: wp.array,
+    cell_velocities: wp.array,
+    dt: wp.array,
+    vf: wp.array,
+    ext_batch_idx: wp.array,
+    ext_atom_ptr: wp.array,
+    max_norm: wp.array,
+    device: str = None,
+) -> None:
+    """Fill ``max_norm`` with the per-system max physical displacement norm.
+
+    This is the couple/measure phase of the coupled variable-cell FIRE2 update:
+    it recomputes each atom's cell-coupled step and reduces the largest norm per
+    system into ``max_norm`` (zeroed first). It does **not** move positions or
+    cell, so a caller can post-process ``max_norm`` before the clamp/apply phase.
+    """
     if device is None:
         device = positions.device
-
     num_ext = ext_batch_idx.shape[0]
     vec_dtype = positions.dtype
-    mat_dtype = cell.dtype
 
     max_norm.zero_()
     wp.launch(
@@ -1834,6 +1878,35 @@ def _apply_fire2_coord_cell_step(
         ],
         device=device,
     )
+
+
+def _fire2_coord_cell_clamp_apply(
+    positions: wp.array,
+    velocities: wp.array,
+    cell: wp.array,
+    cell_velocities: wp.array,
+    dt: wp.array,
+    vf: wp.array,
+    ext_batch_idx: wp.array,
+    ext_atom_ptr: wp.array,
+    max_norm: wp.array,
+    maxstep: float,
+    device: str = None,
+) -> None:
+    """Clamp the coupled step by ``max_norm`` and apply it to positions + cell.
+
+    This is the apply phase of the coupled variable-cell FIRE2 update: it
+    recomputes the same cell-coupled step as
+    :func:`_fire2_coord_cell_compute_max_norm`, scales it by
+    ``min(1, maxstep / max_norm[s])``, and writes positions, cell, and the
+    clamped ``dt``. The ``max_norm`` handed in is used as-is.
+    """
+    if device is None:
+        device = positions.device
+    num_ext = ext_batch_idx.shape[0]
+    vec_dtype = positions.dtype
+    mat_dtype = cell.dtype
+
     wp.launch(
         _fire2_coord_cell_apply_positions_kernel_overload[vec_dtype],
         dim=num_ext,

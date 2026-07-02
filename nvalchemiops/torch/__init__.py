@@ -40,8 +40,12 @@ if importlib.util.find_spec("torch") is None:
     )
 
 from nvalchemiops.torch.fire2 import (
+    fire2_compute_extended_reductions,
     fire2_step_coord,
     fire2_step_coord_cell,
+    fire2_step_coord_cell_apply,
+    fire2_step_coord_cell_couple,
+    fire2_step_coord_cell_mix,
     fire2_step_extended,
 )
 from nvalchemiops.torch.segment_ops import (
@@ -64,6 +68,10 @@ __all__ = [
     "get_wp_vec_dtype",
     "fire2_step_coord",
     "fire2_step_coord_cell",
+    "fire2_step_coord_cell_mix",
+    "fire2_step_coord_cell_couple",
+    "fire2_step_coord_cell_apply",
+    "fire2_compute_extended_reductions",
     "fire2_step_extended",
     "segmented_dot",
     "segmented_matvec",

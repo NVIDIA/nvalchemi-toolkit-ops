@@ -244,6 +244,46 @@ def _fire_revert_and_reduce_kernel(
 
 
 @wp.kernel(enable_backward=False)
+def _fire_revert_kernel(
+    positions: wp.array(dtype=Any),
+    velocities: wp.array(dtype=Any),
+    positions_last: wp.array(dtype=Any),
+    velocities_last: wp.array(dtype=Any),
+    batch_idx: wp.array(dtype=wp.int32),
+    uphill_flag: wp.array(dtype=wp.int32),
+):
+    """Revert uphill systems / accept downhill systems (per-atom, no reduction).
+
+    Companion to the standalone reducer: does only the state roll-back that the
+    fused revert-and-reduce kernel performs, so the reduction can be a separate
+    (skippable) launch that reads the reverted state.
+
+    Launch Grid
+    -----------
+    dim = [num_atoms]
+
+    Parameters
+    ----------
+    positions, velocities : wp.array, shape (N,), dtype vec3*
+        Modified in-place for uphill systems (restored from *_last).
+    positions_last, velocities_last : wp.array, shape (N,), dtype vec3*
+        Modified in-place for downhill systems (set to current state).
+    batch_idx : wp.array, shape (N,), dtype int32
+        System index per atom.
+    uphill_flag : wp.array, shape (M,), dtype int32
+        Per-system uphill flags from the uphill check kernel.
+    """
+    i = wp.tid()
+    s = batch_idx[i]
+    if uphill_flag[s] != 0:
+        positions[i] = positions_last[i]
+        velocities[i] = velocities_last[i]
+    else:
+        positions_last[i] = positions[i]
+        velocities_last[i] = velocities[i]
+
+
+@wp.kernel(enable_backward=False)
 def _fire_update_downhill_batch_idx_kernel(
     positions: wp.array(dtype=Any),
     velocities: wp.array(dtype=Any),
@@ -1221,6 +1261,7 @@ _fire_reduce_batch_idx_rle_kernel_overload = {}
 _fire_update_batch_idx_kernel_overload = {}
 _fire_uphill_check_kernel_overload = {}
 _fire_revert_and_reduce_kernel_overload = {}
+_fire_revert_kernel_overload = {}
 _fire_update_downhill_batch_idx_kernel_overload = {}
 
 # RLE-based update-only kernels (no MD step)
@@ -1321,6 +1362,18 @@ for t, v in zip(_T, _V):
             wp.array(dtype=t),  # ff
             wp.int32,  # N
             wp.int32,  # elems_per_thread
+        ],
+    )
+
+    _fire_revert_kernel_overload[v] = wp.overload(
+        _fire_revert_kernel,
+        [
+            wp.array(dtype=v),  # positions
+            wp.array(dtype=v),  # velocities
+            wp.array(dtype=v),  # positions_last
+            wp.array(dtype=v),  # velocities_last
+            wp.array(dtype=wp.int32),  # batch_idx
+            wp.array(dtype=wp.int32),  # uphill_flag
         ],
     )
 
@@ -1499,6 +1552,64 @@ _FIRE_UPDATE_BATCH_UPDATE_OVERLOADS = {
 # =============================================================================
 
 
+def fire_compute_vf_vv_ff(
+    velocities: wp.array,
+    forces: wp.array,
+    vf: wp.array,
+    vv: wp.array,
+    ff: wp.array,
+    batch_idx: wp.array = None,
+    device: str = None,
+) -> None:
+    """
+    Fill vf[s]=Sum F.v, vv[s]=Sum v.v, ff[s]=Sum F.F over each system's atoms —
+    the same reduction ``fire_step`` / ``fire_update`` perform internally,
+    exposed standalone.
+
+    Lets a caller compute these reductions separately, optionally post-process
+    them, and feed them back via ``fire_step(..., compute_reductions=False)``
+    (or ``fire_update``). Using this helper for the reduction gives
+    machine-precision parity with the values the step would otherwise compute
+    itself.
+
+    Parameters
+    ----------
+    velocities, forces : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Atomic velocities and forces.
+    vf, vv, ff : wp.array, shape (1,) or (num_systems,), dtype=wp.float*
+        Output reductions. Zeroed internally before accumulation. MODIFIED
+        in-place.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32, optional
+        Sorted system index per atom. If None, all atoms are one system.
+    device : str, optional
+        Warp device. If None, inferred from velocities.
+    """
+    if device is None:
+        device = velocities.device
+
+    vf.zero_()
+    vv.zero_()
+    ff.zero_()
+
+    num_atoms = velocities.shape[0]
+    if num_atoms == 0:
+        return
+
+    vec_dtype = velocities.dtype
+    if batch_idx is None:
+        batch_idx = wp.zeros(num_atoms, dtype=wp.int32, device=device)
+
+    sm = max(device.sm_count, 1) if hasattr(device, "sm_count") else 1
+    ept = compute_ept(num_atoms, sm, is_vec3=True)
+    dim_reduce = (num_atoms + ept - 1) // ept
+    wp.launch(
+        _fire_reduce_batch_idx_rle_kernel_overload[vec_dtype],
+        dim=dim_reduce,
+        inputs=[velocities, forces, batch_idx, vf, vv, ff, num_atoms, ept],
+        device=device,
+    )
+
+
 def fire_step(
     # Core DOFs (required)
     positions: wp.array,
@@ -1531,6 +1642,7 @@ def fire_step(
     energy_last: wp.array = None,
     positions_last: wp.array = None,
     velocities_last: wp.array = None,
+    compute_reductions: bool = True,
 ) -> None:
     """
     Unified FIRE optimization step with MD integration.
@@ -1589,6 +1701,14 @@ def fire_step(
         Last accepted positions (for downhill rollback).
     velocities_last : wp.array, shape (N,) or (N_total,), dtype=wp.vec3*, optional
         Last accepted velocities (for downhill rollback).
+    compute_reductions : bool, optional
+        If True (default), recompute the per-system reductions vf/vv/ff
+        (Sum F.v / Sum v.v / Sum F.F) internally from velocities/forces. If
+        False, use the caller-supplied values already in vf/vv/ff instead of
+        recomputing them (they are not zeroed); the state roll-back still runs,
+        so the supplied values must reflect the post-roll-back velocities. Only
+        supported for single/batch_idx mode. See ``fire_compute_vf_vv_ff`` for
+        the matching reduction helper.
 
     Examples
     --------
@@ -1624,16 +1744,17 @@ def fire_step(
     """
     device = positions.device
 
-    if vf is not None:
-        vf.zero_()
-        vv.zero_()
-        ff.zero_()
-
     num_atoms = positions.shape[0]
     vec_dtype = positions.dtype
 
     # Determine batching mode
     exec_mode = resolve_execution_mode(batch_idx, atom_ptr)
+
+    if not compute_reductions and exec_mode is ExecutionMode.ATOM_PTR:
+        raise ValueError(
+            "compute_reductions=False is only supported for single/batch_idx "
+            "mode; the atom_ptr kernels compute reductions inline."
+        )
 
     # Determine if downhill check is enabled
     downhill_arrays = [energy, energy_last, positions_last, velocities_last]
@@ -1719,26 +1840,41 @@ def fire_step(
                 device=device,
             )
 
-            # Kernel 2: Revert if uphill + RLE reduction
+            # Kernel 2: Revert if uphill (per-atom roll-back, always runs)
             wp.launch(
-                _fire_revert_and_reduce_kernel_overload[vec_dtype],
-                dim=dim_reduce,
+                _fire_revert_kernel_overload[vec_dtype],
+                dim=num_atoms,
                 inputs=[
                     positions,
                     velocities,
-                    forces,
                     positions_last,
                     velocities_last,
                     batch_idx,
                     uphill_flag,
-                    vf,
-                    vv,
-                    ff,
-                    num_atoms,
-                    ept,
                 ],
                 device=device,
             )
+
+            # Kernel 2b: RLE reduction over the post-revert state (skippable)
+            if compute_reductions:
+                vf.zero_()
+                vv.zero_()
+                ff.zero_()
+                wp.launch(
+                    _fire_reduce_batch_idx_rle_kernel_overload[vec_dtype],
+                    dim=dim_reduce,
+                    inputs=[
+                        velocities,
+                        forces,
+                        batch_idx,
+                        vf,
+                        vv,
+                        ff,
+                        num_atoms,
+                        ept,
+                    ],
+                    device=device,
+                )
 
             # Kernel 3: Parameter update + velocity mixing
             wp.launch(
@@ -1769,22 +1905,26 @@ def fire_step(
                 device=device,
             )
         else:
-            # Kernel 1: RLE-based reduction
-            wp.launch(
-                _fire_reduce_batch_idx_rle_kernel_overload[vec_dtype],
-                dim=dim_reduce,
-                inputs=[
-                    velocities,
-                    forces,
-                    batch_idx,
-                    vf,
-                    vv,
-                    ff,
-                    num_atoms,
-                    ept,
-                ],
-                device=device,
-            )
+            # Kernel 1: RLE-based reduction (skippable)
+            if compute_reductions:
+                vf.zero_()
+                vv.zero_()
+                ff.zero_()
+                wp.launch(
+                    _fire_reduce_batch_idx_rle_kernel_overload[vec_dtype],
+                    dim=dim_reduce,
+                    inputs=[
+                        velocities,
+                        forces,
+                        batch_idx,
+                        vf,
+                        vv,
+                        ff,
+                        num_atoms,
+                        ept,
+                    ],
+                    device=device,
+                )
 
             # Kernel 2: Parameter update + velocity mixing + position update
             wp.launch(
@@ -1843,6 +1983,7 @@ def fire_update(
     positions: wp.array = None,
     positions_last: wp.array = None,
     velocities_last: wp.array = None,
+    compute_reductions: bool = True,
 ) -> None:
     """
     FIRE parameter update and velocity mixing WITHOUT MD integration.
@@ -1899,6 +2040,11 @@ def fire_update(
         Last accepted positions (for downhill rollback).
     velocities_last : wp.array, shape (N,) or (N_total,), dtype=wp.vec3*, optional
         Last accepted velocities (for downhill rollback).
+    compute_reductions : bool, optional
+        If True (default), recompute vf/vv/ff internally. If False, use the
+        caller-supplied values already in vf/vv/ff instead of recomputing them
+        (they are not zeroed); any state roll-back still runs. Only supported
+        for single/batch_idx mode. See ``fire_step`` and ``fire_compute_vf_vv_ff``.
 
     Examples
     --------
@@ -1924,15 +2070,16 @@ def fire_update(
     """
     device = velocities.device
 
-    if vf is not None:
-        vf.zero_()
-        vv.zero_()
-        ff.zero_()
-
     num_atoms = velocities.shape[0]
 
     # Determine batching mode
     exec_mode = resolve_execution_mode(batch_idx, atom_ptr)
+
+    if not compute_reductions and exec_mode is ExecutionMode.ATOM_PTR:
+        raise ValueError(
+            "compute_reductions=False is only supported for single/batch_idx "
+            "mode; the atom_ptr kernels compute reductions inline."
+        )
 
     # Determine if downhill check is enabled
     downhill_arrays = [energy, energy_last, positions, positions_last, velocities_last]
@@ -2018,26 +2165,41 @@ def fire_update(
                 device=device,
             )
 
-            # Kernel 2: Revert if uphill + RLE reduction
+            # Kernel 2: Revert if uphill (per-atom roll-back, always runs)
             wp.launch(
-                _fire_revert_and_reduce_kernel_overload[vec_dtype],
-                dim=dim_reduce,
+                _fire_revert_kernel_overload[vec_dtype],
+                dim=num_atoms,
                 inputs=[
                     positions,
                     velocities,
-                    forces,
                     positions_last,
                     velocities_last,
                     batch_idx,
                     uphill_flag,
-                    vf,
-                    vv,
-                    ff,
-                    num_atoms,
-                    ept,
                 ],
                 device=device,
             )
+
+            # Kernel 2b: RLE reduction over the post-revert state (skippable)
+            if compute_reductions:
+                vf.zero_()
+                vv.zero_()
+                ff.zero_()
+                wp.launch(
+                    _fire_reduce_batch_idx_rle_kernel_overload[vec_dtype],
+                    dim=dim_reduce,
+                    inputs=[
+                        velocities,
+                        forces,
+                        batch_idx,
+                        vf,
+                        vv,
+                        ff,
+                        num_atoms,
+                        ept,
+                    ],
+                    device=device,
+                )
 
             # Kernel 3: Parameter update + velocity mixing (no MD)
             wp.launch(
@@ -2065,22 +2227,26 @@ def fire_update(
                 device=device,
             )
         else:
-            # Kernel 1: RLE-based reduction
-            wp.launch(
-                _fire_reduce_batch_idx_rle_kernel_overload[vec_dtype],
-                dim=dim_reduce,
-                inputs=[
-                    velocities,
-                    forces,
-                    batch_idx,
-                    vf,
-                    vv,
-                    ff,
-                    num_atoms,
-                    ept,
-                ],
-                device=device,
-            )
+            # Kernel 1: RLE-based reduction (skippable)
+            if compute_reductions:
+                vf.zero_()
+                vv.zero_()
+                ff.zero_()
+                wp.launch(
+                    _fire_reduce_batch_idx_rle_kernel_overload[vec_dtype],
+                    dim=dim_reduce,
+                    inputs=[
+                        velocities,
+                        forces,
+                        batch_idx,
+                        vf,
+                        vv,
+                        ff,
+                        num_atoms,
+                        ept,
+                    ],
+                    device=device,
+                )
 
             # Kernel 2: Parameter update + velocity mixing (no MD)
             wp.launch(

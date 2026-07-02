@@ -36,7 +36,11 @@ import numpy as np
 import pytest
 import warp as wp
 
-from nvalchemiops.dynamics.optimizers import fire_step, fire_update
+from nvalchemiops.dynamics.optimizers import (
+    fire_compute_vf_vv_ff,
+    fire_step,
+    fire_update,
+)
 from nvalchemiops.dynamics.utils import (
     align_cell,
     compute_cell_volume,
@@ -4163,6 +4167,214 @@ class TestFireDeterminism:
                 assert np.array_equal(ref_vel.numpy(), vel.numpy()), (
                     f"Velocities differ on repeat {i}"
                 )
+
+
+# ==============================================================================
+# compute_reductions flag + fire_compute_vf_vv_ff helper
+# ==============================================================================
+
+
+class TestFireComputeReductions:
+    """Tests for the compute_reductions flag and fire_compute_vf_vv_ff helper."""
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,dtype_mat,np_dtype", DTYPE_CONFIGS)
+    @pytest.mark.parametrize("sizes", [[7], [5, 3]], ids=["single", "batched"])
+    def test_compute_vf_vv_ff_matches_manual(
+        self, device, dtype_vec, dtype_scalar, dtype_mat, np_dtype, sizes
+    ):
+        """fire_compute_vf_vv_ff fills the per-system inner products."""
+        num_atoms = sum(sizes)
+        num_systems = len(sizes)
+        batch_np = np.concatenate(
+            [np.full(n, s, dtype=np.int32) for s, n in enumerate(sizes)]
+        )
+        np.random.seed(0)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        frc_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+
+        velocities = wp.array(vel_np, dtype=dtype_vec, device=device)
+        forces = wp.array(frc_np, dtype=dtype_vec, device=device)
+        batch_idx = wp.array(batch_np, dtype=wp.int32, device=device)
+        vf = wp.empty(num_systems, dtype=dtype_scalar, device=device)
+        vv = wp.empty(num_systems, dtype=dtype_scalar, device=device)
+        ff = wp.empty(num_systems, dtype=dtype_scalar, device=device)
+
+        bidx = batch_idx if num_systems > 1 else None
+        fire_compute_vf_vv_ff(velocities, forces, vf, vv, ff, batch_idx=bidx)
+        wp.synchronize_device(device)
+
+        rtol = 1e-6 if np_dtype == np.float32 else 1e-12
+        for s in range(num_systems):
+            m = batch_np == s
+            np.testing.assert_allclose(
+                vf.numpy()[s], (frc_np[m] * vel_np[m]).sum(), rtol=rtol
+            )
+            np.testing.assert_allclose(
+                vv.numpy()[s], (vel_np[m] * vel_np[m]).sum(), rtol=rtol
+            )
+            np.testing.assert_allclose(
+                ff.numpy()[s], (frc_np[m] * frc_np[m]).sum(), rtol=rtol
+            )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,dtype_mat,np_dtype", DTYPE_CONFIGS)
+    @pytest.mark.parametrize("downhill", [False, True], ids=["no_downhill", "downhill"])
+    def test_compute_reductions_parity(
+        self, device, dtype_vec, dtype_scalar, dtype_mat, np_dtype, downhill
+    ):
+        """compute_reductions=True must match compute_reductions=False fed the
+        same (post-roll-back) vf/vv/ff — bit-identical."""
+        sizes = [6, 4]
+        num_atoms = sum(sizes)
+        num_systems = len(sizes)
+        batch_np = np.concatenate(
+            [np.full(n, s, dtype=np.int32) for s, n in enumerate(sizes)]
+        )
+        np.random.seed(3)
+        pos_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        frc_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+
+        def run(compute_reductions, vf_seed=None):
+            positions = wp.array(pos_np.copy(), dtype=dtype_vec, device=device)
+            velocities = wp.array(vel_np.copy(), dtype=dtype_vec, device=device)
+            forces = wp.array(frc_np, dtype=dtype_vec, device=device)
+            masses = wp.ones(num_atoms, dtype=dtype_scalar, device=device)
+            batch_idx = wp.array(batch_np, dtype=wp.int32, device=device)
+            params = make_fire_params(num_systems, dtype_scalar, device, np_dtype)
+            acc = make_accumulators(num_systems, dtype_scalar, device, np_dtype)
+            if vf_seed is not None:
+                acc["vf"] = wp.array(vf_seed[0], dtype=dtype_scalar, device=device)
+                acc["vv"] = wp.array(vf_seed[1], dtype=dtype_scalar, device=device)
+                acc["ff"] = wp.array(vf_seed[2], dtype=dtype_scalar, device=device)
+            kwargs = dict(batch_idx=batch_idx, compute_reductions=compute_reductions)
+            if downhill:
+                dn = make_downhill_arrays(
+                    num_atoms, num_systems, dtype_vec, dtype_scalar, device, np_dtype
+                )
+                # Force system 1 uphill (energy rose) so it reverts.
+                dn["energy"] = wp.array(
+                    np.array([100.0, 101.0], dtype=np_dtype),
+                    dtype=dtype_scalar,
+                    device=device,
+                )
+                # Distinct last-accepted state so the uphill revert actually
+                # moves system 1's atoms.
+                dn["positions_last"] = wp.array(
+                    (pos_np + 0.3).astype(np_dtype), dtype=dtype_vec, device=device
+                )
+                dn["velocities_last"] = wp.array(
+                    (vel_np * 0.5).astype(np_dtype), dtype=dtype_vec, device=device
+                )
+                kwargs.update(
+                    energy=dn["energy"],
+                    energy_last=dn["energy_last"],
+                    positions_last=dn["positions_last"],
+                    velocities_last=dn["velocities_last"],
+                )
+            fire_step(positions, velocities, forces, masses, **params, **acc, **kwargs)
+            wp.synchronize_device(device)
+            return positions, velocities, params, acc
+
+        ref_p, ref_v, ref_params, ref_acc = run(True)
+        # Feed the reductions the reference used back with compute_reductions=False.
+        seed = (ref_acc["vf"].numpy(), ref_acc["vv"].numpy(), ref_acc["ff"].numpy())
+        dd_p, dd_v, dd_params, _ = run(False, vf_seed=seed)
+
+        np.testing.assert_array_equal(dd_p.numpy(), ref_p.numpy())
+        np.testing.assert_array_equal(dd_v.numpy(), ref_v.numpy())
+        np.testing.assert_array_equal(dd_params["dt"].numpy(), ref_params["dt"].numpy())
+        np.testing.assert_array_equal(
+            dd_params["alpha"].numpy(), ref_params["alpha"].numpy()
+        )
+        np.testing.assert_array_equal(
+            dd_params["n_steps_positive"].numpy(),
+            ref_params["n_steps_positive"].numpy(),
+        )
+
+    @pytest.mark.parametrize("device", DEVICES)
+    @pytest.mark.parametrize("dtype_vec,dtype_scalar,dtype_mat,np_dtype", DTYPE_CONFIGS)
+    def test_global_vs_split(
+        self, device, dtype_vec, dtype_scalar, dtype_mat, np_dtype
+    ):
+        """One system's step must match feeding a reduction summed from two
+        disjoint halves of its atoms (compute_reductions=False)."""
+        num_atoms = 12
+        half = num_atoms // 2
+        np.random.seed(5)
+        pos_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        vel_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+        frc_np = np.random.randn(num_atoms, 3).astype(np_dtype)
+
+        def make():
+            return (
+                wp.array(pos_np.copy(), dtype=dtype_vec, device=device),
+                wp.array(vel_np.copy(), dtype=dtype_vec, device=device),
+                wp.array(frc_np, dtype=dtype_vec, device=device),
+                wp.ones(num_atoms, dtype=dtype_scalar, device=device),
+            )
+
+        # Whole-system reference (single system).
+        p1, v1, f1, m1 = make()
+        prm1 = make_fire_params(1, dtype_scalar, device, np_dtype)
+        acc1 = make_accumulators(1, dtype_scalar, device, np_dtype)
+        fire_step(p1, v1, f1, m1, **prm1, **acc1)
+
+        # Split: reduce each half separately, sum, feed with compute_reductions=False.
+        vf_a = wp.empty(1, dtype=dtype_scalar, device=device)
+        vv_a = wp.empty(1, dtype=dtype_scalar, device=device)
+        ff_a = wp.empty(1, dtype=dtype_scalar, device=device)
+        vf_b = wp.empty(1, dtype=dtype_scalar, device=device)
+        vv_b = wp.empty(1, dtype=dtype_scalar, device=device)
+        ff_b = wp.empty(1, dtype=dtype_scalar, device=device)
+        _, v2, f2, _ = make()
+        fire_compute_vf_vv_ff(v2[:half], f2[:half], vf_a, vv_a, ff_a)
+        fire_compute_vf_vv_ff(v2[half:], f2[half:], vf_b, vv_b, ff_b)
+        vf = wp.array(vf_a.numpy() + vf_b.numpy(), dtype=dtype_scalar, device=device)
+        vv = wp.array(vv_a.numpy() + vv_b.numpy(), dtype=dtype_scalar, device=device)
+        ff = wp.array(ff_a.numpy() + ff_b.numpy(), dtype=dtype_scalar, device=device)
+
+        p2, v2b, f2b, m2 = make()
+        prm2 = make_fire_params(1, dtype_scalar, device, np_dtype)
+        fire_step(
+            p2,
+            v2b,
+            f2b,
+            m2,
+            **prm2,
+            vf=vf,
+            vv=vv,
+            ff=ff,
+            uphill_flag=wp.zeros(1, dtype=wp.int32, device=device),
+            compute_reductions=False,
+        )
+        wp.synchronize_device(device)
+        rtol = 1e-5 if np_dtype == np.float32 else 1e-11
+        np.testing.assert_allclose(p2.numpy(), p1.numpy(), rtol=rtol, atol=rtol)
+        np.testing.assert_allclose(v2b.numpy(), v1.numpy(), rtol=rtol, atol=rtol)
+
+    @pytest.mark.parametrize("device", DEVICES)
+    def test_atom_ptr_rejects_compute_reductions_false(self, device):
+        """atom_ptr mode cannot consume external reductions."""
+        num_atoms = 6
+        positions = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+        velocities = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+        forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
+        masses = wp.ones(num_atoms, dtype=wp.float64, device=device)
+        params = make_fire_params(1, wp.float64, device, np.float64)
+        del params["uphill_flag"]
+        atom_ptr = wp.array([0, num_atoms], dtype=wp.int32, device=device)
+        with pytest.raises(ValueError, match="compute_reductions=False"):
+            fire_step(
+                positions,
+                velocities,
+                forces,
+                masses,
+                **params,
+                atom_ptr=atom_ptr,
+                compute_reductions=False,
+            )
 
 
 if __name__ == "__main__":

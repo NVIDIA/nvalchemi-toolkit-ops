@@ -4,6 +4,21 @@
 
 ### Added
 
+- FIRE and FIRE2 optimizer steps accept caller-supplied per-system reductions
+  via a `compute_reductions=True` flag (`fire_step`, `fire_update`,
+  `fire2_step`, `fire2_update`, and the Torch `fire2_step_coord` /
+  `fire2_step_coord_cell`). When `False`, the values already in `vf`/`vv`/`ff`
+  (and FIRE2 `v_sumsq`/`f_sumsq`) are used for the mixing and dt/alpha update
+  instead of being recomputed; the per-atom state roll-back still runs. Adds a
+  standalone `fire_compute_vf_vv_ff` reduction helper. Default `True` is
+  byte-identical to previous behavior.
+- FIRE2 exposes its phases so a caller can post-process the displacement clamp
+  threshold between the velocity mix and the clamp: `fire2_apply_step` (Warp)
+  and the Torch `fire2_step_coord_cell_mix` / `_couple` / `_apply` split
+  `fire2_step_coord_cell` into reduce+mix, measure-`max_norm`, and clamp+apply
+  phases. `fire2_reduce` (Warp) and `fire2_compute_extended_reductions` (Torch,
+  returning separate owned-atom and replicated-cell contributions) expose the
+  reductions standalone. All default paths remain byte-identical.
 - Full Torch Ewald/PME APIs support energy-derived forces, charge
   gradients, and strain-first virials, including second-order force/stress
   losses.
@@ -31,6 +46,11 @@
 
 ### Fixed
 
+- Batched pressure kinetic tensor (`compute_kinetic_tensor` /
+  `compute_pressure_tensor` with `batch_idx`) is now computed with a per-atom
+  atomic reduction. The previous tiled reduction summed each thread block as a
+  whole and attributed it to a single system, corrupting per-system kinetic
+  tensors whenever a block spanned more than one system.
 - Cell-list size estimation no longer overflows when a cell is large relative
   to the cutoff: the per-dimension cell-count product is now computed
   overflow-safe (int64) and clamped per system, so `estimate_cell_list_sizes` /
