@@ -69,6 +69,9 @@
   systems (#104).
 - Fixed Torch Ewald gradients for non-uniform per-atom energy cotangents
   (`torch.autograd.grad(..., grad_outputs=w)`).
+- Batched JAX Ewald autodiff no longer materializes a
+  systems-by-k-vectors-by-atoms phase tensor, avoiding excessive reciprocal-space
+  memory use without changing energies or derivatives.
 - JAX electrostatics no longer import the removed `jax.custom_transpose`. The
   Ewald/PME real- and reciprocal-space and slab HVP transpose rules are
   migrated to `jax.custom_vjp` (a stable API), restoring importability on
