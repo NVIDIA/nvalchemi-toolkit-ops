@@ -38,14 +38,14 @@ Methods:
 - DSF (Damped Shifted Force)
 
 Usage:
-    python benchmark_electrostatics.py --config benchmark_config.yaml --output-dir ./results
-    python benchmark_electrostatics.py --config benchmark_config.yaml --backend jax
-    python benchmark_electrostatics.py --config benchmark_config.yaml --backend torchpme --method ewald
-    python benchmark_electrostatics.py --config benchmark_config.yaml --backend torch --method ewald_slab
-    python benchmark_electrostatics.py --config benchmark_config.yaml --backend torch --method pme_slab
-    python benchmark_electrostatics.py --config benchmark_config.yaml --backend jax --method ewald_slab
-    python benchmark_electrostatics.py --config benchmark_config.yaml --backend jax --method pme_slab
-    python benchmark_electrostatics.py --config benchmark_config.yaml --method dsf --backend both
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --output-dir ./results
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --backend jax
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --backend torchpme --method ewald
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --backend torch --method ewald_slab
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --backend torch --method pme_slab
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --backend jax --method ewald_slab
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --backend jax --method pme_slab
+    python benchmark_electrostatics.py --config benchmark_config_extended.yaml --method dsf --backend both
 """
 
 from __future__ import annotations
@@ -57,9 +57,8 @@ import importlib
 import math
 import sys
 import traceback
-import warnings
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 # Add repo root to path for imports (4 levels up from this script)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
@@ -67,8 +66,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 import numpy as np
 import yaml
 
-from benchmarks.systems import create_crystal_system
-from benchmarks.utils import BackendType, BenchmarkTimer
+if TYPE_CHECKING:
+    from benchmarks.utils import BenchmarkTimer
+else:
+    BenchmarkTimer = Any
+
+BackendType = Literal["torch", "jax", "warp"]
 
 BENCHMARK_CSV_FIELDNAMES = [
     "total_atoms",
@@ -102,14 +105,40 @@ BENCHMARK_CSV_FIELDNAMES = [
     "error_type",
 ]
 
-DerivativeContract = Literal["energy_autograd", "legacy_direct"]
+DerivativeContract = Literal["energy_autograd"]
 BenchmarkWorkload = Literal[
     "forward",
     "backward",
     "double_backward",
-    "legacy_direct",
     "autograd_reference",
 ]
+
+
+def _create_crystal_system(*args, **kwargs):
+    """Load the optional extended-benchmark system generator on demand."""
+    try:
+        from benchmarks.systems import create_crystal_system
+    except ImportError as exc:
+        raise ImportError(
+            "The extended electrostatics benchmark requires its optional system "
+            "dependencies (loguru, pymatgen, and rdkit). The reportable scaling "
+            "suite does not require them; run benchmark_electrostatics_suite.py "
+            "for the reportable NL/D3/EL workflow."
+        ) from exc
+    return create_crystal_system(*args, **kwargs)
+
+
+def _load_benchmark_timer():
+    """Load the optional extended-benchmark timing helper on demand."""
+    try:
+        from benchmarks.utils import BenchmarkTimer as timer_type
+    except ImportError as exc:
+        raise ImportError(
+            "The extended electrostatics benchmark requires its optional "
+            "benchmark dependencies, including pymatgen. The reportable scaling "
+            "suite is available through benchmark_electrostatics_suite.py."
+        ) from exc
+    return timer_type
 
 
 def benchmark_output_file(
@@ -273,19 +302,6 @@ def compile_policy_for_backend(backend: str, torch_compile: bool = False) -> str
     return "eager"
 
 
-def resolve_derivative_contract(
-    cli_contract: str | None,
-    config_contract: str | None,
-) -> DerivativeContract:
-    """Return the benchmark derivative contract requested by CLI/config."""
-    contract = cli_contract or config_contract or "energy_autograd"
-    if contract not in ("energy_autograd", "legacy_direct"):
-        raise ValueError(
-            "derivative_contract must be 'energy_autograd' or 'legacy_direct'"
-        )
-    return contract
-
-
 def resolve_torch_compile(
     cli_torch_compile: bool | None,
     config_compile: bool | None,
@@ -300,15 +316,12 @@ def benchmark_workloads(
     *,
     method: str,
     backend: str,
-    derivative_contract: DerivativeContract,
     compute_forces: bool,
     compute_virial: bool,
 ) -> list[BenchmarkWorkload]:
     """Return the workload rows to emit for one benchmark request."""
     if method == "dsf" or backend in ("torchpme", "torch_dsf"):
         return ["autograd_reference"]
-    if derivative_contract == "legacy_direct":
-        return ["legacy_direct"]
     if method not in ("ewald", "ewald_slab", "pme", "pme_slab"):
         return ["forward"]
 
@@ -563,7 +576,7 @@ def prepare_system_numpy(
     target_atoms_per_system = 2 * supercell_size**3
 
     if batch_size == 1:
-        system = create_crystal_system(
+        system = _create_crystal_system(
             target_atoms_per_system,
             lattice_type="bcc",
             lattice_constant=4.14,
@@ -589,7 +602,7 @@ def prepare_system_numpy(
         batch_idx_list = []
 
         for i in range(batch_size):
-            system = create_crystal_system(
+            system = _create_crystal_system(
                 target_atoms_per_system,
                 lattice_type="bcc",
                 lattice_constant=4.14,
@@ -1279,7 +1292,7 @@ def build_neighbors(
         volume = torch.abs(torch.det(cell_2d)).item()
         density = (total_atoms / batch_size) / volume
         max_nbrs = _neighbor_utils.estimate_max_neighbors(
-            cutoff, atomic_density=density, safety_factor=1.2
+            cutoff, atomic_density=density * 1.2
         )
         nl_kwargs["max_neighbors"] = max_nbrs
 
@@ -1319,7 +1332,7 @@ def prepare_dsf_single_system(
         this creates 2 * supercell_size^3 atoms total.
     """
     target_atoms = 2 * supercell_size**3
-    system = create_crystal_system(
+    system = _create_crystal_system(
         target_atoms,
         lattice_type="bcc",
         lattice_constant=4.14,
@@ -1372,7 +1385,7 @@ def prepare_dsf_batch_system(
     batch_idx_list = []
 
     for i in range(batch_size):
-        system = create_crystal_system(
+        system = _create_crystal_system(
             target_atoms_per_system,
             lattice_type="bcc",
             lattice_constant=4.14,
@@ -1891,7 +1904,7 @@ def prepare_multipole_single_system(
     entry point's auto-estimator (driven by ``sigma``/``alpha``).
     """
     target_atoms = 2 * supercell_size**3
-    system = create_crystal_system(
+    system = _create_crystal_system(
         target_atoms,
         lattice_type="bcc",
         lattice_constant=4.14,
@@ -1955,7 +1968,7 @@ def prepare_multipole_batch_system(
     batch_idx_list = []
 
     for i in range(batch_size):
-        system = create_crystal_system(
+        system = _create_crystal_system(
             target_atoms_per_system,
             lattice_type="bcc",
             lattice_constant=4.14,
@@ -3441,14 +3454,6 @@ def run_benchmark(
             if method in ("ewald", "ewald_slab"):
 
                 def bench_fn():
-                    if derivative_contract == "legacy_direct":
-                        return run_nvalchemiops_ewald(
-                            system_data,
-                            component,
-                            compute_forces,
-                            effective_virial,
-                            slab_correction=method == "ewald_slab",
-                        )
                     return run_nvalchemiops_ewald_energy_autograd(
                         system_data,
                         component,
@@ -3460,14 +3465,6 @@ def run_benchmark(
             else:  # pme
 
                 def bench_fn():
-                    if derivative_contract == "legacy_direct":
-                        return run_nvalchemiops_pme(
-                            system_data,
-                            component,
-                            compute_forces,
-                            effective_virial,
-                            slab_correction=method == "pme_slab",
-                        )
                     return run_nvalchemiops_pme_energy_autograd(
                         system_data,
                         component,
@@ -3478,41 +3475,23 @@ def run_benchmark(
                     )
         elif backend == "jax":
             if method in ("ewald", "ewald_slab"):
-                if derivative_contract == "legacy_direct":
-                    bench_fn = prepare_jax_ewald(
-                        system_data,
-                        component,
-                        compute_forces,
-                        effective_virial,
-                        slab_correction=method == "ewald_slab",
-                    )
-                else:
-                    bench_fn = prepare_jax_ewald_energy_autograd(
-                        system_data,
-                        component,
-                        compute_forces,
-                        effective_virial,
-                        workload=workload,
-                        slab_correction=method == "ewald_slab",
-                    )
+                bench_fn = prepare_jax_ewald_energy_autograd(
+                    system_data,
+                    component,
+                    compute_forces,
+                    effective_virial,
+                    workload=workload,
+                    slab_correction=method == "ewald_slab",
+                )
             else:  # pme
-                if derivative_contract == "legacy_direct":
-                    bench_fn = prepare_jax_pme(
-                        system_data,
-                        component,
-                        compute_forces,
-                        effective_virial,
-                        slab_correction=method == "pme_slab",
-                    )
-                else:
-                    bench_fn = prepare_jax_pme_energy_autograd(
-                        system_data,
-                        component,
-                        compute_forces,
-                        effective_virial,
-                        workload=workload,
-                        slab_correction=method == "pme_slab",
-                    )
+                bench_fn = prepare_jax_pme_energy_autograd(
+                    system_data,
+                    component,
+                    compute_forces,
+                    effective_virial,
+                    workload=workload,
+                    slab_correction=method == "pme_slab",
+                )
         elif backend == "torchpme":
             if method in SLAB_METHODS:
                 return benchmark_result_row(
@@ -3577,17 +3556,6 @@ def run_benchmark(
                 error=f"Backend '{backend}' not applicable for {method}",
                 error_type="NotApplicable",
             )
-
-        if derivative_contract == "legacy_direct":
-            raw_bench_fn = bench_fn
-
-            def bench_fn():
-                with warnings.catch_warnings():
-                    warnings.filterwarnings(
-                        "ignore",
-                        category=DeprecationWarning,
-                    )
-                    return raw_bench_fn()
 
         # Framework-compile cost (torch.compile or JAX jit) measured by a
         # one-shot wrap + first-call timing AFTER the raw bench_fn has been
@@ -3654,7 +3622,7 @@ def run_benchmark(
                     error_type=type(_e).__name__,
                 )
         elif backend == "jax":
-            # JAX path is already JIT-ed inside prepare_jax_pme; time the
+            # JAX energy-autograd paths are already JIT-ed; time the
             # first call separately as a proxy for XLA trace cost.
             try:
                 import time as _time
@@ -3780,8 +3748,9 @@ def main():
         default="torch",
         help=(
             "Backend to use for benchmarking (default: torch). "
-            "'both' dispatches per-method: torch + torchpme for ewald/pme, "
-            "torch + torch_dsf for dsf."
+            "'both' dispatches per method: Torch + JAX + torchpme for "
+            "Ewald/PME, Torch + JAX for slab methods, and Torch + torch_dsf "
+            "for DSF, subject to installed optional backends."
         ),
     )
     parser.add_argument(
@@ -3891,19 +3860,6 @@ def main():
             "overriding any config-level ``compile: true`` setting."
         ),
     )
-    parser.add_argument(
-        "--derivative-contract",
-        type=str,
-        choices=["energy_autograd", "legacy_direct"],
-        default=None,
-        help=(
-            "Derivative contract for nvalchemiops Ewald/PME rows. "
-            "Default is energy_autograd, which benchmarks energy-only calls plus "
-            "framework autograd for force/stress workloads. Use legacy_direct to "
-            "benchmark deprecated compute_forces/compute_virial direct outputs."
-        ),
-    )
-
     args = parser.parse_args()
 
     # Validate backend availability
@@ -3950,13 +3906,14 @@ def main():
 
     # Initialize timers. ``--backend both`` may dispatch Torch-family and JAX
     # rows in one process, and each timer owns framework-specific sync logic.
+    benchmark_timer = _load_benchmark_timer()
     timers = {}
     if args.backend != "jax":
-        timers["torch"] = BenchmarkTimer(
+        timers["torch"] = benchmark_timer(
             backend="torch", warmup_runs=warmup, timing_runs=timing
         )
     if args.backend == "jax" or (args.backend == "both" and JAX_AVAILABLE):
-        timers["jax"] = BenchmarkTimer(
+        timers["jax"] = benchmark_timer(
             backend="jax", warmup_runs=warmup, timing_runs=timing
         )
 
@@ -3966,7 +3923,7 @@ def main():
 
     # Determine what to benchmark. The CLI ``--method`` wins when explicitly
     # passed; otherwise the YAML's ``methods:`` list controls. If neither is
-    # set, default to the historical ewald + pme pair.
+    # set, default to the standard Ewald + PME pair.
     methods = resolve_methods(args.method, config.get("methods"))
     for method in methods:
         get_backends_for_method(args.backend, method)
@@ -3974,10 +3931,7 @@ def main():
     components = config.get("components", ["full"])
     compute_forces = config.get("compute_forces", True)
     compute_virial = config.get("compute_virial", False)
-    derivative_contract = resolve_derivative_contract(
-        args.derivative_contract,
-        config.get("derivative_contract"),
-    )
+    derivative_contract: DerivativeContract = "energy_autograd"
     torch_compile = resolve_torch_compile(
         args.torch_compile,
         config.get("compile"),
@@ -4185,7 +4139,6 @@ def main():
                                 workloads = benchmark_workloads(
                                     method=method,
                                     backend=backend,
-                                    derivative_contract=derivative_contract,
                                     compute_forces=compute_forces,
                                     compute_virial=compute_virial,
                                 )
@@ -4396,7 +4349,6 @@ def main():
                                 workloads = benchmark_workloads(
                                     method=method,
                                     backend=backend,
-                                    derivative_contract=derivative_contract,
                                     compute_forces=compute_forces,
                                     compute_virial=compute_virial,
                                 )

@@ -787,7 +787,7 @@ def main():
             if min_width < 2.0 * cutoff:
                 continue
 
-            max_nbrs = estimate_max_neighbors(cutoff, nl_density, nl_safety)
+            max_nbrs = estimate_max_neighbors(cutoff, nl_density * nl_safety)
 
             for alpha in alphas:
                 for dtype_str in dtypes_str:
@@ -963,7 +963,7 @@ def main():
             if min_width < 2.0 * cutoff:
                 continue
 
-            max_nbrs = estimate_max_neighbors(cutoff, nl_density, nl_safety)
+            max_nbrs = estimate_max_neighbors(cutoff, nl_density * nl_safety)
 
             for alpha in alphas:
                 for dtype_str in dtypes_str:

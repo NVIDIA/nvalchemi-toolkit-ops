@@ -1,0 +1,103 @@
+# Electrostatics Benchmark Configuration
+# =======================================
+# This file defines benchmark parameters for Ewald summation and PME.
+
+parameters:
+  warmup_iterations: 5
+  timing_iterations: 10
+  dtype: float32 # float32 or float64
+  device: cuda # cuda or cpu
+  # Target relative force accuracy passed to the Ewald/PME parameter
+  # estimator. Drives alpha, real-space cutoff (when not pinned), and mesh
+  # dimensions. CLI: --accuracy overrides this value.
+  accuracy: 1.0e-4
+  # Optional: pin the PME real-space cutoff (Angstrom). When unset (or null),
+  # the cost model picks the cutoff that minimizes real + reciprocal time.
+  # When set, alpha and the mesh dimensions are derived from this rc.
+  # CLI: --real-space-cutoff overrides this value.
+  real_space_cutoff: 12.0
+
+# System configurations to test
+systems:
+  # Single large systems - scaling study (up to ~200k atoms)
+  - name: cscl_single
+    system_type: cscl
+    mode: single
+    supercell_sizes: [1, 3, 5, 7, 10, 15, 20, 25, 30, 35, 40, 46] # Linear dimensions (2*size³ atoms)
+
+  # Batched systems - throughput study (up to ~200k total atoms)
+
+  # Very small systems (16 atoms each) - high batch counts
+  - name: cscl_batched_size2
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 2 # 2*2^3 = 16 atoms per system
+    batch_sizes: [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 4096, 8192]
+
+  # Small systems (54 atoms each)
+  - name: cscl_batched_size3
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 3 # 2*3^3 = 54 atoms per system
+    batch_sizes: [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 4096, 8192]
+
+  # Medium-small systems (128 atoms each)
+  - name: cscl_batched_size4
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 4 # 2*4^3 = 128 atoms per system
+    batch_sizes: [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 4096]
+
+  # Medium systems (250 atoms each)
+  - name: cscl_batched_size5
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 5 # 2*5^3 = 250 atoms per system
+    batch_sizes: [1, 4, 8, 16, 32, 64, 128, 256, 512, 1024]
+
+  # Medium-large systems (432 atoms each)
+  - name: cscl_batched_size6
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 6 # 2*6^3 = 432 atoms per system
+    batch_sizes: [1, 4, 8, 16, 32, 64, 128, 256, 512]
+
+  # Large systems (1024 atoms each)
+  - name: cscl_batched_size8
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 8 # 2*8^3 = 1024 atoms per system
+    batch_sizes: [1, 4, 8, 16, 32, 64, 128]
+
+  # Very large systems (2000 atoms each)
+  - name: cscl_batched_size10
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 10 # 2*10^3 = 2000 atoms per system
+    batch_sizes: [1, 4, 8, 16, 32, 64]
+
+  # Very Very Large systems (16,000 atoms each)
+  - name: cscl_batched_size20
+    system_type: cscl
+    mode: batched
+    base_supercell_size: 20 # 2*20^3 = 16,000 atoms per system
+    batch_sizes: [1, 4]
+
+# Methods to benchmark. Honored when --method is NOT passed on the CLI;
+# CLI takes precedence when given. Valid entries: ewald, ewald_slab, pme,
+# pme_slab, dsf.
+methods:
+  - ewald
+  - pme
+  - dsf
+
+# Components to benchmark (DSF always uses "full" regardless of this setting)
+components:
+  - full
+  - real
+  - reciprocal
+
+# Forces and virials are derived from the public energy API through framework
+# autograd; the extended runner does not expose a second derivative contract.
+compute_forces: true
+compute_virial: true
