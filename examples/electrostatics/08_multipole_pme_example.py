@@ -402,7 +402,7 @@ print(f"l_max=2 ∂loss/∂positions max  = {grad_pos_2nd.abs().max().item():.4f
 
 # %%
 # Stress-Loss Training (l_max=2 ``create_graph=True`` through ``dE/dcell``)
-# ------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # The stress is ``∂E/∂cell``, so backprop a stress-error loss needs the mixed
 # second derivative ``∂²E/∂cell∂θ``. PME has the **cell** second-order wired
 # end-to-end at l_max=0/1/2 (single-system and batched): the reciprocal cell
@@ -584,7 +584,7 @@ print(
 
 # %%
 # Batched Force-Loss Training (``create_graph=True``, l_max=1 and l_max=2)
-# -----------------------------------------------------------------------
+# ------------------------------------------------------------------------
 # Multi-system force-loss training is the most common end workflow, and it
 # works through the **batched PME composite** at both l_max=1 and l_max=2:
 # the batched spread double-backward (effective-moment reuse for l≤1 +
@@ -625,7 +625,7 @@ for lmax_tag, mm_b in (("l_max=1", mm_l1_batch), ("l_max=2", mm_l2_batch)):
 
 # %%
 # Batched Stress-Loss Training (``create_graph=True`` through ``dE/dcell``)
-# ------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # Stress-loss is batched too: a ``(B, 3, 3)`` ``cell`` carries grad and the
 # batched PME composite second-order through the cell (fractionalize-fed spread
 # double-backward + convolve k²/volume double-backward) lets a per-system

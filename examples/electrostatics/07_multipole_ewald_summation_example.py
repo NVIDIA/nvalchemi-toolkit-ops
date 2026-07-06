@@ -371,7 +371,7 @@ print(stress_l2)
 
 # %%
 # Force-Loss-Style Training (l_max=2 ``create_graph=True``, full Ewald)
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------------
 # ``create_graph=True`` works through the **full** l_max=2 Ewald composite —
 # both the real-space and the direct-k-space reciprocal second-order
 # backward are registered. So forces from the l_max=2
@@ -407,7 +407,7 @@ print(f"l_max=2 ∂loss/∂positions max = {grad_pos_2nd.abs().max().item():.4f}
 
 # %%
 # Stress-Loss Training (l_max=2 ``create_graph=True`` through ``dE/dcell``)
-# ------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # The cousin of force-loss: backprop a **stress**-error loss. The stress is
 # itself a first derivative ``∂E/∂cell``, so training it to a target requires
 # the *mixed* second derivative ``∂²E/∂cell∂θ`` (θ = positions / moments).
@@ -612,7 +612,7 @@ print(
 
 # %%
 # Batched Force-Loss Training (``create_graph=True``, l_max=1 and l_max=2)
-# -----------------------------------------------------------------------
+# ------------------------------------------------------------------------
 # Multi-system force-loss training is the most common end workflow, and it
 # works through the **batched full composite** at both l_max=1 and l_max=2:
 # the real-space second-order backward and the direct-k reciprocal
@@ -656,7 +656,7 @@ for lmax_tag, moments_b in (
 
 # %%
 # Batched Stress-Loss Training (``create_graph=True`` through ``dE/dcell``)
-# ------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 # Stress-loss is batched too: a ``(B, 3, 3)`` ``cell`` carries grad, the
 # per-system virial is autograd-connected, and the batched composite
 # second-order backward (real-space + direct-k reciprocal cell cross-terms)
