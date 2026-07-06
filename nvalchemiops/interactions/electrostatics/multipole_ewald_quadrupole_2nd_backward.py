@@ -2131,9 +2131,57 @@ def multipole_real_space_quadrupole_csr_cell_grad_backward(
     wp_dtype,
     device=None,
 ):
-    r"""Launcher for the l=2 cell-grad double-backward (stress-loss).
+    r"""Launch the l=2 cell-grad double-backward (stress-loss) for a single system.
 
-    Caller pre-zeroes the six output arrays.
+    Computes second-order gradients w.r.t. positions, charges, dipoles,
+    quadrupoles, ``grad_energies``, and the unit cell arising from differentiating
+    the real-space GTO-Ewald cell-gradient kernel. Caller must pre-zero the six
+    output arrays before calling.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Cartesian atom positions.
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Per-atom monopole charges.
+    dipoles : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Per-atom dipole moments.
+    quadrupoles : wp.array, shape (N,), dtype=wp.mat33f or wp.mat33d
+        Per-atom symmetric Cartesian quadrupole tensors.
+    cell : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        Single-system unit cell.
+    idx_j : wp.array, shape (nnz,), dtype=wp.int32
+        CSR neighbor column indices.
+    neighbor_ptr : wp.array, shape (N + 1,), dtype=wp.int32
+        CSR row pointers.
+    unit_shifts : wp.array, shape (nnz,), dtype=wp.vec3i
+        Integer lattice shifts per pair.
+    sigma : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Gaussian charge width.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    per_direction_scale : wp.array, shape (1,), dtype=wp.float64
+        Per-direction scale (0.5 half list, 0.25 full list).
+    grad_energies : wp.array, shape (N,), dtype=wp.float64
+        Upstream per-atom energy weights.
+    g_cell : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        Cotangent on the cell gradient (incoming upstream gradient).
+    grad_grad_energies : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: second-order gradient w.r.t. ``grad_energies`` (atomic).
+    grad_positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: second-order gradient w.r.t. positions (atomic).
+    grad_charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: second-order gradient w.r.t. charges (atomic).
+    grad_dipoles : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: second-order gradient w.r.t. dipoles (atomic).
+    grad_quadrupoles : wp.array, shape (N,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: second-order gradient w.r.t. quadrupoles (atomic).
+    grad_cell_out : wp.array, shape (1,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: second-order gradient w.r.t. the unit cell (atomic).
+    wp_dtype : wp.float32 or wp.float64
+        Scalar precision used to select the typed kernel overload.
+    device : str, optional
+        Warp device for the launch. Inferred from ``positions`` if ``None``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -2491,9 +2539,59 @@ def batch_multipole_real_space_quadrupole_csr_cell_grad_backward(
     wp_dtype,
     device=None,
 ):
-    r"""Launcher for the l=2 cell-grad double-backward (stress-loss).
+    r"""Launch the l=2 cell-grad double-backward (stress-loss) for a batched system.
 
-    Caller pre-zeroes the six output arrays.
+    Batched analog of
+    :func:`multipole_real_space_quadrupole_csr_cell_grad_backward`: atom ``i``
+    maps to system ``b = atom_batch_idx[i]`` with cell ``cells[b]``. Caller
+    must pre-zero the six output arrays before calling.
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Cartesian atom positions (all systems concatenated).
+    charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        Per-atom monopole charges.
+    dipoles : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        Per-atom dipole moments.
+    quadrupoles : wp.array, shape (N,), dtype=wp.mat33f or wp.mat33d
+        Per-atom symmetric Cartesian quadrupole tensors.
+    cells : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        Per-system unit cells, indexed by ``atom_batch_idx``.
+    idx_j : wp.array, shape (nnz,), dtype=wp.int32
+        CSR neighbor column indices.
+    neighbor_ptr : wp.array, shape (N + 1,), dtype=wp.int32
+        CSR row pointers.
+    atom_batch_idx : wp.array, shape (N,), dtype=wp.int32
+        System index ``b`` for each atom.
+    unit_shifts : wp.array, shape (nnz,), dtype=wp.vec3i
+        Integer lattice shifts per pair.
+    sigma : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Gaussian charge width.
+    alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
+        Ewald splitting parameter.
+    per_direction_scale : wp.array, shape (1,), dtype=wp.float64
+        Per-direction scale (0.5 half list, 0.25 full list).
+    grad_energies : wp.array, shape (N,), dtype=wp.float64
+        Upstream per-atom energy weights.
+    g_cell : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        Per-system cotangent on the cell gradient (incoming upstream gradient).
+    grad_grad_energies : wp.array, shape (N,), dtype=wp.float64
+        OUTPUT: second-order gradient w.r.t. ``grad_energies`` (atomic).
+    grad_positions : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: second-order gradient w.r.t. positions (atomic).
+    grad_charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
+        OUTPUT: second-order gradient w.r.t. charges (atomic).
+    grad_dipoles : wp.array, shape (N,), dtype=wp.vec3f or wp.vec3d
+        OUTPUT: second-order gradient w.r.t. dipoles (atomic).
+    grad_quadrupoles : wp.array, shape (N,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: second-order gradient w.r.t. quadrupoles (atomic).
+    grad_cell_out : wp.array, shape (B,), dtype=wp.mat33f or wp.mat33d
+        OUTPUT: second-order gradient w.r.t. per-system unit cells (atomic).
+    wp_dtype : wp.float32 or wp.float64
+        Scalar precision used to select the typed kernel overload.
+    device : str, optional
+        Warp device for the launch. Inferred from ``positions`` if ``None``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:

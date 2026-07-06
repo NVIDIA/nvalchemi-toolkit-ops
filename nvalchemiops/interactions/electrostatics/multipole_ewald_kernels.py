@@ -4335,7 +4335,29 @@ def multipole_real_space_monopole_csr_cell_grad_backward(
 ) -> None:
     r"""Launcher for the l=0 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes ``grad_positions``, ``grad_charges``, ``grad_cell_out``.
+    Framework-agnostic: operates directly on Warp arrays. Computes the
+    double-backward through the cell-gradient (stress) of the LMAX=0
+    real-space pair energy with respect to ``positions``, ``charges``, and
+    ``cell`` given an upstream cotangent ``g_cell`` on ``grad_cell``.
+
+    Parameters
+    ----------
+    positions, charges, cell, idx_j, neighbor_ptr, unit_shifts, sigma, alpha :
+        Same semantics as :func:`multipole_real_space_monopole_csr_energy`.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor).
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_cell_out : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cell (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -4546,9 +4568,40 @@ def batch_multipole_real_space_monopole_csr_cell_grad_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    r"""Launcher for the l=0 cell-grad double-backward (stress-loss).
+    r"""Launcher for the batched l=0 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes ``grad_positions``, ``grad_charges``, ``grad_cell_out``.
+    Batched variant of
+    :func:`multipole_real_space_monopole_csr_cell_grad_backward`: each system
+    in the batch has its own cell and per-system ``sigma`` / ``alpha`` scalars.
+    Framework-agnostic: operates directly on Warp arrays.
+
+    Parameters
+    ----------
+    positions, charges, idx_j, neighbor_ptr, unit_shifts :
+        Same semantics as :func:`multipole_real_space_monopole_csr_energy`.
+    cells : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Per-system lattice matrices; ``cells[b]`` is used for system ``b``.
+    atom_batch_idx : wp.array, shape (N,), dtype wp.int32
+        Maps each atom to its system index ``b``.
+    sigma : wp.array, shape (B,), dtype matching ``charges``
+        Per-system GTO smearing width.
+    alpha : wp.array, shape (B,), dtype matching ``charges``
+        Per-system Ewald splitting parameter.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor),
+        one per system.
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_cell_out : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cells (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -5813,7 +5866,34 @@ def multipole_real_space_dipole_csr_cell_grad_backward(
 ) -> None:
     r"""Launcher for the l=1 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes the four output arrays.
+    Framework-agnostic: operates directly on Warp arrays. Computes the
+    double-backward through the cell-gradient (stress) of the LMAX=1
+    real-space pair energy with respect to ``positions``, ``charges``,
+    ``dipoles``, and ``cell`` given an upstream cotangent ``g_cell`` on
+    ``grad_cell``.
+
+    Parameters
+    ----------
+    positions, charges, cell, idx_j, neighbor_ptr, unit_shifts, sigma, alpha :
+        Same semantics as :func:`multipole_real_space_dipole_csr_energy`.
+    dipoles : wp.array, shape (N,), dtype wp.vec3f or wp.vec3d
+        Atomic dipole moments.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor).
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_dipoles : wp.array, shape (N,), dtype matching ``dipoles``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. dipoles.
+    grad_cell_out : wp.array, shape (1,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cell (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:
@@ -6200,9 +6280,42 @@ def batch_multipole_real_space_dipole_csr_cell_grad_backward(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    r"""Launcher for the l=1 cell-grad double-backward (stress-loss).
+    r"""Launcher for the batched l=1 cell-grad double-backward (stress-loss).
 
-    Caller pre-zeroes the four output arrays.
+    Batched variant of
+    :func:`multipole_real_space_dipole_csr_cell_grad_backward`: each system
+    in the batch has its own cell and per-system ``sigma`` / ``alpha`` scalars.
+    Framework-agnostic: operates directly on Warp arrays.
+
+    Parameters
+    ----------
+    positions, charges, dipoles, idx_j, neighbor_ptr, unit_shifts :
+        Same semantics as :func:`batch_multipole_real_space_dipole_csr_energy`.
+    cells : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Per-system lattice matrices; ``cells[b]`` is used for system ``b``.
+    atom_batch_idx : wp.array, shape (N,), dtype wp.int32
+        Maps each atom to its system index ``b``.
+    sigma : wp.array, shape (B,), dtype matching ``charges``
+        Per-system GTO smearing width.
+    alpha : wp.array, shape (B,), dtype matching ``charges``
+        Per-system Ewald splitting parameter.
+    per_direction_scale : wp.array, shape (1,), dtype wp.float64
+        Scalar prefactor applied to the stress contribution (e.g. ``1/V``).
+    g_cell : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        Upstream cotangent on the first-order ``grad_cell`` (stress tensor),
+        one per system.
+    grad_positions : wp.array, shape (N,), dtype matching ``positions``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. positions.
+    grad_charges : wp.array, shape (N,), dtype matching ``charges``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. charges.
+    grad_dipoles : wp.array, shape (N,), dtype matching ``dipoles``
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. dipoles.
+    grad_cell_out : wp.array, shape (B,), dtype wp.mat33f or wp.mat33d
+        OUTPUT (pre-zeroed). Second-order gradient w.r.t. cells (stress-stress block).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` -- selects the overloaded variant.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
     if device is None:

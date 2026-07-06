@@ -87,7 +87,25 @@ def bspline_moduli_1d_launch(
     moduli: wp.array,
     device: str | None = None,
 ) -> None:
-    """Launcher for :func:`_bspline_moduli_1d_kernel` (one thread per axis index)."""
+    """Launcher for :func:`_bspline_moduli_1d_kernel` (one thread per axis index).
+
+    Parameters
+    ----------
+    miller : wp.array, shape (n_axis,), dtype=wp.float64
+        Integer Miller indices for this axis (``0 .. n_axis-1``).
+    inv_n : float
+        Reciprocal of the mesh dimension along this axis (``1 / n_axis``).
+    order : int
+        B-spline order (3, 4, 5, or 6).
+    moduli : wp.array, shape (n_axis,), dtype=wp.float64
+        OUTPUT. B-spline modulus at each Miller index.
+    device : str, optional
+        Warp device string. Defaults to ``miller.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (n_axis,)`` — one thread per axis index.
+    """
     if device is None:
         device = str(miller.device)
     wp.launch(
@@ -1995,6 +2013,49 @@ def multipole_pme_convolve_double_backward_launch(
     r"""Launch :func:`_pme_multipole_convolve_double_backward_kernel`.
 
     ``d_volume`` is a ``(1,)`` array — must be zero-initialized.
+
+    Parameters
+    ----------
+    mesh_fft : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Forward-FFT of the spread density (complex as ``vec2``).
+    k_squared : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Squared k-vector magnitude.
+    moduli_x : wp.array, shape (Nx,), dtype=wp.float32/float64
+        1D B-spline modulus along x.
+    moduli_y : wp.array, shape (Ny,), dtype=wp.float32/float64
+        1D B-spline modulus along y.
+    moduli_z : wp.array, shape (Nz_rfft,), dtype=wp.float32/float64
+        1D B-spline modulus along z.
+    alpha : wp.array, shape (1,), dtype=wp.float32/float64
+        Ewald splitting parameter.
+    sigma : wp.array, shape (1,), dtype=wp.float32/float64
+        GTO Gaussian width.
+    volume : wp.array, shape (1,), dtype=wp.float32/float64
+        Unit cell volume.
+    grad_convolved : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream gradient w.r.t. the convolved mesh (from the backward pass).
+    gg_mesh_fft : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream cotangent on ``grad_mesh_fft``.
+    gg_k_squared : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_k_squared``.
+    gg_volume : wp.array, shape (1,), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_volume``.
+    d_grad_convolved : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``grad_convolved``.
+    d_mesh_fft : wp.array, shape (Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``mesh_fft``.
+    d_k_squared : wp.array, shape (Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        OUTPUT. Second-order gradient w.r.t. ``k_squared``.
+    d_volume : wp.array, shape (1,), dtype=wp.float32/float64
+        OUTPUT, pre-zeroed. Second-order gradient w.r.t. volume (atomic).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``mesh_fft.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (Nx, Ny, Nz_rfft)`` — one thread per rfft cell.
     """
     if device is None:
         device = str(mesh_fft.device)
@@ -2506,7 +2567,51 @@ def batch_multipole_pme_convolve_double_backward_launch(
 ) -> None:
     r"""Batched launcher for :func:`_batch_pme_multipole_convolve_double_backward_kernel`.
 
-    ``d_volume`` is a ``(B,)`` array — must be zero-initialized."""
+    ``d_volume`` is a ``(B,)`` array — must be zero-initialized.
+
+    Parameters
+    ----------
+    mesh_fft : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Per-system forward-FFT of the spread density (complex as ``vec2``).
+    k_squared : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Per-system squared k-vector magnitude.
+    moduli_x : wp.array, shape (Nx,), dtype=wp.float32/float64
+        1D B-spline modulus along x (shared across the batch).
+    moduli_y : wp.array, shape (Ny,), dtype=wp.float32/float64
+        1D B-spline modulus along y (shared across the batch).
+    moduli_z : wp.array, shape (Nz_rfft,), dtype=wp.float32/float64
+        1D B-spline modulus along z (shared across the batch).
+    alpha : wp.array, shape (B,), dtype=wp.float32/float64
+        Per-system Ewald splitting parameter.
+    sigma : wp.array, shape (B,), dtype=wp.float32/float64
+        Per-system GTO Gaussian width.
+    volume : wp.array, shape (B,), dtype=wp.float32/float64
+        Per-system unit cell volume.
+    grad_convolved : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream gradient w.r.t. the convolved mesh (from the backward pass).
+    gg_mesh_fft : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        Upstream cotangent on ``grad_mesh_fft``.
+    gg_k_squared : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_k_squared``.
+    gg_volume : wp.array, shape (B,), dtype=wp.float32/float64
+        Upstream cotangent on ``grad_volume``.
+    d_grad_convolved : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``grad_convolved``.
+    d_mesh_fft : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=vec2f/vec2d
+        OUTPUT. Second-order gradient w.r.t. ``mesh_fft``.
+    d_k_squared : wp.array4d, shape (B, Nx, Ny, Nz_rfft), dtype=wp.float32/float64
+        OUTPUT. Second-order gradient w.r.t. ``k_squared``.
+    d_volume : wp.array, shape (B,), dtype=wp.float32/float64
+        OUTPUT, pre-zeroed. Second-order gradient w.r.t. volume (atomic per system).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``mesh_fft.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (B, Nx, Ny, Nz_rfft)`` — one thread per (system, rfft cell).
+    """
     if device is None:
         device = str(mesh_fft.device)
     B, nx, ny, nz_rfft = mesh_fft.shape
@@ -5812,7 +5917,34 @@ def pme_effective_moments_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_effective_moments_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_effective_moments_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    charges : wp.array, shape (N,), dtype=wp.float32/float64
+        Per-atom monopole charges (saved forward input).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors (saved forward input).
+    gg_pos : wp.array, shape (N,), dtype=vec3f/vec3d
+        Incoming position cotangent.
+    gg_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Incoming dipole cotangent.
+    gg_quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Incoming quadrupole cotangent.
+    eff_d : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Effective dipole ``gg_dipoles + charges * gg_pos``.
+    eff_Q : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Effective quadrupole
+        ``gg_quadrupoles + gg_pos ⊗ dipoles + (gg_pos ⊗ dipoles)^T``.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``charges.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(charges.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -5894,7 +6026,36 @@ def pme_fractionalize_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_fractionalize_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_fractionalize_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        Cartesian atom positions.
+    cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        Per-system transpose of the inverse cell matrix
+        :math:`M = \text{cell}^{-T}`.
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        Per-atom system index into the batch (``0 .. B-1``).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors.
+    quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Per-atom Cartesian quadrupole tensors.
+    p_out : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Fractional-coordinate positions ``M * r``.
+    df_out : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Fractional dipoles ``M * mu``.
+    Qf_out : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Fractional quadrupoles ``M * Q * M^T``.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(positions.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -5989,7 +6150,43 @@ def pme_fractionalize_backward_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_fractionalize_backward_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_fractionalize_backward_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        Cartesian atom positions (saved forward input).
+    cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        Per-system transpose of the inverse cell matrix (saved forward input).
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        Per-atom system index into the batch (``0 .. B-1``).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors (saved forward input).
+    quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Per-atom Cartesian quadrupole tensors (saved forward input).
+    gp : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on fractional positions ``p_out``.
+    gdf : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on fractional dipoles ``df_out``.
+    gQf : wp.array, shape (N,), dtype=mat33f/mat33d
+        Upstream cotangent on fractional quadrupoles ``Qf_out``.
+    grad_positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Gradient w.r.t. Cartesian positions.
+    grad_cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        OUTPUT, pre-zeroed. Gradient w.r.t. ``cell_inv_t`` (atomic per system).
+    grad_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Gradient w.r.t. Cartesian dipoles.
+    grad_quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Gradient w.r.t. Cartesian quadrupoles.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(positions.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -6139,7 +6336,58 @@ def pme_fractionalize_double_backward_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_fractionalize_double_backward_kernel` (one thread/atom)."""
+    r"""Launch :func:`_pme_fractionalize_double_backward_kernel` (one thread/atom).
+
+    Parameters
+    ----------
+    positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        Cartesian atom positions (saved forward input).
+    cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        Per-system transpose of the inverse cell matrix (saved forward input).
+    batch_idx : wp.array, shape (N,), dtype=wp.int32
+        Per-atom system index into the batch (``0 .. B-1``).
+    dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        Per-atom Cartesian dipole vectors (saved forward input).
+    quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        Per-atom Cartesian quadrupole tensors (saved forward input).
+    gp : wp.array, shape (N,), dtype=vec3f/vec3d
+        First-order cotangent on fractional positions ``p_out`` (saved backward input).
+    gdf : wp.array, shape (N,), dtype=vec3f/vec3d
+        First-order cotangent on fractional dipoles (saved backward input).
+    gQf : wp.array, shape (N,), dtype=mat33f/mat33d
+        First-order cotangent on fractional quadrupoles (saved backward input).
+    g_pos : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on ``grad_positions``.
+    g_cell : wp.array, shape (B,), dtype=mat33f/mat33d
+        Upstream cotangent on ``grad_cell_inv_t``.
+    g_dip : wp.array, shape (N,), dtype=vec3f/vec3d
+        Upstream cotangent on ``grad_dipoles``.
+    g_quad : wp.array, shape (N,), dtype=mat33f/mat33d
+        Upstream cotangent on ``grad_quadrupoles``.
+    grad_gp : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. ``gp``.
+    grad_gdf : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. ``gdf``.
+    grad_gQf : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Second-order gradient w.r.t. ``gQf``.
+    grad_positions : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. positions.
+    grad_cell_inv_t : wp.array, shape (B,), dtype=mat33f/mat33d
+        OUTPUT, pre-zeroed. Second-order gradient w.r.t. ``cell_inv_t``
+        (atomic per system).
+    grad_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. Second-order gradient w.r.t. dipoles.
+    grad_quadrupoles : wp.array, shape (N,), dtype=mat33f/mat33d
+        OUTPUT. Second-order gradient w.r.t. quadrupoles.
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``positions.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(positions.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
@@ -6237,7 +6485,32 @@ def pme_spread_dbwd_readout_launch(
     wp_dtype,
     device=None,
 ):
-    r"""Launch :func:`_pme_spread_dbwd_readout_kernel` (one thread per atom)."""
+    r"""Launch :func:`_pme_spread_dbwd_readout_kernel` (one thread per atom).
+
+    Parameters
+    ----------
+    gg_pos : wp.array, shape (N,), dtype=vec3f/vec3d
+        Incoming position cotangent.
+    gd2 : wp.array, shape (N,), dtype=vec3f/vec3d
+        Spread-backward dipole field readout (``M^T * acc_f``).
+    gQ2 : wp.array, shape (N,), dtype=mat33f/mat33d
+        Spread-backward quadrupole field readout
+        (:math:`\tfrac{1}{2} M^\top \text{acc\_H}\, M`).
+    d_charges : wp.array, shape (N,), dtype=wp.float32/float64
+        OUTPUT. :math:`\partial L / \partial \text{charges}` contribution
+        (``dot(gg_pos, gd2)``).
+    d_dipoles : wp.array, shape (N,), dtype=vec3f/vec3d
+        OUTPUT. :math:`\partial L / \partial \text{dipoles}` contribution
+        (``2 * gQ2 * gg_pos``).
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64`` — selects the registered overload.
+    device : str, optional
+        Warp device string. Defaults to ``gg_pos.device``.
+
+    Launch Grid
+    -----------
+    ``dim = (N,)`` — one thread per atom.
+    """
     if device is None:
         device = str(gg_pos.device)
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f

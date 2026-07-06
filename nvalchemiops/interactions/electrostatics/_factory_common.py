@@ -463,6 +463,33 @@ def get_backward_scale_kernel(
     the forward pass. First backward only needs to multiply those caches by the
     per-system energy cotangent. This shared kernel fuses that multiplication for
     atom-major position and charge outputs.
+
+    The returned kernel is cached via :func:`functools.lru_cache`; repeated calls with
+    identical arguments return the same ``wp.Kernel`` object without recompilation.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        Warp scalar dtype, either ``wp.float32`` or ``wp.float64``.
+    batched : bool
+        If ``True``, the kernel reads per-atom system indices from ``batch_id`` to
+        look up the correct energy cotangent; if ``False``, a single system is assumed.
+    scale_positions : bool
+        If ``True``, write scaled position gradients into ``grad_positions``.
+    scale_charges : bool
+        If ``True``, write scaled charge gradients into ``grad_charges``.
+
+    Returns
+    -------
+    wp.Kernel
+        A compiled Warp kernel with the signature
+        ``(grad_energy, batch_id, dEdR_cache, dEdq_cache, grad_positions, grad_charges, num_atoms)``.
+        The kernel writes into ``grad_positions`` (when ``scale_positions=True``) and
+        ``grad_charges`` (when ``scale_charges=True``).
+
+    See Also
+    --------
+    :class:`_DerivState` : Derivative-state axis controlling which caches are populated.
     """
     _require_supported_dtype(wp_dtype)
 

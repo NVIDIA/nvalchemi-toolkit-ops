@@ -118,6 +118,13 @@ def alloc_pme_sentinels(wp_dtype: type, device: str) -> dict[str, wp.array]:
     corrections (per-atom) slots. Memoized per ``(wp_dtype, device)`` (zero-size,
     read-only) so repeated launches do not re-allocate them per call.
 
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``.
+    device : str
+        Warp device string (e.g. ``"cuda:0"``).
+
     Returns
     -------
     dict[str, wp.array]
@@ -287,6 +294,15 @@ def make_pme_kernel(
     charge_grad : bool
         For ``component="pme_corrections"``, ``order="forward"`` only: also write
         the analytical ``dE/dq`` output.
+
+    Returns
+    -------
+    wp.Kernel
+        Compiled, cached Warp kernel for the requested specialization.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_factory.get_pme_kernel` : Validated thin wrapper around this function.
     """
     _validate_axes(wp_dtype, component, batched, order, charge_grad)
     if component == "pme_convolve":
@@ -308,6 +324,29 @@ def get_pme_kernel(
     separate cache dict. Every argument is forwarded **by keyword** (including
     ``wp_dtype``) so a positional vs keyword call can never produce a duplicate
     ``@lru_cache`` entry.
+
+    Parameters
+    ----------
+    wp_dtype : type
+        ``wp.float32`` or ``wp.float64``.
+    component : {"pme_convolve", "pme_corrections"}
+        Which Warp-owned PME kernel family to retrieve.
+    batched : bool, optional
+        Single-system (``False``) vs batched (``True``).
+    order : {"forward", "backward", "double_backward"}, optional
+        Forward output, first-derivative autograd node, or second-derivative node.
+    charge_grad : bool, optional
+        For ``component="pme_corrections"``, ``order="forward"`` only: also write
+        the analytical ``dE/dq`` output.
+
+    Returns
+    -------
+    wp.Kernel
+        Compiled, cached Warp kernel for the requested specialization.
+
+    See Also
+    --------
+    :func:`nvalchemiops.interactions.electrostatics.pme_factory.make_pme_kernel` : Underlying cached builder.
     """
     _require_supported_dtype(wp_dtype)
     if component not in _COMPONENTS:

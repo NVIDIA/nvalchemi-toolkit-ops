@@ -429,7 +429,9 @@ def eval_gto_fourier_dipole(
     Parameters
     ----------
     k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        Reciprocal-space k-vectors.
     k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        Squared magnitudes :math:`|k|^2` of the k-vectors.
     sigma : float
         Density-basis Gaussian width.
     inv_cl_l0, inv_cl_l1 : float
@@ -538,12 +540,19 @@ def batch_eval_gto_fourier_dipole(
     Parameters
     ----------
     k_vectors : wp.array, shape (B, K_max), dtype wp.vec3d
+        Reciprocal-space k-vectors, one row per system.
     k_norm2 : wp.array, shape (B, K_max), dtype wp.float64
-    sigma, inv_cl_l0, inv_cl_l1 : float
-        Shared across batch.
+        Squared magnitudes :math:`|k|^2` of the k-vectors.
+    sigma : float
+        Density-basis Gaussian width; shared across the batch.
+    inv_cl_l0 : float
+        Inverse :math:`l=0` overlap normalization constant; shared across the batch.
+    inv_cl_l1 : float
+        Inverse :math:`l=1` overlap normalization constant; shared across the batch.
     output : wp.array, shape (B, K_max, 4, 2), dtype wp.float64
-        Pre-allocated.
+        Pre-allocated output buffer.
     device : str, optional
+        Defaults to ``k_vectors.device``.
     """
     batch_size = k_vectors.shape[0]
     k_max = k_vectors.shape[1]
@@ -932,7 +941,9 @@ def batch_assemble_rho_k_dipole(
     rho : wp.array, shape (B, K_max, 2), dtype wp.float64
         Pre-allocated output.
     wp_dtype : type
+        ``wp.float32`` or ``wp.float64``; selects the overload for ``charges``/``dipoles``.
     device : str, optional
+        Defaults to ``cosines.device``.
     """
     vec_dtype = wp.vec3d if wp_dtype == wp.float64 else wp.vec3f
 
@@ -1596,8 +1607,10 @@ def position_gradient_from_rhok(
 
     Parameters
     ----------
-    charges, dipoles
-        Same dtype / shape as the forward. Picks the kernel overload.
+    charges : wp.array, shape (N_atoms,), dtype wp.float32 or wp.float64
+        Per-atom monopole charges; dtype selects the kernel overload.
+    dipoles : wp.array, shape (N_atoms,), dtype wp.vec3f or wp.vec3d
+        Per-atom Cartesian dipole moments ``(mu_x, mu_y, mu_z)``.
     cosines, sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Must be from the same forward pass as ``grad_rho`` — the gradient
         is only defined w.r.t. the positions those tables were built
@@ -1900,6 +1913,7 @@ def apply_per_k_factor(
     Parameters
     ----------
     rho : wp.array, shape (N_k, 2), dtype wp.float64
+        Complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
     per_k_factor : wp.array, shape (N_k,), dtype wp.float64
         Scalar multiplier per k-vector. For the direct k-space sum,
         ``FIELD_CONSTANT / k^2`` with k=0 zeroed.
@@ -1961,12 +1975,12 @@ def batch_apply_per_k_factor(
 
     Parameters
     ----------
-    rho : wp.array
-        OUTPUT: complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
-    per_k_factor : wp.array
+    rho : wp.array, shape (B, K_max, 2), dtype wp.float64
+        Complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
+    per_k_factor : wp.array, shape (B, K_max), dtype wp.float64
         Per-k multiplicative factor (Green/structure factor).
-    potential : wp.array
-        Per-k reciprocal-space potential factor.
+    potential : wp.array, shape (B, K_max, 2), dtype wp.float64
+        OUTPUT: per-k reciprocal-space potential factor.
     device : str
         Warp device string; defaults to the input array's device.
     """
@@ -2123,11 +2137,11 @@ def batch_compute_energy_product_per_k(
 
     Parameters
     ----------
-    rho : wp.array
-        OUTPUT: complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
-    potential : wp.array
+    rho : wp.array, shape (B, K_max, 2), dtype wp.float64
+        Complex reciprocal-space density :math:`\hat\rho(k)` (re, im).
+    potential : wp.array, shape (B, K_max, 2), dtype wp.float64
         Per-k reciprocal-space potential factor.
-    per_k_energy : wp.array
+    per_k_energy : wp.array, shape (B, K_max), dtype wp.float64
         OUTPUT: per-k energy contribution.
     device : str
         Warp device string; defaults to the input array's device.
@@ -3162,17 +3176,17 @@ def v_gradient_from_feature_grad(
 
     Parameters
     ----------
-    grad_raw : wp.array
+    grad_raw : wp.array, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    grad_v : wp.array
+    grad_v : wp.array, shape (N_k, 2), dtype wp.float64
         OUTPUT: gradient w.r.t. the input feature vector ``v``.
     device : str
         Warp device string; defaults to the input array's device.
@@ -3676,21 +3690,21 @@ def position_gradient_from_feature_grad(
 
     Parameters
     ----------
-    grad_raw : wp.array
+    grad_raw : wp.array, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    potential : wp.array
-        Per-k reciprocal-space potential factor.
-    k_vectors : wp.array
+    potential : wp.array, shape (N_k, 2), dtype wp.float64
+        Per-k reciprocal-space potential factor ``V(k)`` from the forward.
+    k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
         Reciprocal-space k-vectors.
-    grad_positions : wp.array
+    grad_positions : wp.array, shape (N_atoms, 3), dtype wp.float64
         OUTPUT: gradient w.r.t. atomic positions.
     device : str
         Warp device string; defaults to the input array's device.
@@ -3838,23 +3852,23 @@ def batch_position_gradient_from_feature_grad(
 
     Parameters
     ----------
-    grad_raw : wp.array
+    grad_raw : wp.array, shape (N_total, N_:math:`\sigma`, 4), dtype wp.float64
         Upstream gradient w.r.t. the raw (pre-projection) features.
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (B, K_max, N_:math:`\sigma`, 4), dtype wp.vec2d
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (K_max, N_total), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (B, K_max), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    potential : wp.array
+    potential : wp.array, shape (B, K_max, 2), dtype wp.float64
         Per-k reciprocal-space potential factor.
-    k_vectors : wp.array
+    k_vectors : wp.array, shape (B, K_max), dtype wp.vec3d
         Reciprocal-space k-vectors.
-    batch_idx : wp.array
+    batch_idx : wp.array, shape (N_total,), dtype wp.int32
         Per-atom system index into the batch (or scalar system id).
-    grad_positions : wp.array
+    grad_positions : wp.array, shape (N_total, 3), dtype wp.float64
         OUTPUT: gradient w.r.t. atomic positions.
     device : str
         Warp device string; defaults to the input array's device.
@@ -4419,7 +4433,35 @@ def source_phi_hat_double_backward_dipole(
     grad_k_norm2: wp.array,
     device: str | None = None,
 ) -> None:
-    """Launcher for :func:`_source_phi_hat_double_backward_dipole_kernel`."""
+    r"""Launcher for :func:`_source_phi_hat_double_backward_dipole_kernel`.
+
+    Parameters
+    ----------
+    gg_k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        Cotangent on ``grad_k_vectors`` from the outer backward pass.
+    gg_k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        Cotangent on ``grad_k_norm2`` from the outer backward pass.
+    grad_output : wp.array, shape (N_k, 4, 2), dtype wp.float64
+        Upstream cotangent ``dL/d\hat\phi`` from the first-order backward.
+    k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        Reciprocal-space k-vectors from the forward pass.
+    k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        Squared magnitudes :math:`|k|^2` of the k-vectors.
+    sigma : float
+        Density-basis Gaussian width.
+    inv_cl_l0 : float
+        Inverse :math:`l=0` overlap normalization constant.
+    inv_cl_l1 : float
+        Inverse :math:`l=1` overlap normalization constant.
+    grad_grad_output : wp.array, shape (N_k, 4, 2), dtype wp.float64
+        OUTPUT: double-backward gradient w.r.t. ``grad_output``.
+    grad_k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
+        OUTPUT: double-backward gradient w.r.t. k-vectors.
+    grad_k_norm2 : wp.array, shape (N_k,), dtype wp.float64
+        OUTPUT: double-backward gradient w.r.t. :math:`|k|^2`.
+    device : str, optional
+        Defaults to ``k_vectors.device``.
+    """
     n_k = k_vectors.shape[0]
     if device is None:
         device = str(k_vectors.device)
@@ -5666,21 +5708,21 @@ def feat_position_grad_backward_grad_raw(
 
     Parameters
     ----------
-    receiver_phi_hat : wp.array
+    receiver_phi_hat : wp.array, shape (N_k, N_:math:`\sigma`, 4, 2), dtype wp.float64
         Receiver-side GTO Fourier coefficients :math:`\hat\phi(k)`.
-    cosines : wp.array
+    cosines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) cosine table :math:`\cos(k\cdot r)`.
-    sines : wp.array
+    sines : wp.array, shape (N_k, N_atoms), dtype wp.float64
         Per-(k, atom) sine table :math:`\sin(k\cdot r)`.
-    k_factor_proj : wp.array
+    k_factor_proj : wp.array, shape (N_k,), dtype wp.float64
         Per-k projection factor for the feature/direct-k-space projection.
-    potential : wp.array
-        Per-k reciprocal-space potential factor.
-    gg_positions : wp.array
+    potential : wp.array, shape (N_k, 2), dtype wp.float64
+        Per-k reciprocal-space potential factor ``V(k)`` from the forward.
+    gg_positions : wp.array, shape (N_atoms, 3), dtype wp.float64
         Second-order upstream gradient w.r.t. positions (HVP seed).
-    k_vectors : wp.array
+    k_vectors : wp.array, shape (N_k,), dtype wp.vec3d
         Reciprocal-space k-vectors.
-    ggrad_grad_raw : wp.array
+    ggrad_grad_raw : wp.array, shape (N_atoms, N_:math:`\sigma`, 4), dtype wp.float64
         OUTPUT: double-backward gradient w.r.t. ``grad_raw``.
     device : str
         Warp device string; defaults to the input array's device.
