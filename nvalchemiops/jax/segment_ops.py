@@ -249,17 +249,31 @@ _sum_op.defvjp(_sum_op_fwd, _sum_op_bwd)
 
 
 def segmented_sum(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
-    """Differentiable segmented sum.
+    """Compute the differentiable per-segment sum of ``x``.
+
+    Supports scalar (shape ``(N,)``) and vec3 (shape ``(N, 3)``) inputs in
+    float32 or float64.  The backward pass is itself differentiable, so
+    second-order gradients via ``jax.grad(jax.grad(...))`` are supported.
 
     Parameters
     ----------
-    x   : jax.Array, shape ``(N,)`` or ``(N, 3)``, float32 / float64.
-    idx : jax.Array, shape ``(N,)``, dtype int32, sorted in ``[0, num_segments)``.
-    num_segments   : int — number of segments.  Static argument.
+    x : jax.Array, shape (N,) or (N, 3)
+        Values to reduce.  Must be float32 or float64.
+    idx : jax.Array, shape (N,), dtype int32
+        Segment index for each element.  Values must lie in
+        ``[0, num_segments)``.
+    num_segments : int
+        Number of output segments.  Treated as a static (compile-time)
+        constant by JAX.
 
     Returns
     -------
-    jax.Array of shape ``(num_segments,)`` or ``(num_segments, 3)``.
+    jax.Array, shape (num_segments,) or (num_segments, 3)
+        Per-segment sums; ``out[s] = sum(x[i] for i where idx[i] == s)``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.segment_ops.segmented_mean` : Per-segment mean.
     """
     return _sum_op(x, idx, num_segments, _sum_kind(x))
 
@@ -407,7 +421,35 @@ _dot_op.defvjp(_dot_op_fwd, _dot_op_bwd)
 def segmented_dot(
     x: jax.Array, y: jax.Array, idx: jax.Array, num_segments: int
 ) -> jax.Array:
-    """Differentiable per-segment dot product (vec3 inputs)."""
+    """Compute the differentiable per-segment dot product of vec3 arrays.
+
+    For each segment ``s``, accumulates
+    :math:`\\text{out}[s] = \\sum_{i:\\,\\text{idx}[i]=s} x[i] \\cdot y[i]`.
+    Supports float32 and float64.  Second-order gradients are supported.
+
+    Parameters
+    ----------
+    x : jax.Array, shape (N, 3)
+        First vec3 operand.  Must be float32 or float64.
+    y : jax.Array, shape (N, 3)
+        Second vec3 operand.  Must share dtype with ``x``.
+    idx : jax.Array, shape (N,), dtype int32
+        Segment index for each element.  Values must lie in
+        ``[0, num_segments)``.
+    num_segments : int
+        Number of output segments.  Treated as a static (compile-time)
+        constant by JAX.
+
+    Returns
+    -------
+    jax.Array, shape (num_segments,)
+        Per-segment dot products.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.segment_ops.segmented_sum` : Per-segment sum.
+    :func:`nvalchemiops.jax.segment_ops.segmented_mul` : Per-element scale by per-segment scalar.
+    """
     return _dot_op(x, y, idx, num_segments, _norm_dtype(x.dtype))
 
 
@@ -547,7 +589,34 @@ _mul_op.defvjp(_mul_op_fwd, _mul_op_bwd)
 def segmented_mul(
     x: jax.Array, y: jax.Array, idx: jax.Array, num_segments: int
 ) -> jax.Array:
-    """Differentiable per-element scale ``out[i] = x[i] * y[idx[i]]``."""
+    """Scale each vec3 element by its corresponding per-segment scalar.
+
+    Computes :math:`\\text{out}[i] = x[i] \\times y[\\text{idx}[i]]` where
+    ``x`` is a vec3 array and ``y`` holds one scalar per segment.  Supports
+    float32 and float64.  Second-order gradients are supported.
+
+    Parameters
+    ----------
+    x : jax.Array, shape (N, 3)
+        Vec3 values to scale.  Must be float32 or float64.
+    y : jax.Array, shape (num_segments,)
+        Per-segment scalar multipliers.  Must share dtype with ``x``.
+    idx : jax.Array, shape (N,), dtype int32
+        Segment index for each element.  Values must lie in
+        ``[0, num_segments)``.
+    num_segments : int
+        Number of segments.  Treated as a static (compile-time) constant
+        by JAX.
+
+    Returns
+    -------
+    jax.Array, shape (N, 3)
+        Scaled vec3 values; ``out[i] = x[i] * y[idx[i]]``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.segment_ops.segmented_dot` : Per-segment dot product.
+    """
     return _mul_op(x, y, idx, num_segments, _norm_dtype(x.dtype))
 
 
@@ -682,7 +751,34 @@ _mean_op.defvjp(_mean_op_fwd, _mean_op_bwd)
 
 
 def segmented_mean(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
-    """Differentiable per-segment mean."""
+    """Compute the differentiable per-segment mean of ``x``.
+
+    Supports scalar (shape ``(N,)``) and vec3 (shape ``(N, 3)``) inputs in
+    float32 or float64.  Per-segment element counts are computed once during
+    the forward pass and cached as residuals so the backward never recomputes
+    them.  Second-order gradients are supported.
+
+    Parameters
+    ----------
+    x : jax.Array, shape (N,) or (N, 3)
+        Values to average.  Must be float32 or float64.
+    idx : jax.Array, shape (N,), dtype int32
+        Segment index for each element.  Values must lie in
+        ``[0, num_segments)``.
+    num_segments : int
+        Number of output segments.  Treated as a static (compile-time)
+        constant by JAX.
+
+    Returns
+    -------
+    jax.Array, shape (num_segments,) or (num_segments, 3)
+        Per-segment means; ``out[s] = mean(x[i] for i where idx[i] == s)``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.segment_ops.segmented_sum` : Per-segment sum.
+    :func:`nvalchemiops.jax.segment_ops.segmented_rms_norm` : Per-segment RMS norm.
+    """
     out, _counts = _mean_op(x, idx, num_segments, _sum_kind(x))
     return out
 
@@ -853,7 +949,34 @@ _rms_op.defvjp(_rms_op_fwd, _rms_op_bwd)
 
 
 def segmented_rms_norm(x: jax.Array, idx: jax.Array, num_segments: int) -> jax.Array:
-    """Differentiable per-segment RMS norm."""
+    """Compute the differentiable per-segment RMS norm of vec3 inputs.
+
+    For each segment ``s``, computes
+    :math:`\\text{out}[s] = \\sqrt{\\frac{1}{|s|} \\sum_{i:\\,\\text{idx}[i]=s} \\|x[i]\\|^2}`.
+    Inverse norms and per-segment counts are precomputed during the forward
+    pass and cached as residuals.  Supports float32 and float64.
+    Second-order gradients are supported.
+
+    Parameters
+    ----------
+    x : jax.Array, shape (N, 3)
+        Vec3 values.  Must be float32 or float64.
+    idx : jax.Array, shape (N,), dtype int32
+        Segment index for each element.  Values must lie in
+        ``[0, num_segments)``.
+    num_segments : int
+        Number of output segments.  Treated as a static (compile-time)
+        constant by JAX.
+
+    Returns
+    -------
+    jax.Array, shape (num_segments,)
+        Per-segment RMS norms.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.segment_ops.segmented_mean` : Per-segment mean.
+    """
     out, _inv_norm, _counts = _rms_op(x, idx, num_segments, _norm_dtype(x.dtype))
     return out
 
@@ -994,5 +1117,32 @@ _matvec_op.defvjp(_matvec_op_fwd, _matvec_op_bwd)
 def segmented_matvec(
     v: jax.Array, m: jax.Array, idx: jax.Array, num_segments: int
 ) -> jax.Array:
-    """Differentiable per-segment matvec ``out[i] = m[idx[i]]^T @ v[i]``."""
+    """Apply a per-segment 3x3 matrix transpose to each vec3 element.
+
+    Computes :math:`\\text{out}[i] = m[\\text{idx}[i]]^\\top v[i]` where
+    ``m`` holds one 3x3 matrix per segment.  Supports float32 and float64.
+    Second-order gradients are supported.
+
+    Parameters
+    ----------
+    v : jax.Array, shape (N, 3)
+        Vec3 inputs.  Must be float32 or float64.
+    m : jax.Array, shape (num_segments, 3, 3)
+        Per-segment 3x3 matrices.  Must share dtype with ``v``.
+    idx : jax.Array, shape (N,), dtype int32
+        Segment index for each element.  Values must lie in
+        ``[0, num_segments)``.
+    num_segments : int
+        Number of segments.  Treated as a static (compile-time) constant
+        by JAX.
+
+    Returns
+    -------
+    jax.Array, shape (N, 3)
+        Transformed vec3 values; ``out[i] = m[idx[i]]^T @ v[i]``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.segment_ops.segmented_mul` : Per-element scale by per-segment scalar.
+    """
     return _matvec_op(v, m, idx, num_segments, _norm_dtype(v.dtype))

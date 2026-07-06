@@ -63,6 +63,35 @@ def build_naive_kernel_tables(
     4. wrap-on-entry PBC selective-rebuild,
     5. prewrapped PBC,
     6. prewrapped PBC selective-rebuild.
+
+    Parameters
+    ----------
+    operation : {"single_cutoff", "dual_cutoff"}
+        Whether to build tables for single-cutoff or dual-cutoff neighbor search.
+    batched : bool
+        If ``True``, build kernels for batched (multi-system) neighbor search.
+    dtypes : tuple of type
+        Floating-point dtypes (e.g. ``(wp.float32,)``) for which to instantiate
+        each kernel variant.
+    half_fill : bool, optional
+        If ``True``, only fill the upper triangle of the neighbor matrix.
+        Default is ``False``.
+
+    Returns
+    -------
+    tuple of six dict
+        Six ``{dtype: kernel}`` lookup dictionaries, one per (PBC mode, selective)
+        combination in the order listed above.
+
+    Raises
+    ------
+    ValueError
+        If ``operation`` is not ``"single_cutoff"`` or ``"dual_cutoff"``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.neighbors.naive.get_naive_neighbor_matrix_kernel` : Single-cutoff kernel factory.
+    :func:`nvalchemiops.neighbors.naive.get_naive_neighbor_matrix_dual_cutoff_kernel` : Dual-cutoff kernel factory.
     """
     from nvalchemiops.neighbors.naive import (
         get_naive_neighbor_matrix_dual_cutoff_kernel,
