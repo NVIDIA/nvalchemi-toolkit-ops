@@ -209,7 +209,40 @@ _direct_forces_kernel_nl_virial = _make_jax_kernels(
 def direct_forces_kernel_nm_virial(
     *args: object, **kwargs: object
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Dtype-dispatched exported neighbor-matrix direct-force virial kernel."""
+    """Dispatch direct-force virial kernel for neighbor-matrix format by dtype.
+
+    Selects the float32 or float64 Warp kernel overload based on the dtype of
+    ``args[0]`` (positions) and validates the launch dimensions before
+    forwarding all arguments to the underlying JAX kernel wrapper.
+
+    Parameters
+    ----------
+    *args : object
+        Positional arguments forwarded to the dtype-selected kernel.  The first
+        element must be the positions array (jax.Array) whose dtype determines
+        which overload is called.
+    **kwargs : object
+        Keyword arguments forwarded to the kernel.  A ``launch_dims`` key is
+        validated and defaulted to ``(N, JAX_DFTD3_BLOCK_DIM)`` where ``N`` is
+        the number of atoms.
+
+    Returns
+    -------
+    dE_dCN : jax.Array, shape (N,)
+        Partial derivative of energy with respect to coordination number,
+        float32.
+    forces : jax.Array, shape (N, 3)
+        Direct-pair force contribution, float32.
+    energy : jax.Array, shape (num_systems,)
+        Per-system dispersion energy, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Per-system virial tensor, float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nm` :
+        Non-virial variant with optional virial passthrough.
+    """
     positions = args[0]
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
@@ -219,7 +252,40 @@ def direct_forces_kernel_nm_virial(
 def direct_forces_kernel_nl_virial(
     *args: object, **kwargs: object
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Dtype-dispatched exported neighbor-list direct-force virial kernel."""
+    """Dispatch direct-force virial kernel for neighbor-list format by dtype.
+
+    Selects the float32 or float64 Warp kernel overload based on the dtype of
+    ``args[0]`` (positions) and validates the launch dimensions before
+    forwarding all arguments to the underlying JAX kernel wrapper.
+
+    Parameters
+    ----------
+    *args : object
+        Positional arguments forwarded to the dtype-selected kernel.  The first
+        element must be the positions array (jax.Array) whose dtype determines
+        which overload is called.
+    **kwargs : object
+        Keyword arguments forwarded to the kernel.  A ``launch_dims`` key is
+        validated and defaulted to ``(N, JAX_DFTD3_BLOCK_DIM)`` where ``N`` is
+        the number of atoms.
+
+    Returns
+    -------
+    dE_dCN : jax.Array, shape (N,)
+        Partial derivative of energy with respect to coordination number,
+        float32.
+    forces : jax.Array, shape (N, 3)
+        Direct-pair force contribution, float32.
+    energy : jax.Array, shape (num_systems,)
+        Per-system dispersion energy, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Per-system virial tensor, float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nl` :
+        Non-virial variant with optional virial passthrough.
+    """
     positions = args[0]
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
@@ -253,7 +319,90 @@ def direct_forces_kernel_nm(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Compatibility wrapper for the exported neighbor-matrix direct-force kernel."""
+    """Compute direct pairwise D3 forces and energy for neighbor-matrix format.
+
+    Dispatches to the virial or non-virial Warp kernel overload depending on
+    ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
+    buffer is returned unchanged.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic positions, float32 or float64.
+    numbers : jax.Array, shape (N,)
+        Atomic numbers, int32.
+    neighbor_matrix : jax.Array, shape (N, max_neighbors)
+        Neighbor indices per atom, int32; padded with ``fill_value``.
+    cartesian_shifts : jax.Array, shape (N, max_neighbors, 3)
+        Cartesian PBC shift vectors per neighbor pair, same dtype as
+        ``positions``.  Pass a zero array for non-periodic calculations.
+    coord_num : jax.Array, shape (N,)
+        Coordination numbers per atom, float32.
+    r4r2 : jax.Array, shape (max_Z+1,)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values
+        indexed by atomic number, float32.
+    c6_reference : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        C6 reference coefficients, float32.
+    coord_num_ref : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        Coordination number reference grid for Gaussian interpolation, float32.
+    k3 : float
+        Gaussian width parameter for CN interpolation (typically -4.0).
+    a1 : float
+        Becke-Johnson damping parameter 1.
+    a2 : float
+        Becke-Johnson damping parameter 2.
+    s6 : float
+        C6 scaling factor.
+    s8 : float
+        C8 scaling factor.
+    s5_smoothing_on : float
+        Distance at which S5 switching begins.
+    s5_smoothing_off : float
+        Distance at which S5 switching completes.
+    inv_w : float
+        Precomputed inverse switching-window width; 0.0 disables switching.
+    fill_value : int
+        Padding sentinel in ``neighbor_matrix``.
+    periodic : bool
+        Whether to apply PBC shifts when computing pair distances.
+    batch_idx : jax.Array, shape (N,)
+        System index per atom, int32.
+    compute_virial : bool
+        If True, accumulate the virial tensor.
+    dE_dCN : jax.Array, shape (N,)
+        Pre-allocated zero buffer; accumulates :math:`\\partial E / \\partial CN`
+        contributions, float32.  Modified in-place by the kernel.
+    forces : jax.Array, shape (N, 3)
+        Pre-allocated zero buffer; accumulates direct force contributions,
+        float32.  Modified in-place by the kernel.
+    energy : jax.Array, shape (num_systems,)
+        Pre-allocated zero buffer; accumulates per-system energy, float32.
+        Modified in-place by the kernel.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Pre-allocated buffer for virial; passed through unchanged when
+        ``compute_virial=False``, float32.
+    **kwargs : object
+        Additional keyword arguments forwarded to the JAX kernel (e.g.
+        ``launch_dims``).
+
+    Returns
+    -------
+    dE_dCN : jax.Array, shape (N,)
+        Updated :math:`\\partial E / \\partial CN` accumulator, float32.
+    forces : jax.Array, shape (N, 3)
+        Updated direct force accumulator, float32.
+    energy : jax.Array, shape (num_systems,)
+        Updated per-system energy accumulator, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Updated virial tensor (unchanged when ``compute_virial=False``), float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nl` :
+        Neighbor-list variant.
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nm` :
+        Adds the CN-gradient force contribution after this pass.
+    """
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
@@ -341,7 +490,90 @@ def direct_forces_kernel_nl(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """Compatibility wrapper for the exported neighbor-list direct-force kernel."""
+    """Compute direct pairwise D3 forces and energy for neighbor-list format.
+
+    Dispatches to the virial or non-virial Warp kernel overload depending on
+    ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
+    buffer is returned unchanged.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic positions, float32 or float64.
+    numbers : jax.Array, shape (N,)
+        Atomic numbers, int32.
+    idx_j : jax.Array, shape (num_pairs,)
+        Destination atom indices in CSR neighbor list, int32.
+    neighbor_ptr : jax.Array, shape (N+1,)
+        CSR row pointers indexing into ``idx_j``, int32.
+    cartesian_shifts : jax.Array, shape (num_pairs, 3)
+        Cartesian PBC shift vectors per pair, same dtype as ``positions``.
+        Pass a zero array for non-periodic calculations.
+    coord_num : jax.Array, shape (N,)
+        Coordination numbers per atom, float32.
+    r4r2 : jax.Array, shape (max_Z+1,)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values
+        indexed by atomic number, float32.
+    c6_reference : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        C6 reference coefficients, float32.
+    coord_num_ref : jax.Array, shape (max_Z+1, max_Z+1, interp_mesh, interp_mesh)
+        Coordination number reference grid for Gaussian interpolation, float32.
+    k3 : float
+        Gaussian width parameter for CN interpolation (typically -4.0).
+    a1 : float
+        Becke-Johnson damping parameter 1.
+    a2 : float
+        Becke-Johnson damping parameter 2.
+    s6 : float
+        C6 scaling factor.
+    s8 : float
+        C8 scaling factor.
+    s5_smoothing_on : float
+        Distance at which S5 switching begins.
+    s5_smoothing_off : float
+        Distance at which S5 switching completes.
+    inv_w : float
+        Precomputed inverse switching-window width; 0.0 disables switching.
+    periodic : bool
+        Whether to apply PBC shifts when computing pair distances.
+    batch_idx : jax.Array, shape (N,)
+        System index per atom, int32.
+    compute_virial : bool
+        If True, accumulate the virial tensor.
+    dE_dCN : jax.Array, shape (N,)
+        Pre-allocated zero buffer; accumulates :math:`\\partial E / \\partial CN`
+        contributions, float32.  Modified in-place by the kernel.
+    forces : jax.Array, shape (N, 3)
+        Pre-allocated zero buffer; accumulates direct force contributions,
+        float32.  Modified in-place by the kernel.
+    energy : jax.Array, shape (num_systems,)
+        Pre-allocated zero buffer; accumulates per-system energy, float32.
+        Modified in-place by the kernel.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Pre-allocated buffer for virial; passed through unchanged when
+        ``compute_virial=False``, float32.
+    **kwargs : object
+        Additional keyword arguments forwarded to the JAX kernel (e.g.
+        ``launch_dims``).
+
+    Returns
+    -------
+    dE_dCN : jax.Array, shape (N,)
+        Updated :math:`\\partial E / \\partial CN` accumulator, float32.
+    forces : jax.Array, shape (N, 3)
+        Updated direct force accumulator, float32.
+    energy : jax.Array, shape (num_systems,)
+        Updated per-system energy accumulator, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Updated virial tensor (unchanged when ``compute_virial=False``), float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nm` :
+        Neighbor-matrix variant.
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nl` :
+        Adds the CN-gradient force contribution after this pass.
+    """
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
@@ -429,7 +661,35 @@ _cn_forces_contrib_nl_virial = _make_jax_kernels(
 def cn_forces_contrib_nm_virial(
     *args: object, **kwargs: object
 ) -> tuple[jax.Array, jax.Array]:
-    """Dtype-dispatched exported neighbor-matrix CN-force virial kernel."""
+    """Dispatch CN-force virial kernel for neighbor-matrix format by dtype.
+
+    Selects the float32 or float64 Warp kernel overload based on the dtype of
+    ``args[0]`` (positions) and validates the launch dimensions before
+    forwarding all arguments to the underlying JAX kernel wrapper.
+
+    Parameters
+    ----------
+    *args : object
+        Positional arguments forwarded to the dtype-selected kernel.  The first
+        element must be the positions array (jax.Array) whose dtype determines
+        which overload is called.
+    **kwargs : object
+        Keyword arguments forwarded to the kernel.  A ``launch_dims`` key is
+        validated and defaulted to ``(N, JAX_DFTD3_BLOCK_DIM)`` where ``N`` is
+        the number of atoms.
+
+    Returns
+    -------
+    forces : jax.Array, shape (N, 3)
+        Force array with CN-gradient contribution added in-place, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Virial tensor with CN-gradient contribution added in-place, float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nm` :
+        Non-virial variant with optional virial passthrough.
+    """
     positions = args[0]
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
@@ -439,7 +699,35 @@ def cn_forces_contrib_nm_virial(
 def cn_forces_contrib_nl_virial(
     *args: object, **kwargs: object
 ) -> tuple[jax.Array, jax.Array]:
-    """Dtype-dispatched exported neighbor-list CN-force virial kernel."""
+    """Dispatch CN-force virial kernel for neighbor-list format by dtype.
+
+    Selects the float32 or float64 Warp kernel overload based on the dtype of
+    ``args[0]`` (positions) and validates the launch dimensions before
+    forwarding all arguments to the underlying JAX kernel wrapper.
+
+    Parameters
+    ----------
+    *args : object
+        Positional arguments forwarded to the dtype-selected kernel.  The first
+        element must be the positions array (jax.Array) whose dtype determines
+        which overload is called.
+    **kwargs : object
+        Keyword arguments forwarded to the kernel.  A ``launch_dims`` key is
+        validated and defaulted to ``(N, JAX_DFTD3_BLOCK_DIM)`` where ``N`` is
+        the number of atoms.
+
+    Returns
+    -------
+    forces : jax.Array, shape (N, 3)
+        Force array with CN-gradient contribution added in-place, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Virial tensor with CN-gradient contribution added in-place, float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nl` :
+        Non-virial variant with optional virial passthrough.
+    """
     positions = args[0]
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
@@ -462,7 +750,63 @@ def cn_forces_contrib_nm(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array]:
-    """Compatibility wrapper for the exported neighbor-matrix CN force kernel."""
+    """Add CN-gradient force contribution for neighbor-matrix format.
+
+    Dispatches to the virial or non-virial Warp kernel overload depending on
+    ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
+    buffer is returned unchanged.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic positions, float32 or float64.
+    numbers : jax.Array, shape (N,)
+        Atomic numbers, int32.
+    neighbor_matrix : jax.Array, shape (N, max_neighbors)
+        Neighbor indices per atom, int32; padded with ``fill_value``.
+    cartesian_shifts : jax.Array, shape (N, max_neighbors, 3)
+        Cartesian PBC shift vectors per neighbor pair, same dtype as
+        ``positions``.  Pass a zero array for non-periodic calculations.
+    covalent_radii : jax.Array, shape (max_Z+1,)
+        Covalent radii indexed by atomic number, float32.
+    dE_dCN : jax.Array, shape (N,)
+        :math:`\\partial E / \\partial CN` values from the direct-force pass,
+        float32.
+    k1 : float
+        CN counting steepness parameter (typically 16.0).
+    fill_value : int
+        Padding sentinel in ``neighbor_matrix``.
+    periodic : bool
+        Whether to apply PBC shifts when computing pair distances.
+    batch_idx : jax.Array, shape (N,)
+        System index per atom, int32.
+    compute_virial : bool
+        If True, accumulate the CN-gradient contribution into ``virial``.
+    forces : jax.Array, shape (N, 3)
+        Force buffer from the direct-force pass; CN contribution is added
+        in-place, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Virial buffer; CN contribution is added in-place when
+        ``compute_virial=True``, otherwise passed through unchanged, float32.
+    **kwargs : object
+        Additional keyword arguments forwarded to the JAX kernel (e.g.
+        ``launch_dims``).
+
+    Returns
+    -------
+    forces : jax.Array, shape (N, 3)
+        Force array with CN-gradient contribution added, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Virial tensor with CN-gradient contribution added (unchanged when
+        ``compute_virial=False``), float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nl` :
+        Neighbor-list variant.
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nm` :
+        Preceding pass that produces ``dE_dCN``.
+    """
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
@@ -516,7 +860,63 @@ def cn_forces_contrib_nl(
     virial: jax.Array,
     **kwargs,
 ) -> tuple[jax.Array, jax.Array]:
-    """Compatibility wrapper for the exported neighbor-list CN force kernel."""
+    """Add CN-gradient force contribution for neighbor-list format.
+
+    Dispatches to the virial or non-virial Warp kernel overload depending on
+    ``compute_virial``.  When ``compute_virial=False`` the input ``virial``
+    buffer is returned unchanged.
+
+    Parameters
+    ----------
+    positions : jax.Array, shape (N, 3)
+        Atomic positions, float32 or float64.
+    numbers : jax.Array, shape (N,)
+        Atomic numbers, int32.
+    idx_j : jax.Array, shape (num_pairs,)
+        Destination atom indices in CSR neighbor list, int32.
+    neighbor_ptr : jax.Array, shape (N+1,)
+        CSR row pointers indexing into ``idx_j``, int32.
+    cartesian_shifts : jax.Array, shape (num_pairs, 3)
+        Cartesian PBC shift vectors per pair, same dtype as ``positions``.
+        Pass a zero array for non-periodic calculations.
+    covalent_radii : jax.Array, shape (max_Z+1,)
+        Covalent radii indexed by atomic number, float32.
+    dE_dCN : jax.Array, shape (N,)
+        :math:`\\partial E / \\partial CN` values from the direct-force pass,
+        float32.
+    k1 : float
+        CN counting steepness parameter (typically 16.0).
+    periodic : bool
+        Whether to apply PBC shifts when computing pair distances.
+    batch_idx : jax.Array, shape (N,)
+        System index per atom, int32.
+    compute_virial : bool
+        If True, accumulate the CN-gradient contribution into ``virial``.
+    forces : jax.Array, shape (N, 3)
+        Force buffer from the direct-force pass; CN contribution is added
+        in-place, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Virial buffer; CN contribution is added in-place when
+        ``compute_virial=True``, otherwise passed through unchanged, float32.
+    **kwargs : object
+        Additional keyword arguments forwarded to the JAX kernel (e.g.
+        ``launch_dims``).
+
+    Returns
+    -------
+    forces : jax.Array, shape (N, 3)
+        Force array with CN-gradient contribution added, float32.
+    virial : jax.Array, shape (num_systems, 3, 3)
+        Virial tensor with CN-gradient contribution added (unchanged when
+        ``compute_virial=False``), float32.
+
+    See Also
+    --------
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.cn_forces_contrib_nm` :
+        Neighbor-matrix variant.
+    :func:`nvalchemiops.jax.interactions.dispersion._dftd3.direct_forces_kernel_nl` :
+        Preceding pass that produces ``dE_dCN``.
+    """
     kernel_dtype = _normalize_dtype(positions.dtype)
     launch_kwargs = _launch_kwargs_for_positions(positions, kwargs)
     if compute_virial:
@@ -691,7 +1091,14 @@ class D3Parameters:
 
     @property
     def max_z(self) -> int:
-        """Maximum atomic number supported by these parameters."""
+        """Return the maximum atomic number supported by these parameters.
+
+        Returns
+        -------
+        int
+            Largest atomic number Z for which parameters are available;
+            equal to ``rcov.shape[0] - 1`` (index 0 is reserved for padding).
+        """
         return self.rcov.shape[0] - 1
 
 

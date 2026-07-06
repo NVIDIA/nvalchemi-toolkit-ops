@@ -280,10 +280,25 @@ def compute_bspline_moduli_1d(
     Returns ``b[i] = sinc(m_i / N)^spline_order`` for each Miller index
     ``m_i`` (with ``sinc(x) = sin(pi*x)/(pi*x)``, ``sinc(0) = 1``). The
     three-axis product ``b_x[i] * b_y[j] * b_z[k]`` is the B-spline
-    structure factor consumed by ``pme_fused_convolve``. Precomputing the
+    structure factor consumed by :func:`pme_fused_convolve`. Precomputing the
     LUT lets the convolve kernel replace three sinc transcendentals + an
     order-dependent power loop per (i, j, k) thread with three reads + two
     multiplies.
+
+    Parameters
+    ----------
+    miller_indices : jax.Array, shape (N,)
+        Integer Miller indices for one mesh axis, e.g. from
+        ``jnp.fft.fftfreq(N, d=1.0/N)`` or ``jnp.fft.rfftfreq(N, d=1.0/N)``.
+    mesh_N : int
+        Number of mesh points along this axis.
+    spline_order : int
+        B-spline interpolation order (e.g. 4 for cubic B-splines).
+
+    Returns
+    -------
+    jax.Array, shape (N,)
+        Per-Miller-index B-spline modulus ``sinc(m/N)^spline_order``.
     """
     # sinc(x) for x in [-0.5, 0.5] is bounded in [2/pi, 1], so s^spline_order
     # (for orders 2-6) stays well within fp32 range. Stay in the input dtype
@@ -2686,9 +2701,16 @@ def pme_reciprocal_space(
 
     Returns
     -------
-    jax.Array or tuple[jax.Array, ...]
-        Per-atom reciprocal energies, plus direct outputs when
-        requested.
+    energies : jax.Array, shape (N,)
+        Per-atom reciprocal-space energies.
+    forces : jax.Array, shape (N, 3), optional
+        Per-atom forces. Only present when ``compute_forces=True``.
+    charge_gradients : jax.Array, shape (N,), optional
+        Per-atom charge gradients dE/dq. Only present when
+        ``compute_charge_gradients=True`` (deprecated direct-output flag).
+    virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor. Only present when ``compute_virial=True`` (deprecated
+        direct-output flag). Always last in the return tuple.
 
     Notes
     -----
@@ -3240,8 +3262,16 @@ def particle_mesh_ewald(
 
     Returns
     -------
-    jax.Array or tuple[jax.Array, ...]
-        Per-atom energy, plus deprecated direct outputs when requested.
+    energies : jax.Array, shape (N,)
+        Per-atom total electrostatic energies (real + reciprocal + slab).
+    forces : jax.Array, shape (N, 3), optional
+        Per-atom forces. Only present when ``compute_forces=True`` (deprecated).
+    charge_gradients : jax.Array, shape (N,), optional
+        Per-atom charge gradients dE/dq. Only present when
+        ``compute_charge_gradients=True`` (deprecated).
+    virial : jax.Array, shape (1, 3, 3) or (B, 3, 3), optional
+        Virial tensor. Only present when ``compute_virial=True`` (deprecated).
+        Always last in the return tuple.
 
     Notes
     -----
