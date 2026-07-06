@@ -67,24 +67,10 @@ Performance for batched MD simulations showing how throughput scales with both
 system size and batch size. Batching enables efficient parameter sweeps and
 ensemble simulations.
 
-#### Time Scaling
+#### Time Scaling and Throughput
 
-```{figure} _static/dynamics_md_batch_nvalchemiops_scaling_h100.png
-:width: 90%
-:align: center
-:alt: MD batched scaling
-
-Average step time for batched MD simulations showing batch size scaling.
-```
-
-#### Throughput
-
-```{figure} _static/dynamics_md_batch_nvalchemiops_throughput_h100.png
-:width: 90%
-:align: center
-:alt: MD batched throughput
-
-Total throughput (atom-steps/s) for batched MD systems.
+```{note}
+Batched MD benchmark results will be published in a future release.
 ```
 
 ### Available Integrators

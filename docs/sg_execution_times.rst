@@ -50,15 +50,3 @@ Computation times
    * - :ref:`sphx_glr_examples_electrostatics_01_coulomb_example.py` (``../examples/electrostatics/01_coulomb_example.py``)
      - 00:00.000
      - 0.0
-   * - :ref:`sphx_glr_examples_neighborlist_01_simple_neighbor_list.py` (``../examples/neighborlist/01_simple_neighbor_list.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighborlist_02_batch_neighbor_list.py` (``../examples/neighborlist/02_batch_neighbor_list.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighborlist_03_rebuild_neighborlist_detection.py` (``../examples/neighborlist/03_rebuild_neighborlist_detection.py``)
-     - 00:00.000
-     - 0.0
-   * - :ref:`sphx_glr_examples_neighborlist_04_neighbors_list_torch_compile_performance.py` (``../examples/neighborlist/04_neighbors_list_torch_compile_performance.py``)
-     - 00:00.000
-     - 0.0
