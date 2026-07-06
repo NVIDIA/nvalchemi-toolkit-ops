@@ -2169,7 +2169,37 @@ def npt_barostat_half_step_aniso(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """Anisotropic NPT barostat. See :func:`npt_barostat_half_step` with vec3 target."""
+    """Anisotropic NPT barostat half-step with independent x, y, z pressure control.
+
+    Convenience alias for :func:`npt_barostat_half_step` with ``vec3`` target pressures.
+    Prefer calling :func:`npt_barostat_half_step` directly; this function exists for
+    backwards compatibility.
+
+    Parameters
+    ----------
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,). Modified in-place.
+    pressure_tensors : wp.array(dtype=vec9f or vec9d)
+        Current pressure tensors from virial. Shape (B,).
+    target_pressures : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Target pressures [Pxx, Pyy, Pzz] per system. Shape (B,).
+    volumes : wp.array(dtype=scalar)
+        Cell volumes V. Shape (B,).
+    cell_masses : wp.array(dtype=scalar)
+        Barostat masses W. Shape (B,).
+    kinetic_energy : wp.array(dtype=scalar)
+        System kinetic energies. Shape (B,).
+    num_atoms_per_system : wp.array(dtype=wp.int32)
+        Number of atoms per system. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system; half-step factor applied internally. Shape (B,).
+    device : str, optional
+        Warp device. Default: inferred from ``cell_velocities``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_barostat_half_step` : Unified dispatcher for all modes.
+    """
     if device is None:
         device = cell_velocities.device
     num_systems = cell_velocities.shape[0]
@@ -2201,7 +2231,38 @@ def npt_barostat_half_step_triclinic(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """Triclinic NPT barostat. See :func:`npt_barostat_half_step` with vec9 target."""
+    """Triclinic NPT barostat half-step with full stress tensor control.
+
+    Convenience alias for :func:`npt_barostat_half_step` with ``vec9`` target pressures.
+    Prefer calling :func:`npt_barostat_half_step` directly; this function exists for
+    backwards compatibility.
+
+    Parameters
+    ----------
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,). Modified in-place.
+    pressure_tensors : wp.array(dtype=vec9f or vec9d)
+        Current pressure tensors from virial. Shape (B,).
+    target_pressures : wp.array(dtype=vec9f or vec9d)
+        Full target stress tensors [xx, xy, xz, yx, yy, yz, zx, zy, zz] per system.
+        Shape (B,).
+    volumes : wp.array(dtype=scalar)
+        Cell volumes V. Shape (B,).
+    cell_masses : wp.array(dtype=scalar)
+        Barostat masses W. Shape (B,).
+    kinetic_energy : wp.array(dtype=scalar)
+        System kinetic energies. Shape (B,).
+    num_atoms_per_system : wp.array(dtype=wp.int32)
+        Number of atoms per system. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system; half-step factor applied internally. Shape (B,).
+    device : str, optional
+        Warp device. Default: inferred from ``cell_velocities``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_barostat_half_step` : Unified dispatcher for all modes.
+    """
     if device is None:
         device = cell_velocities.device
     num_systems = cell_velocities.shape[0]
@@ -2480,28 +2541,35 @@ def npt_position_update(
     batch_idx: wp.array = None,
     device: str = None,
 ) -> None:
-    r"""
-    Update positions for NPT integration.
+    r"""Update particle positions for NPT integration in-place.
+
+    Applies :math:`r \leftarrow r + dt \cdot (v + \dot{\varepsilon} \cdot r)` where
+    ``cell_velocities`` is the strain-rate tensor :math:`\dot{\varepsilon} = p_g / W`.
 
     Parameters
     ----------
-    positions : wp.array
-        Particle positions. MODIFIED in-place.
-    velocities : wp.array
-        Particle velocities.
-    cells : wp.array
-        Cell matrices.
-    cell_velocities : wp.array
-        Strain-rate matrices :math:`\dot{\varepsilon}`.
+    positions : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Particle positions. Shape (N,). Modified in-place.
+    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Particle velocities. Shape (N,).
+    cells : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Cell matrices. Shape (B,).
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\dot{\varepsilon}`. Shape (B,).
     dt : wp.array(dtype=scalar)
         Full time step per system. Shape (B,).
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
             Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
-    batch_idx : wp.array, optional
-        System index for each atom.
+    batch_idx : wp.array(dtype=wp.int32), optional
+        System index for each atom. Required for batched simulations.
     device : str, optional
-        Warp device.
+        Warp device. Default: inferred from ``positions``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_position_update_out` : Non-mutating variant.
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_cell_update` : Cell matrix update step.
     """
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
@@ -2533,19 +2601,40 @@ def npt_position_update_out(
     device: str = None,
     _skip_validation: bool = False,
 ) -> wp.array:
-    """
-    Update positions for NPT integration (non-mutating).
+    """Update particle positions for NPT integration, writing results into a pre-allocated output.
+
+    Non-mutating variant of :func:`npt_position_update`.
 
     Parameters
     ----------
+    positions : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Input particle positions. Shape (N,). Not modified when ``positions_out`` differs.
+    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Particle velocities. Shape (N,).
+    cells : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Cell matrices. Shape (B,).
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
+    positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Pre-allocated output array for updated positions. Shape (N,).
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
             Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
+    batch_idx : wp.array(dtype=wp.int32), optional
+        System index for each atom. Required for batched simulations.
+    device : str, optional
+        Warp device. Default: inferred from ``positions``.
 
     Returns
     -------
-    wp.array
-        Updated positions.
+    wp.array(dtype=wp.vec3f or wp.vec3d)
+        Updated positions array (same object as ``positions_out``). Shape (N,).
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_position_update` : In-place variant.
     """
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
@@ -2627,13 +2716,32 @@ def npt_cell_update_out(
     device: str = None,
     _skip_validation: bool = False,
 ) -> wp.array:
-    """
-    Update cell matrices (non-mutating).
+    """Update cell matrices, writing results into a pre-allocated output.
+
+    Non-mutating variant of :func:`npt_cell_update`. Applies
+    :math:`h_{new} = h + dt \\cdot \\dot{\\varepsilon} \\cdot h`.
+
+    Parameters
+    ----------
+    cells : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Input cell matrices. Shape (B,). Not modified when ``cells_out`` differs.
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
+    cells_out : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Pre-allocated output array for updated cell matrices. Shape (B,).
+    device : str, optional
+        Warp device. Default: inferred from ``cells``.
 
     Returns
     -------
-    wp.array
-        Updated cell matrices.
+    wp.array(dtype=wp.mat33f or wp.mat33d)
+        Updated cell matrices (same object as ``cells_out``). Shape (B,).
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_cell_update` : In-place variant.
     """
     if device is None:
         device = cells.device
@@ -3046,7 +3154,37 @@ def nph_barostat_half_step_aniso(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """Anisotropic NPH barostat. See :func:`nph_barostat_half_step` with vec3 target."""
+    """Anisotropic NPH barostat half-step with independent x, y, z pressure control.
+
+    Convenience alias for :func:`nph_barostat_half_step` with ``vec3`` target pressures.
+    Prefer calling :func:`nph_barostat_half_step` directly; this function exists for
+    backwards compatibility.
+
+    Parameters
+    ----------
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,). Modified in-place.
+    pressure_tensors : wp.array(dtype=vec9f or vec9d)
+        Current pressure tensors from virial. Shape (B,).
+    target_pressures : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Target pressures [Pxx, Pyy, Pzz] per system. Shape (B,).
+    volumes : wp.array(dtype=scalar)
+        Cell volumes V. Shape (B,).
+    cell_masses : wp.array(dtype=scalar)
+        Barostat masses W. Shape (B,).
+    kinetic_energy : wp.array(dtype=scalar)
+        System kinetic energies. Shape (B,).
+    num_atoms_per_system : wp.array(dtype=wp.int32)
+        Number of atoms per system. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system; half-step factor applied internally. Shape (B,).
+    device : str, optional
+        Warp device. Default: inferred from ``cell_velocities``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.nph_barostat_half_step` : Unified dispatcher for all modes.
+    """
     if device is None:
         device = cell_velocities.device
     num_systems = cell_velocities.shape[0]
@@ -3078,7 +3216,38 @@ def nph_barostat_half_step_triclinic(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """Triclinic NPH barostat. See :func:`nph_barostat_half_step` with vec9 target."""
+    """Triclinic NPH barostat half-step with full stress tensor control.
+
+    Convenience alias for :func:`nph_barostat_half_step` with ``vec9`` target pressures.
+    Prefer calling :func:`nph_barostat_half_step` directly; this function exists for
+    backwards compatibility.
+
+    Parameters
+    ----------
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,). Modified in-place.
+    pressure_tensors : wp.array(dtype=vec9f or vec9d)
+        Current pressure tensors from virial. Shape (B,).
+    target_pressures : wp.array(dtype=vec9f or vec9d)
+        Full target stress tensors [xx, xy, xz, yx, yy, yz, zx, zy, zz] per system.
+        Shape (B,).
+    volumes : wp.array(dtype=scalar)
+        Cell volumes V. Shape (B,).
+    cell_masses : wp.array(dtype=scalar)
+        Barostat masses W. Shape (B,).
+    kinetic_energy : wp.array(dtype=scalar)
+        System kinetic energies. Shape (B,).
+    num_atoms_per_system : wp.array(dtype=wp.int32)
+        Number of atoms per system. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system; half-step factor applied internally. Shape (B,).
+    device : str, optional
+        Warp device. Default: inferred from ``cell_velocities``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.nph_barostat_half_step` : Unified dispatcher for all modes.
+    """
     if device is None:
         device = cell_velocities.device
 
@@ -3331,16 +3500,35 @@ def nph_position_update(
     batch_idx: wp.array = None,
     device: str = None,
 ) -> None:
-    """
-    Update positions for NPH integration.
+    """Update particle positions for NPH integration in-place.
 
-    Uses same kernel as NPT since position update is identical.
+    Delegates to :func:`npt_position_update`; the position update kernel is
+    identical for NPT and NPH.
 
     Parameters
     ----------
+    positions : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Particle positions. Shape (N,). Modified in-place.
+    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Particle velocities. Shape (N,).
+    cells : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Cell matrices. Shape (B,).
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
             Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
+    batch_idx : wp.array(dtype=wp.int32), optional
+        System index for each atom. Required for batched simulations.
+    device : str, optional
+        Warp device. Default: inferred from ``positions``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.nph_position_update_out` : Non-mutating variant.
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_position_update` : NPT equivalent.
     """
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
@@ -3368,19 +3556,41 @@ def nph_position_update_out(
     batch_idx: wp.array = None,
     device: str = None,
 ) -> wp.array:
-    """
-    Update positions for NPH integration (non-mutating).
+    """Update particle positions for NPH integration, writing results into a pre-allocated output.
+
+    Non-mutating variant of :func:`nph_position_update`. Delegates to
+    :func:`npt_position_update_out`; the position update kernel is identical for NPT and NPH.
 
     Parameters
     ----------
+    positions : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Input particle positions. Shape (N,). Not modified when ``positions_out`` differs.
+    velocities : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Particle velocities. Shape (N,).
+    cells : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Cell matrices. Shape (B,).
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
+    positions_out : wp.array(dtype=wp.vec3f or wp.vec3d)
+        Pre-allocated output array for updated positions. Shape (N,).
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
             Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
+    batch_idx : wp.array(dtype=wp.int32), optional
+        System index for each atom. Required for batched simulations.
+    device : str, optional
+        Warp device. Default: inferred from ``positions``.
 
     Returns
     -------
-    wp.array
-        Updated positions.
+    wp.array(dtype=wp.vec3f or wp.vec3d)
+        Updated positions array (same object as ``positions_out``). Shape (N,).
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.nph_position_update` : In-place variant.
     """
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
@@ -3404,10 +3614,25 @@ def nph_cell_update(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """
-    Update cell matrices for NPH.
+    """Update cell matrices for NPH integration in-place.
 
-    Uses same kernel as NPT since cell update is identical.
+    Delegates to :func:`npt_cell_update`; the cell update kernel is identical
+    for NPT and NPH.
+
+    Parameters
+    ----------
+    cells : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Cell matrices. Shape (B,). Modified in-place.
+    cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
+        Strain-rate matrices :math:`\\dot{\\varepsilon}`. Shape (B,).
+    dt : wp.array(dtype=scalar)
+        Full time step per system. Shape (B,).
+    device : str, optional
+        Warp device. Default: inferred from ``cells``.
+
+    See Also
+    --------
+    :func:`nvalchemiops.dynamics.integrators.npt.npt_cell_update` : NPT equivalent.
     """
     npt_cell_update(cells, cell_velocities, dt, device=device)
 
