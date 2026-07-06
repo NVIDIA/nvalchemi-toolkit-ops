@@ -330,7 +330,7 @@ def _query_cluster_tile_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for the tile-pair → matrix conversion kernel.
+    """jax_callable callback for the tile-pair -> matrix conversion kernel.
 
     No ``n_tiles`` scalar — the warp launcher launches at the allocated
     ``tile_row_group`` capacity and guards per-tile via the device-side
@@ -373,7 +373,7 @@ def _query_cluster_tile_selective_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for selective tile-pair → matrix conversion."""
+    """jax_callable callback for selective tile-pair -> matrix conversion."""
     _warp_query_cluster_tile(
         sorted_atom_index=sorted_atom_index,
         sorted_pos_x=sorted_pos_x,
@@ -415,7 +415,7 @@ def _query_cluster_tile_dual_callback(
     cutoff2: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for dual-cutoff tile-pair → matrix conversion."""
+    """jax_callable callback for dual-cutoff tile-pair -> matrix conversion."""
     _warp_query_cluster_tile(
         sorted_atom_index=sorted_atom_index,
         sorted_pos_x=sorted_pos_x,
@@ -505,7 +505,7 @@ def _query_cluster_tile_pair_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for the pair-output tile-pair → matrix kernel.
+    """jax_callable callback for the pair-output tile-pair -> matrix kernel.
 
     Same as :func:`_query_cluster_tile_callback` but with additional
     ``neighbor_vectors`` / ``neighbor_distances`` in/out arrays that the
@@ -561,7 +561,7 @@ def _query_cluster_tile_coo_callback(
     natom: wp.int32,
     max_pairs: wp.int32,
 ) -> None:
-    """jax_callable callback for the tile-pair → flat COO conversion kernel.
+    """jax_callable callback for the tile-pair -> flat COO conversion kernel.
 
     No ``n_tiles`` scalar — the warp launcher launches at the allocated
     ``tile_row_group`` capacity and guards per-tile via the device-side
@@ -728,7 +728,7 @@ _jax_query_cluster_tile_pair = jax_callable(
 @functools.cache
 def _get_jax_cluster_tile_pair_fn_callable(pair_fn):
     """Build (and cache) a ``jax_callable`` that closes over ``pair_fn`` for the
-    cluster-tile pair-output → matrix kernel.
+    cluster-tile pair-output -> matrix kernel.
 
     Same as ``_jax_query_cluster_tile_pair`` but the callback closes over
     ``pair_fn`` (which cannot cross the JAX trace boundary as data) and adds the

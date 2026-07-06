@@ -1379,7 +1379,7 @@ def _rs_dipole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
 
 
 def _rs_dipole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
-    """∂/∂{positions, charges, dipoles, cell} of ⟨g_cell, dE/dcell⟩ (l=1)."""
+    r"""Gradient :math:`\partial/\partial\{\text{positions, charges, dipoles, cell}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle` (l=1)."""
     (
         positions,
         charges,
@@ -1923,10 +1923,10 @@ def _rs_monopole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
 
 
 def _rs_monopole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
-    """∂/∂{positions, charges, cell} of ⟨g_cell, dE/dcell⟩ (stress-loss).
+    r"""Gradient :math:`\partial/\partial\{\text{positions, charges, cell}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle` (stress-loss).
 
     Reuses the force-loss radial Hessian with the per-pair direction
-    ``w = g_cellᵀ·n`` (n = unit_shifts); see the Warp kernel.
+    :math:`w = g_\text{cell}^\top \cdot n` (n = unit_shifts); see the Warp kernel.
     """
     (
         positions,
@@ -2164,9 +2164,9 @@ def multipole_real_space_energy(
     Unified entry point covering :math:`l_{max} \in \{0, 1, 2\}`. The trailing
     dim of ``multipole_moments`` selects the path:
 
-    * :math:`(N, 1)` → :math:`l_{max}=0` (charges only)
-    * :math:`(N, 4)` → :math:`l_{max}=1` (charges + dipoles, e3nn :math:`(y, z, x)` order)
-    * :math:`(N, 9)` → :math:`l_{max}=2` (adds the quadrupole channels)
+    * :math:`(N, 1)` -> :math:`l_{max}=0` (charges only)
+    * :math:`(N, 4)` -> :math:`l_{max}=1` (charges + dipoles, e3nn :math:`(y, z, x)` order)
+    * :math:`(N, 9)` -> :math:`l_{max}=2` (adds the quadrupole channels)
 
     Channel ``[:, 0]`` is the charge and ``[:, 1:4]`` is the dipole in e3nn
     :math:`(y, z, x)` spherical order; the wrapper permutes to Cartesian before
@@ -3116,7 +3116,7 @@ def _batch_rs_dipole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
 
 
 def _batch_rs_dipole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
-    """Batched ∂/∂{positions, charges, dipoles, cells} of ⟨g_cell, dE/dcell⟩."""
+    r"""Batched gradient :math:`\partial/\partial\{\text{positions, charges, dipoles, cells}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle`."""
     (
         positions,
         charges,
@@ -3448,7 +3448,7 @@ def _batch_rs_monopole_cell_grad_setup(ctx, inputs, output):  # pragma: no cover
 
 
 def _batch_rs_monopole_cell_grad_backward(ctx, g_cell):  # pragma: no cover
-    """Batched ∂/∂{positions, charges, cells} of ⟨g_cell, dE/dcell⟩."""
+    r"""Batched gradient :math:`\partial/\partial\{\text{positions, charges, cells}\}` of :math:`\langle g\_\text{cell},\, dE/d\text{cell}\rangle`."""
     (
         positions,
         charges,
@@ -3693,8 +3693,8 @@ def _batch_multipole_real_space_energy(
     Batched analog of :func:`multipole_real_space_energy`, reached via that
     function's ``batch_idx=`` path. The trailing dim of
     ``multipole_moments`` selects the :math:`l_{max}` path:
-    :math:`(N_\text{total}, 1)` → charges only; :math:`(N_\text{total}, 4)` →
-    charges + dipoles; :math:`(N_\text{total}, 9)` → adds quadrupoles. Supports
+    :math:`(N_\text{total}, 1)` -> charges only; :math:`(N_\text{total}, 4)` ->
+    charges + dipoles; :math:`(N_\text{total}, 9)` -> adds quadrupoles. Supports
     ``create_graph=True`` force-loss training on the :math:`l_{max} \le 1`
     paths.
 

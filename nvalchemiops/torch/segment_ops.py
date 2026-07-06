@@ -159,7 +159,7 @@ def _validate_idx(idx: torch.Tensor, num_segments: int, op: str) -> None:
     Notes
     -----
     The range check reads ``idx.min()`` / ``idx.max()`` as scalars, which forces
-    a CUDA → host synchronization *and* a ``torch.compile`` graph break. We skip
+    a CUDA -> host synchronization *and* a ``torch.compile`` graph break. We skip
     it under ``torch.compiler.is_compiling()`` so the public wrappers stay
     fullgraph-clean when a caller (e.g. an MLIP model) compiles straight through
     them; compiled callers are trusted to pass ``idx`` already validated at

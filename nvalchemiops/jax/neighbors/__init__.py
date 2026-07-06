@@ -134,7 +134,7 @@ def neighbor_list(
     """Compute neighbor list using the appropriate method based on the provided parameters.
 
     This is the main entry point for JAX users of the neighbor list API. It automatically
-    selects the most appropriate algorithm (naive O(N²) or cell list O(N)) based on system
+    selects the most appropriate algorithm (naive :math:`O(N^2)` or cell list :math:`O(N)`) based on system
     size and parameters.
 
     Parameters
@@ -344,7 +344,7 @@ def neighbor_list(
 
     See Also
     --------
-    naive_neighbor_list : Direct access to naive O(N²) algorithm
+    naive_neighbor_list : Direct access to naive :math:`O(N^2)` algorithm
     cell_list : Direct access to cell list O(N) algorithm
     cluster_tile_neighbor_list : Direct access to cluster-pair tile algorithm
     batch_naive_neighbor_list : Batched naive algorithm

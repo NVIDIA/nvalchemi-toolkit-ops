@@ -21,14 +21,14 @@ into extended arrays, enabling standard optimizers (FIRE, BFGS, etc.) to perform
 variable-cell optimization without modification.
 
 The approach follows the "filter" pattern:
-- Atomic positions (3N DOFs) + cell parameters (6 DOFs) → extended positions (3N + 6)
-- Atomic forces + stress tensor → extended forces (3N + 6)
+- Atomic positions (3N DOFs) + cell parameters (6 DOFs) -> extended positions (3N + 6)
+- Atomic forces + stress tensor -> extended forces (3N + 6)
 - Standard optimizer operates on extended arrays
 - Results are unpacked back to atomic positions and cell
 
 Key features:
 - Cell alignment to upper-triangular form for stability
-- 6-DOF cell representation (upper-triangular: a, b*cos(γ), b*sin(γ), c1, c2, c3)
+- 6-DOF cell representation (upper-triangular: a, b*cos(gamma), b*sin(gamma), c1, c2, c3)
 - Stress-to-cell-force conversion with proper volume scaling
 - batch_idx/atom_ptr extension for batched systems
 
@@ -91,7 +91,7 @@ def _align_cell_kernel(
             c_1 & c_2 & c_3
         \end{pmatrix}
 
-    where a, b, c are lattice vector lengths and γ is the angle between a and b.
+    where a, b, c are lattice vector lengths and :math:`\gamma` is the angle between a and b.
 
     This representation:
     - Reduces rotational ambiguity (improves optimization stability)
@@ -259,8 +259,8 @@ def _pack_positions_kernel(
     upper-triangular form from align_cell().
 
     Cell packing format:
-        extended[N]   = [H[0,0], H[1,0], H[2,0]] = [a, b*cos(γ), c1]
-        extended[N+1] = [H[1,1], H[2,1], H[2,2]] = [b*sin(γ), c2, c3]
+        extended[N]   = [H[0,0], H[1,0], H[2,0]] = [a, b*cos(gamma), c1]
+        extended[N+1] = [H[1,1], H[2,1], H[2,2]] = [b*sin(gamma), c2, c3]
 
     Parameters
     ----------
@@ -701,7 +701,7 @@ def _stress_to_cell_force_kernel(
 
         \mathbf{F}_{\text{cell}} = -V \cdot \boldsymbol{\sigma} \cdot (\mathbf{H}^{-1})^T
 
-    where V is cell volume, σ is the stress tensor, and H is the cell matrix.
+    where V is cell volume, :math:`\sigma` is the stress tensor, and H is the cell matrix.
 
     For upper-triangular cells, this simplifies since H^{-1} is also upper-triangular.
 
@@ -710,7 +710,7 @@ def _stress_to_cell_force_kernel(
     stress : wp.array, shape (B,), dtype=wp.mat33*
         Stress tensor in tension-positive (negative for compression)
         convention, in energy/volume units.  For zero-pressure relaxation
-        this is typically ``virial / V`` where virial = −Σ r⊗F from the
+        this is typically ``virial / V`` where virial = :math:`-\sum_i \mathbf{r}_i \otimes \mathbf{F}_i` from the
         LJ kernel.  For finite external pressure use
         ``P_ext − P_internal`` (see ``virial_to_stress``).
     cell : wp.array, shape (B,), dtype=wp.mat33*
@@ -1300,8 +1300,8 @@ def pack_positions_with_cell(
     Single-system mode (atom_ptr=None):
         The extended array has shape (N + 2,) with dtype vec3*, where:
         - First N entries: atomic positions
-        - Entry N: [a, b*cos(γ), c1] (first 3 cell parameters)
-        - Entry N+1: [b*sin(γ), c2, c3] (remaining 3 cell parameters)
+        - Entry N: [a, b*cos(gamma), c1] (first 3 cell parameters)
+        - Entry N+1: [b*sin(gamma), c2, c3] (remaining 3 cell parameters)
 
     Batched mode (atom_ptr provided):
         Positions are concatenated across systems, cells have shape (B,).
@@ -1729,7 +1729,7 @@ def stress_to_cell_force(
     r"""
     Convert stress tensor to cell force for optimization.
 
-    Computes: F_cell = -V * σ * (H^{-1})^T
+    Computes: F_cell = -V * sigma * (H^{-1})^T
 
     This is the "force" on the cell that, when minimized, leads to
     zero stress (pressure equilibration).

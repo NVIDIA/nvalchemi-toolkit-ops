@@ -110,7 +110,7 @@ Algorithm-Specific Kernel Functions
 **FIRE Optimizer:**
 
 compute_vf_vv_ff
-    Compute triple dot product (v·f, v·v, f·f) for FIRE diagnostics.
+    Compute triple dot product (dot(v,f), dot(v,v), dot(f,f)) for FIRE diagnostics.
 
 fire_velocity_mixing
     FIRE velocity mixing formula with zero-safety.

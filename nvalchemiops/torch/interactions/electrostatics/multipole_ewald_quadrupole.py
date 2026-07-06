@@ -294,8 +294,8 @@ def _rs_quadrupole_cell_grad_setup(ctx, inputs, output):
 
 
 def _rs_quadrupole_cell_grad_backward(ctx, g_cell):
-    """∂/∂{grad_energies, positions, charges, dipoles, quadrupoles, cell} of
-    ⟨g_cell, dE/dcell⟩ (l=2 stress-loss)."""
+    """Backward of ``d/d{grad_energies, positions, charges, dipoles, quadrupoles, cell}``
+    of the inner product :math:`\\langle g\\_cell,\\, dE/dcell \\rangle` (l=2 stress-loss)."""
     (
         grad_energies,
         positions,
@@ -1018,8 +1018,8 @@ def _batch_rs_quadrupole_cell_grad_setup(ctx, inputs, output):
 
 
 def _batch_rs_quadrupole_cell_grad_backward(ctx, g_cell):
-    """Batched ∂/∂{grad_energies, positions, charges, dipoles, quadrupoles,
-    cells} of ⟨g_cell, dE/dcell⟩ (l=2)."""
+    """Batched backward of ``d/d{grad_energies, positions, charges, dipoles, quadrupoles,
+    cells}`` of the inner product :math:`\\langle g\\_cell,\\, dE/dcell \\rangle` (l=2)."""
     (
         grad_energies,
         positions,
@@ -1325,7 +1325,7 @@ def _batch_rs_quadrupole_setup(ctx, inputs, output):
 
 
 def _batch_rs_quadrupole_backward(ctx, grad_per_atom):
-    """Per-atom grad → moment-grad + gated cell-grad (forward is now per-atom)."""
+    """Per-atom grad -> moment-grad + gated cell-grad (forward is now per-atom)."""
     (
         positions,
         charges,

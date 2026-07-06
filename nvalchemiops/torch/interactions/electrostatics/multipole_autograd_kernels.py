@@ -176,7 +176,7 @@ def _source_phi_hat_double_backward(
 
     Propagates ``(gg_k_vectors, gg_k_norm2)`` to grads w.r.t. the backward's
     differentiable inputs ``(grad_output, k_vectors, k_norm2)`` — enabling
-    reciprocal stress-loss (``∂²E/∂cell∂θ``) while staying fully on Warp.
+    reciprocal stress-loss (``d^2E/dcell/dtheta``) while staying fully on Warp.
     """
     device = k_vectors.device
     grad_grad_output = torch.empty(
@@ -296,7 +296,7 @@ class ReceiverPhiHatFunction(torch.autograd.Function):
     k_norm2 : torch.Tensor
         Squared k-norms :math:`|k|^2`, shape ``(N_k,)``.
     sigmas : torch.Tensor
-        Per-receiver Gaussian widths, shape ``(N_σ,)`` (non-differentiable).
+        Per-receiver Gaussian widths, shape ``(N_sigma,)`` (non-differentiable).
     inv_cl_table : torch.Tensor
         Inverse closure-length normalization table (non-differentiable).
 
@@ -376,7 +376,7 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
     k_norm2 : torch.Tensor
         Squared k-norms :math:`|k|^2`, shape ``(N_k,)``.
     sigmas : torch.Tensor
-        Per-receiver Gaussian widths, shape ``(N_σ,)`` (non-differentiable).
+        Per-receiver Gaussian widths, shape ``(N_sigma,)`` (non-differentiable).
     inv_cl_l2 : torch.Tensor
         l=2 inverse closure-length normalization table (non-differentiable).
 
@@ -403,7 +403,7 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
         Returns
         -------
         torch.Tensor
-            l=2 receiver block, shape ``(N_k, N_σ, 5, 2)`` (purely real).
+            l=2 receiver block, shape ``(N_k, N_sigma, 5, 2)`` (purely real).
         """
         n_k = k_vectors.shape[0]
         n_sigma = sigmas.shape[0]
@@ -429,7 +429,7 @@ class ReceiverPhiHatQuadrupoleFunction(torch.autograd.Function):
     ) -> tuple[torch.Tensor | None, torch.Tensor | None, None, None]:
         """Backward of the l=2 receiver Fourier block.
 
-        Returns ``∂L/∂k_vectors`` and ``∂L/∂k_norm2`` (via
+        Returns :math:`\\partial L/\\partial` ``k_vectors`` and :math:`\\partial L/\\partial` ``k_norm2`` (via
         :func:`receiver_phi_hat_backward_quadrupole`); the ``sigmas`` and
         ``inv_cl_l2`` slots are ``None``.
         """

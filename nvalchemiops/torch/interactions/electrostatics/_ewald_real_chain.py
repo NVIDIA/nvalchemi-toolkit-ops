@@ -416,8 +416,8 @@ def _backward_impl(
 ):
     """First backward = cheap scale of the detached forward caches (no pair loop).
 
-    ``grad_positions = (per-system grad_energy)·dE/dR`` and
-    ``grad_charges = (per-system grad_energy)·dE/dq`` -- numerically identical to the
+    ``grad_positions = (per-system grad_energy) * dE/dR`` and
+    ``grad_charges = (per-system grad_energy) * dE/dq`` -- numerically identical to the
     old ``order="backward"`` kernel output (same per-system mean reduction, same
     sign: the dE/dR cache already absorbed the ``-F`` negation). The forward inputs
     are still threaded through so the registered ``double_backward`` recomputes the

@@ -28,7 +28,7 @@ Public functions
 ----------------
 segmented_sum      : reduce per segment (scalar or vec3, f32 or f64)
 segmented_dot      : per-segment dot product (vec3, f32 or f64)
-segmented_mul      : per-element scale by per-segment scalar (vec3 × scalar)
+segmented_mul      : per-element scale by per-segment scalar (vec3 * scalar)
 segmented_mean     : per-segment mean (scalar or vec3, f32 or f64)
 segmented_rms_norm : per-segment RMS norm of vec3 inputs
 segmented_matvec   : per-segment matvec ``out[i] = m[idx[i]]^T @ v[i]``

@@ -18,7 +18,7 @@ PyTorch bindings for direct k-space atom-centered electrostatic features.
 
 Exposes ``multipole_electrostatic_features(...)``, the feature-extraction
 counterpart to ``multipole_electrostatic_energy``. Produces LODE/ACE-style
-per-atom descriptors by projecting :math:`V(\mathbf{k})` back onto a multi-σ
+per-atom descriptors by projecting :math:`V(\mathbf{k})` back onto a multi-:math:`\sigma`
 receiver basis. Bit-for-bit parity with the customer reference
 ``GTOElectrostaticFeatures`` at ``density_max_l`` in
 :math:`\{0, 1\}` and ``feature_max_l = 1``.
@@ -139,15 +139,15 @@ def multipole_electrostatic_features(
     sigma : float
         Density-side Gaussian width.
     receiver_sigmas : list of floats, tuple, or 1-D tensor
-        Multi-σ receiver basis widths. Must be non-empty.
+        Multi-:math:`\sigma` receiver basis widths. Must be non-empty.
     k_cutoff, k_vectors
         Same semantics as :func:`multipole_electrostatic_energy`. Pass
         ``k_vectors`` to amortize setup across calls for fixed geometry
         (single-system only). Batched mode requires ``k_cutoff``.
     feature_max_l : int, default 1
-        Receiver angular cap: how many l-blocks are projected out per σ,
-        independent of the source ``l_max``. ``1`` -> ``(N_σ * 4)`` features
-        (:math:`l \le 1`); ``2`` -> ``(N_σ * 9)`` (adds the 5 :math:`l = 2`
+        Receiver angular cap: how many l-blocks are projected out per :math:`\sigma`,
+        independent of the source ``l_max``. ``1`` -> ``(N_sigma * 4)`` features
+        (:math:`l \le 1`); ``2`` -> ``(N_sigma * 9)`` (adds the 5 :math:`l = 2`
         receiver channels). The :math:`l = 2` self-interaction subtract uses
         the source's e3nn :math:`l = 2` moment (zero when the source has no
         quadrupole).
@@ -164,7 +164,7 @@ def multipole_electrostatic_features(
     -------
     torch.Tensor
         ``float64`` on ``positions.device``, shape
-        ``(N, N_σ * (feature_max_l + 1)**2)`` in the reference permuted-flat
+        ``(N, N_sigma * (feature_max_l + 1)**2)`` in the reference permuted-flat
         layout (grouped by l-block). Autograd-connected to ``positions`` and
         ``multipole_moments``.
     """

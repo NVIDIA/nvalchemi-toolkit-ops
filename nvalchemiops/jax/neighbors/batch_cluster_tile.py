@@ -576,7 +576,7 @@ def _batch_query_cluster_tile_selective_callback(
     cutoff: wp.float32,
     natom: wp.int32,
 ) -> None:
-    """jax_callable callback for selective batched tile-pair → matrix conversion."""
+    """jax_callable callback for selective batched tile-pair -> matrix conversion."""
     _warp_batch_query_cluster_tile(
         sorted_atom_index=sorted_atom_index,
         sorted_pos_x=sorted_pos_x,
@@ -940,7 +940,7 @@ _jax_batch_query_cluster_tile_pair = jax_callable(
 @functools.cache
 def _get_jax_batch_cluster_tile_pair_fn_callable(pair_fn):
     """Build (and cache) a batched ``jax_callable`` closing over ``pair_fn`` for the
-    cluster-tile pair-output → matrix kernel.
+    cluster-tile pair-output -> matrix kernel.
 
     Batched analogue of
     ``cluster_tile._get_jax_cluster_tile_pair_fn_callable``: adds the ``pair_params``

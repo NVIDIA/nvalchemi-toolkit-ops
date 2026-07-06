@@ -78,7 +78,7 @@ def _self_energy_op(
     dipoles_cart: torch.Tensor | None,
     quadrupoles: torch.Tensor | None,
 ) -> torch.Tensor:
-    """Per-atom self-energy ``Σ_l c_l moment_l^2`` via the shared Warp op.
+    r"""Per-atom self-energy :math:`\sum_l c_l \, \text{moment}_l^2` via the shared Warp op.
 
     Wraps :func:`multipole_self_energy`, feeding the cache's overlap-constant
     coefficients and gating the l=1 / l=2 channels by presence. Returns the
@@ -182,7 +182,7 @@ def multipole_scf_step_energy(
         Required when ``cache`` is batched; must be ``None`` for a single
         system. Mirrors :func:`multipole_ewald_summation`'s convention.
     include_self_interaction : bool
-        If ``False`` (default), subtract ``0.5 · E_self`` using
+        If ``False`` (default), subtract :math:`0.5 \cdot E_\text{self}` using
         ``cache.source_overlap_constants``. ``True`` returns the raw
         reciprocal sum (the Ewald path subtracts the self term itself).
     quadrupoles : torch.Tensor, optional, shape (N, 3, 3)
@@ -549,7 +549,7 @@ def _multipole_scf_step_energy_batch(
     batch_idx : torch.Tensor, shape (N_total,), int32
         System index per atom (expected sorted so atoms group by system).
     include_self_interaction : bool
-        ``False`` (default): subtract per-system ``0.5 · E_self``.
+        ``False`` (default): subtract per-system :math:`0.5 \cdot E_\text{self}`.
     quadrupoles : torch.Tensor, optional, shape (N_total, 3, 3)
         Cartesian symmetric source quadrupole. When supplied, the additive
         batched :math:`\rho_Q(k)` channel and its per-system :math:`l=2` self

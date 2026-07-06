@@ -54,7 +54,7 @@ Scope note: the convolve ``double_backward`` kernel implements both the position
 second-order terms (the force-loss double-backward) AND the alpha/volume/cell
 (k_squared) second-order terms (the stress-loss double-backward). k_squared and
 volume are functions of the cell, so ``grad_alpha`` / ``grad_volume`` /
-``grad_k_squared`` carry the cell/stress second order; PyTorch maps k²/V → cell
+``grad_k_squared`` carry the cell/stress second order; PyTorch maps :math:`k^2/V` to cell
 outside the kernel.
 """
 

@@ -51,9 +51,9 @@ Design notes
   receiver basis replaced by the source basis.
 
 * **Dipole-axis permutation.** The :math:`\rho` assembly kernel embeds the
-  Cartesian → e3nn :math:`(y, z, x)` rotation: ``dipoles[i, 0]`` maps to
-  ``lm = 3`` (m=+1), ``dipoles[i, 1]`` → ``lm = 1`` (m=-1), ``dipoles[i, 2]``
-  → ``lm = 2`` (m=0). The backward inverts this permutation when assembling
+  Cartesian -> e3nn :math:`(y, z, x)` rotation: ``dipoles[i, 0]`` maps to
+  ``lm = 3`` (m=+1), ``dipoles[i, 1]`` -> ``lm = 1`` (m=-1), ``dipoles[i, 2]``
+  -> ``lm = 2`` (m=0). The backward inverts this permutation when assembling
   the Cartesian dipole gradient.
 """
 
@@ -489,7 +489,7 @@ def _rho_phihat_grad_forward(
     k_vectors: torch.Tensor,
     volume: torch.Tensor,
 ) -> torch.Tensor:
-    r"""``∂L/∂source_phi_hat`` ``(N_k, 4, 2)`` via the Warp ``rho_phihat_grad`` kernel.
+    r""":math:`\partial L/\partial \hat{\phi}_\mathrm{source}` ``(N_k, 4, 2)`` via the Warp ``rho_phihat_grad`` kernel.
 
     ``positions`` / ``k_vectors`` are unused by the forward kernel (the
     cos/sin dependence is carried by the detached tables) but are explicit
@@ -543,7 +543,7 @@ def _rho_phihat_grad_backward(
     """Warp second-order backward: grads for ``(grad_rho, charges, dipoles, positions, k_vectors)``.
 
     The Warp ``rho_phihat_grad_double_backward`` kernel applies ``scale =
-    (2π)³/V`` and folds the cos/sin position/k dependence analytically.
+    (2*pi)^3/V`` and folds the cos/sin position/k dependence analytically.
     """
     device = charges.device
     wp_device = wp.device_from_torch(device)
@@ -613,7 +613,7 @@ def _rho_kphase_grad_forward(
     k_vectors: torch.Tensor,
     volume: torch.Tensor,
 ) -> torch.Tensor:
-    """``∂L/∂k_vectors`` ``(N_k, 3)`` (phase channel) via the Warp ``rho_kphase_grad`` kernel.
+    r""":math:`\partial L/\partial k` ``(N_k, 3)`` (phase channel) via the Warp ``rho_kphase_grad`` kernel.
 
     ``k_vectors`` is an explicit diff slot (kernel-unused in forward; the cos/sin
     dependence is carried by the detached tables) so the Warp second-order
@@ -817,10 +817,10 @@ def _rho_backward_to_phihat(
     sines: torch.Tensor,
     cache: MultipoleSCFCache,
 ) -> torch.Tensor:
-    r"""``∂L/∂source_phi_hat`` via the ``multipole_rho_phihat_grad`` Warp op chain.
+    r""":math:`\partial L/\partial \hat{\phi}_\mathrm{source}` via the ``multipole_rho_phihat_grad`` Warp op chain.
 
     The op is twice-differentiable (Warp ``rho_phihat_grad_double_backward``),
-    so the cell↔{positions, moments, k} second-order cross-terms flow for
+    so the cell :math:`\leftrightarrow` {positions, moments, k} second-order cross-terms flow for
     reciprocal stress-loss — all on Warp. ``positions`` / ``k_vectors`` are
     explicit diff slots; ``cosines`` / ``sines`` are detached helper tables.
 
@@ -850,11 +850,11 @@ def _rho_backward_to_kvec(
     sines: torch.Tensor,
     cache: MultipoleSCFCache,
 ) -> torch.Tensor:
-    r"""``∂L/∂k_vectors`` through the phase via the ``multipole_rho_kphase_grad`` Warp op chain.
+    r""":math:`\partial L/\partial k` (phase channel) via the ``multipole_rho_kphase_grad`` Warp op chain.
 
     Phase contribution only; :math:`\hat\phi`'s k-dependence flows separately
     through ``source_phi_hat``. The op is twice-differentiable (Warp
-    ``rho_kphase_grad_double_backward``), so the cell↔{positions, moments, φ̂, k}
+    ``rho_kphase_grad_double_backward``), so the cell :math:`\leftrightarrow` {positions, moments, :math:`\hat{\phi}`, k}
     second-order cross-terms route through Warp for reciprocal stress-loss.
 
     Returns
@@ -1060,9 +1060,9 @@ def _multipole_rho_gather_t_op(
     k_vectors: torch.Tensor,
     volume: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Opaque forward: ``g = Sᵀ·grad_rho`` per-atom moment gradient ``(N, 4)``.
+    r"""Opaque forward: :math:`g = S^T \cdot \mathrm{grad\_rho}` per-atom moment gradient ``(N, 4)``.
 
-    e3nn layout ``[q, μ_y, μ_z, μ_x]``; equals the rho-assembly's Jacobian
+    e3nn layout ``[q, mu_y, mu_z, mu_x]``; equals the rho-assembly's Jacobian
     transpose (``multipole_rho_moment_grad``).
     """
     cosines, sines = _structure_factor_table_launch(positions, k_vectors)
@@ -1088,13 +1088,13 @@ def _multipole_rho_gather_t_setup_context(ctx, inputs, output) -> None:
 
 
 def _multipole_rho_gather_t_backward(ctx, g_cot: torch.Tensor):
-    r"""Adjoint of ``g = Sᵀ·grad_rho``.
+    r"""Adjoint of :math:`g = S^T \cdot \mathrm{grad\_rho}`.
 
     With cotangent ``cg = g_cot`` (per-atom, e3nn layout) on ``g``,
-    ``<cg, Sᵀ grad_rho> = <S·cg, grad_rho>``:
+    :math:`\langle cg,\, S^T \mathrm{grad\_rho} \rangle = \langle S \cdot cg,\, \mathrm{grad\_rho} \rangle`:
 
-    * ``∂/∂grad_rho = S·cg = ρ(cg)`` (the rho FORWARD with moments ``= cg``)
-    * ``∂/∂{positions, source_phi_hat, k_vectors}`` are the rho-assembly
+    * :math:`\partial/\partial \mathrm{grad\_rho} = S \cdot cg = \rho(cg)` (the rho FORWARD with moments ``= cg``)
+    * :math:`\partial/\partial \{\mathrm{positions},\, \mathrm{source\_phi\_hat},\, \mathrm{k\_vectors}\}` are the rho-assembly
       backward sub-ops evaluated with moments ``= cg`` and field ``= grad_rho``.
 
     Every term is an autograd-registered op, so create_graph composes their
@@ -1166,7 +1166,7 @@ def _multipole_rho_q_gather_t_op(
     k_vectors: torch.Tensor,
     volume: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Opaque forward: ``g_Q = Sᵀ_Q · grad_rho`` per-atom quadrupole gradient.
+    r"""Opaque forward: :math:`g_Q = S_Q^T \cdot \mathrm{grad\_rho}` per-atom quadrupole gradient.
 
     Returns ``(N, 3, 3)`` Cartesian symmetric; equals the Q-assembly's Jacobian
     transpose (``multipole_rho_q_moment_grad``).
@@ -1196,13 +1196,13 @@ def _multipole_rho_q_gather_t_setup_context(ctx, inputs, output) -> None:
 
 
 def _multipole_rho_q_gather_t_backward(ctx, g_cot: torch.Tensor):
-    r"""Adjoint of ``g_Q = Sᵀ_Q · grad_rho``.
+    r"""Adjoint of :math:`g_Q = S_Q^T \cdot \mathrm{grad\_rho}`.
 
     With cotangent ``cg_Q = g_cot`` (per-atom ``(N, 3, 3)``) on ``g_Q``,
-    ``<cg_Q, Sᵀ_Q grad_rho> = <S_Q·cg_Q, grad_rho>``:
+    :math:`\langle cg_Q,\, S_Q^T \mathrm{grad\_rho} \rangle = \langle S_Q \cdot cg_Q,\, \mathrm{grad\_rho} \rangle`:
 
-    * ``∂/∂grad_rho = S_Q·cg_Q = ρ_Q(cg_Q)`` (the ``multipole_rho_q`` FORWARD).
-    * ``∂/∂{positions, source_coeff2, k_vectors}`` are the rho_q backward
+    * :math:`\partial/\partial \mathrm{grad\_rho} = S_Q \cdot cg_Q = \rho_Q(cg_Q)` (the ``multipole_rho_q`` FORWARD).
+    * :math:`\partial/\partial \{\mathrm{positions},\, \mathrm{source\_coeff2},\, \mathrm{k\_vectors}\}` are the rho_q backward
       sub-ops with quadrupoles ``= cg_Q`` and field ``= grad_rho``.
 
     Every term is an autograd-registered op, so create_graph composes their
@@ -1569,7 +1569,7 @@ def _rho_q_coeff2_grad_forward(
     k_vectors: torch.Tensor,
     volume: torch.Tensor,
 ) -> torch.Tensor:
-    """``∂L/∂source_coeff2`` ``(N_k,)`` via the Warp ``rho_q_coeff2_grad`` kernel (l=2 stress).
+    """``dL/dsource_coeff2`` ``(N_k,)`` via the Warp ``rho_q_coeff2_grad`` kernel (l=2 stress).
 
     ``positions`` is an explicit diff slot (kernel-unused in forward) so the
     Warp second-order backward can place its Hessian grad.
@@ -1682,7 +1682,7 @@ def _rho_q_kvec_grad_forward(
     source_coeff2: torch.Tensor,
     volume: torch.Tensor,
 ) -> torch.Tensor:
-    """``∂L/∂k_vectors`` ``(N_k, 3)`` via the (k·Q·k) form + phase (l=2 stress), Warp kernel."""
+    """``dL/dk_vectors`` ``(N_k, 3)`` via the (k*Q*k) form + phase (l=2 stress), Warp kernel."""
     device = quadrupoles.device
     wp_device = wp.device_from_torch(device)
     wp_scalar = wp.float64 if quadrupoles.dtype == torch.float64 else wp.float32
@@ -1968,7 +1968,7 @@ def _project_raw_features_launch(
 ) -> torch.Tensor:
     r"""Run :func:`project_features_dipole` (no self-subtract, natural layout).
 
-    Returns the raw feature tensor ``(N_atoms, N_σ, 4)`` — the projection of
+    Returns the raw feature tensor ``(N_atoms, N_sigma, 4)`` — the projection of
     ``V(k)`` onto the receiver basis with the half-origin ``k_factor_proj``
     weighting, before the self-interaction correction.
     """
@@ -2017,7 +2017,7 @@ def _feature_v_grad_forward(
     k_vectors: torch.Tensor,
     positions: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`v_gradient_from_feature_grad` — ``∂L/∂V(k)`` ``(N_k, 2)``.
+    r""":func:`v_gradient_from_feature_grad` — :math:`\partial L/\partial V(k)` ``(N_k, 2)``.
 
     ``k_vectors`` / ``positions`` are unused by the value kernel (carried by the
     detached cos/sin table) but are explicit inputs so their second-order grads
@@ -2145,7 +2145,7 @@ def _feature_position_grad_forward(
     k_vectors: torch.Tensor,
     positions: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`position_gradient_from_feature_grad` — ``∂L/∂r`` ``(N_atoms, 3)``.
+    r""":func:`position_gradient_from_feature_grad` — :math:`\partial L/\partial r` ``(N_atoms, 3)``.
 
     ``positions`` is unused by the value kernel (carried by the detached cos/sin
     table) but is an explicit input so its position-Hessian grad has a slot.
@@ -2269,7 +2269,7 @@ def _feature_phihat_grad_op(
     potential: torch.Tensor,
     n_lm: int,
 ) -> torch.Tensor:
-    """``dL/dreceiver_phi_hat`` ``(N_k, N_σ, n_lm, 2)`` via ``project_phihat_grad_dipole``."""
+    """``dL/dreceiver_phi_hat`` ``(N_k, N_sigma, n_lm, 2)`` via ``project_phihat_grad_dipole``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     n_k = cosines.shape[0]
@@ -2296,7 +2296,7 @@ def _feature_phihat_grad_fake(
     potential: torch.Tensor,
     n_lm: int,
 ) -> torch.Tensor:
-    """Shape/dtype metadata: ``(N_k, N_σ, n_lm, 2)`` float64."""
+    """Shape/dtype metadata: ``(N_k, N_sigma, n_lm, 2)`` float64."""
     return cosines.new_empty(
         (cosines.shape[0], grad_raw.shape[1], n_lm, 2), dtype=torch.float64
     )
@@ -2388,7 +2388,7 @@ def _multipole_project_raw_features_fake(
     k_vectors: torch.Tensor,
     k_factor_proj: torch.Tensor,
 ) -> torch.Tensor:
-    """Shape/dtype metadata: raw features ``(N_atoms, N_σ, 4)`` float64."""
+    """Shape/dtype metadata: raw features ``(N_atoms, N_sigma, 4)`` float64."""
     n_atoms = positions.shape[0]
     n_sigma = receiver_phi_hat.shape[1]
     return positions.new_empty((n_atoms, n_sigma, 4), dtype=torch.float64)
@@ -2468,7 +2468,7 @@ class MultipoleProjectRawFeaturesFunction:
     positions : torch.Tensor
         Atomic coordinates, shape ``(N_atoms, 3)``.
     receiver_phi_hat : torch.Tensor
-        l<=1 receiver block ``[:, :, :4, :]`` of shape ``(N_k, N_σ, 4, 2)``;
+        l<=1 receiver block ``[:, :, :4, :]`` of shape ``(N_k, N_sigma, 4, 2)``;
         carries the feature cell-grad.
     k_vectors : torch.Tensor
         Reciprocal-lattice vectors, shape ``(N_k, 3)``.
@@ -2478,7 +2478,7 @@ class MultipoleProjectRawFeaturesFunction:
     Returns
     -------
     torch.Tensor
-        Raw (un-self-subtracted) features ``(N_atoms, N_σ, 4)`` float64.
+        Raw (un-self-subtracted) features ``(N_atoms, N_sigma, 4)`` float64.
     """
 
     @staticmethod
@@ -2501,7 +2501,7 @@ class MultipoleProjectRawFeaturesFunction:
 
 
 def _l2_receiver_block(cache: MultipoleSCFCache) -> torch.Tensor:
-    r"""Extract the contiguous l=2 sub-block ``(N_k, N_σ, 5, 2)`` of the cache.
+    r"""Extract the contiguous l=2 sub-block ``(N_k, N_sigma, 5, 2)`` of the cache.
 
     The feature_max_l=2 cache stores a 9-column ``receiver_phi_hat`` with the
     l<=1 block in columns ``0:4`` and the l=2 block in columns ``4:9``.
@@ -2521,7 +2521,7 @@ def _project_raw_features_quadrupole_launch(
     sines: torch.Tensor,
     k_factor_proj: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Run :func:`project_features_quadrupole` (no self-subtract). ``(N, N_σ, 5)``."""
+    r"""Run :func:`project_features_quadrupole` (no self-subtract). ``(N, N_sigma, 5)``."""
     device = potential.device
     wp_device = wp.device_from_torch(device)
     n_atoms = cosines.shape[1]
@@ -2552,7 +2552,7 @@ def _feature_v_grad_quadrupole_forward(
     k_vectors: torch.Tensor,
     positions: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`v_gradient_from_feature_grad_quadrupole` — ``∂L/∂V(k)`` ``(N_k, 2)``."""
+    r""":func:`v_gradient_from_feature_grad_quadrupole` — :math:`\partial L/\partial V(k)` ``(N_k, 2)``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     n_k = receiver_phi_hat.shape[0]
@@ -2650,7 +2650,7 @@ def _feature_position_grad_quadrupole_forward(
     k_vectors: torch.Tensor,
     positions: torch.Tensor,
 ) -> torch.Tensor:
-    r""":func:`position_gradient_from_feature_grad_quadrupole` — ``∂L/∂r`` ``(N_atoms, 3)``."""
+    r""":func:`position_gradient_from_feature_grad_quadrupole` — :math:`\partial L/\partial r` ``(N_atoms, 3)``."""
     device = grad_raw.device
     wp_device = wp.device_from_torch(device)
     n_atoms = cosines.shape[1]
@@ -2769,7 +2769,7 @@ def _feature_phihat_grad_quadrupole_op(
     k_factor_proj: torch.Tensor,
     potential: torch.Tensor,
 ) -> torch.Tensor:
-    """``dL/dreceiver_phi_hat`` ``(N_k, N_σ, 5, 2)`` via ``project_phihat_grad_dipole``."""
+    """``dL/dreceiver_phi_hat`` ``(N_k, N_sigma, 5, 2)`` via ``project_phihat_grad_dipole``."""
     return _feature_phihat_grad_op(
         grad_raw, cosines, sines, k_factor_proj, potential, 5
     )
@@ -2783,7 +2783,7 @@ def _feature_phihat_grad_quadrupole_fake(
     k_factor_proj: torch.Tensor,
     potential: torch.Tensor,
 ) -> torch.Tensor:
-    """Shape/dtype metadata: ``(N_k, N_σ, 5, 2)`` float64."""
+    """Shape/dtype metadata: ``(N_k, N_sigma, 5, 2)`` float64."""
     return cosines.new_empty(
         (cosines.shape[0], grad_raw.shape[1], 5, 2), dtype=torch.float64
     )
@@ -2862,7 +2862,7 @@ def _multipole_project_raw_features_quadrupole_fake(
     k_vectors: torch.Tensor,
     k_factor_proj: torch.Tensor,
 ) -> torch.Tensor:
-    """Shape/dtype metadata: raw l=2 features ``(N_atoms, N_σ, 5)`` float64."""
+    """Shape/dtype metadata: raw l=2 features ``(N_atoms, N_sigma, 5)`` float64."""
     n_atoms = positions.shape[0]
     n_sigma = receiver_phi_hat.shape[1]
     return positions.new_empty((n_atoms, n_sigma, 5), dtype=torch.float64)
@@ -2942,7 +2942,7 @@ class MultipoleProjectRawFeaturesQuadrupoleFunction:
     positions : torch.Tensor
         Atomic coordinates, shape ``(N_atoms, 3)``.
     receiver_phi_hat_l2 : torch.Tensor
-        l=2 receiver block ``[:, :, 4:9, :]`` of shape ``(N_k, N_σ, 5, 2)``;
+        l=2 receiver block ``[:, :, 4:9, :]`` of shape ``(N_k, N_sigma, 5, 2)``;
         carries the feature cell-grad.
     k_vectors : torch.Tensor
         Reciprocal-lattice vectors, shape ``(N_k, 3)``.
@@ -2952,7 +2952,7 @@ class MultipoleProjectRawFeaturesQuadrupoleFunction:
     Returns
     -------
     torch.Tensor
-        Raw l=2 features ``(N_atoms, N_σ, 5)`` float64 in natural layout.
+        Raw l=2 features ``(N_atoms, N_sigma, 5)`` float64 in natural layout.
     """
 
     @staticmethod

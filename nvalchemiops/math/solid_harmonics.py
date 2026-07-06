@@ -20,7 +20,7 @@ Regular and Irregular Solid Harmonics
 This module provides Warp functions for the **regular** and **irregular** real
 solid harmonics for angular momentum :math:`L \leq 1`. Solid harmonics bundle
 the radial factor with the spherical harmonic and are the natural basis for
-multipole expansions — they replace explicit :math:`r^l` / :math:`r^{-(l+1)}`
+multipole expansions -- they replace explicit :math:`r^l` / :math:`r^{-(l+1)}`
 factors scattered through kernel code.
 
 Definitions
@@ -60,23 +60,23 @@ The two canonical identities that justify this module:
 Conventions & caveats
 ---------------------
 
-- **Racah prefactor:** this module uses the bare ``r^l · Y_l^m`` form. To recover
-  the Racah-normalized variant ``R_l^m^{(R)} = \sqrt{4\pi/(2l+1)} · r^l · Y_l^m``
-  — as used, for example, by the customer reference's real-space ``R_l^m``
-  evaluation —
+- **Racah prefactor:** this module uses the bare ``r^l * Y_l^m`` form. To recover
+  the Racah-normalized variant ``R_l^m^{(R)} = sqrt(4*pi/(2l+1)) * r^l * Y_l^m``
+  -- as used, for example, by the customer reference's real-space ``R_l^m``
+  evaluation --
   multiply the output of :func:`regular_solid_harmonic_l1` by
   :math:`\sqrt{4\pi/3}`.
 - **Irregular harmonics are singular at the origin.** ``irregular_solid_harmonic_*``
-  functions apply a tiny ``r² + _EPSILON`` safety floor (matching the pattern
+  functions apply a tiny ``r^2 + _EPSILON`` safety floor (matching the pattern
   elsewhere in ``nvalchemiops.math``) so they cannot produce raw NaN/inf during
-  autograd. Values very close to :math:`r = 0` are still unphysically large —
+  autograd. Values very close to :math:`r = 0` are still unphysically large --
   callers are responsible for avoiding the origin when the physics demands it.
 - **Scope:** only L=0 and L=1 are implemented here. L=2 and L=3 extensions
   slot in alongside the spherical harmonics / GTO extensions for those
   orders.
 - **Gradients** of the solid harmonics are not yet provided. Downstream
   multipole kernels compute forces via interaction-tensor derivatives of the
-  damped Coulomb kernel (``erfc(αr)/r``) rather than direct gradients of these
+  damped Coulomb kernel (``erfc(alpha*r)/r``) rather than direct gradients of these
   basis functions, so the gradient routines are left for later phases.
 """
 
@@ -171,7 +171,7 @@ def _eval_regular_solid_harmonics_kernel(
 
     Launch Grid
     -----------
-    dim = [N] — one thread per position.
+    dim = [N] -- one thread per position.
 
     Parameters
     ----------
@@ -203,7 +203,7 @@ def _eval_irregular_solid_harmonics_kernel(
 
     Launch Grid
     -----------
-    dim = [N] — one thread per position.
+    dim = [N] -- one thread per position.
 
     Parameters
     ----------
