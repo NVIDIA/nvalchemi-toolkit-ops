@@ -42,7 +42,7 @@ __all__ = [
 
 @dataclass
 class D3Parameters:
-    """
+    r"""
     DFT-D3 reference parameters for dispersion correction calculations.
 
     This dataclass encapsulates all element-specific parameters required for
@@ -57,7 +57,7 @@ class D3Parameters:
         with position coordinates. Index 0 is reserved for
         padding; valid atomic numbers are 1 to max_Z.
     r4r2 : torch.Tensor
-        <r⁴>/<r²> expectation values [max_Z+1] as float32 or float64.
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values [max_Z+1] as float32 or float64.
         Dimensionless ratio used for computing C8 coefficients from C6 values.
     c6ab : torch.Tensor
         C6 reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
@@ -262,7 +262,7 @@ def _dftd3_matrix_op(
     batch_idx: torch.Tensor | None = None,
     device: str | None = None,
 ) -> None:
-    """Internal custom op for DFT-D3(BJ) dispersion energy and forces
+    r"""Internal custom op for DFT-D3(BJ) dispersion energy and forces
     computation (non-PBC, neighbor matrix format).
 
     This is a low-level custom operator that performs DFT-D3(BJ) dispersion
@@ -286,7 +286,7 @@ def _dftd3_matrix_op(
     covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32
-        <r⁴>/<r²> expectation values for C8 computation (dimensionless)
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values for C8 computation (dimensionless)
     c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
         C6 reference values in energy x distance^6 units
     coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
@@ -489,7 +489,7 @@ def _dftd3_matrix_pbc_op(
     compute_virial: bool = False,
     device: str | None = None,
 ) -> None:
-    """Internal custom op for DFT-D3(BJ) dispersion energy and forces computation (PBC, neighbor matrix format).
+    r"""Internal custom op for DFT-D3(BJ) dispersion energy and forces computation (PBC, neighbor matrix format).
 
     This is a low-level custom operator that performs DFT-D3(BJ) dispersion
     calculations using Warp kernels for periodic systems with neighbor matrix format.
@@ -516,7 +516,7 @@ def _dftd3_matrix_pbc_op(
     covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32
-        <r⁴>/<r²> expectation values for C8 computation (dimensionless)
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values for C8 computation (dimensionless)
     c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
         C6 reference values in energy x distance^6 units
     coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
@@ -736,7 +736,7 @@ def _dftd3_op(
     batch_idx: torch.Tensor | None = None,
     device: str | None = None,
 ) -> None:
-    """Internal custom op for DFT-D3(BJ) using CSR neighbor list format (non-PBC).
+    r"""Internal custom op for DFT-D3(BJ) using CSR neighbor list format (non-PBC).
 
     This is a low-level custom operator that performs DFT-D3(BJ) dispersion
     calculations using CSR (Compressed Sparse Row) neighbor list format with
@@ -760,7 +760,7 @@ def _dftd3_op(
     covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32
         Covalent radii indexed by atomic number
     r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32
-        <r⁴>/<r²> expectation values
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values
     c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
         C6 reference values
     coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
@@ -954,7 +954,7 @@ def _dftd3_pbc_op(
     compute_virial: bool = False,
     device: str | None = None,
 ) -> None:
-    """Internal custom op for DFT-D3(BJ) using CSR neighbor list format (PBC).
+    r"""Internal custom op for DFT-D3(BJ) using CSR neighbor list format (PBC).
 
     This is a low-level custom operator that performs DFT-D3(BJ) dispersion
     calculations using CSR (Compressed Sparse Row) neighbor list format with
@@ -982,7 +982,7 @@ def _dftd3_pbc_op(
     covalent_radii : torch.Tensor, shape (max_Z+1), dtype=float32
         Covalent radii indexed by atomic number
     r4r2 : torch.Tensor, shape (max_Z+1), dtype=float32
-        <r⁴>/<r²> expectation values
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values
     c6_reference : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
         C6 reference values
     coord_num_ref : torch.Tensor, shape (max_Z+1, max_Z+1, 5, 5), dtype=float32
@@ -1258,7 +1258,7 @@ def dftd3(
         <r4>/<r2> expectation values [max_Z+1] as float32 for C8 computation (dimensionless).
         If provided, overrides the value in d3_params.
     c6_reference : torch.Tensor | None, optional
-        C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy × distance^6 units.
+        C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy x distance^6 units.
         If provided, overrides the value in d3_params.
     coord_num_ref : torch.Tensor | None, optional
         CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).

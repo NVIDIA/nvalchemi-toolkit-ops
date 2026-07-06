@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 Nosé-Hoover Chain (NHC) Thermostat for NVT Ensemble.
 
 This module implements the Nosé-Hoover chain thermostat following the
@@ -26,17 +26,24 @@ References
 - Tuckerman et al. J Phys A: Math Gen, 39, 5629 (2006)
 
 The Nosé-Hoover chain equations of motion:
-    ṙᵢ = vᵢ
-    v̇ᵢ = Fᵢ/mᵢ - η̇₁·vᵢ
-    η̇₁ = (2·KE - Ndof·kT) / Q₁
-    η̇ₖ = (Qₖ₋₁·η̇²ₖ₋₁ - kT) / Qₖ   for k > 1
+
+.. math::
+
+    \dot{r}_i = v_i
+
+    \dot{v}_i = F_i/m_i - \dot{\eta}_1 v_i
+
+    \dot{\eta}_1 = (2 \cdot \text{KE} - N_\text{dof} k T) / Q_1
+
+    \dot{\eta}_k = (Q_{k-1} \dot{\eta}_{k-1}^2 - kT) / Q_k \quad \text{for } k > 1
 
 Where:
-    η   : thermostat chain positions (unitless)
-    η̇   : thermostat chain velocities (1/time)
-    Q   : thermostat chain masses (energy·time²)
-    Ndof: degrees of freedom (typically 3N - 3)
-    kT  : target temperature in energy units (k_B = 1)
+
+- :math:`\eta` : thermostat chain positions (unitless)
+- :math:`\dot{\eta}` : thermostat chain velocities (1/time)
+- :math:`Q` : thermostat chain masses (energy*time^2)
+- :math:`N_\text{dof}` : degrees of freedom (typically 3N - 3)
+- :math:`kT` : target temperature in energy units (k_B = 1)
 
 BATCH MODE
 ==========
@@ -290,17 +297,18 @@ def _nhc_chain_propagate_kernel(
     chain_length: int,
     vel_scale: wp.array(dtype=Any),
 ):
-    """Propagate Nosé-Hoover chain for one Yoshida-Suzuki sub-step.
+    r"""Propagate Nosé-Hoover chain for one Yoshida-Suzuki sub-step.
 
     This kernel implements the time-reversible Martyna-Tobias-Klein (MTK)
     integration scheme for Nosé-Hoover chains.
 
     Algorithm (for each system):
-    1. Half-step position update: η_k += 0.5 * dt * η̇_k
-    2. Backward sweep: Update η̇ from chain end to start with friction
-    3. Compute velocity scale factor: exp(-0.5 * dt * η̇_0)
-    4. Forward sweep: Update η̇ from start to chain end with new forces
-    5. Half-step position update: η_k += 0.5 * dt * η̇_k
+
+    1. Half-step position update: :math:`\eta_k \mathrel{+}= 0.5 \cdot dt \cdot \dot{\eta}_k`
+    2. Backward sweep: Update :math:`\dot{\eta}` from chain end to start with friction
+    3. Compute velocity scale factor: :math:`\exp(-0.5 \cdot dt \cdot \dot{\eta}_0)`
+    4. Forward sweep: Update :math:`\dot{\eta}` from start to chain end with new forces
+    5. Half-step position update: :math:`\eta_k \mathrel{+}= 0.5 \cdot dt \cdot \dot{\eta}_k`
 
     Launch Grid
     -----------
@@ -595,10 +603,14 @@ def _nhc_compute_chain_energy_kernel(
     ke_chain: wp.array(dtype=Any),
     pe_chain: wp.array(dtype=Any),
 ):
-    """Compute NHC kinetic and potential energy for single system.
+    r"""Compute NHC kinetic and potential energy for single system.
 
-    KE_chain = sum_k 0.5 * Q_k * η̇_k²
-    PE_chain = ndof * kT * η_0 + kT * sum_{k>0} η_k
+    .. math::
+
+        \text{KE}_\text{chain} = \sum_k \tfrac{1}{2} Q_k \dot{\eta}_k^2
+
+        \text{PE}_\text{chain} = N_\text{dof} \cdot kT \cdot \eta_0 + kT \sum_{k>0} \eta_k
+
 
     Parameters
     ----------
@@ -1678,15 +1690,23 @@ def nhc_compute_chain_energy(
     num_systems: int = 1,
     device: str = None,
 ) -> tuple[wp.array, wp.array]:
-    """
+    r"""
     Compute Nosé-Hoover chain kinetic and potential energy.
 
     For conservation checks, the extended system Hamiltonian is:
-        H_ext = KE_particles + PE + KE_chain + PE_chain
+
+    .. math::
+
+        H_\text{ext} = \text{KE}_\text{particles} + \text{PE} + \text{KE}_\text{chain} + \text{PE}_\text{chain}
 
     where:
-        KE_chain = sum_k 0.5 * Q_k * eta_dot_k^2
-        PE_chain = ndof * kT * eta_0 + kT * sum_{k>0} eta_k
+
+    .. math::
+
+        \text{KE}_\text{chain} = \sum_k \tfrac{1}{2} Q_k \dot{\eta}_k^2
+
+        \text{PE}_\text{chain} = N_\text{dof} \cdot kT \cdot \eta_0 + kT \sum_{k>0} \eta_k
+
 
     Parameters
     ----------

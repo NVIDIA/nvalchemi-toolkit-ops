@@ -539,7 +539,7 @@ def _fire_reduce_batch_idx_rle_kernel(
     N: wp.int32,
     elems_per_thread: wp.int32,
 ):
-    """RLE-based reduction for FIRE diagnostics (vf, vv, ff).
+    r"""RLE-based reduction for FIRE diagnostics (vf, vv, ff).
 
     Uses run-length encoding to minimize atomic operations: accumulates
     locally while batch_idx stays constant, emits atomic_add only on
@@ -547,9 +547,9 @@ def _fire_reduce_batch_idx_rle_kernel(
 
     This kernel implements the reduction phase for FIRE optimization,
     computing three per-system inner products:
-    - vf[s] = sum(v·f for atoms in system s)
-    - vv[s] = sum(v·v for atoms in system s)
-    - ff[s] = sum(f·f for atoms in system s)
+    - vf[s] = sum(:math:`\mathbf{v} \cdot \mathbf{f}` for atoms in system s)
+    - vv[s] = sum(:math:`\mathbf{v} \cdot \mathbf{v}` for atoms in system s)
+    - ff[s] = sum(:math:`\mathbf{f} \cdot \mathbf{f}` for atoms in system s)
 
     Launch Grid
     -----------
@@ -564,11 +564,11 @@ def _fire_reduce_batch_idx_rle_kernel(
     batch_idx : wp.array, shape (N,), dtype int32
         Sorted system index per atom in [0, M). **MUST BE SORTED**.
     vf : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: v·f per system. Zeroed internally before each use.
+        OUTPUT: :math:`\mathbf{v} \cdot \mathbf{f}` per system. Zeroed internally before each use.
     vv : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: v·v per system. Zeroed internally before each use.
+        OUTPUT: :math:`\mathbf{v} \cdot \mathbf{v}` per system. Zeroed internally before each use.
     ff : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: f·f per system. Zeroed internally before each use.
+        OUTPUT: :math:`\mathbf{f} \cdot \mathbf{f}` per system. Zeroed internally before each use.
     N : int32
         Total number of atoms.
     elems_per_thread : int32

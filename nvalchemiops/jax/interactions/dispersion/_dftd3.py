@@ -579,7 +579,7 @@ __all__ = [
 
 @dataclass
 class D3Parameters:
-    """
+    r"""
     DFT-D3 reference parameters for dispersion correction calculations.
 
     This dataclass encapsulates all element-specific parameters required for
@@ -594,7 +594,7 @@ class D3Parameters:
         with position coordinates. Index 0 is reserved for
         padding; valid atomic numbers are 1 to max_Z.
     r4r2 : jax.Array
-        <r⁴>/<r²> expectation values [max_Z+1] as float32.
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values [max_Z+1] as float32.
         Dimensionless ratio used for computing C8 coefficients from C6 values.
     c6ab : jax.Array
         C6 reference coefficients [max_Z+1, max_Z+1, interp_mesh, interp_mesh]
@@ -1295,7 +1295,7 @@ def dftd3(
     tuple[jax.Array, jax.Array, jax.Array]
     | tuple[jax.Array, jax.Array, jax.Array, jax.Array]
 ):
-    """
+    r"""
     Compute DFT-D3(BJ) dispersion energy and forces using Warp with JAX arrays.
 
     **DFT-D3 parameters must be explicitly provided** using one of three methods:
@@ -1353,7 +1353,7 @@ def dftd3(
         <r4>/<r2> expectation values [max_Z+1] as float32 for C8 computation (dimensionless).
         If provided, overrides the value in d3_params.
     c6_reference : jax.Array | None, optional
-        C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy × distance^6 units.
+        C6 reference values [max_Z+1, max_Z+1, 5, 5] as float32 in energy :math:`\times` distance^6 units.
         If provided, overrides the value in d3_params.
     coord_num_ref : jax.Array | None, optional
         CN reference grid [max_Z+1, max_Z+1, 5, 5] as float32 (dimensionless).

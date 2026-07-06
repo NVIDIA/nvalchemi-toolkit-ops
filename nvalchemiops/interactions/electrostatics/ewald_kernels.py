@@ -313,14 +313,18 @@ def _ewald_real_space_charge_grad_potential(
     distance: wp.float64,
     alpha: wp.float64,
 ) -> wp.float64:
-    """Compute the damped Coulomb potential for charge gradient.
+    r"""Compute the damped Coulomb potential for charge gradient.
 
-    Returns (1/2) * erfc(α·r) / r, which when multiplied by q_j gives
+    Returns :math:`\frac{1}{2} \frac{\text{erfc}(\alpha r)}{r}`, which when multiplied by q_j gives
     the charge gradient contribution to atom i.
 
-    For pair (i,j) with energy E_ij = (1/2) * q_i * q_j * erfc(α·r) / r:
-        ∂E_ij/∂q_i = (1/2) * q_j * erfc(α·r) / r = potential * q_j
-        ∂E_ij/∂q_j = (1/2) * q_i * erfc(α·r) / r = potential * q_i
+    For pair (i,j) with energy :math:`E_{ij} = \frac{1}{2} q_i q_j \frac{\text{erfc}(\alpha r)}{r}`:
+
+    .. math::
+
+        \frac{\partial E_{ij}}{\partial q_i} = \frac{1}{2} q_j \frac{\text{erfc}(\alpha r)}{r} = \phi \cdot q_j
+
+        \frac{\partial E_{ij}}{\partial q_j} = \frac{1}{2} q_i \frac{\text{erfc}(\alpha r)}{r} = \phi \cdot q_i
 
     Parameters
     ----------
@@ -355,7 +359,7 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     real_structure_factors: wp.array(dtype=wp.float64),
     imag_structure_factors: wp.array(dtype=wp.float64),
 ):
-    """Compute structure factors for reciprocal-space Ewald summation.
+    r"""Compute structure factors for reciprocal-space Ewald summation.
 
     This kernel uses K-major iteration: each thread processes one k-vector
     over all atoms. This avoids atomics entirely since each thread fully
@@ -365,12 +369,12 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
 
     .. math::
 
-        \\begin{aligned}
-        S_{\\text{real}}(k) &= \\frac{G(k)}{V} \\sum_i q_i \\cos(k \\cdot r_i) \\\\
-        S_{\\text{imag}}(k) &= \\frac{G(k)}{V} \\sum_i q_i \\sin(k \\cdot r_i)
-        \\end{aligned}
+        \begin{aligned}
+        S_{\text{real}}(k) &= \frac{G(k)}{V} \sum_i q_i \cos(k \cdot r_i) \\
+        S_{\text{imag}}(k) &= \frac{G(k)}{V} \sum_i q_i \sin(k \cdot r_i)
+        \end{aligned}
 
-    where :math:`G(k) = \\frac{4\\pi}{k^2} \\exp(-k^2/(4\\alpha^2))` is the Green's function.
+    where :math:`G(k) = \frac{4\pi}{k^2} \exp(-k^2/(4\alpha^2))` is the Green's function.
 
     Launch Grid
     -----------
@@ -394,13 +398,13 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
         OUTPUT: Accumulated total charge divided by volume (Q/V) for
         background correction. Only the first k-vector thread accumulates this.
     cos_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
-        OUTPUT: :math:`\\cos(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\cos(k \cdot r_i)` for each (k, atom) pair.
     sin_k_dot_r : wp.array2d, shape (K, N), dtype=wp.float64
-        OUTPUT: :math:`\\sin(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\sin(k \cdot r_i)` for each (k, atom) pair.
     real_structure_factors : wp.array, shape (K,), dtype=wp.float64
-        OUTPUT: :math:`(G(k)/V) \\sum_i q_i \\cos(k \\cdot r_i)`.
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \cos(k \cdot r_i)`.
     imag_structure_factors : wp.array, shape (K,), dtype=wp.float64
-        OUTPUT: :math:`(G(k)/V) \\sum_i q_i \\sin(k \\cdot r_i)`.
+        OUTPUT: :math:`(G(k)/V) \sum_i q_i \sin(k \cdot r_i)`.
 
     Notes
     -----
@@ -409,7 +413,7 @@ def _ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     - Thread 0 accumulates total_charge as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
     - cos_k_dot_r and sin_k_dot_r store unweighted phases for charge gradient computation.
-    - Half-space k-vectors use the corresponding 8π Green's function factor.
+    - Half-space k-vectors use the corresponding :math:`8\pi` Green's function factor.
     """
     k_idx = wp.tid()
     num_atoms = positions.shape[0]
@@ -1344,7 +1348,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     real_structure_factors: wp.array2d(dtype=wp.float64),
     imag_structure_factors: wp.array2d(dtype=wp.float64),
 ):
-    """Compute structure factors for batched reciprocal-space Ewald summation.
+    r"""Compute structure factors for batched reciprocal-space Ewald summation.
 
     This kernel uses a blocked strategy: each thread handles one (k-vector, system,
     atom_block) triplet. This significantly reduces atomic contention compared to
@@ -1357,12 +1361,12 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
 
     .. math::
 
-        \\begin{aligned}
-        S_{\\text{real}}(s, k) &+= \\frac{G_s(k)}{V_s} q_i \\cos(k \\cdot r_i) \\\\
-        S_{\\text{imag}}(s, k) &+= \\frac{G_s(k)}{V_s} q_i \\sin(k \\cdot r_i)
-        \\end{aligned}
+        \begin{aligned}
+        S_{\text{real}}(s, k) &+= \frac{G_s(k)}{V_s} q_i \cos(k \cdot r_i) \\
+        S_{\text{imag}}(s, k) &+= \frac{G_s(k)}{V_s} q_i \sin(k \cdot r_i)
+        \end{aligned}
 
-    where :math:`G_s(k) = 8\\pi * \\exp(-k^2/(4\\alpha_s^2)) / k^2` uses half-space k-vectors.
+    where :math:`G_s(k) = 8\pi * \exp(-k^2/(4\alpha_s^2)) / k^2` uses half-space k-vectors.
 
     Launch Grid
     -----------
@@ -1389,13 +1393,13 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     total_charges : wp.array, shape (B,), dtype=wp.float64
         OUTPUT: Accumulated (Q_total/V) per system for background correction.
     cos_k_dot_r : wp.array2d, shape (K, N_total), dtype=wp.float64
-        OUTPUT: :math:`\\cos(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\cos(k \cdot r_i)` for each (k, atom) pair.
     sin_k_dot_r : wp.array2d, shape (K, N_total), dtype=wp.float64
-        OUTPUT: :math:`\\sin(k \\cdot r_i)` for each (k, atom) pair.
+        OUTPUT: :math:`\sin(k \cdot r_i)` for each (k, atom) pair.
     real_structure_factors : wp.array2d, shape (B, K), dtype=wp.float64
-        OUTPUT: Per-system :math:`(G(k)/V) \\sum_i q_i \\cos(k \\cdot r_i)`.
+        OUTPUT: Per-system :math:`(G(k)/V) \sum_i q_i \cos(k \cdot r_i)`.
     imag_structure_factors : wp.array2d, shape (B, K), dtype=wp.float64
-        OUTPUT: Per-system :math:`(G(k)/V) \\sum_i q_i \\sin(k \\cdot r_i)`.
+        OUTPUT: Per-system :math:`(G(k)/V) \sum_i q_i \sin(k \cdot r_i)`.
 
     Notes
     -----
@@ -1406,7 +1410,7 @@ def _batch_ewald_reciprocal_space_energy_kernel_fill_structure_factors(
     - Blocks beyond the system's atoms cause early return.
     - Thread 0 accumulates total_charges as Q/V for background correction.
     - All internal computations use float64 for numerical stability.
-    - Half-space k-vectors use the corresponding 8π Green's function factor.
+    - Half-space k-vectors use the corresponding :math:`8\pi` Green's function factor.
     """
     k_idx, system_id, block_idx = wp.tid()
 

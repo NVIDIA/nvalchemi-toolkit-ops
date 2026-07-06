@@ -277,7 +277,7 @@ def _s5_switch(
     inv_w: wp.float32,
 ) -> tuple[wp.float32, wp.float32]:
     """
-    C² smooth switching function for cutoff smoothing.
+    :math:`C^2` smooth switching function for cutoff smoothing.
 
     This function provides a smooth transition from 1 to 0 over the interval
     [r_on, r_off]. The switching polynomial S5(t) has continuous first and
@@ -364,7 +364,7 @@ def _c6ab_interpolate(
     cnref_j_mat: wp.array2d(dtype=wp.float32),
     k3: wp.float32,
 ) -> tuple[wp.float32, wp.float32, wp.float32]:
-    """
+    r"""
     Interpolate C6 coefficient and CN derivatives using Gaussian weighting.
 
     This function performs Gaussian interpolation over a 5x5 reference grid
@@ -391,9 +391,9 @@ def _c6ab_interpolate(
     c6_ij : float32
         Interpolated C6 coefficient
     dC6_dCNi : float32
-        Derivative :math:`\\partial C_6/\\partial \text{CN}_i`
+        Derivative :math:`\partial C_6/\partial \text{CN}_i`
     dC6_dCNj : float32
-        Derivative :math:`\\partial C_6/\\partial \text{CN}_j`
+        Derivative :math:`\partial C_6/\partial \text{CN}_j`
 
     Notes
     -----
@@ -401,16 +401,16 @@ def _c6ab_interpolate(
 
     .. math::
 
-        L_{pq} = \\exp\\left(-k_3 \\left[(\\text{CN}_i - \\text{CN}_{\\text{ref},i}[p,q])^2 +
-        (\\text{CN}_j - \\text{CN}_{\\text{ref},j}[p,q])^2\\right]\\right)
+        L_{pq} = \exp\left(-k_3 \left[(\text{CN}_i - \text{CN}_{\text{ref},i}[p,q])^2 +
+        (\text{CN}_j - \text{CN}_{\text{ref},j}[p,q])^2\right]\right)
 
     The interpolated C6 and derivatives are:
 
     .. math::
 
-        C_6 = \\frac{\\sum_{pq} C_6^{\\text{ref}}[p,q] L_{pq}}{\\sum_{pq} L_{pq}}
+        C_6 = \frac{\sum_{pq} C_6^{\text{ref}}[p,q] L_{pq}}{\sum_{pq} L_{pq}}
 
-        \\frac{\\partial C_6}{\\partial \\text{CN}_i} = \\frac{2k_3}{w} (z_{d_i} - C_6 w_{d_i})
+        \frac{\partial C_6}{\partial \text{CN}_i} = \frac{2k_3}{w} (z_{d_i} - C_6 w_{d_i})
 
     where accumulators :math:`w`, :math:`z`, :math:`w_{d_i}`, :math:`z_{d_i}` are
     computed in a single pass over the 5x5 grid.
@@ -823,7 +823,7 @@ def _cn_kernel_matrix(
     Notes
     -----
     - Launch with dim=(num_atoms, DFTD3_MATRIX_CN_BLOCK_SIZE), block_dim=DFTD3_MATRIX_CN_BLOCK_SIZE
-    - Two warps per atom (64 threads); 32 blocks/SM on H100 → 100% warp occupancy
+    - Two warps per atom (64 threads); 32 blocks/SM on H100 -> 100% warp occupancy
     - Block-level tile_sum reduction; thread 0 writes coord_num[atom_i]
     - Padding atoms indicated by numbers[i] == 0 are skipped
     - Neighbor entries with j >= fill_value are padding and are skipped
@@ -896,7 +896,7 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     forces: wp.array(dtype=wp.vec3f),
     energy: wp.array(dtype=wp.float32),
 ):
-    """
+    r"""
     Pass 2: Compute direct forces, energy, and accumulate dE/dCN per atom.
 
     Computes dispersion energy and forces at constant CN, and accumulates
@@ -916,7 +916,7 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     coord_num : wp.array(dtype=float32)
         Coordination numbers [num_atoms] from Pass 1 (dimensionless)
     r4r2 : wp.array(dtype=float32)
-        <r⁴>/<r²> expectation values [max_Z+1] (dimensionless)
+        :math:`\langle r^4 \rangle / \langle r^2 \rangle` expectation values [max_Z+1] (dimensionless)
     c6_reference : wp.array4d(dtype=float32)
         C6 reference [max_Z+1, max_Z+1, 5, 5] in energy x distance^6 units
     coord_num_ref : wp.array4d(dtype=float32)
@@ -949,8 +949,8 @@ def _direct_forces_and_dE_dCN_kernel_matrix(  # NOSONAR (S1542) "math formula"
     - Launch with dim=(num_atoms, DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE), block_dim=DFTD3_MATRIX_DIRECT_FORCES_BLOCK_SIZE
     - One warp per atom; threads stride over the neighbor list BLOCK_SIZE apart
     - Tile reduction (warp shuffles) eliminates atomics for forces and dE/dCN
-    - Direct forces are F = :math:`-(\\partial E/\\partial r)|_\text{CN}`, without chain rule term
-    - dE_dCN[i] = :math:`\\sum_j \\partial E_{ij}/\\partial \text{CN}_i` accumulated over all pairs containing atom i
+    - Direct forces are F = :math:`-(\partial E/\partial r)|_\text{CN}`, without chain rule term
+    - dE_dCN[i] = :math:`\sum_j \partial E_{ij}/\partial \text{CN}_i` accumulated over all pairs containing atom i
     - Neighbor entries with j >= fill_value are padding and are skipped
 
     See Also
@@ -1222,7 +1222,7 @@ def _cn_forces_contrib_kernel_matrix(
     periodic: bool,
     forces: wp.array(dtype=wp.vec3f),
 ):
-    """
+    r"""
     Pass 3: Add CN-dependent force contribution.
 
     Adds the CN-dependent term to forces computed in Pass 2. Computes
@@ -1259,7 +1259,7 @@ def _cn_forces_contrib_kernel_matrix(
     - One warp per atom; threads stride over the neighbor list block_stride apart
     - Block-level tile_sum reduction; thread 0 writes force contributions
     - Skips C6 interpolation and damping calculations
-    - Uses precomputed dE_dCN[i] = :math:`\\sum_k \\partial E_{ik}/\\partial \text{CN}_i` from all pairs
+    - Uses precomputed dE_dCN[i] = :math:`\sum_k \partial E_{ik}/\partial \text{CN}_i` from all pairs
     - Neighbor entries with j >= fill_value are padding and are skipped
 
     See Also
@@ -2338,7 +2338,7 @@ def dftd3_matrix(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        <r⁴>/<r²> expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         C6 reference values in energy x distance^6 units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
@@ -2569,7 +2569,7 @@ def dftd3_matrix_pbc(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        <r⁴>/<r²> expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         C6 reference values in energy x distance^6 units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
@@ -2864,7 +2864,7 @@ def dftd3(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        <r⁴>/<r²> expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         C6 reference values in energy x distance^6 units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
@@ -3096,7 +3096,7 @@ def dftd3_pbc(
     covalent_radii : wp.array(dtype=float32), shape [max_Z+1]
         Covalent radii indexed by atomic number, in same units as positions
     r4r2 : wp.array(dtype=float32), shape [max_Z+1]
-        <r⁴>/<r²> expectation values for C8 computation (dimensionless)
+        :math:`\\langle r^4 \\rangle / \\langle r^2 \\rangle` expectation values for C8 computation (dimensionless)
     c6_reference : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]
         C6 reference values in energy x distance^6 units
     coord_num_ref : wp.array4d(dtype=float32), shape [max_Z+1, max_Z+1, 5, 5]

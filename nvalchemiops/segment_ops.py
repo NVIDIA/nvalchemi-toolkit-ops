@@ -395,7 +395,7 @@ def _segmented_dot_vec_kernel(
     N: wp.int32,
     elems_per_thread: wp.int32,
 ):
-    """Vec3 dot-product reduction per segment.
+    r"""Vec3 dot-product reduction per segment.
 
     Computes ``out[s] = sum(dot(x[i], y[i]) for i where idx[i] == s)``
     using vector dot products.
@@ -422,7 +422,7 @@ def _segmented_dot_vec_kernel(
     Notes
     -----
     - Output is scalar (float32 for vec3f input, float64 for vec3d input)
-    - Useful for computing v·f power in FIRE optimizer
+    - Useful for computing :math:`v \cdot f` power in FIRE optimizer
     """
     t = wp.tid()
     start = t * elems_per_thread
@@ -664,7 +664,7 @@ def _segmented_inner_products_scalar_kernel(
     N: wp.int32,
     elems_per_thread: wp.int32,
 ):
-    """Triple inner-product reduction per segment for scalar arrays.
+    r"""Triple inner-product reduction per segment for scalar arrays.
 
     Computes three dot products in a single pass:
     - ``out_xy[s] = sum(x[i] * y[i] for i where idx[i] == s)``
@@ -686,11 +686,11 @@ def _segmented_inner_products_scalar_kernel(
     idx : wp.array, shape (N,), dtype int32
         Sorted segment indices in [0, M).
     out_xy : wp.array, shape (M,), dtype matches x
-        OUTPUT: x·y per segment. Zeroed internally before each use.
+        OUTPUT: x*y per segment. Zeroed internally before each use.
     out_xx : wp.array, shape (M,), dtype matches x
-        OUTPUT: x·x per segment. Zeroed internally before each use.
+        OUTPUT: x*x per segment. Zeroed internally before each use.
     out_yy : wp.array, shape (M,), dtype matches x
-        OUTPUT: y·y per segment. Zeroed internally before each use.
+        OUTPUT: y*y per segment. Zeroed internally before each use.
     N : int32
         Total number of elements.
     elems_per_thread : int32
@@ -698,7 +698,7 @@ def _segmented_inner_products_scalar_kernel(
 
     Notes
     -----
-    - Useful for FIRE2 optimizer which needs v·f, v·v, and f·f simultaneously
+    - Useful for FIRE2 optimizer which needs :math:`v \cdot f`, :math:`v \cdot v`, and :math:`f \cdot f` simultaneously
     - Reduces memory traffic compared to three separate kernel launches
     """
     t = wp.tid()
@@ -765,11 +765,11 @@ def _segmented_inner_products_vec_kernel(
     idx : wp.array, shape (N,), dtype int32
         Sorted segment indices in [0, M).
     out_xy : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: x·y per segment. Zeroed internally before each use.
+        OUTPUT: x*y per segment. Zeroed internally before each use.
     out_xx : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: x·x per segment. Zeroed internally before each use.
+        OUTPUT: x*x per segment. Zeroed internally before each use.
     out_yy : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: y·y per segment. Zeroed internally before each use.
+        OUTPUT: y*y per segment. Zeroed internally before each use.
     N : int32
         Total number of elements.
     elems_per_thread : int32
@@ -778,8 +778,8 @@ def _segmented_inner_products_vec_kernel(
     Notes
     -----
     - Output is scalar (float32 for vec3f input, float64 for vec3d input)
-    - Useful for FIRE2 optimizer which needs velocity·force, velocity·velocity,
-      and force·force simultaneously for adaptive parameter updates
+    - Useful for FIRE2 optimizer which needs velocity*force, velocity*velocity,
+      and force*force simultaneously for adaptive parameter updates
     """
     t = wp.tid()
     start = t * elems_per_thread
@@ -1662,7 +1662,7 @@ def _get_segmented_sum_launch(kernel, device, x, idx, out, N, ept):
     ``wp.launch(record_cmd=True)`` (the expensive path).  Subsequent calls
     mutate ``dim`` + the five parameter slots in place and skip the bulk of
     Warp's ``wp.launch`` dispatch (~12.6 KB of validation + kernel-hooks
-    resolution).  At low N this saves ~3 µs per call.
+    resolution).  At low N this saves ~3 us per call.
     """
     key = (id(kernel), id(device))
     launch = _segmented_sum_launch_cache.get(key)
@@ -1870,7 +1870,7 @@ def segmented_dot(
 
     See Also
     --------
-    segmented_inner_products : Compute x·y, x·x, and y·y in one pass
+    segmented_inner_products : Compute x*y, x*x, and y*y in one pass
     segmented_sum : Element-wise sum per segment
     """
     N = x.shape[0]
@@ -1944,7 +1944,7 @@ def segmented_max_norm(
 
     See Also
     --------
-    segmented_dot : Squared norms (v·v) per segment
+    segmented_dot : Squared norms (v*v) per segment
     """
     N = x.shape[0]
     if N == 0:
@@ -2027,7 +2027,7 @@ def segmented_inner_products(
 ) -> None:
     """Compute three inner products per segment in one fused pass using RLE.
 
-    Computes ``out_xy[s]``, ``out_xx[s]``, ``out_yy[s]`` (the x·y, x·x, y·y
+    Computes ``out_xy[s]``, ``out_xx[s]``, ``out_yy[s]`` (the x*y, x*x, y*y
     inner products) in a single kernel launch, roughly 3x faster than three
     separate ``segmented_dot`` calls.
 

@@ -38,10 +38,10 @@ OPERATIONS
    mesh[g] += value[atom] * weight(atom, g)
 
 2. GATHER: Collect mesh values at atom positions
-   value[atom] = Σ_g mesh[g] * weight(atom, g)
+   value[atom] = sum_g mesh[g] * weight(atom, g)
 
 3. GATHER_VEC3: Collect 3D vector field values at atom positions
-   vector[atom] = Σ_g mesh[g] * weight(atom, g)
+   vector[atom] = sum_g mesh[g] * weight(atom, g)
 
 4. GATHER_GRADIENT: Collect mesh values with weight gradients (forces)
    grad[atom] = sum_g mesh[g] * grad_weight(atom, g)
@@ -566,12 +566,16 @@ def spline_gather(
     batch_idx: jax.Array | None = None,
     cell_inv_t: jax.Array | None = None,
 ) -> jax.Array:
-    """Gather values from mesh to atoms using B-spline interpolation.
+    r"""Gather values from mesh to atoms using B-spline interpolation.
 
     For each atom, interpolates the mesh value at its position by summing nearby
     grid points weighted by the B-spline basis function.
 
-    Formula: output[atom] = Σ_g mesh[g] * w(atom, g)
+    Formula:
+
+    .. math::
+
+        \text{output}[\text{atom}] = \sum_g \text{mesh}[g] \cdot w(\text{atom}, g)
 
     where the sum is over the order^3 grid points in the atom's stencil.
 
@@ -663,12 +667,12 @@ def spline_gather_vec3(
     spline_order: int = 4,
     batch_idx: jax.Array | None = None,
 ) -> jax.Array:
-    """Gather charge-weighted 3D vector values from mesh using B-splines.
+    r"""Gather charge-weighted 3D vector values from mesh using B-splines.
 
     Similar to spline_gather but multiplies by the atom's charge and
     outputs to a 3D vector array (for use with vector-valued mesh fields).
 
-    Formula: output[atom] = q[atom] * Σ_g mesh[g] * w(atom, g)
+    Formula: :math:`\text{output}[\text{atom}] = q[\text{atom}] \cdot \sum_g \text{mesh}[g] \cdot w(\text{atom}, g)`
 
     Parameters
     ----------
@@ -760,15 +764,15 @@ def spline_gather_gradient(
     batch_idx: jax.Array | None = None,
     cell_inv_t: jax.Array | None = None,
 ) -> jax.Array:
-    """Compute forces by gathering mesh gradients using B-spline derivatives.
+    r"""Compute forces by gathering mesh gradients using B-spline derivatives.
 
     Computes:
 
     .. math::
 
-        F_i = -q_i \\sum_g \\phi(g) \\nabla w(r_i, g)
+        F_i = -q_i \sum_g \phi(g) \nabla w(r_i, g)
 
-    The gradient ∇w is computed in fractional coordinates and then transformed
+    The gradient :math:`\nabla w` is computed in fractional coordinates and then transformed
     to Cartesian coordinates via the cell matrix.
 
     Parameters
@@ -780,7 +784,7 @@ def spline_gather_gradient(
     mesh : jax.Array
         For single-system: shape (nx, ny, nz)
         For batch: shape (B, nx, ny, nz)
-        Scalar-valued mesh containing potential values (e.g., electrostatic potential φ).
+        Scalar-valued mesh containing potential values (e.g., electrostatic potential :math:`\phi`).
         dtype=float32 or float64.
     cell : jax.Array, shape (3, 3) or (B, 3, 3)
         Unit cell matrix. dtype=float32 or float64.
@@ -980,9 +984,9 @@ def _spline_gather_with_force(
     """Fused gather of scalar potential AND derivative-based force from one mesh.
 
     Returns ``(output, forces)`` where:
-      - ``output[atom] = Σ_g mesh[g] * w(atom, g)``           — raw potential per atom
+      - ``output[atom] = sum_g mesh[g] * w(atom, g)``           — raw potential per atom
         (the caller multiplies by charge in the PME corrections step).
-      - ``forces[atom] = -q_atom * Σ_g mesh[g] * Cell^{-T} ∇w`` — Cartesian force.
+      - ``forces[atom] = -q_atom * sum_g mesh[g] * Cell^{-T} * nabla_w`` — Cartesian force.
 
     Replaces ``spline_gather(...)`` followed by ``spline_gather_gradient(...)``
     on the same mesh: each thread reads its stencil cell ONCE and accumulates

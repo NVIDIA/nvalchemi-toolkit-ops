@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
+r"""
 NPT and NPH Integrators with Isotropic and Anisotropic Pressure Control.
 
 This module implements the Martyna-Tobias-Klein (MTK) equations of motion
@@ -21,7 +21,7 @@ for NPT and NPH molecular dynamics simulations.
 
 NPT (Isothermal-Isobaric)
 -------------------------
-Constant temperature and pressure via coupled Nosé-Hoover thermostat
+Constant temperature and pressure via coupled Nose-Hoover thermostat
 and barostat. Samples the canonical NPT ensemble.
 
 NPH (Isenthalpic-Isobaric)
@@ -38,12 +38,12 @@ Pressure Control Modes
 Conventions
 -----------
 **Cell velocities** (``cell_velocities``) are the strain-rate tensor
-ε̇ = p_g / W (canonical MTK / ASE / TorchSim convention).  The absolute
-time derivative is ḣ = ε̇ · h, applied multiplicatively in the cell
+:math:`\dot{\varepsilon} = p_g / W` (canonical MTK / ASE / TorchSim convention).  The absolute
+time derivative is :math:`\dot{h} = \dot{\varepsilon} \cdot h`, applied multiplicatively in the cell
 update step.  Callers should not pre-multiply by h.
 
 **Virial sign**: ``compute_pressure_tensor`` expects the virial
-W = -dE/dε as defined in ``docs/userguide/about/conventions.md``.
+:math:`W = -dE/d\varepsilon` as defined in ``docs/userguide/about/conventions.md``.
 All interaction kernels in this library produce this sign directly.
 
 References
@@ -187,7 +187,7 @@ def _npt_accel(f: Any, m: Any) -> Any:
 
 @wp.func
 def _drag_isotropic(eps_dot: Any, coupling: Any, eta_dot_1: Any, v: Any) -> Any:
-    """Isotropic drag: (coupling * Tr(ε̇)/3 + eta_dot_1) * v."""
+    """Isotropic drag: ``(coupling * Tr(eps_dot)/3 + eta_dot_1) * v``."""
     trace_eps = eps_dot[0, 0] + eps_dot[1, 1] + eps_dot[2, 2]
     eps_scalar = trace_eps / type(trace_eps)(3.0)
     return (coupling * eps_scalar + eta_dot_1) * v
@@ -195,7 +195,7 @@ def _drag_isotropic(eps_dot: Any, coupling: Any, eta_dot_1: Any, v: Any) -> Any:
 
 @wp.func
 def _drag_anisotropic(eps_dot: Any, inv_three_n: Any, eta_dot_1: Any, v: Any) -> Any:
-    """Anisotropic drag: (ε̇_ii + Tr(ε̇)·inv_three_n + eta_dot_1) * v_i."""
+    """Anisotropic drag: ``(eps_dot_ii + Tr(eps_dot) * inv_three_n + eta_dot_1) * v_i``."""
     trace_eps = eps_dot[0, 0] + eps_dot[1, 1] + eps_dot[2, 2]
     trace_corr = trace_eps * inv_three_n
     return type(v)(
@@ -207,7 +207,7 @@ def _drag_anisotropic(eps_dot: Any, inv_three_n: Any, eta_dot_1: Any, v: Any) ->
 
 @wp.func
 def _drag_triclinic(eps_dot: Any, inv_three_n: Any, eta_dot_1: Any, v: Any) -> Any:
-    """Triclinic drag: (ε̇ + (Tr(ε̇)·inv_three_n + eta_dot_1)·I) @ v."""
+    """Triclinic drag: ``(eps_dot + (Tr(eps_dot) * inv_three_n + eta_dot_1) * I) @ v``."""
     trace_eps = eps_dot[0, 0] + eps_dot[1, 1] + eps_dot[2, 2]
     diag_corr = trace_eps * inv_three_n + eta_dot_1
     drag_x = (
@@ -233,7 +233,7 @@ def _drag_triclinic(eps_dot: Any, inv_three_n: Any, eta_dot_1: Any, v: Any) -> A
 
 @wp.func
 def _npt_position_step(r: Any, v: Any, eps_dot: Any, dt: Any) -> Any:
-    """Position update: r + dt * (v + ε̇ · r)."""
+    """Position update: ``r + dt * (v + eps_dot @ r)``."""
     eps_dot_r = wp.mul(eps_dot, r)
     return r + dt * (v + eps_dot_r)
 
@@ -431,7 +431,7 @@ def _compute_cell_kinetic_energy_kernel(
     cell_masses: wp.array(dtype=Any),
     kinetic_energy: wp.array(dtype=Any),
 ):
-    """Compute cell kinetic energy: KE = 0.5 * W * ||ε̇||²_F where ε̇ = cell_velocities.
+    r"""Compute cell kinetic energy: :math:`KE = 0.5 W \|\dot{\varepsilon}\|_F^2` where ``eps_dot = cell_velocities``.
 
     Launch Grid: dim = [num_systems]
     """
@@ -480,11 +480,11 @@ def _npt_velocity_half_step_single_kernel(
     dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
-    """NPT isotropic velocity half-step, single system (out-only).
+    r"""NPT isotropic velocity half-step, single system (out-only).
 
-    v_new = v + dt/2 * (F/m - (1 + d/N_f) * ε̇ * v - η̇₁ * v)
+    :math:`v_{new} = v + \frac{dt}{2} \left(\frac{F}{m} - (1 + \frac{d}{N_f}) \dot{\varepsilon} v - \dot{\eta}_1 v\right)`
 
-    where ε̇ is the isotropic strain rate.
+    where ``eps_dot`` is the isotropic strain rate.
 
     For in-place: host passes same array as velocities and velocities_out.
 
@@ -559,11 +559,11 @@ def _nph_velocity_half_step_single_kernel(
     dt: wp.array(dtype=Any),
     velocities_out: wp.array(dtype=Any),
 ):
-    """NPH isotropic velocity half-step, single system (out-only).
+    r"""NPH isotropic velocity half-step, single system (out-only).
 
-    v_new = v + dt/2 * (F/m - (1 + d/N_f) * ε̇ * v)
+    :math:`v_{new} = v + \frac{dt}{2} \left(\frac{F}{m} - (1 + \frac{d}{N_f}) \dot{\varepsilon} v\right)`
 
-    where ε̇ is the isotropic strain rate.
+    where ``eps_dot`` is the isotropic strain rate.
 
     For in-place: host passes same array as velocities and velocities_out.
 
@@ -634,9 +634,9 @@ def _position_update_single_kernel(
     dt: wp.array(dtype=Any),
     positions_out: wp.array(dtype=Any),
 ):
-    """Position update for single system (out-only).
+    r"""Position update for single system (out-only).
 
-    r_new = r + dt * v + dt * ε̇ @ r
+    :math:`r_{new} = r + dt \cdot v + dt \cdot \dot{\varepsilon} \cdot r`
 
     For in-place: host passes same array as positions and positions_out.
 
@@ -692,7 +692,7 @@ def _npt_cell_velocity_update_kernel(
     num_atoms_per_system: wp.array(dtype=wp.int32),
     dt: wp.array(dtype=Any),
 ):
-    """NPT isotropic cell-velocity update: ε̇ += (dt/2)·(V/W)·(Tr(P)/3 + 2·KE/(3N·V) − P_ext)."""
+    r"""NPT isotropic cell-velocity update: :math:`\dot{\varepsilon} += \frac{dt}{2} \frac{V}{W} \left(\frac{\mathrm{Tr}(P)}{3} + \frac{2 KE}{3NV} - P_{ext}\right)`."""
     sys_id = wp.tid()
     h_dot = cell_velocities[sys_id]
     P_ext = target_pressures[sys_id]
@@ -738,7 +738,7 @@ def _nph_cell_velocity_update_kernel(
     num_atoms_per_system: wp.array(dtype=wp.int32),
     dt: wp.array(dtype=Any),
 ):
-    """
+    r"""
     NPH isotropic cell velocity update (no thermostat coupling).
 
     Algorithm
@@ -746,7 +746,7 @@ def _nph_cell_velocity_update_kernel(
     Updates cell velocity for constant enthalpy (NPH) dynamics. Without
     thermostat coupling, the equation simplifies to:
 
-        ḧ = (V/W) * (P_inst - P_ext)
+        :math:`\ddot{h} = \frac{V}{W}(P_{inst} - P_{ext})`
 
     The system evolves on a constant-enthalpy surface with temperature
     fluctuating naturally.
@@ -772,7 +772,7 @@ def _nph_cell_velocity_update_kernel(
 
     Notes
     -----
-    - No thermostat drag term (η̇₁ * ḣ) compared to NPT.
+    - No thermostat drag term (:math:`\dot{\eta}_1 \dot{h}`) compared to NPT.
     - Temperature is not controlled; enthalpy H = KE + PE + PV is conserved.
     """
     sys_id = wp.tid()
@@ -833,7 +833,7 @@ def _npt_cell_velocity_update_aniso_kernel(
     num_atoms_per_system: wp.array(dtype=wp.int32),
     dt: wp.array(dtype=Any),
 ):
-    """NPT anisotropic cell-velocity update: ε̇_ii += (dt/2)·(V/W)·(P_ii − P_ext_ii)."""
+    r"""NPT anisotropic cell-velocity update: :math:`\dot{\varepsilon}_{ii} += \frac{dt}{2} \frac{V}{W} (P_{ii} - P_{ext,ii})`."""
     sys_id = wp.tid()
     h_dot = cell_velocities[sys_id]
     P_ext = target_pressures[sys_id]
@@ -882,9 +882,9 @@ def _nph_cell_velocity_update_aniso_kernel(
     num_atoms_per_system: wp.array(dtype=wp.int32),
     dt: wp.array(dtype=Any),
 ):
-    """NPH cell velocity update - anisotropic/orthorhombic (no thermostat).
+    r"""NPH cell velocity update - anisotropic/orthorhombic (no thermostat).
 
-    ḧ_ii = V/W * (P_ii - P_ext_ii)
+    :math:`\ddot{h}_{ii} = \frac{V}{W}(P_{ii} - P_{ext,ii})`
 
     Launch Grid: dim = [num_systems]
     """
@@ -941,7 +941,7 @@ def _npt_cell_velocity_update_triclinic_kernel(
     num_atoms_per_system: wp.array(dtype=wp.int32),
     dt: wp.array(dtype=Any),
 ):
-    """NPT triclinic cell-velocity update: ε̇_ij += (dt/2)·(V/W)·(P_ij − P_ext_ij), DOF correction on diagonal only."""
+    r"""NPT triclinic cell-velocity update: :math:`\dot{\varepsilon}_{ij} += \frac{dt}{2} \frac{V}{W} (P_{ij} - P_{ext,ij})`, DOF correction on diagonal only."""
     sys_id = wp.tid()
     h_dot = cell_velocities[sys_id]
     P_ext = target_pressures[sys_id]
@@ -1003,9 +1003,9 @@ def _nph_cell_velocity_update_triclinic_kernel(
     num_atoms_per_system: wp.array(dtype=wp.int32),
     dt: wp.array(dtype=Any),
 ):
-    """NPH cell velocity update - full triclinic (no thermostat).
+    r"""NPH cell velocity update - full triclinic (no thermostat).
 
-    ḧ_ij = V/W * (P_ij - P_ext_ij)
+    :math:`\ddot{h}_{ij} = \frac{V}{W}(P_{ij} - P_{ext,ij})`
 
     Launch Grid: dim = [num_systems]
     """
@@ -1362,7 +1362,7 @@ def _cell_update_kernel(
     dt: wp.array(dtype=Any),
     cells_out: wp.array(dtype=Any),
 ):
-    """Update cell matrix: h_new = h + dt * ε̇ * h (out-only, multiplicative).
+    r"""Update cell matrix: :math:`h_{new} = h + dt \cdot \dot{\varepsilon} \cdot h` (out-only, multiplicative).
 
     For in-place: host passes same array as cells and cells_out.
 
@@ -1390,7 +1390,7 @@ def _npt_thermostat_chain_update_kernel(
     chain_length: wp.int32,
     dt_chain: wp.array(dtype=Any),
 ):
-    """Update Nosé-Hoover chain for NPT thermostat.
+    """Update Nose-Hoover chain for NPT thermostat.
 
     Launch Grid: dim = [num_systems]
     """
@@ -1711,14 +1711,14 @@ def _compute_barostat_mass_kernel(
     num_atoms: wp.array(dtype=wp.int32),
     masses_out: wp.array(dtype=Any),
 ):
-    """
+    r"""
     Compute barostat masses for NPT/NPH simulations.
 
     Algorithm
     ---------
     The barostat mass is computed from the MTK equations:
 
-        W = (N_f + d) * kT * τ_p²
+        :math:`W = (N_f + d) k_B T \tau_p^2`
 
     where N_f = 3N is degrees of freedom, d = 3 is dimensionality.
 
@@ -1837,22 +1837,22 @@ def compute_barostat_mass(
     masses_out: wp.array,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Compute barostat mass(es) for desired pressure fluctuation timescale.
 
     The barostat mass determines the inertia of cell volume/shape fluctuations
     in NPT/NPH simulations. It is computed from the Martyna-Tobias-Klein
-    equations to give a characteristic pressure relaxation time τ_p:
+    equations to give a characteristic pressure relaxation time :math:`\tau_p`:
 
     .. math::
 
-        W = (N_f + d) \\cdot k_B T \\cdot \\tau_p^2
+        W = (N_f + d) \cdot k_B T \cdot \tau_p^2
 
     where:
     - N_f = 3N is the number of degrees of freedom (N atoms in 3D)
     - d = 3 is the dimensionality (for 3D simulations)
     - k_B T is the thermal energy (in reduced units, k_B = 1)
-    - τ_p is the pressure relaxation time
+    - :math:`\tau_p` is the pressure relaxation time
 
     Larger W gives slower pressure equilibration (more stable but slower to
     reach target pressure). Smaller W gives faster equilibration but may
@@ -1893,7 +1893,7 @@ def compute_barostat_mass(
 
     Notes
     -----
-    - The formula assumes k_B = 1 (reduced units). Scale τ_p accordingly
+    - The formula assumes k_B = 1 (reduced units). Scale :math:`\tau_p` accordingly
       for real units.
     - For isotropic barostat, a single mass controls all cell dimensions.
     - For anisotropic/triclinic barostat, the same mass is typically used
@@ -1930,27 +1930,27 @@ def compute_cell_kinetic_energy(
     volumes: wp.array = None,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Compute kinetic energy of cell degrees of freedom.
 
-    KE_cell = 0.5 * W * ||ε̇||²_F
+    :math:`KE_{cell} = \frac{1}{2} W \|\dot{\varepsilon}\|_F^2`
 
     Parameters
     ----------
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Strain-rate matrices ε̇ = p_g/W. Shape (B,).
+        Strain-rate matrices :math:`\dot{\varepsilon} = p_g/W`. Shape (B,).
     cell_masses : wp.array
         Barostat masses. Shape (B,). Note that this is the per-DOF mass
-        ``W = (d + 1) k_B T τ_p²`` consumed by the strain-rate update,
-        not the full barostat mass ``d · W``.
+        :math:`W = (d + 1) k_B T \tau_p^2` consumed by the strain-rate update,
+        not the full barostat mass :math:`d \cdot W`.
     kinetic_energy : wp.array(dtype=scalar)
         Output cell kinetic energy. Shape (B,).
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     volumes : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     device : str, optional
         Warp device.
 
@@ -2095,7 +2095,7 @@ def npt_barostat_half_step(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """NPT barostat half-step: ε̇ += (dt/2)·(V/W)·(P_inst − P_ext).
+    r"""NPT barostat half-step: :math:`\dot{\varepsilon} += \frac{dt}{2} \frac{V}{W} (P_{inst} - P_{ext})`.
 
     Mode is dispatched by ``target_pressures`` dtype (scalar / vec3 / vec9).
     Barostat-NHC coupling is applied separately by the caller.
@@ -2103,7 +2103,7 @@ def npt_barostat_half_step(
     Parameters
     ----------
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Strain-rate matrices ε̇. Shape (B,). MODIFIED in-place.
+        Strain-rate matrices :math:`\dot{\varepsilon}`. Shape (B,). MODIFIED in-place.
     pressure_tensors : wp.array(dtype=vec9f or vec9d)
         Current pressure tensors from virial. Shape (B,).
     target_pressures : wp.array
@@ -2242,22 +2242,22 @@ def npt_velocity_half_step(
     mode: str = "isotropic",
     device: str = None,
 ) -> None:
-    """
+    r"""
     Perform half-step velocity update for NPT ensemble.
 
     Updates particle velocities accounting for:
     1. Forces from the potential energy surface
     2. Coupling to barostat (cell velocity / strain rate)
-    3. Coupling to thermostat (Nosé-Hoover chain)
+    3. Coupling to thermostat (Nose-Hoover chain)
 
     Mathematical Formulation
     ------------------------
     **Isotropic mode** (default)
-        ``v ← v · exp(-Δt · ((1 + 1/N_atoms) · Tr(ε̇)/3 + η̇₁))``
+        :math:`v \leftarrow v \exp\!\left(-\Delta t \left((1 + 1/N_{atoms}) \frac{\mathrm{Tr}(\dot{\varepsilon})}{3} + \dot{\eta}_1\right)\right)`
     **Anisotropic / triclinic mode**
-        ``v ← v · exp(-Δt · (ε̇ + Tr(ε̇)/(3·N_atoms) · I + η̇₁ · I))``
+        :math:`v \leftarrow v \exp\!\left(-\Delta t \left(\dot{\varepsilon} + \frac{\mathrm{Tr}(\dot{\varepsilon})}{3 N_{atoms}} I + \dot{\eta}_1 I\right)\right)`
 
-    where ``ε̇ = cell_velocities = p_g/W`` and ``η̇₁`` is the first
+    where ``eps_dot = cell_velocities = p_g/W`` and :math:`\dot{\eta}_1` is the first
     thermostat-chain velocity.  This primitive already applies particle
     thermostat drag through ``eta_dots[:, 0]``; callers that apply particle
     NHC velocity scaling as a separate Trotter operator should use
@@ -2273,10 +2273,10 @@ def npt_velocity_half_step(
     forces : wp.array(dtype=wp.vec3f or wp.vec3d)
         Forces on particles. Shape (N,).
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Strain-rate matrices ε̇ = p_g/W. Shape (B,).
+        Strain-rate matrices :math:`\dot{\varepsilon} = p_g/W`. Shape (B,).
     volumes : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     eta_dots : wp.array2d(dtype=scalar)
         Thermostat chain velocities. Shape (B, chain_length).
     num_atoms : wp.array(dtype=wp.int32)
@@ -2290,13 +2290,13 @@ def npt_velocity_half_step(
         Number of atoms per system. Required for batched simulations.
     cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     mode : str, optional
         Pressure control mode. One of:
 
-        - ``"isotropic"`` (default): scalar coupling on ``Tr(ε̇)/3``
-        - ``"anisotropic"``: diagonal coupling on ``ε̇``
-        - ``"triclinic"``: full-tensor coupling on ``ε̇``
+        - ``"isotropic"`` (default): scalar coupling on :math:`\mathrm{Tr}(\dot{\varepsilon})/3`
+        - ``"anisotropic"``: diagonal coupling on :math:`\dot{\varepsilon}`
+        - ``"triclinic"``: full-tensor coupling on :math:`\dot{\varepsilon}`
 
     device : str, optional
         Warp device.
@@ -2382,7 +2382,7 @@ def npt_velocity_half_step_out(
         System state arrays.
     volumes : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     eta_dots : wp.array
         Thermostat chain velocities.
     num_atoms : wp.array(dtype=wp.int32)
@@ -2398,7 +2398,7 @@ def npt_velocity_half_step_out(
         Atom counts per system.
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
     device : str, optional
@@ -2480,7 +2480,7 @@ def npt_position_update(
     batch_idx: wp.array = None,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Update positions for NPT integration.
 
     Parameters
@@ -2492,12 +2492,12 @@ def npt_position_update(
     cells : wp.array
         Cell matrices.
     cell_velocities : wp.array
-        Strain-rate matrices ε̇.
+        Strain-rate matrices :math:`\dot{\varepsilon}`.
     dt : wp.array(dtype=scalar)
         Full time step per system. Shape (B,).
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     batch_idx : wp.array, optional
         System index for each atom.
     device : str, optional
@@ -2540,7 +2540,7 @@ def npt_position_update_out(
     ----------
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
 
     Returns
     -------
@@ -2595,8 +2595,8 @@ def npt_cell_update(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """
-    Update cell matrices: h_new = h + dt · ε̇ · h.
+    r"""
+    Update cell matrices: :math:`h_{new} = h + dt \cdot \dot{\varepsilon} \cdot h`.
 
     Parameters
     ----------
@@ -2740,7 +2740,7 @@ def run_npt_step(
         Zeroed internally before each use.
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     kinetic_tensors : wp.array(dtype=scalar, ndim=2)
         Scratch array for kinetic tensor accumulation. Shape (B, 9).
         Zeroed internally before each use.
@@ -2917,14 +2917,14 @@ def nph_barostat_half_step(
     dt: wp.array,
     device: str = None,
 ) -> None:
-    """
+    r"""
     Perform barostat half-step for NPH ensemble (no thermostat coupling).
 
     NPH (isenthalpic-isobaric) simulations maintain constant pressure and
     enthalpy. Unlike NPT, there is no thermostat - the temperature evolves
     naturally on the constant-enthalpy surface.
 
-    This function updates the cell velocity matrix ḣ based on the pressure
+    This function updates the cell velocity matrix :math:`\dot{h}` based on the pressure
     difference. The pressure control mode is automatically detected from
     the ``target_pressures`` array dtype:
 
@@ -2940,24 +2940,24 @@ def nph_barostat_half_step(
 
     .. math::
 
-        \\ddot{h} = \\frac{V}{W}(P - P_{ext})
+        \ddot{h} = \frac{V}{W}(P - P_{ext})
 
     **Anisotropic mode:**
 
     .. math::
 
-        \\ddot{h}_{ii} = \\frac{V}{W}(P_{ii} - P_{ext,ii})
+        \ddot{h}_{ii} = \frac{V}{W}(P_{ii} - P_{ext,ii})
 
     **Triclinic mode:**
 
     .. math::
 
-        \\ddot{h}_{ij} = \\frac{V}{W}(P_{ij} - P_{ext,ij})
+        \ddot{h}_{ij} = \frac{V}{W}(P_{ij} - P_{ext,ij})
 
     Parameters
     ----------
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Strain-rate matrices ε̇. Shape (B,). **MODIFIED in-place.**
+        Strain-rate matrices :math:`\dot{\varepsilon}`. Shape (B,). **MODIFIED in-place.**
     pressure_tensors : wp.array(dtype=vec9f or vec9d)
         Current pressure tensors from virial. Shape (B,).
     target_pressures : wp.array
@@ -3119,7 +3119,7 @@ def nph_velocity_half_step(
     mode: str = "isotropic",
     device: str = None,
 ) -> None:
-    """
+    r"""
     Perform half-step velocity update for NPH ensemble (no thermostat).
 
     Updates particle velocities accounting for:
@@ -3132,9 +3132,9 @@ def nph_velocity_half_step(
     Mathematical Formulation
     ------------------------
     **Isotropic mode**
-        ``v ← v · exp(-Δt · (1 + 1/N_atoms) · Tr(ε̇)/3)``
+        :math:`v \leftarrow v \exp\!\left(-\Delta t (1 + 1/N_{atoms}) \frac{\mathrm{Tr}(\dot{\varepsilon})}{3}\right)`
     **Anisotropic / triclinic mode**
-        ``v ← v · exp(-Δt · (ε̇ + Tr(ε̇)/(3·N_atoms) · I))``
+        :math:`v \leftarrow v \exp\!\left(-\Delta t \left(\dot{\varepsilon} + \frac{\mathrm{Tr}(\dot{\varepsilon})}{3 N_{atoms}} I\right)\right)`
 
     Parameters
     ----------
@@ -3145,10 +3145,10 @@ def nph_velocity_half_step(
     forces : wp.array(dtype=wp.vec3f or wp.vec3d)
         Forces on particles.
     cell_velocities : wp.array(dtype=wp.mat33f or wp.mat33d)
-        Strain-rate matrices ε̇ = p_g/W.
+        Strain-rate matrices :math:`\dot{\varepsilon} = p_g/W`.
     volumes : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3160,13 +3160,13 @@ def nph_velocity_half_step(
         Number of atoms per system.
     cells_inv : wp.array(dtype=wp.mat33f or wp.mat33d), optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     mode : str, optional
         Pressure control mode:
 
-        - ``"isotropic"``: scalar coupling on ``Tr(ε̇)/3``
-        - ``"anisotropic"``: diagonal coupling on ``ε̇``
-        - ``"triclinic"``: full-tensor coupling on ``ε̇``
+        - ``"isotropic"``: scalar coupling on :math:`\mathrm{Tr}(\dot{\varepsilon})/3`
+        - ``"anisotropic"``: diagonal coupling on :math:`\dot{\varepsilon}`
+        - ``"triclinic"``: full-tensor coupling on :math:`\dot{\varepsilon}`
 
     device : str, optional
         Warp device.
@@ -3239,7 +3239,7 @@ def nph_velocity_half_step_out(
         System state arrays.
     volumes : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     num_atoms : wp.array(dtype=wp.int32)
         Atom count for single-system mode. Shape (1,).
     dt : wp.array(dtype=scalar)
@@ -3251,7 +3251,7 @@ def nph_velocity_half_step_out(
         For batched simulations.
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     mode : str, optional
         Pressure control mode: "isotropic", "anisotropic", or "triclinic".
     device : str, optional
@@ -3340,7 +3340,7 @@ def nph_position_update(
     ----------
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     """
     if cells_inv is not None:
         _warn_cells_inv_deprecated()
@@ -3375,7 +3375,7 @@ def nph_position_update_out(
     ----------
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
 
     Returns
     -------
@@ -3480,7 +3480,7 @@ def run_nph_step(
         Zeroed internally before each use.
     cells_inv : wp.array, optional
         .. deprecated:: 0.3.1
-            Ignored; ``cell_velocities`` is the strain rate ``ε̇ = p_g/W``.
+            Ignored; ``cell_velocities`` is the strain rate ``eps_dot = p_g/W``.
     kinetic_tensors : wp.array(dtype=scalar, ndim=2)
         Scratch array for kinetic tensor accumulation. Shape (B, 9).
         Zeroed internally before each use.

@@ -160,10 +160,10 @@ def _pme_green_structure_factor_kernel(
     green_function: wp.array3d(dtype=Any),  # (Nx, Ny, Nz_rfft)
     structure_factor_sq: wp.array3d(dtype=Any),  # (Nx, Ny, Nz_rfft)
 ):
-    """Compute PME Green's function and B-spline structure factor correction.
+    r"""Compute PME Green's function and B-spline structure factor correction.
 
     Computes two arrays needed for PME reciprocal space:
-    1. Green's function: G(k) = (2π/V) * exp(-k²/(4α²)) / k²
+    1. Green's function: :math:`G(k) = (2\pi/V) \cdot \exp(-k^2/(4\alpha^2)) / k^2`
     2. Structure factor squared: :math:`|B(k)|^2` for B-spline dealiasing
 
     The structure factor correction accounts for aliasing from B-spline
@@ -201,7 +201,7 @@ def _pme_green_structure_factor_kernel(
     Notes
     -----
     - k=0 (grid point [0,0,0]) is explicitly set to zero (tin-foil boundary conditions).
-    - Near-zero k² values are set to zero to avoid division by zero.
+    - Near-zero :math:`k^2` values are set to zero to avoid division by zero.
     - Structure factor is clamped to avoid division by zero in dealiasing.
     - Uses rfft symmetry: only Nz_rfft = Nz//2 + 1 points in z.
     """
@@ -274,12 +274,12 @@ def _batch_pme_green_structure_factor_kernel(
     green_function: wp.array4d(dtype=Any),  # (B, Nx, Ny, Nz_rfft)
     structure_factor_sq: wp.array3d(dtype=Any),  # (Nx, Ny, Nz_rfft)
 ):
-    """Compute PME Green's function and B-spline structure factor for batched systems.
+    r"""Compute PME Green's function and B-spline structure factor for batched systems.
 
     Batched version of _pme_green_structure_factor_kernel. Each system can have
     different alpha and volume values, but shares the same mesh dimensions.
 
-    Green's function: G_s(k) = (2π/V_s) * exp(-k²/(4α_s²)) / k²
+    Green's function: :math:`G_s(k) = (2\pi/V_s) \cdot \exp(-k^2/(4\alpha_s^2)) / k^2`
     Structure factor: :math:`|B(k)|^2` (computed once, shared across systems)
 
     Launch Grid
@@ -314,7 +314,7 @@ def _batch_pme_green_structure_factor_kernel(
     Notes
     -----
     - k=0 (grid point [0,0,0]) is explicitly set to zero for each system.
-    - Near-zero k² values are set to zero to avoid division by zero.
+    - Near-zero :math:`k^2` values are set to zero to avoid division by zero.
     - Structure factor is computed only once (at batch_idx=0) since it depends
       only on mesh dimensions and spline order, not on system parameters.
     - Uses rfft symmetry: only Nz_rfft = Nz//2 + 1 points in z.
@@ -456,15 +456,23 @@ def _pme_virial_bg_backward_per_system_kernel(
     grad_alpha: wp.array(dtype=Any),  # (B,) OUT — dL/dα per system
     grad_cell: wp.array3d(dtype=Any),  # (B, 3, 3) OUT — dL/dC
 ):
-    """Per-system: turn the cotangent of virial_out into per-system dL/dQ, dL/dα, dL/dC.
+    r"""Per-system: turn the cotangent of virial_out into per-system dL/dQ, dL/dalpha, dL/dC.
 
-    From ``virial_out[s,i,j] = virial_in[s,i,j] - δ_ij · E_bg(s)`` (where
-    ``E_bg = π Q² / (2 α² V)`` and ``V = |det(C)|``):
-      dL/dE_bg(s) = -(g[s,0,0] + g[s,1,1] + g[s,2,2])
-      dE_bg/dQ    =  π Q / (α² V)
-      dE_bg/dα    = -π Q² / (α³ V)
-      dE_bg/dV    = -π Q² / (2 α² V²)
-      d|det C|/dC = sign(det C) · cofactor(C)   (Jacobi's formula)
+    From ``virial_out[s,i,j] = virial_in[s,i,j] - delta_ij * E_bg(s)`` (where
+    :math:`E_{bg} = \pi Q^2 / (2 \alpha^2 V)` and ``V = |det(C)|``):
+
+    .. math::
+
+        dL/dE_{bg}(s) = -(g[s,0,0] + g[s,1,1] + g[s,2,2])
+
+        dE_{bg}/dQ = \pi Q / (\alpha^2 V)
+
+        dE_{bg}/d\alpha = -\pi Q^2 / (\alpha^3 V)
+
+        dE_{bg}/dV = -\pi Q^2 / (2 \alpha^2 V^2)
+
+        d|\det C|/dC = \text{sign}(\det C) \cdot \text{cofactor}(C) \quad \text{(Jacobi's formula)}
+
     """
     s = wp.tid()
 
@@ -1144,21 +1152,27 @@ def pme_energy_corrections(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply self-energy and background corrections to PME energies.
+    r"""Apply self-energy and background corrections to PME energies.
 
     Framework-agnostic launcher for single-system energy corrections.
 
-    Converts raw potential values (φ_i) to corrected per-atom energies by:
-    1. Multiplying potential by charge: E_pot = q_i * φ_i
-    2. Subtracting self-energy: E_self = (α/√π) * q_i²
-    3. Subtracting background: E_bg = (π/(2α²V)) * q_i * Q_total
+    Converts raw potential values :math:`\phi_i` to corrected per-atom energies by:
 
-    Final: E_i = q_i * φ_i - (α/√π) * q_i² - (π/(2α²V)) * q_i * Q_total
+    1. Multiplying potential by charge: :math:`E_{pot} = q_i \cdot \phi_i`
+    2. Subtracting self-energy: :math:`E_{self} = (\alpha/\sqrt{\pi}) \cdot q_i^2`
+    3. Subtracting background: :math:`E_{bg} = (\pi/(2\alpha^2 V)) \cdot q_i \cdot Q_{total}`
+
+    Final:
+
+    .. math::
+
+        E_i = q_i \cdot \phi_i - \frac{\alpha}{\sqrt{\pi}} q_i^2 - \frac{\pi}{2\alpha^2 V} q_i Q_{total}
+
 
     Parameters
     ----------
     raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         Atomic charges.
     volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
@@ -1166,7 +1180,7 @@ def pme_energy_corrections(
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
     total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Sum of all charges (Q_total = ∑_i q_i).
+        Sum of all charges (:math:`Q_{total} = \sum_i q_i`).
     corrected_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     wp_dtype : type
@@ -1206,7 +1220,7 @@ def batch_pme_energy_corrections(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply self-energy and background corrections for batched PME.
+    r"""Apply self-energy and background corrections for batched PME.
 
     Framework-agnostic launcher for batched energy corrections.
     Each atom looks up its system's parameters via batch_idx.
@@ -1214,7 +1228,7 @@ def batch_pme_energy_corrections(
     Parameters
     ----------
     raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         Atomic charges for all systems concatenated.
     batch_idx : wp.array, shape (N_total,), dtype=wp.int32
@@ -1224,7 +1238,7 @@ def batch_pme_energy_corrections(
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
     total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system sum of charges (Q_s = ∑_{i∈s} q_i).
+        Per-system sum of charges (:math:`Q_s = \sum_{i \in s} q_i`).
     corrected_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     wp_dtype : type
@@ -1474,19 +1488,20 @@ def pme_energy_corrections_with_charge_grad(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply corrections and compute charge gradients for PME energies.
+    r"""Apply corrections and compute charge gradients for PME energies.
 
     Framework-agnostic launcher for single-system energy corrections
     with analytical charge gradient computation.
 
     Computes both corrected energies and analytical charge gradients:
-    - Energy: E_i = q_i * φ_i - (α/√π) * q_i² - (π/(2α²V)) * q_i * Q_total
-    - Charge gradient: ∂E_total/∂q_i = 2*φ_i - 2*(α/√π)*q_i - (π/(α²V))*Q_total
+
+    - Energy: :math:`E_i = q_i \phi_i - (\alpha/\sqrt{\pi}) q_i^2 - (\pi/(2\alpha^2 V)) q_i Q_{total}`
+    - Charge gradient: :math:`\partial E_{total}/\partial q_i = 2\phi_i - 2(\alpha/\sqrt{\pi})q_i - (\pi/(\alpha^2 V))Q_{total}`
 
     Parameters
     ----------
     raw_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         Atomic charges.
     volume : wp.array, shape (1,), dtype=wp.float32 or wp.float64
@@ -1494,11 +1509,11 @@ def pme_energy_corrections_with_charge_grad(
     alpha : wp.array, shape (1,), dtype=wp.float32 or wp.float64
         Ewald splitting parameter.
     total_charge : wp.array, shape (1,), dtype=wp.float32 or wp.float64
-        Sum of all charges (Q_total = ∑_i q_i).
+        Sum of all charges (:math:`Q_{total} = \sum_i q_i`).
     corrected_energies : wp.array, shape (N,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     charge_gradients : wp.array, shape (N,), dtype=wp.float32 or wp.float64
-        OUTPUT: Analytical charge gradients ∂E_total/∂q_i.
+        OUTPUT: Analytical charge gradients :math:`\partial E_{total}/\partial q_i`.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64).
     device : str | None
@@ -1539,7 +1554,7 @@ def batch_pme_energy_corrections_with_charge_grad(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply corrections and compute charge gradients for batched PME.
+    r"""Apply corrections and compute charge gradients for batched PME.
 
     Framework-agnostic launcher for batched energy corrections
     with analytical charge gradient computation.
@@ -1547,7 +1562,7 @@ def batch_pme_energy_corrections_with_charge_grad(
     Parameters
     ----------
     raw_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        Raw potential values φ_i from mesh interpolation.
+        Raw potential values :math:`\phi_i` from mesh interpolation.
     charges : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         Atomic charges for all systems concatenated.
     batch_idx : wp.array, shape (N_total,), dtype=wp.int32
@@ -1557,11 +1572,11 @@ def batch_pme_energy_corrections_with_charge_grad(
     alpha : wp.array, shape (B,), dtype=wp.float32 or wp.float64
         Per-system Ewald splitting parameter.
     total_charges : wp.array, shape (B,), dtype=wp.float32 or wp.float64
-        Per-system sum of charges (Q_s = ∑_{i∈s} q_i).
+        Per-system sum of charges (:math:`Q_s = \sum_{i \in s} q_i`).
     corrected_energies : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
         OUTPUT: Corrected per-atom energies.
     charge_gradients : wp.array, shape (N_total,), dtype=wp.float32 or wp.float64
-        OUTPUT: Analytical charge gradients ∂E_total/∂q_i.
+        OUTPUT: Analytical charge gradients :math:`\partial E_{total}/\partial q_i`.
     wp_dtype : type
         Warp scalar dtype (wp.float32 or wp.float64).
     device : str | None
@@ -1595,11 +1610,11 @@ def pme_virial_bg_correction(
     wp_dtype: type,
     device: str | None = None,
 ) -> None:
-    """Apply non-neutral background virial correction.
+    r"""Apply non-neutral background virial correction.
 
     Two-pass: pass 1 reduces per-atom ``charges`` into per-system
     ``total_charges`` (zero-initialized by the caller) via atomic_add;
-    pass 2 computes ``V = |det(cell[s])|``, ``E_bg = π Q² / (2 α² V)``,
+    pass 2 computes ``V = |det(cell[s])|``, :math:`E_{bg} = \pi Q^2 / (2 \alpha^2 V)`,
     subtracts ``E_bg`` from the three diagonal entries of ``virial_in``,
     and writes the result to ``virial_out``. Single-system uses
     ``batch_idx`` filled with zeros.
@@ -1608,11 +1623,11 @@ def pme_virial_bg_correction(
       charges       (N,)
       batch_idx     (N,) int32
       cell          (B, 3, 3)
-      volume        (B,) — caller-supplied volume or dummy
+      volume        (B,) - caller-supplied volume or dummy
       alpha         (B,)
-      total_charges (B,)  — zero-initialized by caller; written in pass 1
+      total_charges (B,)  - zero-initialized by caller; written in pass 1
       virial_in     (B, 3, 3)
-      virial_out    (B, 3, 3) — written in pass 2 (may alias virial_in)
+      virial_out    (B, 3, 3) - written in pass 2 (may alias virial_in)
     """
     num_atoms = charges.shape[0]
     num_systems = total_charges.shape[0]
@@ -1659,7 +1674,7 @@ def pme_virial_bg_correction_backward(
     Three passes:
       1) reduce ``charges`` into ``total_charges`` (Q per system)
       2) per-system: turn cotangent ``grad_virial`` into ``grad_total_charges``,
-         ``grad_alpha``, ``grad_cell`` via dE_bg/dQ, dE_bg/dα, and Jacobi's
+         ``grad_alpha``, ``grad_cell`` via dE_bg/dQ, dE_bg/dalpha, and Jacobi's
          formula for d|det C|/dC
       3) per-atom: scatter ``grad_total_charges[s(j)]`` to ``grad_charges[j]``
 

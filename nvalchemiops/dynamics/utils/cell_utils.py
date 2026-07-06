@@ -75,7 +75,7 @@ def _compute_cell_volume_kernel(
     cells: wp.array(dtype=Any),
     volumes: wp.array(dtype=Any),
 ):
-    """Compute cell volume V = det(cell) = a · (b × c).
+    r"""Compute cell volume :math:`V = \det(\text{cell}) = \mathbf{a} \cdot (\mathbf{b} \times \mathbf{c})`.
 
     Launch Grid
     -----------
@@ -171,7 +171,7 @@ def _compute_strain_tensor_kernel(
     cells_ref_inv: wp.array(dtype=Any),
     strains: wp.array(dtype=Any),
 ):
-    """Compute strain tensor: ε = cell @ cell_ref_inv - I.
+    r"""Compute strain tensor: :math:`\varepsilon = \text{cell} \cdot \text{cell\_ref\_inv} - I`.
 
     Launch Grid
     -----------
@@ -739,11 +739,12 @@ def compute_strain_tensor(
     strains: wp.array,
     device: str = None,
 ) -> wp.array:
-    """
+    r"""
     Compute strain tensor from current and reference cells.
 
-    The strain tensor ε is defined by: cell = (I + ε) @ cell_ref
-    So: ε = cell @ cell_ref_inv - I
+    The strain tensor :math:`\varepsilon` is defined by:
+    :math:`\text{cell} = (I + \varepsilon) \cdot \text{cell\_ref}`, so
+    :math:`\varepsilon = \text{cell} \cdot \text{cell\_ref\_inv} - I`.
 
     Parameters
     ----------

@@ -343,7 +343,7 @@ def _multipole_pme_convolve_backward(  # pragma: no cover
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     r"""Backward op — returns ``(grad_mesh_fft, grad_k_squared, grad_volume)``.
 
-    With ``convolved = mesh_fft · factor`` and
+    With ``convolved = mesh_fft`` :math:`\cdot` ``factor`` and
     :math:`\text{factor} = 2\pi \exp(-(1/(4\alpha^2) + \sigma^2) k^2) / (V k^2 \mathrm{sf}^2)`:
 
     - :math:`\partial L/\partial \text{mesh\_fft} = \text{grad\_convolved} \cdot \text{factor}`.
@@ -587,7 +587,7 @@ def _multipole_pme_convolve_double_backward(  # pragma: no cover
     sigma,
     volume,
 ):
-    """Single-system convolve double-backward → (grad_convolved, mesh_fft,
+    """Single-system convolve double-backward -> (grad_convolved, mesh_fft,
     k_squared, volume) grads."""
     return _convolve_double_backward_run(
         gg_mesh_fft,
@@ -621,7 +621,7 @@ def _batch_multipole_pme_convolve_double_backward(  # pragma: no cover
     sigma,
     volume,
 ):
-    """Batched convolve double-backward → (grad_convolved, mesh_fft, k_squared,
+    """Batched convolve double-backward -> (grad_convolved, mesh_fft, k_squared,
     volume) grads; ``volume`` grad is per-system ``(B,)``."""
     return _convolve_double_backward_run(
         gg_mesh_fft,
@@ -768,7 +768,7 @@ def multipole_pme_convolve(
     Coulomb singularity.
 
     Dispatches to the single-system or batched custom_op based on the rank of
-    ``mesh_fft`` (3D → single, 4D → batched).
+    ``mesh_fft`` (3D -> single, 4D -> batched).
 
     Parameters
     ----------
@@ -873,7 +873,7 @@ def _multipole_pme_spread_unified_forward(
     spline_order: int,
     lmax: int,
 ) -> torch.Tensor:
-    """Unified spread (q + μ + Q) — picks (ORDER, LMAX, dtype) overload."""
+    """Unified spread (q + mu + Q) — picks (ORDER, LMAX, dtype) overload."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -997,10 +997,10 @@ def _multipole_pme_spread_unified_double_backward(  # pragma: no cover
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Double-backward of the unified spread (l_max 0/1/2).
+    r"""Double-backward of the unified spread (l_max 0/1/2).
 
     l_max<=1 is pure effective-moment reuse; l_max=2 adds the input-Q octupole
-    ∇³/∇⁴ terms. Returns grads w.r.t. the backward op's inputs at
+    :math:`\nabla^3`/:math:`\nabla^4` terms. Returns grads w.r.t. the backward op's inputs at
     ``second_order_diff_positions = (0, 1, 2, 3, 4)`` —
     ``(grad_mesh, positions, charges, dipoles, quadrupoles)``.
     """
@@ -1296,7 +1296,7 @@ def _batch_multipole_pme_spread_unified_forward(
     spline_order: int,
     lmax: int,
 ) -> torch.Tensor:
-    """Batched unified spread (q + μ + Q) onto per-system meshes."""
+    """Batched unified spread (q + mu + Q) onto per-system meshes."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -1420,11 +1420,11 @@ def _batch_multipole_pme_spread_unified_double_backward(  # pragma: no cover
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Batched double-backward of the unified spread (l_max 0/1/2).
+    r"""Batched double-backward of the unified spread (l_max 0/1/2).
 
     Batched analog of :func:`_multipole_pme_spread_unified_double_backward`:
     l_max<=1 is pure effective-moment reuse (batched fwd + bwd spread); l_max=2
-    adds the input-Q ∇³/∇⁴ octupole terms via the batched octupole kernels.
+    adds the input-Q :math:`\nabla^3`/:math:`\nabla^4` octupole terms via the batched octupole kernels.
     Returns grads w.r.t. the backward op's inputs at
     ``second_order_diff_positions = (0, 1, 2, 3, 4)`` —
     ``(grad_mesh, positions, charges, dipoles, quadrupoles)``.
@@ -1659,11 +1659,11 @@ def _multipole_pme_gather_via_spread_t_forward(
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    r"""Gather ``Sᵀφ`` to atoms → ``(g_q (N,), g_d (N,3), g_Q (N,3,3))``.
+    r"""Gather :math:`S^\top \phi` to atoms -- ``(g_q (N,), g_d (N,3), g_Q (N,3,3))``.
 
-    ``Sᵀ`` is the unified-spread backward: the spread ``ρ = S·m`` is linear in
+    :math:`S^\top` is the unified-spread backward: the spread :math:`\rho = S \cdot m` is linear in
     the moments, so its moment-gradients evaluated at *zero* moments are the
-    gathered potential (``g_q``), field (``g_d``) and ½·hessian (``g_Q``).
+    gathered potential (``g_q``), field (``g_d``) and :math:`\tfrac{1}{2}` hessian (``g_Q``).
     """
     n = p_frac.shape[0]
     dtype = p_frac.dtype
@@ -1711,7 +1711,7 @@ def _multipole_pme_gather_via_spread_t_backward(  # pragma: no cover
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    r"""Adjoint of ``g = Sᵀφ`` → grads w.r.t. ``(phi_grid, p_frac)``.
+    r"""Adjoint of :math:`g = S^\top \phi` -- grads w.r.t. ``(phi_grid, p_frac)``.
 
     With cotangent ``cg = (cg_q, cg_d, cg_Q)`` on ``g``:
 
@@ -1780,17 +1780,19 @@ def _multipole_pme_gather_via_spread_t_double_backward(  # pragma: no cover
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     r"""Second-order backward of :func:`_multipole_pme_gather_via_spread_t_backward`.
 
-    The backward maps ``cg`` to ``d_phi = S·cg`` and ``d_p = ∂<S·cg, φ>/∂p``.
+    The backward maps ``cg`` to ``d_phi = S*cg`` and
+    :math:`d_p = \partial\langle S \cdot cg, \varphi\rangle/\partial p`.
     With cotangents ``gg_phi`` (on ``d_phi``) and ``gg_p`` (on ``d_p``), the
-    scalar ``Φ = <gg_phi, S·cg> + <gg_p, ∂<S·cg, φ>/∂p>`` splits into two groups
-    whose derivatives are *exactly* the unified spread's own backward and
+    scalar :math:`\Phi = \langle gg\_phi, S \cdot cg\rangle + \langle gg\_p, \partial\langle S \cdot cg, \varphi\rangle/\partial p\rangle`
+    splits into two groups whose derivatives are *exactly* the unified spread's own backward and
     double-backward:
 
-    * group A ``<gg_phi, S·cg>`` → ``∂/∂cg = Sᵀ·gg_phi`` (= gather of ``gg_phi``)
-      and ``∂/∂p = ∂<S·cg, gg_phi>/∂p`` (spread-backward grad_positions).
-    * group B ``<gg_p, Bpos(p, cg, φ)>`` is exactly the spread double-backward
-      with ``gg_positions = gg_p``, ``grad_mesh = φ``, moments ``= cg`` —
-      returning ``∂/∂φ``, ``∂/∂p`` and ``∂/∂cg``.
+    * group A :math:`\langle gg\_phi, S \cdot cg\rangle`: :math:`\partial/\partial cg = S^\top \cdot gg\_phi`
+      (= gather of ``gg_phi``) and :math:`\partial/\partial p = \partial\langle S \cdot cg, gg\_phi\rangle/\partial p`
+      (spread-backward grad_positions).
+    * group B :math:`\langle gg\_p, Bpos(p, cg, \varphi)\rangle` is exactly the spread double-backward
+      with ``gg_positions = gg_p``, ``grad_mesh =`` :math:`\varphi`, ``moments = cg`` --
+      returning :math:`\partial/\partial\varphi`, :math:`\partial/\partial p` and :math:`\partial/\partial cg`.
 
     Returns grads for the backward's diff inputs at
     ``second_order_diff_positions = (0, 1, 2, 3, 4)`` =
@@ -1939,7 +1941,7 @@ def _batch_multipole_pme_gather_via_spread_t_forward(
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Batched ``Sᵀφ`` gather → ``(g_q (N,), g_d (N,3), g_Q (N,3,3))``."""
+    r"""Batched :math:`S^\top \phi` gather -- ``(g_q (N,), g_d (N,3), g_Q (N,3,3))``."""
     n = p_frac.shape[0]
     dtype = p_frac.dtype
     device = p_frac.device
@@ -1992,7 +1994,7 @@ def _batch_multipole_pme_gather_via_spread_t_backward(  # pragma: no cover
     spline_order: int,
     lmax: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Batched adjoint of ``g = Sᵀφ`` → grads w.r.t. ``(phi_grid, p_frac)``."""
+    r"""Batched adjoint of :math:`g = S^\top \phi` -- grads w.r.t. ``(phi_grid, p_frac)``."""
     cg_d, cg_Q = _mask_gather_cotangents(cg_d, cg_Q, lmax)
     d_phi = _batch_multipole_pme_spread_unified_forward(
         p_frac,
@@ -2219,7 +2221,7 @@ def _multipole_pme_green_struct_forward(
     mesh_nz: int,
     spline_order: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute ``(G̃(k), |C(k)|²)`` from the multipole-PME Green's kernel."""
+    r"""Compute :math:`(\tilde{G}(k), |C(k)|^2)` from the multipole-PME Green's kernel."""
     device = k_squared.device
     input_dtype = k_squared.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -2254,7 +2256,7 @@ def _multipole_pme_green_struct_forward(
 
 
 def _green_struct_forward_fake(k_squared, *_args):  # pragma: no cover
-    """Fake: ``(G̃, |C|²)`` both match k_squared shape (single-system)."""
+    r"""Fake: :math:`(\tilde{G}, |C|^2)` both match k_squared shape (single-system)."""
     return torch.empty_like(k_squared), torch.empty_like(k_squared)
 
 
@@ -2280,7 +2282,7 @@ def _batch_multipole_pme_green_struct_forward(
     mesh_nz: int,
     spline_order: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Batched ``(G̃_b(k), |C(k)|²)`` — per-system Green's, shared struct."""
+    r"""Batched :math:`(\tilde{G}_b(k), |C(k)|^2)` — per-system Green's, shared struct."""
     device = k_squared.device
     input_dtype = k_squared.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -2315,7 +2317,7 @@ def _batch_multipole_pme_green_struct_forward(
 
 
 def _batch_green_struct_forward_fake(k_squared, *_args):  # pragma: no cover
-    """Fake: ``green`` matches ``(B, Nx, Ny, Nz_rfft)``, ``|C|²`` is shared."""
+    r"""Fake: ``green`` matches ``(B, Nx, Ny, Nz_rfft)``, :math:`|C|^2` is shared."""
     _, nx, ny, nz_rfft = k_squared.shape
     return (
         torch.empty_like(k_squared),
@@ -2361,7 +2363,7 @@ def multipole_pme_green_structure_factor(
     k_squared : torch.Tensor
         - Single-system: shape ``(Nx, Ny, Nz_rfft)``.
         - Batched: shape ``(B, Nx, Ny, Nz_rfft)``.
-        ``|k|²`` at each grid point (rfft half-space).
+        :math:`|k|^2` at each grid point (rfft half-space).
     miller_x, miller_y, miller_z : torch.Tensor
         Miller indices from ``fftfreq`` / ``rfftfreq`` — shared across
         batch (mesh geometry is the same for all systems).
@@ -2372,7 +2374,7 @@ def multipole_pme_green_structure_factor(
         Full mesh dimensions ``(Nx, Ny, Nz)`` (note ``Nz``, not
         ``Nz_rfft``).
     spline_order : int, default 4
-        B-spline order. ``|C|² = (sinc_x sinc_y sinc_z)^(2·spline_order)``.
+        B-spline order. :math:`|C|^2 = (\mathrm{sinc}_x \, \mathrm{sinc}_y \, \mathrm{sinc}_z)^{2 \cdot \mathrm{spline\_order}}`.
 
     Returns
     -------
@@ -2423,7 +2425,7 @@ def _multipole_pme_gather_potential_forward(
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> torch.Tensor:
-    """Gather ``φ(r_i) = Σ_g B_p(r_i, g) · φ_grid[g]`` (single-system)."""
+    r"""Gather :math:`\phi(r_i) = \sum_g B_p(r_i, g) \cdot \phi_\text{grid}[g]` (single-system)."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -2451,7 +2453,7 @@ def _multipole_pme_gather_potential_backward(  # pragma: no cover
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Backward: spread grad_output onto mesh + gather_gradient for ∂L/∂r."""
+    r"""Backward: spread grad_output onto mesh + gather_gradient for :math:`\partial L/\partial r`."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -2511,10 +2513,10 @@ def _gather_grad_field(  # pragma: no cover
     spline_order: int,
     mesh: torch.Tensor,
 ) -> torch.Tensor:
-    r"""``Σ_g weight_i · ∇B(r_i, g) · mesh[g]`` per atom ``(N, 3)`` (Warp, with CSR fallback).
+    r""":math:`\sum_g \text{weight}_i \cdot \nabla B(r_i, g) \cdot \text{mesh}[g]` per atom ``(N, 3)`` (Warp, with CSR fallback).
 
     Returns the gathered gradient (NOT negated) — the gather-gradient launcher
-    emits the force convention ``-Σ_g weight ∇B mesh``, so this negates it. The
+    emits the force convention :math:`-\sum_g \text{weight} \, \nabla B \, \text{mesh}`, so this negates it. The
     ``multipole_pme_gather_gradient_launch`` tiled kernel falls back to the CSR
     ``spline_gather_gradient`` on CPU / unsupported configs
     ([[feedback_warp_launch_tiled_cpu_silent]]).
@@ -2561,9 +2563,9 @@ def _hessian_contract(  # pragma: no cover
     spline_order: int,
     mesh: torch.Tensor,
 ) -> torch.Tensor:
-    r"""``(Σ_g ∇²B(r_i, g) mesh[g]) · direction_i`` per atom ``(N, 3)`` (Warp).
+    r""":math:`\bigl(\sum_g \nabla^2 B(r_i, g) \, \text{mesh}[g]\bigr) \cdot \text{direction}_i` per atom ``(N, 3)`` (Warp).
 
-    The directional Hessian-gather ``Σ_α direction[α] Σ_g mesh(g) ∂²B/∂r_α∂r_γ``,
+    The directional Hessian-gather :math:`\sum_\alpha \text{direction}[\alpha] \sum_g \text{mesh}(g) \, \partial^2 B/\partial r_\alpha \partial r_\gamma`,
     computed via the unified-spread backward (``lmax=1``, ``dipoles=direction``,
     ``grad_mesh=mesh``) — the same primitive ``gather_field``'s position-backward
     uses. Stencil math stays in Warp.
@@ -2617,17 +2619,17 @@ def _multipole_pme_gather_potential_double_backward(  # pragma: no cover
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     r"""Second-order backward of :func:`_multipole_pme_gather_potential_backward`.
 
-    The first backward maps ``c = grad_output`` to ``gm[g] = Σ_i c_i B(r_i, g)``
-    (spread) and ``gp_i = c_i · F_i`` with ``F_i = Σ_g ∇B(r_i, g) mesh[g]``. With
+    The first backward maps ``c = grad_output`` to :math:`gm[g] = \sum_i c_i B(r_i, g)`
+    (spread) and :math:`gp_i = c_i \cdot F_i` with :math:`F_i = \sum_g \nabla B(r_i, g) \, \text{mesh}[g]`. With
     cotangents ``gg_m`` (on ``gm``) and ``gg_p`` (on ``gp``):
 
     .. math::
 
-        \partial/\partial c_i &= \text{gather}(gg_m)_i + gg_{p,i} \cdot F_i \\
-        \partial/\partial mesh[g] &= \sum_i (c_i\, gg_{p,i}) \cdot \nabla B(r_i, g)
+        \partial/\partial c_i &= \mathrm{gather}(gg_m)_i + gg_{p,i} \cdot F_i \\
+        \partial/\partial \mathrm{mesh}[g] &= \sum_i (c_i\, gg_{p,i}) \cdot \nabla B(r_i, g)
             \quad (\text{dipole-spread of } d_i = c_i\, gg_{p,i}) \\
-        \partial/\partial r_i &= c_i\, \text{gatherGrad}(gg_m)_i
-            + c_i\, (H_i \cdot gg_{p,i}),\quad H_i = \sum_g \nabla^2 B(r_i, g)\, mesh[g]
+        \partial/\partial r_i &= c_i\, \mathrm{gatherGrad}(gg_m)_i
+            + c_i\, (H_i \cdot gg_{p,i}),\quad H_i = \sum_g \nabla^2 B(r_i, g)\, \mathrm{mesh}[g]
 
     All stencil sums run in Warp launchers (gather / gather-gradient / spread /
     unified-spread-backward); only O(N) per-atom vector combines are torch.
@@ -2806,7 +2808,7 @@ def _batch_gather_grad_field(  # pragma: no cover
     spline_order: int,
     mesh: torch.Tensor,
 ) -> torch.Tensor:
-    """Batched companion of :func:`_gather_grad_field` (``Σ_g w·∇B·mesh``, ``(N,3)``)."""
+    r"""Batched companion of :func:`_gather_grad_field` (:math:`\sum_g w \cdot \nabla B \cdot \text{mesh}`, ``(N,3)``)."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -2853,7 +2855,7 @@ def _batch_hessian_contract(  # pragma: no cover
     spline_order: int,
     mesh: torch.Tensor,
 ) -> torch.Tensor:
-    """Batched companion of :func:`_hessian_contract` (``(Σ_g ∇²B·mesh)·dir``, ``(N,3)``)."""
+    r"""Batched companion of :func:`_hessian_contract` (:math:`(\sum_g \nabla^2 B \cdot \text{mesh}) \cdot \text{dir}`, ``(N,3)``)."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -3039,8 +3041,8 @@ def multipole_pme_gather_potential(
 
     Notes
     -----
-    Backward implements both ``∂L/∂mesh`` (spread of the cotangent) and
-    ``∂L/∂positions`` (gather-gradient against the grid).
+    Backward implements both :math:`\partial L/\partial \text{mesh}` (spread of the cotangent) and
+    :math:`\partial L/\partial \text{positions}` (gather-gradient against the grid).
     """
     if batch_idx is None:
         cell_inv_t_resolved = _resolve_cell_inv_t(cell, cell_inv_t)
@@ -3064,7 +3066,7 @@ def _multipole_pme_gather_field_forward(
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> torch.Tensor:
-    """Gather ``∇_{cart} φ(r_i)`` (single-system) — gradient-gather + sign flip."""
+    r"""Gather :math:`\nabla_\text{cart} \phi(r_i)` (single-system) — gradient-gather + sign flip."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -3104,13 +3106,12 @@ def _multipole_pme_gather_field_backward(  # pragma: no cover
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    r"""Two-slot backward — ``∂L/∂mesh`` and ``∂L/∂positions``.
+    r"""Two-slot backward — :math:`\partial L/\partial \text{mesh}` and :math:`\partial L/\partial \text{positions}`.
 
-    - ``∂L/∂mesh(g) = Σ_i Σ_α grad_field[i, α] · ∂B/∂r_α(r_i, g)``
+    - :math:`\partial L/\partial \text{mesh}(g) = \sum_i \sum_\alpha \text{grad\_field}[i, \alpha] \cdot \partial B/\partial r_\alpha(r_i, g)`
       — same as "spread ``grad_field`` as dipoles" (``multipole_pme_spread_launch``
       with charges=0).
-    - ``∂L/∂r_γ[i] = Σ_α grad_field[i, α] · Σ_g mesh(g) ·
-      ∂²B/∂r_α∂r_γ(r_i, g)``
+    - :math:`\partial L/\partial r_\gamma[i] = \sum_\alpha \text{grad\_field}[i, \alpha] \cdot \sum_g \text{mesh}(g) \cdot \partial^2 B/\partial r_\alpha \partial r_\gamma(r_i, g)`
       — a rank-2 Hessian gather at the atom. Implemented via the
       unified-spread backward kernel with ``dipoles = grad_field``,
       ``charges = 0``, ``quadrupoles = 0``, ``lmax = 1``,
@@ -3190,9 +3191,9 @@ def _quad_gradpos(  # pragma: no cover
     spline_order: int,
     mesh: torch.Tensor,
 ) -> torch.Tensor:
-    r"""``Σ_{αβ} Q_i[α,β] Σ_g mesh[g] ∂³B/∂r_α∂r_β∂r_γ(r_i,g)`` per atom ``(N,3)``.
+    r""":math:`\sum_{\alpha\beta} Q_i[\alpha,\beta] \sum_g \text{mesh}[g] \, \partial^3 B/\partial r_\alpha \partial r_\beta \partial r_\gamma(r_i,g)` per atom ``(N,3)``.
 
-    The ∂³B contraction of a per-atom Cartesian quadrupole against the mesh —
+    The :math:`\partial^3 B` contraction of a per-atom Cartesian quadrupole against the mesh —
     the position-derivative of the quadrupole spread. Computed via the unified
     spread backward (``lmax=2``, ``quadrupoles=Q``, ``grad_mesh=mesh``); its
     ``grad_positions`` output is exactly this third-derivative gather. Stencil
@@ -3245,9 +3246,9 @@ def _quad_spread(  # pragma: no cover
     device: torch.device,
     input_dtype: torch.dtype,
 ) -> torch.Tensor:
-    r"""``Σ_i Σ_{αβ} Q_i[α,β] ∂²B/∂r_α∂r_β(r_i,g)`` on the mesh ``(quad-spread)``.
+    r""":math:`\sum_i \sum_{\alpha\beta} Q_i[\alpha,\beta] \, \partial^2 B/\partial r_\alpha \partial r_\beta(r_i,g)` on the mesh ``(quad-spread)``.
 
-    The ∂²B (quadrupole) channel of the unified spread (``lmax=2``, ``charges=0``,
+    The :math:`\partial^2 B` (quadrupole) channel of the unified spread (``lmax=2``, ``charges=0``,
     ``dipoles=0``) — the mesh-side adjoint of the Hessian gather.
     """
     wp_scalar = get_wp_dtype(input_dtype)
@@ -3290,21 +3291,21 @@ def _multipole_pme_gather_field_double_backward(  # pragma: no cover
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     r"""Second-order backward of :func:`_multipole_pme_gather_field_backward`.
 
-    Forward ``field_i = Σ_g ∇B(r_i,g) mesh[g]`` (N,3). Backward (cotangent
-    ``gf``): ``grad_mesh = dipole-spread(gf)``, ``grad_pos_i = H^m_i·gf_i``
-    (``H^m = Σ_g ∇²B·mesh``). With cotangents ``gg_m`` (grad_mesh), ``gg_p``
-    (grad_pos), and ``Q_i = gf_i ⊗ gg_p_i``:
+    Forward :math:`\text{field}_i = \sum_g \nabla B(r_i,g) \, \text{mesh}[g]` (N,3). Backward (cotangent
+    ``gf``): ``grad_mesh = dipole-spread(gf)``, :math:`\text{grad\_pos}_i = H^m_i \cdot gf_i`
+    (:math:`H^m = \sum_g \nabla^2 B \cdot \text{mesh}`). With cotangents ``gg_m`` (grad_mesh), ``gg_p``
+    (grad_pos), and :math:`Q_i = gf_i \otimes gg\_p_i`:
 
     .. math::
 
-        \partial/\partial gf_i &= \text{gatherGrad}(gg_m)_i + H^m_i \cdot gg_{p,i} \\
-        \partial/\partial mesh[g] &= \text{quadSpread}(Q)[g]
+        \partial/\partial gf_i &= \mathrm{gatherGrad}(gg_m)_i + H^m_i \cdot gg_{p,i} \\
+        \partial/\partial \mathrm{mesh}[g] &= \mathrm{quadSpread}(Q)[g]
             \quad (\sum_i Q_i : \nabla^2 B(r_i,g)) \\
         \partial/\partial r_i &= H^{gg_m}_i \cdot gf_i
-            + \text{quadGradPos}(Q, mesh)_i \quad (\nabla^3 B\ \text{term})
+            + \mathrm{quadGradPos}(Q, \mathrm{mesh})_i \quad (\nabla^3 B\ \text{term})
 
     All stencil sums run in Warp launchers; only O(N) per-atom combines + the
-    ``gf ⊗ gg_p`` outer product are torch. Returns grads for the backward's diff
+    :math:`gf \otimes gg\_p` outer product are torch. Returns grads for the backward's diff
     inputs ``(grad_field, mesh, positions)``.
     """
     device = positions.device
@@ -3366,7 +3367,7 @@ def _batch_multipole_pme_gather_field_forward(
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> torch.Tensor:
-    """Batched ``∇_{cart} φ(r_i)`` gather."""
+    r"""Batched :math:`\nabla_\text{cart} \phi(r_i)` gather."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -3409,11 +3410,11 @@ def _batch_multipole_pme_gather_field_backward(  # pragma: no cover
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Two-slot batched backward — ``∂L/∂mesh`` AND ``∂L/∂positions``.
+    r"""Two-slot batched backward — :math:`\partial L/\partial \text{mesh}` AND :math:`\partial L/\partial \text{positions}`.
 
-    Same math as the single-system version (``∂L/∂r_γ[i] = Σ_α
-    grad_field[i, α] · Σ_g mesh(g) · ∂²B/∂r_α∂r_γ(r_i, g)``), routed
-    through ``batch_multipole_pme_spread_backward_launch`` with
+    Same math as the single-system version
+    (:math:`\partial L/\partial r_\gamma[i] = \sum_\alpha \text{grad\_field}[i, \alpha] \cdot \sum_g \text{mesh}(g) \cdot \partial^2 B/\partial r_\alpha \partial r_\gamma(r_i, g)`),
+    routed through ``batch_multipole_pme_spread_backward_launch`` with
     charges=0 and dipoles=grad_field.
     """
     device = positions.device
@@ -3469,7 +3470,7 @@ def _batch_quad_gradpos(  # pragma: no cover
     spline_order: int,
     mesh: torch.Tensor,
 ) -> torch.Tensor:
-    """Batched companion of :func:`_quad_gradpos` (∇³B contraction, ``(N,3)``)."""
+    r"""Batched companion of :func:`_quad_gradpos` (:math:`\nabla^3 B` contraction, ``(N,3)``)."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -3519,7 +3520,7 @@ def _batch_quad_spread(  # pragma: no cover
     device: torch.device,
     input_dtype: torch.dtype,
 ) -> torch.Tensor:
-    """Batched companion of :func:`_quad_spread` (∂²B quad channel → mesh)."""
+    r"""Batched companion of :func:`_quad_spread` (:math:`\partial^2 B` quad channel -> mesh)."""
     wp_scalar = get_wp_dtype(input_dtype)
     wp_vec = get_wp_vec_dtype(input_dtype)
     wp_mat = get_wp_mat_dtype(input_dtype)
@@ -3668,7 +3669,7 @@ def multipole_pme_gather_field(
 
     Notes
     -----
-    Backward implements both ``∂L/∂φ_grid`` and ``∂L/∂positions`` (the
+    Backward implements both :math:`\partial L/\partial \phi_\text{grid}` and :math:`\partial L/\partial \text{positions}` (the
     latter via a rank-2 Hessian gather at the atom), so the field gather is
     fully position-autograd-aware.
     """
@@ -3694,7 +3695,7 @@ def _multipole_pme_gather_hessian_forward(
     cell_inv_t: torch.Tensor,
     spline_order: int,
 ) -> torch.Tensor:
-    """Gather the symmetric ``(N, 3, 3)`` Cartesian Hessian of ``φ``."""
+    r"""Gather the symmetric ``(N, 3, 3)`` Cartesian Hessian of :math:`\phi`."""
     device = positions.device
     input_dtype = positions.dtype
     wp_scalar = get_wp_dtype(input_dtype)
@@ -3737,19 +3738,18 @@ def _multipole_pme_gather_hessian_backward(  # pragma: no cover
 ) -> tuple[torch.Tensor, torch.Tensor]:
     r"""Two-slot backward for ``gather_hessian``.
 
-    Given upstream cotangent ``grad_H[i, α, β]`` (treated as a symmetric
+    Given upstream cotangent ``grad_H[i, alpha, beta]`` (treated as a symmetric
     ``(N, 3, 3)`` tensor since the forward output is symmetric):
 
-    - ``∂L/∂mesh(g) = Σ_i Σ_αβ grad_H[i, α, β] · ∂²B/∂r_α∂r_β(r_i, g)``
-    - ``∂L/∂r_γ[i] = Σ_g mesh(g) · Σ_αβ grad_H[i, α, β] ·
-      ∂³B/∂r_α∂r_β∂r_γ(r_i, g)``
+    - :math:`\partial L/\partial \text{mesh}(g) = \sum_i \sum_{\alpha\beta} \text{grad\_H}[i, \alpha, \beta] \cdot \partial^2 B/\partial r_\alpha \partial r_\beta(r_i, g)`
+    - :math:`\partial L/\partial r_\gamma[i] = \sum_g \text{mesh}(g) \cdot \sum_{\alpha\beta} \text{grad\_H}[i, \alpha, \beta] \cdot \partial^3 B/\partial r_\alpha \partial r_\beta \partial r_\gamma(r_i, g)`
 
     Implementation: reuse the unified-spread Q-channel infrastructure.
-    The unified spread forward with ``Q = 2·grad_H`` (charges=0,
+    The unified spread forward with ``Q = 2*grad_H`` (charges=0,
     dipoles=0, lmax=2) produces exactly the mesh-side adjoint
     (the ``(1/2) Qe : H_frac`` per-cell contribution doubles to
     ``grad_H : H_cart`` per atom). The unified spread backward with
-    the same fake-Q and ``grad_mesh = mesh`` produces the rank-3 ∂³B
+    the same fake-Q and ``grad_mesh = mesh`` produces the rank-3 :math:`\partial^3 B`
     position contraction.
     """
     device = positions.device
@@ -3879,7 +3879,7 @@ def multipole_pme_gather_hessian(
 
     Notes
     -----
-    Backward implements both ``∂L/∂mesh`` and ``∂L/∂positions`` by
+    Backward implements both :math:`\partial L/\partial \text{mesh}` and :math:`\partial L/\partial \text{positions}` by
     reusing the unified-spread Q-channel infrastructure.
     """
     cell_inv_t_resolved = _resolve_cell_inv_t(cell, cell_inv_t)
@@ -3986,7 +3986,7 @@ def _multipole_pme_corrections_backward(  # pragma: no cover
     has_dipoles: bool,
     has_quadrupoles: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Backward: analytic ``∂L/∂{q, μ, Q, V}`` via the Warp backward kernel.
+    r"""Backward: analytic :math:`\partial L/\partial\{q, \mu, Q, V\}` via the Warp backward kernel.
 
     Returns grads for ``charges``, ``dipoles``, ``quadrupoles``, ``volume``
     (the four ``diff_input_positions``). ``grad_out`` is the upstream scalar
@@ -4298,7 +4298,7 @@ def multipole_pme_energy_corrections(
 
     where :math:`F = \mathrm{FIELD\_CONSTANT}` (Coulomb prefactor in
     nvalchemiops's Hartree-like units) and
-    :math:`\sigma_c = \sqrt{\sigma^2 + 1/(4 \alpha^2)}` is the
+    :math:`\sigma_c = \sqrt{\sigma^2 + 1/(4\alpha^2)}` is the
     GTO-Ewald combined width.
 
     Background correction (non-neutral systems only):
@@ -4315,7 +4315,7 @@ def multipole_pme_energy_corrections(
     norm, the per-atom background share, and the analytic input gradients)
     runs in Warp kernels via the ``multipole_pme_corrections`` custom op;
     this wrapper only precomputes the scalar coefficients (folding in
-    σ_c, α, F), feeds fp64 inputs, and the op reduces the per-atom output
+    :math:`\sigma_c`, :math:`\alpha`, F), feeds fp64 inputs, and the op reduces the per-atom output
     (``.sum()`` single / ``scatter_add`` batched). The result is
     autograd-connected to ``charges``, ``dipoles``, ``quadrupoles`` and
     ``volume``. Constants ``sigma``, ``alpha`` are passed as Python floats.
@@ -4449,14 +4449,14 @@ def multipole_pme_energy_corrections_per_atom(
 
     Per-atom ``(N,)`` (single) / ``(N_total,)`` (batched) counterpart of
     :func:`multipole_pme_energy_corrections`. The reduced wrapper returns
-    ``Σ_i correction_i`` (scalar / ``(B,)``); this returns the per-atom
+    :math:`\sum_i \text{correction}_i` (scalar / ``(B,)``); this returns the per-atom
     ``correction_i`` so the per-atom-energy composite can assemble
-    ``E_i = E_real_i + E_recip_i − correction_i`` and let the caller own the
-    reduction (the PR #96 energy-autograd contract — ``Σ_i`` matches the reduced
-    op bit-for-bit, and ``grad(Σ_i, ·)`` matches the reduced op's gradients).
+    ``E_i = E_real_i + E_recip_i - correction_i`` and let the caller own the
+    reduction (the PR #96 energy-autograd contract — :math:`\sum_i` matches the reduced
+    op bit-for-bit, and ``grad(E.sum(), .)`` matches the reduced op's gradients).
 
     Closed forms (all per-atom, ``F = FIELD_CONSTANT``,
-    ``σ_c = sqrt(σ² + 1/(4α²))``):
+    :math:`\sigma_c = \sqrt{\sigma^2 + 1/(4\alpha^2)}`):
 
     .. math::
 
@@ -4466,8 +4466,8 @@ def multipole_pme_energy_corrections_per_atom(
         \text{bg}_i &= \frac{F\pi}{2\alpha^2 V}\, q_i\, Q_\text{total}, \\
         \text{correction}_i &= \text{self}_i - \text{bg}_i.
 
-    The background is split per atom as ``q_i · Q_total`` so the per-atom sum
-    recovers the collective ``(F\pi/2\alpha^2 V) Q_\text{total}^2``. Pure-torch
+    The background is split per atom as :math:`q_i \cdot Q_\text{total}` so the per-atom sum
+    recovers the collective :math:`(F\pi / 2\alpha^2 V) Q_\text{total}^2`. Pure-torch
     elementwise (twice-differentiable for free) — matches the
     ``multipole_pme_corrections`` Warp op's reduced value/grads to machine eps.
 
@@ -4555,7 +4555,7 @@ def _multipole_reciprocal_rho_energy_backward(  # pragma: no cover
     rho: torch.Tensor,
     per_k_factor: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    r"""Backward: ``∂L/∂rho`` and ``∂L/∂per_k_factor``.
+    r"""Backward: :math:`\partial L/\partial \rho` and :math:`\partial L/\partial \text{per\_k\_factor}`.
 
     .. math::
 
@@ -4760,7 +4760,7 @@ def _multipole_self_energy_backward(  # pragma: no cover
     has_dipoles: bool,
     has_quadrupoles: bool,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Backward: ``∂L/∂{q, mu, Q}`` (per-atom cotangent ``grad_out``)."""
+    r"""Backward: :math:`\partial L/\partial\{q, \mu, Q\}` (per-atom cotangent ``grad_out``)."""
     device = charges.device
     wp_scalar = get_wp_dtype(torch.float64)
     wp_vec = get_wp_vec_dtype(torch.float64)
@@ -5001,7 +5001,7 @@ def _multipole_pme_mesh_inner_product_backward(  # pragma: no cover
     rho_grid: torch.Tensor,
     phi_grid: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    r"""Backward: ``∂L/∂rho_grid`` and ``∂L/∂phi_grid`` (bilinear product).
+    r"""Backward: :math:`\partial L/\partial \rho_\text{grid}` and :math:`\partial L/\partial \phi_\text{grid}` (bilinear product).
 
     .. math::
 
@@ -5124,7 +5124,7 @@ def multipole_pme_mesh_inner_product(
     rho_grid: torch.Tensor,
     phi_grid: torch.Tensor,
 ) -> torch.Tensor:
-    r"""Mesh inner product ``Σ_g rho_grid · phi_grid`` (autograd-connected).
+    r"""Mesh inner product :math:`\sum_g \rho_\text{grid} \cdot \phi_\text{grid}` (autograd-connected).
 
     Moves the per-element ``rho_grid * phi_grid`` product physics into a Warp
     kernel; the caller owns the reduction + ``F/(4 pi)`` scale. Accepts the 3D
@@ -5201,7 +5201,7 @@ def _pme_k_squared_backward(  # pragma: no cover
     ny: int,
     nz_rfft: int,
 ) -> torch.Tensor:
-    r"""``∂L/∂inv_cell_t`` given ``∂L/∂k_squared``.
+    r""":math:`\partial L/\partial \text{inv\_cell\_t}` given :math:`\partial L/\partial k^2`.
 
     :math:`\partial k^2/\partial M[c, d] = (2\pi)^2 \cdot 2 \cdot k_c \cdot m_d`
     where :math:`k = M (m_x, m_y, m_z)`. Per-cell contributions are
@@ -5313,8 +5313,8 @@ def _pme_fractionalize_forward(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     r"""Map Cartesian (positions, moments) to the cell-fractional frame.
 
-    Returns ``(p, d_frac, Q_frac)`` with ``p = M·r``, ``d_frac = M·μ``,
-    ``Q_frac = M·Q·Mᵀ`` (``M = cell_inv_t[batch_idx[i]]``). Feeding these to the
+    Returns ``(p, d_frac, Q_frac)`` with :math:`p = M r`, :math:`d\_frac = M \mu`,
+    :math:`Q\_frac = M Q M^\top` (``M = cell_inv_t[batch_idx[i]]``). Feeding these to the
     spread kernel with an identity ``cell_inv_t`` reproduces the cell-coupled
     spread bit-for-bit, so the cell-stress 2nd-order composes through this
     multilinear map's autograd.
@@ -5354,7 +5354,7 @@ def _pme_fractionalize_backward(  # pragma: no cover
     quadrupoles: torch.Tensor,
     batch_idx: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Adjoint of the fractionalize map → (grad_pos, grad_cell, grad_dip, grad_quad)."""
+    """Adjoint of the fractionalize map -- (grad_pos, grad_cell, grad_dip, grad_quad)."""
     device = positions.device
     dtype = positions.dtype
     wp_scalar = get_wp_dtype(dtype)
@@ -5409,7 +5409,7 @@ def _pme_fractionalize_double_backward(  # pragma: no cover
     torch.Tensor,
 ]:
     r"""Second-order backward (stress-loss). Cotangents ``(g_pos, g_cell, g_dip,
-    g_quad)`` on the backward outputs → grads w.r.t. backward inputs at
+    g_quad)`` on the backward outputs -- grads w.r.t. backward inputs at
     ``second_order_diff_positions = (0, 1, 2, 3, 4, 5, 6)`` =
     ``(grad_p, grad_df, grad_qf, positions, cell_inv_t, dipoles, quadrupoles)``.
     """
@@ -5587,29 +5587,29 @@ def multipole_pme_reciprocal_space(
     Composes the spread / Green's / gather wrappers with ``torch.fft``
     into the canonical PME pipeline:
 
-    1. Spread ``ρ_grid = q · B + μ · ∇B``.
+    1. Spread :math:`\rho_\text{grid} = q \cdot B + \mu \cdot \nabla B`.
     2. Forward rfftn (``norm="backward"``).
-    3. Apply ``ρ̃(k) · G̃(k) / |C(k)|²`` (G̃ has the GTO ``exp(-σ²k²)``
-       factor baked in — the full σ², not σ²/2, because the pair-sum
-       convolution multiplies the per-side ``exp(-σ²k²/2)`` Fourier
+    3. Apply :math:`\tilde{\rho}(k) \cdot \tilde{G}(k) / |C(k)|^2` (:math:`\tilde{G}` has the GTO :math:`\exp(-\sigma^2 k^2)`
+       factor baked in — the full :math:`\sigma^2`, not :math:`\sigma^2/2`, because the pair-sum
+       convolution multiplies the per-side :math:`\exp(-\sigma^2 k^2/2)` Fourier
        transform).
     4. Inverse irfftn (``norm="forward"``) — same FFT-norm convention as
-       monopole PME so the 2π-normalized Green's function absorbs the
+       monopole PME so the :math:`2\pi`-normalized Green's function absorbs the
        round-trip scaling.
-    5. Gather φ and ∇φ at atom positions.
-    6. Per-atom raw energy ``q_i · φ(r_i) + μ_i · ∇φ(r_i)``; sum and
-       multiply by ``F/(4π) = FIELD_CONSTANT/(4π)`` to convert from
-       natural Coulomb units (the Green's function uses ``2π/V``) into
+    5. Gather :math:`\phi` and :math:`\nabla\phi` at atom positions.
+    6. Per-atom raw energy :math:`q_i \cdot \phi(r_i) + \mu_i \cdot \nabla\phi(r_i)`; sum and
+       multiply by :math:`F/(4\pi) = \text{FIELD\_CONSTANT}/(4\pi)` to convert from
+       natural Coulomb units (the Green's function uses :math:`2\pi/V`) into
        F-scaled units.
     7. Subtract the self + background corrections (already F-scaled — they
        match ``_multipole_ewald_self_energy_per_atom``).
 
     The dipole sign in step 6 is positive: Parseval on the multipole
-    density (``ρ_grid = q·B + μ·∇_r_atom B``) yields
-    ``E_recip = ⟨ρ_grid, φ_grid⟩ = Σ_i [q_i φ(r_i) + μ_i · ∇φ]``; the
-    apparent ``-μ·∇B`` in the standard multipole-density formula becomes
-    ``+μ·∇_r_atom B`` after the chain-rule sign flip
-    (``∇_r_atom = -∇_grid``).
+    density (:math:`\rho_\text{grid} = q \cdot B + \mu \cdot \nabla_{r_\text{atom}} B`) yields
+    :math:`E_\text{recip} = \langle\rho_\text{grid}, \phi_\text{grid}\rangle = \sum_i [q_i \phi(r_i) + \mu_i \cdot \nabla\phi]`; the
+    apparent :math:`-\mu \cdot \nabla B` in the standard multipole-density formula becomes
+    :math:`+\mu \cdot \nabla_{r_\text{atom}} B` after the chain-rule sign flip
+    (:math:`\nabla_{r_\text{atom}} = -\nabla_\text{grid}`).
 
     Forward only — autograd flows through the wrapper-level ``torch.fft``
     ops plus the analytical backwards of the spread / gather pieces.
@@ -5620,7 +5620,7 @@ def multipole_pme_reciprocal_space(
         Cartesian atom positions.
     multipole_moments : torch.Tensor, shape ``(N, 1)``, ``(N, 4)``, or
         ``(N, 9)``. e3nn spherical-harmonic packing: ``[q]`` (l_max=0),
-        ``[q, μ_y, μ_z, μ_x]`` (l_max=1), or the l_max=1 block plus the
+        ``[q, mu_y, mu_z, mu_x]`` (l_max=1), or the l_max=1 block plus the
         five traceless l=2 channels (l_max=2). The trailing dim selects
         the path; quadrupoles are expanded to the Cartesian symmetric
         ``(N, 3, 3)`` form internally. A pure-monopole ``(N, 1)`` call
@@ -5852,8 +5852,8 @@ def multipole_particle_mesh_ewald(
 
     Single-system or batched, dispatched by ``batch_idx``. Mirrors the
     API of ``multipole_ewald_summation`` (single function with optional
-    ``batch_idx``) but routes the O(N · N_k) reciprocal half through
-    PME, dropping the asymptotic cost to O(M log M + N · p³) at the
+    ``batch_idx``) but routes the :math:`O(N \cdot N_k)` reciprocal half through
+    PME, dropping the asymptotic cost to :math:`O(M \log M + N \cdot p^3)` at the
     cost of a small spline-truncation residual.
 
     The composition matches the direct-k ``multipole_ewald_summation``:
@@ -5861,13 +5861,13 @@ def multipole_particle_mesh_ewald(
     1. Real-space pair sum via
        :func:`~nvalchemiops.torch.interactions.electrostatics.multipole_ewald.multipole_real_space_energy`
        (single, or batched through its ``batch_idx=`` path). Per-atom output
-       is multiplied by ``coulomb_scale = F/(4π)``.
+       is multiplied by ``coulomb_scale = F/(4*pi)``.
     2. Reciprocal piece via :func:`multipole_pme_reciprocal_space` —
        returns ``E_recip - E_self - E_bg`` already in F units.
     3. ``E_total = E_real + E_recip - E_self - E_bg``.
 
-    Direct-k parity holds at the spline-truncation floor (``rtol ≈ 1e-4``
-    at ``mesh = 60³``, ``L = 10``).
+    Direct-k parity holds at the spline-truncation floor (``rtol`` ~ 1e-4
+    at ``mesh = 60^3``, ``L = 10``).
 
     Parameters
     ----------
@@ -5876,7 +5876,7 @@ def multipole_particle_mesh_ewald(
     multipole_moments : torch.Tensor, shape ``(N, 1)``, ``(N, 4)``, or
         ``(N, 9)`` (or the ``N_total`` analog in batched mode). e3nn
         spherical-harmonic packing: ``[q]`` (l_max=0),
-        ``[q, μ_y, μ_z, μ_x]`` (l_max=1), or the l_max=1 block plus the
+        ``[q, mu_y, mu_z, mu_x]`` (l_max=1), or the l_max=1 block plus the
         five traceless l=2 channels (l_max=2). The trailing dim selects
         the l_max path.
     cell : torch.Tensor, shape ``(3, 3)``, ``(1, 3, 3)``, or ``(B, 3, 3)``
@@ -6142,14 +6142,14 @@ def _batch_multipole_pme_reciprocal_space_impl(
     corrections (already batched) with ``torch.fft.rfftn`` along the
     spatial dims:
 
-    1. Batched spread → ``ρ_grid: (B, nx, ny, nz)``.
+    1. Batched spread -- :math:`\rho_\text{grid}`: ``(B, nx, ny, nz)``.
     2. ``torch.fft.rfftn(rho_grid, dim=(1, 2, 3), norm="backward")``.
-    3. Batched Green's function → per-system ``G̃_b(k)``.
-    4. ``mesh_fft / struct_sq * green`` — per-system multiply.
+    3. Batched Green's function -- per-system :math:`\tilde{G}_b(k)`.
+    4. ``mesh_fft / struct_sq * green`` -- per-system multiply.
     5. ``torch.fft.irfftn(..., dim=(1, 2, 3), norm="forward")``.
-    6. Batched gather φ + ∇φ.
-    7. Per-atom ``q_i φ + μ_i · ∇φ``, scaled by ``F/(4π)``,
-       scatter-summed by ``batch_idx`` → per-system raw recip energy.
+    6. Batched gather :math:`\phi` + :math:`\nabla\phi`.
+    7. Per-atom :math:`q_i \phi + \mu_i \cdot \nabla\phi`, scaled by :math:`F/(4\pi)`,
+       scatter-summed by ``batch_idx`` -- per-system raw recip energy.
     8. Subtract per-system self/background corrections.
 
     Sigma and alpha are scalar floats — same convention as

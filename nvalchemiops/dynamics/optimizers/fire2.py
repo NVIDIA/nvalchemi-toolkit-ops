@@ -103,7 +103,7 @@ def _fire2_reduce_only_kernel(
     N: wp.int32,
     elems_per_thread: wp.int32,
 ):
-    """Triple inner-product reduction with deferred velocity half-step.
+    r"""Triple inner-product reduction with deferred velocity half-step.
 
     Computes three inner products per segment without modifying velocities:
     - ``vf[s] = sum(dot(v_upd[i], f[i]) for i where batch_idx[i] == s)``
@@ -132,11 +132,11 @@ def _fire2_reduce_only_kernel(
     batch_idx : wp.array, shape (N,), dtype int32
         Sorted system index per atom in [0, M).
     vf : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: v_upd·f per segment. Zeroed internally before each use.
+        OUTPUT: :math:`v_\text{upd} \cdot f` per segment. Zeroed internally before each use.
     v_sumsq : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: v_upd·v_upd per segment. Zeroed internally before each use.
+        OUTPUT: :math:`v_\text{upd} \cdot v_\text{upd}` per segment. Zeroed internally before each use.
     f_sumsq : wp.array, shape (M,), dtype float32/float64
-        OUTPUT: f·f per segment. Zeroed internally before each use.
+        OUTPUT: :math:`f \cdot f` per segment. Zeroed internally before each use.
     N : int32
         Total number of atoms.
     elems_per_thread : int32
@@ -268,7 +268,7 @@ def _fire2_fused_mix_maxnorm_kernel(
     tmax: Any,
     tmin: Any,
 ):
-    """Fused adaptive parameter update, deferred half-step, velocity mixing, and max-norm reduction.
+    r"""Fused adaptive parameter update, deferred half-step, velocity mixing, and max-norm reduction.
 
     This kernel performs four operations in a single launch:
 
@@ -278,7 +278,7 @@ def _fire2_fused_mix_maxnorm_kernel(
 
     2. **Deferred half-step + velocity mixing** (algebraically combined):
        ``v[i] = mix_a * v[i] + (mix_a * dt_old + mix_b) * f[i]``
-       where ``mix_a = 1 - alpha``, ``mix_b = alpha * sqrt(v·v / f·f)``
+       where ``mix_a = 1 - alpha``, ``mix_b = alpha * sqrt(v.v / f.f)``
 
     3. **State updates** (first atom per segment writes):
        Updates ``alpha[s]``, ``dt[s]``, and ``nsteps_inc[s]``
@@ -306,11 +306,11 @@ def _fire2_fused_mix_maxnorm_kernel(
     batch_idx : wp.array, shape (N,), dtype int32
         Sorted system index per atom in [0, M).
     vf : wp.array, shape (M,), dtype float32/float64
-        v·f inner product per segment from kernel 1 (read-only).
+        :math:`v \cdot f` inner product per segment from kernel 1 (read-only).
     v_sumsq : wp.array, shape (M,), dtype float32/float64
-        v·v inner product per segment from kernel 1 (read-only).
+        :math:`v \cdot v` inner product per segment from kernel 1 (read-only).
     f_sumsq : wp.array, shape (M,), dtype float32/float64
-        f·f inner product per segment from kernel 1 (read-only).
+        :math:`f \cdot f` inner product per segment from kernel 1 (read-only).
     alpha : wp.array, shape (M,), dtype float32/float64
         FIRE2 mixing parameter. Modified in-place by first atom per segment.
     nsteps_inc : wp.array, shape (M,), dtype int32
@@ -471,7 +471,7 @@ def _fire2_clamp_apply_recompute_kernel(
     vf: wp.array(dtype=Any),
     maxstep: Any,
 ):
-    """Step recomputation, clamping, position update, velocity zeroing, and coupled dt scaling.
+    r"""Step recomputation, clamping, position update, velocity zeroing, and coupled dt scaling.
 
     This kernel performs the final operations of the FIRE2 step:
 
@@ -514,7 +514,7 @@ def _fire2_clamp_apply_recompute_kernel(
     max_norm : wp.array, shape (M,), dtype float32/float64
         Maximum step norm per segment from kernel 2.
     vf : wp.array, shape (M,), dtype float32/float64
-        v·f inner product per segment from kernel 1. System is uphill if vf[s] <= 0.
+        :math:`v \cdot f` inner product per segment from kernel 1. System is uphill if vf[s] <= 0.
     maxstep : float32/float64
         Maximum allowed step size (FIRE2 hyperparameter).
 
