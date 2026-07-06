@@ -919,7 +919,30 @@ class MultipoleRhoFunction:
         k_vectors: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.multipole_rho`` (``cache`` -> volume)."""
+        """Dispatch to ``torch.ops.nvalchemiops.multipole_rho`` (``cache`` -> volume).
+
+        Parameters
+        ----------
+        charges : torch.Tensor, shape (N_atoms,)
+            Per-atom monopole charges.
+        dipoles : torch.Tensor, shape (N_atoms, 3)
+            Per-atom Cartesian dipoles in ``(x, y, z)`` order. Pass an
+            all-zero ``(N_atoms, 3)`` tensor for an l=0 system.
+        positions : torch.Tensor, shape (N_atoms, 3)
+            Atomic coordinates.
+        source_phi_hat : torch.Tensor, shape (N_k, 4, 2)
+            Source-basis :math:`\\hat\\phi(k)`; value equals
+            ``cache.source_phi_hat``.
+        k_vectors : torch.Tensor, shape (N_k, 3)
+            Reciprocal-lattice vectors; value equals ``cache.k_vectors``.
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.volume``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_k, 2), dtype=float64
+            Assembled :math:`\rho(k)`.
+        """
         return torch.ops.nvalchemiops.multipole_rho(
             charges, dipoles, positions, source_phi_hat, k_vectors, cache.volume
         )
@@ -1891,7 +1914,32 @@ class MultipoleRhoQFunction:
         k_vectors: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.multipole_rho_q`` (``cache`` -> volume)."""
+        """Dispatch to ``torch.ops.nvalchemiops.multipole_rho_q`` (``cache`` -> volume).
+
+        Parameters
+        ----------
+        quadrupoles : torch.Tensor, shape (N_atoms, 3, 3)
+            Per-atom Cartesian quadrupole tensors (symmetric).
+        positions : torch.Tensor, shape (N_atoms, 3)
+            Atomic coordinates.
+        source_coeff2 : torch.Tensor, shape (N_k,)
+            Per-k l=2 source coefficient :math:`c_2(k)`; value equals
+            ``cache.source_coeff2``.
+        k_vectors : torch.Tensor, shape (N_k, 3)
+            Reciprocal-lattice vectors; value equals ``cache.k_vectors``.
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; must be built with ``l_max>=2``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_k, 2), dtype=float64
+            Additive Q-channel :math:`\rho_Q(k)`.
+
+        Raises
+        ------
+        ValueError
+            If ``cache.source_coeff2`` is ``None`` (cache built without l=2 support).
+        """
         if cache.source_coeff2 is None:
             raise ValueError(
                 "MultipoleRhoQFunction requires a cache built with l_max>=2 "
@@ -2489,7 +2537,26 @@ class MultipoleProjectRawFeaturesFunction:
         k_vectors: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.multipole_project_raw_features``."""
+        """Dispatch to ``torch.ops.nvalchemiops.multipole_project_raw_features``.
+
+        Parameters
+        ----------
+        potential : torch.Tensor, shape (N_k, 2)
+            Reciprocal-space potential :math:`V(k)`.
+        positions : torch.Tensor, shape (N_atoms, 3)
+            Atomic coordinates.
+        receiver_phi_hat : torch.Tensor, shape (N_k, N_sigma, 4, 2)
+            l<=1 receiver basis block; carries the feature cell-grad.
+        k_vectors : torch.Tensor, shape (N_k, 3)
+            Reciprocal-lattice vectors.
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_atoms, N_sigma, 4), dtype=float64
+            Raw (un-self-subtracted) l<=1 features.
+        """
         return torch.ops.nvalchemiops.multipole_project_raw_features(
             potential, positions, receiver_phi_hat, k_vectors, cache.k_factor_proj
         )
@@ -2963,7 +3030,27 @@ class MultipoleProjectRawFeaturesQuadrupoleFunction:
         k_vectors: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``multipole_project_raw_features_quadrupole``."""
+        """Dispatch to ``multipole_project_raw_features_quadrupole``.
+
+        Parameters
+        ----------
+        potential : torch.Tensor, shape (N_k, 2)
+            Reciprocal-space potential :math:`V(k)`.
+        positions : torch.Tensor, shape (N_atoms, 3)
+            Atomic coordinates.
+        receiver_phi_hat_l2 : torch.Tensor, shape (N_k, N_sigma, 5, 2)
+            l=2 receiver basis block ``[:, :, 4:9, :]``; carries the feature
+            cell-grad.
+        k_vectors : torch.Tensor, shape (N_k, 3)
+            Reciprocal-lattice vectors.
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_atoms, N_sigma, 5), dtype=float64
+            Raw (un-self-subtracted) l=2 features in natural layout.
+        """
         return torch.ops.nvalchemiops.multipole_project_raw_features_quadrupole(
             potential,
             positions,

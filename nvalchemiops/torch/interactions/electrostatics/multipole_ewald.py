@@ -127,7 +127,38 @@ class MultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
         neighbor_ptr: torch.Tensor,
         unit_shifts: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Run the first-order backward kernel; save tensors for 2nd-order backward."""
+        """Run the first-order backward kernel; save tensors for 2nd-order backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the second-order backward.
+        grad_energies : torch.Tensor, shape (N,), dtype=float64
+            Upstream energy cotangents.
+        positions : torch.Tensor, shape (N, 3)
+            Atomic positions.
+        charges : torch.Tensor, shape (N,)
+            Atomic charges.
+        cell : torch.Tensor, shape (1, 3, 3)
+            Unit cell matrix.
+        sigma : torch.Tensor, shape (1,)
+            GTO density-basis width :math:`\\sigma`.
+        alpha : torch.Tensor, shape (1,)
+            Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+
+        Returns
+        -------
+        grad_positions : torch.Tensor, shape (N, 3)
+            Gradient of the energy w.r.t. positions.
+        grad_charges : torch.Tensor, shape (N,)
+            Gradient of the energy w.r.t. charges.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -173,7 +204,27 @@ class MultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
     def backward(
         ctx, gg_positions: torch.Tensor, gg_charges: torch.Tensor
     ):  # pragma: no cover
-        """Second-order backward: produces (gg_ge_2nd, gg_pos_2nd, gg_chg_2nd)."""
+        """Run the second-order backward kernel for force-loss training.
+
+        Produces second-order cotangents w.r.t. the first-order backward's
+        inputs: ``(gg_grad_energies, gg_positions, gg_charges)``.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding tensors saved in ``forward``.
+        gg_positions : torch.Tensor, shape (N, 3)
+            Upstream cotangent for ``grad_positions``.
+        gg_charges : torch.Tensor, shape (N,)
+            Upstream cotangent for ``grad_charges``.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Nine-element tuple: ``(gg_grad_energies_2nd, gg_positions_2nd,
+            gg_charges_2nd, None, None, None, None, None, None)`` corresponding
+            to the inputs of ``forward`` (non-differentiable slots are ``None``).
+        """
         (
             grad_energies,
             positions,
@@ -264,7 +315,36 @@ class MultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function):
         unit_shifts: torch.Tensor,
         half_neighbor_list: bool = False,
     ) -> torch.Tensor:
-        """Run the lmax=0 fused Warp kernel; stash analytical gradients in ctx."""
+        """Run the lmax=0 fused Warp kernel; stash analytical gradients in ctx.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to cache precomputed gradients.
+        positions : torch.Tensor, shape (N, 3)
+            Atomic positions.
+        charges : torch.Tensor, shape (N,)
+            Atomic charges.
+        cell : torch.Tensor, shape (1, 3, 3)
+            Unit cell matrix.
+        sigma : torch.Tensor, shape (1,)
+            GTO density-basis width :math:`\\sigma`.
+        alpha : torch.Tensor, shape (1,)
+            Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        half_neighbor_list : bool, optional
+            Whether the neighbor list stores each pair once. Default ``False``.
+
+        Returns
+        -------
+        torch.Tensor, scalar, dtype=float64
+            Scalar total energy summed over all atoms.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -355,9 +435,24 @@ class MultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_E: torch.Tensor):  # pragma: no cover
-        """Broadcast precomputed grads for plain forces; route through the
-        on-tape backward Function under ``create_graph``. Cell-grad is always a
-        scalar broadcast."""
+        """Broadcast precomputed grads for plain forces; route through the on-tape backward Function under ``create_graph``.
+
+        Cell-grad is always a scalar broadcast.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding precomputed gradients and saved tensors.
+        grad_E : torch.Tensor, scalar, dtype=float64
+            Upstream cotangent for the scalar total energy.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(grad_positions, grad_charges, grad_cell, None, None, None, None,
+            None, None)`` — one entry per input to ``forward``; non-differentiable
+            slots are ``None``.
+        """
         (
             pre_grad_positions,
             pre_grad_charges,
@@ -450,7 +545,34 @@ class MultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
         neighbor_ptr: torch.Tensor,
         unit_shifts: torch.Tensor,
     ) -> torch.Tensor:
-        """Run the forward Warp kernel and save tensors for analytical backward."""
+        """Run the l_max=0 forward Warp kernel and save tensors for analytical backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the backward pass.
+        positions : torch.Tensor, shape (N, 3)
+            Atomic positions.
+        charges : torch.Tensor, shape (N,)
+            Atomic charges.
+        cell : torch.Tensor, shape (1, 3, 3)
+            Unit cell matrix.
+        sigma : torch.Tensor, shape (1,)
+            GTO density-basis width :math:`\\sigma`.
+        alpha : torch.Tensor, shape (1,)
+            Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+
+        Returns
+        -------
+        torch.Tensor, shape (N,), dtype=float64
+            Per-atom real-space energies.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         num_atoms = positions.shape[0]
@@ -546,7 +668,42 @@ class MultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         neighbor_ptr: torch.Tensor,
         unit_shifts: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Run the l_max=1 first-order backward Warp kernel."""
+        """Run the l_max=1 first-order backward Warp kernel; save tensors for 2nd-order backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the second-order backward.
+        grad_energies : torch.Tensor, shape (N,), dtype=float64
+            Upstream energy cotangents.
+        positions : torch.Tensor, shape (N, 3)
+            Atomic positions.
+        charges : torch.Tensor, shape (N,)
+            Atomic charges.
+        dipoles : torch.Tensor, shape (N, 3)
+            Atomic dipole moments in Cartesian coordinates.
+        cell : torch.Tensor, shape (1, 3, 3)
+            Unit cell matrix.
+        sigma : torch.Tensor, shape (1,)
+            GTO density-basis width :math:`\\sigma`.
+        alpha : torch.Tensor, shape (1,)
+            Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+
+        Returns
+        -------
+        grad_positions : torch.Tensor, shape (N, 3)
+            Gradient of the energy w.r.t. positions.
+        grad_charges : torch.Tensor, shape (N,)
+            Gradient of the energy w.r.t. charges.
+        grad_dipoles : torch.Tensor, shape (N, 3)
+            Gradient of the energy w.r.t. dipoles.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -601,7 +758,26 @@ class MultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         gg_charges: torch.Tensor,
         gg_dipoles: torch.Tensor,
     ):
-        """Second-order backward via :func:`multipole_real_space_dipole_csr_energy_2nd_backward`."""
+        """Run the second-order backward kernel via :func:`multipole_real_space_dipole_csr_energy_2nd_backward`.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding tensors saved in ``forward``.
+        gg_positions : torch.Tensor, shape (N, 3)
+            Upstream cotangent for ``grad_positions``.
+        gg_charges : torch.Tensor, shape (N,)
+            Upstream cotangent for ``grad_charges``.
+        gg_dipoles : torch.Tensor, shape (N, 3)
+            Upstream cotangent for ``grad_dipoles``.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Ten-element tuple: ``(gg_grad_energies_2nd, gg_positions_2nd,
+            gg_charges_2nd, gg_dipoles_2nd, None, None, None, None, None, None)``
+            corresponding to the inputs of ``forward``.
+        """
         (
             grad_energies,
             positions,
@@ -707,7 +883,38 @@ class MultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
         unit_shifts: torch.Tensor,
         half_neighbor_list: bool = False,
     ) -> torch.Tensor:
-        """Run the lmax=1 fused Warp kernel; stash analytical gradients in ctx."""
+        """Run the lmax=1 fused Warp kernel; stash analytical gradients in ctx.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to cache precomputed gradients.
+        positions : torch.Tensor, shape (N, 3)
+            Atomic positions.
+        charges : torch.Tensor, shape (N,)
+            Atomic charges.
+        dipoles : torch.Tensor, shape (N, 3)
+            Atomic dipole moments in Cartesian coordinates.
+        cell : torch.Tensor, shape (1, 3, 3)
+            Unit cell matrix.
+        sigma : torch.Tensor, shape (1,)
+            GTO density-basis width :math:`\\sigma`.
+        alpha : torch.Tensor, shape (1,)
+            Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        half_neighbor_list : bool, optional
+            Whether the neighbor list stores each pair once. Default ``False``.
+
+        Returns
+        -------
+        torch.Tensor, scalar, dtype=float64
+            Scalar total energy summed over all atoms.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -810,8 +1017,22 @@ class MultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_E: torch.Tensor):  # pragma: no cover
-        """Broadcast precomputed grads for plain forces; route through the
-        on-tape backward Function under ``create_graph``."""
+        """Broadcast precomputed grads for plain forces; route through the on-tape backward Function under ``create_graph``.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding precomputed gradients and saved tensors.
+        grad_E : torch.Tensor, scalar, dtype=float64
+            Upstream cotangent for the scalar total energy.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(grad_positions, grad_charges, grad_dipoles, grad_cell, None,
+            None, None, None, None, None)`` — one entry per input to ``forward``;
+            non-differentiable slots are ``None``.
+        """
         (
             pre_grad_positions,
             pre_grad_charges,
@@ -905,7 +1126,36 @@ class MultipoleRealSpaceFunction(torch.autograd.Function):
         neighbor_ptr: torch.Tensor,
         unit_shifts: torch.Tensor,
     ) -> torch.Tensor:
-        """Run the l_max=1 forward Warp kernel; save tensors for the backward Function."""
+        """Run the l_max=1 forward Warp kernel; save tensors for the backward Function.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the backward pass.
+        positions : torch.Tensor, shape (N, 3)
+            Atomic positions.
+        charges : torch.Tensor, shape (N,)
+            Atomic charges.
+        dipoles : torch.Tensor, shape (N, 3)
+            Atomic dipole moments in Cartesian coordinates.
+        cell : torch.Tensor, shape (1, 3, 3)
+            Unit cell matrix.
+        sigma : torch.Tensor, shape (1,)
+            GTO density-basis width :math:`\\sigma`.
+        alpha : torch.Tensor, shape (1,)
+            Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+
+        Returns
+        -------
+        torch.Tensor, shape (N,), dtype=float64
+            Per-atom real-space energies.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         num_atoms = positions.shape[0]
@@ -1815,6 +2065,48 @@ def multipole_real_space_energy_with_stress(
     cell-grad only on a scalar). l=2 already routes cell-grad per-atom; for
     l<=1 the cell gradient is injected via :class:`_AttachRealSpaceCellGradLmax1`
     (the energy cotangent is per-system uniform under sum-reduction).
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3) or (N_total, 3)
+        Atomic positions in Cartesian space (flat across systems when batched).
+    multipole_moments : torch.Tensor, shape (N, (l_max+1)**2)
+        Per-atom multipole moments in e3nn spherical layout. Trailing dim
+        selects :math:`l_{max}`: 1 → charges only, 4 → charges + dipoles,
+        9 → charges + dipoles + quadrupoles.
+    cell : torch.Tensor, shape (3, 3), (1, 3, 3), or (B, 3, 3)
+        Unit cell matrix (row vectors = lattice vectors). Pass ``(B, 3, 3)``
+        with ``batch_idx`` for batched mode.
+    idx_j : torch.Tensor, dtype=int32
+        CSR neighbor column indices (flat neighbor j-indices).
+    neighbor_ptr : torch.Tensor, dtype=int32
+        CSR row pointers of shape ``(N+1,)`` or ``(N_total+1,)``.
+    unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+        Periodic image shift vectors for each neighbor pair.
+    sigma : torch.Tensor, shape (1,) or (B,)
+        GTO density-basis width :math:`\sigma` (per-system ``(B,)`` when
+        batched).
+    alpha : torch.Tensor, shape (1,) or (B,)
+        Ewald splitting parameter :math:`\alpha` (per-system ``(B,)`` when
+        batched).
+    batch_idx : torch.Tensor, shape (N_total,), dtype=int32, optional
+        Per-atom system index. Required when ``cell`` is ``(B, 3, 3)``;
+        pass ``None`` for single-system mode.
+    half_neighbor_list : bool, optional
+        Forwarded to the :math:`l_{max}=2` path (no effect otherwise).
+        Default is ``False``.
+
+    Returns
+    -------
+    torch.Tensor, shape (N,) or (N_total,), dtype=float64
+        Per-atom real-space energy, differentiable w.r.t. ``positions``,
+        ``multipole_moments``, and ``cell``. Call ``.sum()`` for the
+        total energy; ``grad(E.sum(), cell)`` yields the collective stress.
+
+    See Also
+    --------
+    :func:`nvalchemiops.torch.interactions.electrostatics.multipole_ewald.multipole_real_space_energy` : Per-atom real-space energy without cell-grad attachment.
+    :func:`nvalchemiops.torch.interactions.electrostatics.multipole_ewald.multipole_ewald_summation` : Full Ewald summation composing real-space, reciprocal, and self-energy terms.
     """
     per_atom = multipole_real_space_energy(
         positions,
@@ -2316,7 +2608,40 @@ class BatchMultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
         unit_shifts: torch.Tensor,
         batch_idx: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Launch the batched first-order backward kernel; save tensors for the 2nd-backward."""
+        """Launch the batched l_max=0 first-order backward kernel; save tensors for the 2nd-backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the second-order backward.
+        grad_energies : torch.Tensor, shape (N_total,), dtype=float64
+            Upstream energy cotangents.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic positions flat across all systems.
+        charges : torch.Tensor, shape (N_total,)
+            Atomic charges flat across all systems.
+        cells : torch.Tensor, shape (B, 3, 3)
+            Per-system unit cell matrices.
+        sigmas : torch.Tensor, shape (B,)
+            Per-system GTO density-basis width :math:`\\sigma`.
+        alphas : torch.Tensor, shape (B,)
+            Per-system Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N_total+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index.
+
+        Returns
+        -------
+        grad_positions : torch.Tensor, shape (N_total, 3)
+            Gradient of the energy w.r.t. positions.
+        grad_charges : torch.Tensor, shape (N_total,)
+            Gradient of the energy w.r.t. charges.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -2364,7 +2689,24 @@ class BatchMultipoleRealSpaceMonopoleBackwardFunction(torch.autograd.Function):
     def backward(
         ctx, gg_positions: torch.Tensor, gg_charges: torch.Tensor
     ):  # pragma: no cover
-        """Second-order backward via :func:`batch_multipole_real_space_monopole_csr_energy_2nd_backward`."""
+        """Run the second-order backward kernel via :func:`batch_multipole_real_space_monopole_csr_energy_2nd_backward`.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding tensors saved in ``forward``.
+        gg_positions : torch.Tensor, shape (N_total, 3)
+            Upstream cotangent for ``grad_positions``.
+        gg_charges : torch.Tensor, shape (N_total,)
+            Upstream cotangent for ``grad_charges``.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Ten-element tuple: ``(gg_grad_energies_2nd, gg_positions_2nd,
+            gg_charges_2nd, None, None, None, None, None, None, None)``
+            corresponding to the inputs of ``forward``.
+        """
         (
             grad_energies,
             positions,
@@ -2458,7 +2800,38 @@ class BatchMultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function
         batch_idx: torch.Tensor,
         half_neighbor_list: bool = False,
     ) -> torch.Tensor:
-        """Run the batched lmax=0 fused Warp kernel; stash per-atom gradients in ctx."""
+        """Run the batched lmax=0 fused Warp kernel; stash per-atom gradients in ctx.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to cache precomputed gradients.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic positions flat across all systems.
+        charges : torch.Tensor, shape (N_total,)
+            Atomic charges flat across all systems.
+        cells : torch.Tensor, shape (B, 3, 3)
+            Per-system unit cell matrices.
+        sigmas : torch.Tensor, shape (B,)
+            Per-system GTO density-basis width :math:`\\sigma`.
+        alphas : torch.Tensor, shape (B,)
+            Per-system Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N_total+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index.
+        half_neighbor_list : bool, optional
+            Whether the neighbor list stores each pair once. Default ``False``.
+
+        Returns
+        -------
+        torch.Tensor, shape (B,), dtype=float64
+            Per-system summed real-space energies.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -2557,11 +2930,23 @@ class BatchMultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function
 
     @staticmethod
     def backward(ctx, grad_E: torch.Tensor):  # pragma: no cover
-        """Fast per-system precomputed-grad broadcast for plain forces; on-tape
-        backward Function (double-backward capable) under ``create_graph``.
+        """Broadcast precomputed per-atom grads for plain forces; on-tape backward Function under ``create_graph``.
 
-        ``grad_E`` has shape ``(B,)``; the per-atom cotangent is
-        ``grad_E[batch_idx[i]]``.
+        The per-atom cotangent is ``grad_E[batch_idx[i]]``.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding precomputed gradients and saved tensors.
+        grad_E : torch.Tensor, shape (B,), dtype=float64
+            Upstream cotangent for the per-system total energies.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(grad_positions, grad_charges, grad_cells, None, None, None,
+            None, None, None, None)`` — one entry per input to ``forward``;
+            non-differentiable slots are ``None``.
         """
         (
             pre_grad_positions,
@@ -2628,7 +3013,14 @@ class BatchMultipoleRealSpaceMonopoleFusedScalarFunction(torch.autograd.Function
 
 
 class BatchMultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
-    r"""Batched l_max=0 GTO-Ewald multipole real-space (charges only)."""
+    r"""Batched :math:`l_{max}=0` GTO-Ewald multipole real-space (charges only).
+
+    Batched analog of :class:`MultipoleRealSpaceMonopoleFunction`. Returns
+    per-atom :math:`(N_\text{total},)` energies in :math:`\text{float64}`;
+    the caller owns the atom-global or per-system reduction. Routes its
+    backward through :class:`BatchMultipoleRealSpaceMonopoleBackwardFunction`
+    to enable ``create_graph=True`` force-loss training.
+    """
 
     @staticmethod
     def forward(
@@ -2643,7 +3035,36 @@ class BatchMultipoleRealSpaceMonopoleFunction(torch.autograd.Function):
         unit_shifts: torch.Tensor,
         batch_idx: torch.Tensor,
     ) -> torch.Tensor:
-        """Launch the batched forward Warp kernel; save tensors for backward."""
+        """Launch the batched l_max=0 forward Warp kernel; save tensors for backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the backward pass.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic positions flat across all systems.
+        charges : torch.Tensor, shape (N_total,)
+            Atomic charges flat across all systems.
+        cells : torch.Tensor, shape (B, 3, 3)
+            Per-system unit cell matrices.
+        sigmas : torch.Tensor, shape (B,)
+            Per-system GTO density-basis width :math:`\\sigma`.
+        alphas : torch.Tensor, shape (B,)
+            Per-system Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices (flat across systems).
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N_total+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_total,), dtype=float64
+            Per-atom real-space energies flat across all systems.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -3833,7 +4254,44 @@ class BatchMultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         unit_shifts: torch.Tensor,
         batch_idx: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Launch the batched l_max=1 first-order backward kernel."""
+        """Launch the batched l_max=1 first-order backward kernel; save tensors for 2nd-backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the second-order backward.
+        grad_energies : torch.Tensor, shape (N_total,), dtype=float64
+            Upstream energy cotangents.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic positions flat across all systems.
+        charges : torch.Tensor, shape (N_total,)
+            Atomic charges flat across all systems.
+        dipoles : torch.Tensor, shape (N_total, 3)
+            Atomic dipole moments in Cartesian coordinates.
+        cells : torch.Tensor, shape (B, 3, 3)
+            Per-system unit cell matrices.
+        sigmas : torch.Tensor, shape (B,)
+            Per-system GTO density-basis width :math:`\\sigma`.
+        alphas : torch.Tensor, shape (B,)
+            Per-system Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N_total+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index.
+
+        Returns
+        -------
+        grad_positions : torch.Tensor, shape (N_total, 3)
+            Gradient of the energy w.r.t. positions.
+        grad_charges : torch.Tensor, shape (N_total,)
+            Gradient of the energy w.r.t. charges.
+        grad_dipoles : torch.Tensor, shape (N_total, 3)
+            Gradient of the energy w.r.t. dipoles.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -3890,7 +4348,26 @@ class BatchMultipoleRealSpaceBackwardFunction(torch.autograd.Function):
         gg_charges: torch.Tensor,
         gg_dipoles: torch.Tensor,
     ):
-        """Second-order backward via :func:`batch_multipole_real_space_dipole_csr_energy_2nd_backward`."""
+        """Run the second-order backward kernel via :func:`batch_multipole_real_space_dipole_csr_energy_2nd_backward`.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding tensors saved in ``forward``.
+        gg_positions : torch.Tensor, shape (N_total, 3)
+            Upstream cotangent for ``grad_positions``.
+        gg_charges : torch.Tensor, shape (N_total,)
+            Upstream cotangent for ``grad_charges``.
+        gg_dipoles : torch.Tensor, shape (N_total, 3)
+            Upstream cotangent for ``grad_dipoles``.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Eleven-element tuple: ``(gg_grad_energies_2nd, gg_positions_2nd,
+            gg_charges_2nd, gg_dipoles_2nd, None, None, None, None, None,
+            None, None)`` corresponding to the inputs of ``forward``.
+        """
         (
             grad_energies,
             positions,
@@ -3980,7 +4457,40 @@ class BatchMultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
         batch_idx: torch.Tensor,
         half_neighbor_list: bool = False,
     ) -> torch.Tensor:
-        """Run the batched lmax=1 fused Warp kernel; stash per-atom gradients in ctx."""
+        """Run the batched lmax=1 fused Warp kernel; stash per-atom gradients in ctx.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to cache precomputed gradients.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic positions flat across all systems.
+        charges : torch.Tensor, shape (N_total,)
+            Atomic charges flat across all systems.
+        dipoles : torch.Tensor, shape (N_total, 3)
+            Atomic dipole moments in Cartesian coordinates.
+        cells : torch.Tensor, shape (B, 3, 3)
+            Per-system unit cell matrices.
+        sigmas : torch.Tensor, shape (B,)
+            Per-system GTO density-basis width :math:`\\sigma`.
+        alphas : torch.Tensor, shape (B,)
+            Per-system Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N_total+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index.
+        half_neighbor_list : bool, optional
+            Whether the neighbor list stores each pair once. Default ``False``.
+
+        Returns
+        -------
+        torch.Tensor, shape (B,), dtype=float64
+            Per-system summed real-space energies.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype
@@ -4091,9 +4601,24 @@ class BatchMultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_E: torch.Tensor):  # pragma: no cover
-        """Fast per-system precomputed-grad broadcast for plain forces; on-tape
-        backward Function (double-backward capable) under ``create_graph``.
-        ``grad_E`` is ``(B,)``; per-atom cotangent is ``grad_E[batch_idx[i]]``."""
+        """Broadcast precomputed per-atom grads for plain forces; on-tape backward Function under ``create_graph``.
+
+        The per-atom cotangent is ``grad_E[batch_idx[i]]``.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context holding precomputed gradients and saved tensors.
+        grad_E : torch.Tensor, shape (B,), dtype=float64
+            Upstream cotangent for the per-system total energies.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            ``(grad_positions, grad_charges, grad_dipoles, grad_cells, None,
+            None, None, None, None, None, None)`` — one entry per input to
+            ``forward``; non-differentiable slots are ``None``.
+        """
         (
             pre_grad_positions,
             pre_grad_charges,
@@ -4171,7 +4696,14 @@ class BatchMultipoleRealSpaceDipoleFusedScalarFunction(torch.autograd.Function):
 
 
 class BatchMultipoleRealSpaceFunction(torch.autograd.Function):
-    r"""Batched l_max=1 GTO-Ewald multipole real-space (charges + dipoles)."""
+    r"""Batched :math:`l_{max}=1` GTO-Ewald multipole real-space (charges + dipoles).
+
+    Batched analog of :class:`MultipoleRealSpaceFunction`. Returns per-atom
+    :math:`(N_\text{total},)` energies in :math:`\text{float64}`; the caller
+    owns the atom-global or per-system reduction. Routes its backward through
+    :class:`BatchMultipoleRealSpaceBackwardFunction` to enable
+    ``create_graph=True`` force-loss training.
+    """
 
     @staticmethod
     def forward(
@@ -4187,7 +4719,38 @@ class BatchMultipoleRealSpaceFunction(torch.autograd.Function):
         unit_shifts: torch.Tensor,
         batch_idx: torch.Tensor,
     ) -> torch.Tensor:
-        """Launch the batched l_max=1 forward Warp kernel."""
+        """Launch the batched l_max=1 forward Warp kernel; save tensors for backward.
+
+        Parameters
+        ----------
+        ctx : torch.autograd.function.FunctionCtx
+            Autograd context used to save tensors for the backward pass.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic positions flat across all systems.
+        charges : torch.Tensor, shape (N_total,)
+            Atomic charges flat across all systems.
+        dipoles : torch.Tensor, shape (N_total, 3)
+            Atomic dipole moments in Cartesian coordinates, flat across systems.
+        cells : torch.Tensor, shape (B, 3, 3)
+            Per-system unit cell matrices.
+        sigmas : torch.Tensor, shape (B,)
+            Per-system GTO density-basis width :math:`\\sigma`.
+        alphas : torch.Tensor, shape (B,)
+            Per-system Ewald splitting parameter :math:`\\alpha`.
+        idx_j : torch.Tensor, dtype=int32
+            CSR neighbor column indices.
+        neighbor_ptr : torch.Tensor, dtype=int32
+            CSR row pointers, shape ``(N_total+1,)``.
+        unit_shifts : torch.Tensor, shape (E, 3), dtype=int32
+            Periodic image shift vectors.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_total,), dtype=float64
+            Per-atom real-space energies flat across all systems.
+        """
         device = positions.device
         wp_device = wp.device_from_torch(device)
         input_dtype = positions.dtype

@@ -1502,7 +1502,31 @@ class BatchMultipoleRhoFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho``."""
+        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho``.
+
+        Parameters
+        ----------
+        charges : torch.Tensor, shape (N_total,)
+            Per-atom monopole charges.
+        dipoles : torch.Tensor, shape (N_total, 3)
+            Per-atom dipole moments in Cartesian coordinates.
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        source_phi_hat : torch.Tensor, shape (B, K_max, 4, 2)
+            Differentiable per-system source envelope table; equals
+            ``cache.source_phi_hat``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.volume``.
+
+        Returns
+        -------
+        torch.Tensor, shape (B, K_max, 2), dtype=float64
+            Batched :math:`\\rho(k)` structure factor (real, imaginary channels).
+        """
         return torch.ops.nvalchemiops.batch_multipole_rho(
             charges,
             dipoles,
@@ -2455,7 +2479,30 @@ class BatchMultipoleRhoQFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho_q``."""
+        """Dispatch to ``torch.ops.nvalchemiops.batch_multipole_rho_q``.
+
+        Parameters
+        ----------
+        quadrupoles : torch.Tensor, shape (N_total, 3, 3)
+            Per-atom Cartesian quadrupole tensors (symmetric).
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        source_coeff2 : torch.Tensor, shape (B, K_max)
+            Per-k l=2 source coefficient :math:`c_2(k)`; equals
+            ``cache.source_coeff2``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; must be built with ``l_max>=2``.
+
+        Returns
+        -------
+        torch.Tensor, shape (B, K_max, 2), dtype=float64
+            Additive Cartesian-quadrupole :math:`\\rho_Q(k)` (real, imaginary
+            channels).
+        """
         if cache.source_coeff2 is None:
             raise ValueError(
                 "BatchMultipoleRhoQFunction requires a cache built with "
@@ -2871,6 +2918,21 @@ class BatchMultipoleProjectRawFeaturesFunction:
     cache)`` call signature (``cache`` supplies ``k_factor_proj``); new code
     should call the op directly.
 
+    Parameters
+    ----------
+    potential : torch.Tensor, shape (B, K_max, 2)
+        Batched per-k reciprocal potential :math:`V(k)` (real, imaginary channels).
+    positions : torch.Tensor, shape (N_total, 3)
+        Atomic coordinates.
+    receiver_phi_hat_l1 : torch.Tensor, shape (B, K_max, N_sigma, 4, 2)
+        Per-system l<=1 receiver envelope table; equals ``cache.receiver_phi_hat``.
+    k_vectors : torch.Tensor, shape (B, K_max, 3)
+        Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+    batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+        Per-atom system index (sorted, contiguous within each system).
+    cache : MultipoleSCFCache
+        Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
     Returns
     -------
     torch.Tensor
@@ -2886,7 +2948,30 @@ class BatchMultipoleProjectRawFeaturesFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``batch_multipole_project_raw_features``."""
+        """Dispatch to ``batch_multipole_project_raw_features``.
+
+        Parameters
+        ----------
+        potential : torch.Tensor, shape (B, K_max, 2)
+            Batched per-k reciprocal potential :math:`V(k)` (real, imaginary
+            channels).
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        receiver_phi_hat_l1 : torch.Tensor, shape (B, K_max, N_sigma, 4, 2)
+            Per-system l<=1 receiver envelope table; equals
+            ``cache.receiver_phi_hat``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_total, N_sigma, 4), dtype=float64
+            Raw (un-self-subtracted) l<=1 projected features.
+        """
         return torch.ops.nvalchemiops.batch_multipole_project_raw_features(
             potential,
             positions,
@@ -3036,6 +3121,21 @@ class BatchMultipoleProjectRawFeaturesQuadrupoleFunction:
     ``.apply(potential, positions, receiver_phi_hat_l2, k_vectors, batch_idx,
     cache)`` call signature (``cache`` supplies ``k_factor_proj``).
 
+    Parameters
+    ----------
+    potential : torch.Tensor, shape (B, K_max, 2)
+        Batched per-k reciprocal potential :math:`V(k)` (real, imaginary channels).
+    positions : torch.Tensor, shape (N_total, 3)
+        Atomic coordinates.
+    receiver_phi_hat_l2 : torch.Tensor, shape (B, K_max, N_sigma, 5, 2)
+        Per-system l=2 receiver envelope table; equals ``cache.receiver_phi_hat_l2``.
+    k_vectors : torch.Tensor, shape (B, K_max, 3)
+        Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+    batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+        Per-atom system index (sorted, contiguous within each system).
+    cache : MultipoleSCFCache
+        Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
     Returns
     -------
     torch.Tensor
@@ -3051,7 +3151,30 @@ class BatchMultipoleProjectRawFeaturesQuadrupoleFunction:
         batch_idx: torch.Tensor,
         cache: MultipoleSCFCache,
     ) -> torch.Tensor:
-        """Dispatch to ``batch_multipole_project_raw_features_quadrupole``."""
+        """Dispatch to ``batch_multipole_project_raw_features_quadrupole``.
+
+        Parameters
+        ----------
+        potential : torch.Tensor, shape (B, K_max, 2)
+            Batched per-k reciprocal potential :math:`V(k)` (real, imaginary
+            channels).
+        positions : torch.Tensor, shape (N_total, 3)
+            Atomic coordinates.
+        receiver_phi_hat_l2 : torch.Tensor, shape (B, K_max, N_sigma, 5, 2)
+            Per-system l=2 receiver envelope table; equals
+            ``cache.receiver_phi_hat_l2``.
+        k_vectors : torch.Tensor, shape (B, K_max, 3)
+            Reciprocal-lattice vectors; equals ``cache.k_vectors``.
+        batch_idx : torch.Tensor, shape (N_total,), dtype=int32
+            Per-atom system index (sorted, contiguous within each system).
+        cache : MultipoleSCFCache
+            Per-system direct-k-space state; supplies ``cache.k_factor_proj``.
+
+        Returns
+        -------
+        torch.Tensor, shape (N_total, N_sigma, 5), dtype=float64
+            Raw l=2 projected features in natural (Cartesian quadrupole) layout.
+        """
         return torch.ops.nvalchemiops.batch_multipole_project_raw_features_quadrupole(
             potential,
             positions,

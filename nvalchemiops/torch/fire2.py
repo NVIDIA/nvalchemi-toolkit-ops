@@ -846,6 +846,32 @@ def fire2_step_coord_cell_couple(
     physical Cartesian displacement norm into ``max_norm`` (zeroed first).
     Positions and cell are **not** moved, so a caller can post-process
     ``max_norm`` before :func:`fire2_step_coord_cell_apply`.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic positions (read-only).
+    velocities : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic velocities after the mix phase (read-only).
+    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell matrices (read-only).
+    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell velocity matrices after the mix phase (read-only).
+    dt : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system timestep.
+    vf : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system velocity-force dot product from the mix phase (read-only).
+    batch_idx : torch.Tensor, shape (N,), dtype int32
+        Sorted system index per atom.
+    max_norm : torch.Tensor, shape (M,), dtype float32/float64
+        Output buffer: zeroed then filled with the per-system maximum physical
+        Cartesian displacement norm. Modified in-place.
+    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        CSR-style atom pointers. Computed from *batch_idx* if ``None``.
+    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
+    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
+        System index for each element of the extended layout. Computed if ``None``.
     """
     device = positions.device
     M = dt.shape[0]
@@ -900,6 +926,37 @@ def fire2_step_coord_cell_apply(
     ``min(1, maxstep / max_norm[s])`` using the supplied ``max_norm``, and writes
     ``positions``, ``cell``, ``cell_velocities`` (uphill zeroing), and the clamped
     ``dt`` in-place.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic positions. Modified in-place.
+    velocities : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic velocities after the mix phase (read-only; cell_velocities are
+        zeroed for uphill systems by the underlying Warp kernel).
+    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell matrices. Modified in-place.
+    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell velocity matrices. Modified in-place (zeroed for uphill systems).
+    dt : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system timestep. Modified in-place (shrunk when step is clamped).
+    vf : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system velocity-force dot product from the mix phase (read-only).
+    batch_idx : torch.Tensor, shape (N,), dtype int32
+        Sorted system index per atom.
+    max_norm : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system maximum physical Cartesian displacement norm, as computed by
+        :func:`fire2_step_coord_cell_couple` (possibly post-processed by the
+        caller). Read-only.
+    maxstep : float, default 0.1
+        Maximum allowed displacement per atom. Steps larger than this are
+        rescaled by ``maxstep / max_norm[s]``.
+    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        CSR-style atom pointers. Computed from *batch_idx* if ``None``.
+    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
+    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
+        System index for each element of the extended layout. Computed if ``None``.
     """
     device = positions.device
     M = dt.shape[0]
@@ -967,6 +1024,54 @@ def fire2_compute_extended_reductions(
 
     Uses the same ``v + f*dt`` half-step as the internal reduction, so the
     combined result is bit-parity with recomputing it in one pass.
+
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic positions (read-only; used only to determine N and dtype).
+    velocities : torch.Tensor, shape (N, 3), dtype float32/float64
+        Atomic velocities (read-only).
+    forces : torch.Tensor, shape (N, 3), dtype float32/float64
+        Forces on atoms (read-only).
+    cell : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell matrices (read-only; used only to determine M).
+    cell_velocities : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Cell velocity matrices (read-only).
+    cell_force : torch.Tensor, shape (M, 3, 3), dtype float32/float64
+        Raw cell force matrices (read-only). Divided by
+        ``atoms_per_system * cell_force_scale`` before packing.
+    batch_idx : torch.Tensor, shape (N,), dtype int32
+        Sorted system index per atom.
+    dt : torch.Tensor, shape (M,), dtype float32/float64
+        Per-system timestep used for the ``v + f*dt`` half-step projection.
+    atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        CSR-style atom pointers. Computed from *batch_idx* if ``None``.
+    ext_atom_ptr : torch.Tensor, shape (M+1,), dtype int32, optional
+        Extended atom pointers (2 cell DOFs per system). Computed if ``None``.
+    ext_velocities : torch.Tensor, shape (N+2M, 3), optional
+        Scratch buffer for the packed extended velocity array. Allocated if ``None``.
+    ext_forces : torch.Tensor, shape (N+2M, 3), optional
+        Scratch buffer for the packed extended force array. Allocated if ``None``.
+    ext_batch_idx : torch.Tensor, shape (N+2M,), dtype int32, optional
+        System index for each element of the extended layout. Computed if ``None``.
+    cell_force_scale : float, default 1.0
+        Extra positive multiplier for cell-force normalization; cell forces are
+        divided by ``atoms_per_system * cell_force_scale``.
+
+    Returns
+    -------
+    atom_partial : tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(vf, v_sumsq, f_sumsq)`` reduction contributions from the atom DOFs
+        only, each of shape ``(M,)``. Sum across a caller-side partition before
+        combining with *cell_term*.
+    cell_term : tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+        ``(vf, v_sumsq, f_sumsq)`` reduction contributions from the cell DOFs
+        only, each of shape ``(M,)``. Replicated — add exactly once regardless
+        of the partition scheme.
+
+    See Also
+    --------
+    :func:`nvalchemiops.torch.fire2.fire2_step_coord_cell_mix` : Runs the mix phase with caller-supplied reductions.
     """
     dtype = positions.dtype
     device = positions.device

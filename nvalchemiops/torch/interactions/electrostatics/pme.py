@@ -353,6 +353,23 @@ def compute_bspline_moduli_1d(
     1e-10 clamp + square. Precomputing the LUT lets the convolve kernel
     replace three sinc transcendentals + an order-dependent power loop
     per (i, j, k) thread with three reads + two multiplies.
+
+    Parameters
+    ----------
+    miller_indices : torch.Tensor, shape (M,)
+        Integer Miller indices along one mesh axis, typically produced by
+        ``torch.fft.fftfreq`` or ``torch.fft.rfftfreq`` scaled by ``mesh_N``.
+    mesh_N : int
+        Number of mesh points along this axis.
+    spline_order : int
+        B-spline interpolation order ``p``. The modulus is
+        :math:`\\operatorname{sinc}(m/N)^p`.
+
+    Returns
+    -------
+    torch.Tensor, shape (M,)
+        1D B-spline modulus values, one per Miller index. Same dtype as
+        ``miller_indices``.
     """
     # sinc(x) for x in [-0.5, 0.5] is bounded in [2/pi, 1], so s^spline_order
     # (for orders 2-6) stays well within fp32 range. Stay in the input dtype

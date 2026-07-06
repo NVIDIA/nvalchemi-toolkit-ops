@@ -210,6 +210,28 @@ def flatten_to_reference_layout(
     does not depend on ``m``). Useful only for parity testing against the
     reference implementation — production code should index the clean
     ``(N_sigma, L+1)`` tensor directly.
+
+    Parameters
+    ----------
+    constants_by_sigma_L : torch.Tensor, shape (N_sigma, max_L + 1)
+        Per-``(sigma_receive, L)`` overlap constants as returned by
+        :func:`compute_overlap_constants`.
+    max_L : int
+        Maximum angular momentum (inclusive). Must satisfy
+        ``constants_by_sigma_L.shape[1] == max_L + 1``.
+
+    Returns
+    -------
+    torch.Tensor, shape (N_sigma * (max_L + 1) ** 2,), dtype=float64
+        Flat overlap constant array in the customer reference index layout.
+        Each ``(L, sigma_receive)`` constant is repeated ``2L + 1`` times for
+        the ``m``-slots.
+
+    Raises
+    ------
+    ValueError
+        If ``max_L`` is negative or ``constants_by_sigma_L`` does not have
+        shape ``(N_sigma, max_L + 1)``.
     """
     if max_L < 0:
         raise ValueError(f"max_L must be non-negative, got {max_L}")
