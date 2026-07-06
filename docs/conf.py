@@ -82,8 +82,15 @@ intersphinx_mapping = {
 
 source_suffix = [".rst", ".md"]
 myst_enable_extensions = ["colon_fence", "dollarmath"]
+myst_heading_anchors = 3
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "sphinxext.py", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "sphinxext.py",
+    "Thumbs.db",
+    ".DS_Store",
+    "benchmarks/benchmark_results/README.md",
+]
 autodoc_typehints = "description"
 autodoc_preserve_defaults = True
 
@@ -140,7 +147,6 @@ sphinx_gallery_conf = {
     "filename_pattern": filename_pattern,
     "ignore_pattern": r"(^_|utils\.py$)",  # Exclude files starting with _ or ending with utils.py
     "image_srcset": ["1x"],
-    "within_subsection_order": FileNameSortKey,
     "run_stale_examples": run_stale_examples,
     "backreferences_dir": "modules/backreferences",
     "doc_module": ("nvalchemiops",),
@@ -156,6 +162,8 @@ sphinx_gallery_conf = {
     "thumbnail_size": (250, 250),
     "min_reported_time": 0,
     "capture_repr": ("_repr_html_", "__repr__"),
+    # Class ref causes a benign [config.cache] warning; default is NumberOfCodeLinesSortKey.
+    "within_subsection_order": FileNameSortKey,
 }
 
 
