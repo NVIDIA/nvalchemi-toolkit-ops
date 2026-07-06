@@ -48,13 +48,39 @@ class CompiledPairFn:
     _ops: dict[str, object] = field(default_factory=dict, compare=False, hash=False)
 
     def op_name(self, route: str) -> str:
-        """Return the stable generated torch-library op name for a route."""
+        """Return the stable generated torch-library op name for a route.
+
+        Parameters
+        ----------
+        route : str
+            Neighbor route identifier (e.g. ``"naive_no_pbc_pair"``).
+
+        Returns
+        -------
+        str
+            Fully qualified Torch custom-op name for the given route.
+        """
         return f"{self.op_prefix}_{route}"
 
     def get_or_register(
         self, route: str, factory: Callable[[CompiledPairFn], _T]
     ) -> _T:
-        """Return the cached route op, registering it on first use."""
+        """Return the cached route op, registering it on first use.
+
+        Parameters
+        ----------
+        route : str
+            Neighbor route identifier used as the cache key.
+        factory : Callable[[CompiledPairFn], _T]
+            Callable invoked exactly once per route to create and register the
+            Torch custom op; receives this :class:`CompiledPairFn` as its only
+            argument.
+
+        Returns
+        -------
+        _T
+            The registered op object for the given route.
+        """
         op = self._ops.get(route)
         if op is not None:
             return op  # type: ignore[return-value]
@@ -112,7 +138,19 @@ def compile_pair_fn(pair_fn: wp.Function, *, name: str | None = None) -> Compile
 
 
 def is_compiled_pair_fn(pair_fn: object) -> bool:
-    """Return whether ``pair_fn`` is a compiled pair-function wrapper."""
+    """Return whether ``pair_fn`` is a compiled pair-function wrapper.
+
+    Parameters
+    ----------
+    pair_fn : object
+        Object to test; typically a ``wp.Function`` or a :class:`CompiledPairFn`.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``pair_fn`` is an instance of :class:`CompiledPairFn`,
+        ``False`` otherwise.
+    """
     return isinstance(pair_fn, CompiledPairFn)
 
 

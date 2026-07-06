@@ -929,6 +929,32 @@ def batch_query_cell_list(
     atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
         Selects the atom-centric implementation path. ``"auto"`` resolves to
         ``"direct"``.
+    target_indices : torch.Tensor, shape (num_targets,), dtype=int32, optional
+        If provided, only query neighbors for the subset of atoms listed. The
+        output ``neighbor_matrix`` and ``num_neighbors`` will have ``num_targets``
+        rows rather than ``total_atoms`` rows.
+    return_vectors : bool, default=False
+        If True and ``neighbor_vectors`` is provided, write per-neighbor
+        displacement vectors into ``neighbor_vectors``.
+    return_distances : bool, default=False
+        If True and ``neighbor_distances`` is provided, write per-neighbor
+        distances into ``neighbor_distances``.
+    pair_fn : wp.Function or CompiledPairFn, optional
+        Warp function called for each active pair inside the kernel. Must be
+        provided together with ``pair_params``.
+    pair_params : torch.Tensor, optional
+        Per-atom parameters passed to ``pair_fn``. Shape and dtype are
+        determined by ``pair_fn``.
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        Pre-allocated output buffer for per-neighbor displacement vectors.
+        Required when ``return_vectors=True``.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        Pre-allocated output buffer for per-neighbor distances.
+        Required when ``return_distances=True``.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        Pre-allocated output buffer for per-pair energies written by ``pair_fn``.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        Pre-allocated output buffer for per-pair forces written by ``pair_fn``.
 
     See Also
     --------
@@ -1726,6 +1752,9 @@ def batch_cell_list(
         Pre-allocated tensor for start indices.
     cell_atom_list : torch.Tensor, shape (total_atoms,), dtype=int32, optional
         Pre-allocated tensor for atom list.
+    cell_offsets : torch.Tensor, shape (num_systems,), dtype=int32, optional
+        Accepted for API compatibility; computed internally and not used from
+        this argument.
     rebuild_flags : torch.Tensor, shape (num_systems,), dtype=torch.bool, optional
         Per-system rebuild flags produced by ``batch_cell_list_needs_rebuild``.
         If provided, only systems where rebuild_flags[i] is True are recomputed;
@@ -1733,11 +1762,74 @@ def batch_cell_list(
         non-rebuilt systems entirely on the GPU (no CPU-GPU sync). When this is used,
         pre-allocated ``neighbor_matrix`` and ``num_neighbors`` tensors must be provided
         and will not be globally zeroed - only rebuilt-system entries are reset.
+    neighbor_matrix : torch.Tensor, shape (num_rows, max_neighbors), dtype=int32, optional
+        Pre-allocated neighbor matrix. If None, allocated internally.
+    neighbor_matrix_shifts : torch.Tensor, shape (num_rows, max_neighbors, 3), dtype=int32, optional
+        Pre-allocated shift-vector matrix. If None, allocated internally.
+    num_neighbors : torch.Tensor, shape (num_rows,), dtype=int32, optional
+        Pre-allocated neighbor count tensor. If None, allocated internally.
+    strategy : {"auto", "atom_centric", "pair_centric"}, default "auto"
+        Forces one of the two warp-level batch cell-list kernels.
+        ``"auto"`` applies the sync-free dispatch rule
+        (:func:`select_batch_cell_list_strategy`).  Pair-centric requires CUDA.
+    atom_centric_path : {"auto", "direct", "sorted"}, default "auto"
+        Selects the atom-centric implementation path. ``"auto"`` resolves to
+        ``"direct"``.
+    target_indices : torch.Tensor, shape (num_targets,), dtype=int32, optional
+        If provided, only compute neighbors for this subset of atoms. Output
+        tensors will have ``num_targets`` rows.
+    return_vectors : bool, default=False
+        If True, include per-neighbor displacement vectors in the output tuple.
+    return_distances : bool, default=False
+        If True, include per-neighbor distances in the output tuple.
+    pair_fn : wp.Function or CompiledPairFn, optional
+        Warp function called for each active pair inside the kernel. Must be
+        provided together with ``pair_params``.
+    pair_params : torch.Tensor, optional
+        Per-atom parameters passed to ``pair_fn``. Shape and dtype are
+        determined by ``pair_fn``.
+    neighbor_vectors : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        Pre-allocated output buffer for per-neighbor displacement vectors.
+        Allocated internally when ``return_vectors=True`` and not provided.
+    neighbor_distances : torch.Tensor, shape (num_rows, max_neighbors), optional
+        Pre-allocated output buffer for per-neighbor distances.
+        Allocated internally when ``return_distances=True`` and not provided.
+    pair_energies : torch.Tensor, shape (num_rows, max_neighbors), optional
+        Pre-allocated output buffer for per-pair energies from ``pair_fn``.
+        Allocated internally when ``pair_fn`` is set and not provided.
+    pair_forces : torch.Tensor, shape (num_rows, max_neighbors, 3), optional
+        Pre-allocated output buffer for per-pair forces from ``pair_fn``.
+        Allocated internally when ``pair_fn`` is set and not provided.
 
     Returns
     -------
-    results : tuple of torch.Tensor
-        Variable-length tuple with neighbor data in matrix or list format.
+    neighbor_matrix or neighbor_list : torch.Tensor
+        When ``return_neighbor_list=False``: shape ``(num_rows, max_neighbors)``,
+        dtype=int32. Neighbor indices; unused slots contain ``fill_value``.
+        When ``return_neighbor_list=True``: shape ``(2, num_pairs)``, dtype=int32.
+        Row 0 is source indices, row 1 is target indices.
+    num_neighbors or neighbor_ptr : torch.Tensor
+        When ``return_neighbor_list=False``: shape ``(num_rows,)``, dtype=int32.
+        Number of neighbors per atom.
+        When ``return_neighbor_list=True``: shape ``(num_rows + 1,)``, dtype=int32.
+        CSR row pointer for the neighbor list.
+    neighbor_matrix_shifts or neighbor_list_shifts : torch.Tensor
+        When ``return_neighbor_list=False``: shape ``(num_rows, max_neighbors, 3)``,
+        dtype=int32. Periodic image shift vectors per slot.
+        When ``return_neighbor_list=True``: shape ``(num_pairs, 3)``, dtype=int32.
+        Shift vectors aligned with the neighbor list.
+    neighbor_distances : torch.Tensor, optional
+        Shape ``(num_rows, max_neighbors)`` or ``(num_pairs,)``.
+        Returned only when ``return_distances=True``.
+    neighbor_vectors : torch.Tensor, optional
+        Shape ``(num_rows, max_neighbors, 3)`` or ``(num_pairs, 3)``.
+        Returned only when ``return_vectors=True``.
+    pair_energies : torch.Tensor, optional
+        Shape ``(num_rows, max_neighbors)`` or ``(num_pairs,)``.
+        Returned only when ``pair_fn`` is provided.
+    pair_forces : torch.Tensor, optional
+        Shape ``(num_rows, max_neighbors, 3)`` or ``(num_pairs, 3)``.
+        Returned only when ``pair_fn`` is provided.
 
     See Also
     --------

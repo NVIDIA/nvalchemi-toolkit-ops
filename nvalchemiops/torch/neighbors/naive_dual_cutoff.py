@@ -509,11 +509,138 @@ def naive_neighbor_list_dual_cutoff(
     single brute-force pairwise distance calculation. This is more efficient
     than running two separate neighbor calculations when both neighbor lists are needed.
 
+    Parameters
+    ----------
+    positions : torch.Tensor, shape (N, 3)
+        Atomic positions in Cartesian space, where N is the number of atoms.
+    cutoff1 : float
+        Inner cutoff radius; pairs within this distance populate the first neighbor list.
+    cutoff2 : float
+        Outer cutoff radius; pairs within this distance populate the second neighbor list.
+        Must satisfy ``cutoff2 >= cutoff1``.
+    pbc : torch.Tensor, shape (1, 3) or (3,), dtype=bool, optional
+        Periodic boundary condition flags along x, y, z. Pass ``None`` for free-space.
+    cell : torch.Tensor, shape (1, 3, 3), optional
+        Unit-cell matrix whose rows are lattice vectors in Cartesian coordinates.
+        Required when ``pbc`` is not ``None``.
+    max_neighbors1 : int, optional
+        Maximum number of neighbors per atom for the inner cutoff list. Estimated
+        automatically when ``None`` and pre-allocated buffers are not supplied.
+    max_neighbors2 : int, optional
+        Maximum number of neighbors per atom for the outer cutoff list. Defaults to
+        ``max_neighbors1`` when ``None``.
+    half_fill : bool, optional
+        If ``True``, only the lower-triangular half of each neighbor matrix is filled.
+        Default is ``False``.
+    fill_value : int, optional
+        Padding value written into unused neighbor slots. Defaults to ``N``
+        (i.e., one past the last valid atom index).
+    return_neighbor_list : bool, optional
+        If ``True``, convert each neighbor matrix to a COO-style neighbor list
+        ``(neighbor_indices, neighbor_ptr)``. Incurs a masking step; prefer the
+        matrix format when possible. Default is ``False``.
+    neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32, optional
+        Pre-allocated buffer for inner-cutoff neighbor indices. Modified in-place.
+        Allocated internally when ``None``.
+    neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32, optional
+        Pre-allocated buffer for outer-cutoff neighbor indices. Modified in-place.
+        Allocated internally when ``None``.
+    neighbor_matrix_shifts1 : torch.Tensor, shape (N, max_neighbors1, 3), dtype=int32, optional
+        Pre-allocated buffer for PBC image shift vectors of the inner list. Modified
+        in-place. Only used when ``pbc`` is not ``None``.
+    neighbor_matrix_shifts2 : torch.Tensor, shape (N, max_neighbors2, 3), dtype=int32, optional
+        Pre-allocated buffer for PBC image shift vectors of the outer list. Modified
+        in-place. Only used when ``pbc`` is not ``None``.
+    num_neighbors1 : torch.Tensor, shape (N,), dtype=int32, optional
+        Pre-allocated buffer for per-atom inner-cutoff neighbor counts. Modified in-place.
+    num_neighbors2 : torch.Tensor, shape (N,), dtype=int32, optional
+        Pre-allocated buffer for per-atom outer-cutoff neighbor counts. Modified in-place.
+    shift_range_per_dimension : torch.Tensor, shape (3,), dtype=int32, optional
+        Number of periodic image layers to search along each lattice direction.
+        Computed automatically when ``None``.
+    num_shifts_per_system : torch.Tensor, optional
+        Total number of image shift vectors for each system. Computed automatically
+        when ``None``.
+    max_shifts_per_system : int, optional
+        Maximum value in ``num_shifts_per_system``. Computed automatically when ``None``.
+    rebuild_flags : torch.Tensor, shape (1,), dtype=bool, optional
+        Device-side flag. When provided, the neighbor lists are only recomputed for
+        the system if ``rebuild_flags[0]`` is ``True``; no CPU-GPU synchronisation
+        occurs. Pass ``None`` to always rebuild.
+    wrap_positions : bool, optional
+        If ``True``, atomic positions are wrapped into the primary unit cell before
+        the neighbor search. Default is ``True``.
+    positions_wrapped_buffer : torch.Tensor, shape (N, 3), optional
+        Pre-allocated buffer for wrapped positions. Allocated internally when ``None``.
+    per_atom_cell_offsets_buffer : torch.Tensor, shape (N, 3), dtype=int32, optional
+        Pre-allocated buffer for per-atom cell-image offsets. Allocated internally
+        when ``None``.
+    inv_cell_buffer : torch.Tensor, shape (1, 3, 3), optional
+        Pre-allocated buffer for the inverse cell matrix. Allocated internally
+        when ``None``.
+
+    Returns
+    -------
+    tuple
+        The return type depends on ``pbc`` and ``return_neighbor_list``:
+
+        **No PBC, return_neighbor_list=False** — 4-tuple:
+
+        neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32
+            Inner-cutoff neighbor indices; unused slots are filled with ``fill_value``.
+        num_neighbors1 : torch.Tensor, shape (N,), dtype=int32
+            Number of inner-cutoff neighbors per atom.
+        neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32
+            Outer-cutoff neighbor indices; unused slots are filled with ``fill_value``.
+        num_neighbors2 : torch.Tensor, shape (N,), dtype=int32
+            Number of outer-cutoff neighbors per atom.
+
+        **No PBC, return_neighbor_list=True** — 4-tuple:
+
+        neighbor_list1 : torch.Tensor, shape (E1,), dtype=int32
+            Flat array of inner-cutoff neighbor atom indices.
+        neighbor_ptr1 : torch.Tensor, shape (N+1,), dtype=int32
+            CSR row pointers for ``neighbor_list1``.
+        neighbor_list2 : torch.Tensor, shape (E2,), dtype=int32
+            Flat array of outer-cutoff neighbor atom indices.
+        neighbor_ptr2 : torch.Tensor, shape (N+1,), dtype=int32
+            CSR row pointers for ``neighbor_list2``.
+
+        **With PBC, return_neighbor_list=False** — 6-tuple:
+
+        neighbor_matrix1 : torch.Tensor, shape (N, max_neighbors1), dtype=int32
+            Inner-cutoff neighbor indices.
+        num_neighbors1 : torch.Tensor, shape (N,), dtype=int32
+            Inner-cutoff neighbor counts.
+        neighbor_matrix_shifts1 : torch.Tensor, shape (N, max_neighbors1, 3), dtype=int32
+            PBC image shift vectors for the inner list.
+        neighbor_matrix2 : torch.Tensor, shape (N, max_neighbors2), dtype=int32
+            Outer-cutoff neighbor indices.
+        num_neighbors2 : torch.Tensor, shape (N,), dtype=int32
+            Outer-cutoff neighbor counts.
+        neighbor_matrix_shifts2 : torch.Tensor, shape (N, max_neighbors2, 3), dtype=int32
+            PBC image shift vectors for the outer list.
+
+        **With PBC, return_neighbor_list=True** — 6-tuple:
+
+        neighbor_list1 : torch.Tensor, shape (E1,), dtype=int32
+            Flat inner-cutoff neighbor indices.
+        neighbor_ptr1 : torch.Tensor, shape (N+1,), dtype=int32
+            CSR row pointers for ``neighbor_list1``.
+        unit_shifts1 : torch.Tensor, shape (E1, 3), dtype=int32
+            PBC image shift vectors corresponding to ``neighbor_list1``.
+        neighbor_list2 : torch.Tensor, shape (E2,), dtype=int32
+            Flat outer-cutoff neighbor indices.
+        neighbor_ptr2 : torch.Tensor, shape (N+1,), dtype=int32
+            CSR row pointers for ``neighbor_list2``.
+        unit_shifts2 : torch.Tensor, shape (E2, 3), dtype=int32
+            PBC image shift vectors corresponding to ``neighbor_list2``.
+
     See Also
     --------
-    nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff : Core warp launcher (no PBC)
-    nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff : Core warp launcher (with PBC)
-    naive_neighbor_list : Single cutoff version
+    :func:`nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_dual_cutoff` : Core warp launcher (no PBC).
+    :func:`nvalchemiops.neighbors.naive_dual_cutoff.naive_neighbor_matrix_pbc_dual_cutoff` : Core warp launcher (with PBC).
+    :func:`nvalchemiops.torch.neighbors.naive.naive_neighbor_list` : Single cutoff version.
     """
     if pbc is None and cell is not None:
         raise ValueError("If cell is provided, pbc must also be provided")
