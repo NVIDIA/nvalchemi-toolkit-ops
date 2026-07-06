@@ -359,10 +359,8 @@ def warp_custom_op(
 
     This decorator eliminates boilerplate by automatically generating:
     - A ``torch.library.custom_op`` forward registered with fake/meta support
-    - A hidden token input for runtime state handoff while the public wrapper
-      still exposes only the user-visible signature
-    - A traceable ``register_autograd`` wrapper that replays Warp tapes through
-      an opaque backward custom op
+    - A hidden token input for runtime state handoff while the public wrapper still exposes only the user-visible signature
+    - A traceable ``register_autograd`` wrapper that replays Warp tapes through an opaque backward custom op
     - Stream binding so Warp launches execute on PyTorch's current CUDA stream
 
     Parameters

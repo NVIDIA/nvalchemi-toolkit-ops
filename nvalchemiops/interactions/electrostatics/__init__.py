@@ -54,10 +54,8 @@ Available Methods
 5. **Slab Correction** (`slab_kernels`)
    - Yeh-Berkowitz / Ballenegger correction for 2D-periodic slabs
    - Supports orthogonal and triclinic cells via projected slab normals
-   - Warp launchers: ``slab_reduce_moments()``, ``slab_precompute_geometry()``,
-     ``slab_correction()``
-   - PyTorch API: ``compute_slab_correction()`` and
-     ``ewald_summation(..., slab_correction=True)``
+   - Warp launchers: ``slab_reduce_moments()``, ``slab_precompute_geometry()``, ``slab_correction()``
+   - PyTorch API: ``compute_slab_correction()`` and ``ewald_summation(..., slab_correction=True)``
 
 """
 

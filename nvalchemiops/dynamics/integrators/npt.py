@@ -1842,7 +1842,8 @@ def compute_barostat_mass(
 
     The barostat mass determines the inertia of cell volume/shape fluctuations
     in NPT/NPH simulations. It is computed from the Martyna-Tobias-Klein
-    equations to give a characteristic pressure relaxation time :math:`\tau_p`:
+    equations [MTK1994]_ to give a characteristic pressure relaxation time
+    :math:`\tau_p`:
 
     .. math::
 
@@ -1896,8 +1897,8 @@ def compute_barostat_mass(
     - The formula assumes k_B = 1 (reduced units). Scale :math:`\tau_p` accordingly
       for real units.
     - For isotropic barostat, a single mass controls all cell dimensions.
-    - For anisotropic/triclinic barostat, the same mass is typically used
-      for all cell velocity components.
+    - For anisotropic/triclinic barostat [SSM2004]_, the same mass is typically
+      used for all cell velocity components.
     - All input arrays must have the same length (num_systems). The caller
       is responsible for broadcasting scalar values to arrays before calling.
 
@@ -2124,8 +2125,7 @@ def npt_barostat_half_step(
 
     References
     ----------
-    .. [MTK1994] Martyna, Tobias, Klein, J. Chem. Phys. 101, 4177 (1994)
-    .. [SSM2004] Shinoda, Shiga, Mikami, Phys. Rev. B 69, 134103 (2004)
+    See ``compute_barostat_mass`` for the MTK1994 and SSM2004 citations.
     """
     if device is None:
         device = cell_velocities.device
