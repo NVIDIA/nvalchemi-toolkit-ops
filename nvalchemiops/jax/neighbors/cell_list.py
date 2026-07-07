@@ -42,15 +42,11 @@ from nvalchemiops.neighbors.cell_list import (
     compute_batch_pair_centric_n_outer,
     get_build_cell_list_kernel,
     get_query_cell_list_kernel,
-    is_pair_centric_launch_safe,
     is_pair_centric_parallelism_sufficient,
     select_cell_list_strategy,
 )
 from nvalchemiops.neighbors.cell_list import (
     query_cell_list as _warp_query_cell_list,
-)
-from nvalchemiops.neighbors.cell_list.launchers import (
-    _raise_unsafe_pair_centric_launch,
 )
 from nvalchemiops.neighbors.neighbor_utils import (
     estimate_max_neighbors,
@@ -525,9 +521,10 @@ def _resolve_cell_strategy(
     - ``"atom_centric"`` -> ``"atom_centric"``.
     - ``"pair_centric"`` -> ``"pair_centric"`` on GPU; raises on CPU.
 
-    This is the strategy *decision* only.  The pair-centric launch-safety /
-    parallelism guards and the ``n_outer`` host read live in ``query_cell_list``
-    where the concrete ``neighbor_search_radius`` is available.
+    This is the strategy *decision* only.  Pair-centric parallelism guards,
+    transparent launch coarsening, and the ``n_outer`` host read live in
+    ``query_cell_list`` where the concrete ``neighbor_search_radius`` is
+    available.
     """
     if strategy == "auto":
         if device_is_cpu or half_fill:
@@ -627,9 +624,11 @@ def _run_graph_query_cell_list(
     ``strategy`` / ``n_outer`` thread the cell-list query sub-strategy through
     to ``_warp_query_cell_list``.  For ``strategy="pair_centric"`` the launcher
     runs the internal ``gather_fused`` into ``sorted_positions`` /
-    ``sorted_atom_periodic_shifts`` and the pair-centric linear launch sized by
-    the host-computed ``n_outer``.  ``n_outer`` is a static scalar baked at
-    launch-build time (see :func:`compute_batch_pair_centric_n_outer`).
+    ``sorted_atom_periodic_shifts`` and the pair-centric launch sized by
+    the host-computed ``n_outer``, coarsening logical blocks when the
+    uncoarsened grid would exceed the Warp one-dimensional launch limit.
+    ``n_outer`` is a static scalar baked at launch-build time (see
+    :func:`compute_batch_pair_centric_n_outer`).
 
     The optional ``return_vectors`` / ``return_distances`` / ``pair_fn`` (+
     ``pair_params`` and the ``neighbor_vectors`` / ``neighbor_distances`` /
@@ -2515,8 +2514,6 @@ def query_cell_list(
                 ) from exc
             pc_n_outer = compute_batch_pair_centric_n_outer((rx, ry, rz), False)
             total_cells = int(atoms_per_cell_count.shape[0])
-            if not is_pair_centric_launch_safe(total_cells, pc_n_outer):
-                _raise_unsafe_pair_centric_launch(total_cells, pc_n_outer)
             pc_strategy = "pair_centric"
 
         forward_kwargs = {
@@ -2719,11 +2716,7 @@ def query_cell_list(
             # JAX cell_list is full-fill (half_fill+pair_centric raised above).
             n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), False)
             total_cells = int(atoms_per_cell_count.shape[0])
-            if not is_pair_centric_launch_safe(total_cells, n_outer):
-                if strategy == "pair_centric":
-                    _raise_unsafe_pair_centric_launch(total_cells, n_outer)
-                chosen = "atom_centric"
-            elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+            if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
                 total_atoms, total_cells, n_outer
             ):
                 chosen = "atom_centric"
@@ -3285,9 +3278,6 @@ def cell_list(
                     ) from exc
                 # JAX cell_list is full-fill (half_fill+pair_centric raised above).
                 pc_n_outer = compute_batch_pair_centric_n_outer((Rx, Ry, Rz), False)
-                total_cells = int(atoms_per_cell_count.shape[0])
-                if not is_pair_centric_launch_safe(total_cells, pc_n_outer):
-                    _raise_unsafe_pair_centric_launch(total_cells, pc_n_outer)
                 pc_strategy = "pair_centric"
 
             forward_kwargs = {
