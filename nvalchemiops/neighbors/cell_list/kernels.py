@@ -1319,6 +1319,7 @@ def _make_pair_centric_kernel(
     return_vectors: bool,
     return_distances: bool,
     pair_fn: wp.Function | None,
+    coarsened: bool,
 ) -> wp.Kernel:
     """Build the pair-centric neighbor-matrix kernel."""
     _require_supported_dtype(wp_dtype)
@@ -1334,8 +1335,10 @@ def _make_pair_centric_kernel(
         pair_fn=pair_fn,
     )
 
-    @wp.kernel(enable_backward=False, module="unique")
-    def _kernel(
+    @wp.func
+    def _process_logical_block(
+        logical_bid: wp.int64,
+        lane: wp.int32,
         sorted_positions: wp.array(dtype=vec_dtype),
         sorted_atom_periodic_shifts: wp.array(dtype=wp.vec3i),
         cell: wp.array(dtype=mat_dtype),
@@ -1363,13 +1366,18 @@ def _make_pair_centric_kernel(
         block_dim_const: wp.int32,
         total_cells: wp.int32,
         n_offsets: wp.int32,
+        total_logical_blocks: wp.int64,
         max_radius: wp.vec3i,
         rebuild_flags: wp.array(dtype=wp.bool),
     ) -> None:
-        """Build cell-list neighbor-matrix rows with one block per cell/offset pair
+        """Process one logical (source cell, offset) block for pair-centric search.
 
         Parameters
         ----------
+        logical_bid : wp.int64
+            Flat logical block index.
+        lane : wp.int32
+            Lane index within the CUDA block.
         sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
             Cell-contiguous positions.
         sorted_atom_periodic_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i
@@ -1424,32 +1432,22 @@ def _make_pair_centric_kernel(
             Number of global cells to traverse.
         n_offsets : wp.int32
             Number of neighbor-cell offsets encoded in the launch grid.
+        total_logical_blocks : wp.int64
+            Total number of logical (source cell, offset) blocks.
         max_radius : wp.vec3i
             Maximum search radius used to decode batched offsets.
         rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
             Selective rebuild flags. Sentinel for non-selective specializations.
 
-        Returns
-        -------
-        None
-            This function modifies the input arrays in-place.
-
         Notes
         -----
-        - Thread launch: One CUDA block per source-cell/offset pair, with lanes covering source-cell atoms.
-        - Modifies: ``neighbor_matrix``, ``neighbor_matrix_shifts``, ``num_neighbors`` atomically, and enabled pair-output buffers.
-        Batching, selective rebuild, partial rows, and pair outputs are static
-        specializations. Pair-centric execution is CUDA-only at the launcher boundary.
-
-        See Also
-        --------
-        get_query_cell_list_kernel : Return the specialized pair-centric neighbor-search kernel.
+        Early ``return`` statements skip inactive logical blocks or systems.
         """
-        tid = wp.tid()
-        bid = tid / block_dim_const
-        lane = tid - bid * block_dim_const
-        source_cell = bid / n_offsets
-        offset_idx = bid % n_offsets
+
+        if logical_bid >= total_logical_blocks:
+            return
+        source_cell = wp.int32(logical_bid / wp.int64(n_offsets))
+        offset_idx = wp.int32(logical_bid % wp.int64(n_offsets))
         if source_cell >= total_cells:
             return
 
@@ -1626,6 +1624,323 @@ def _make_pair_centric_kernel(
                         )
             slot += block_dim_const
 
+    if coarsened:
+
+        @wp.kernel(enable_backward=False, module="unique")
+        def _kernel(
+            sorted_positions: wp.array(dtype=vec_dtype),
+            sorted_atom_periodic_shifts: wp.array(dtype=wp.vec3i),
+            cell: wp.array(dtype=mat_dtype),
+            pbc_single: wp.array(dtype=wp.bool),
+            pbc_batch: wp.array2d(dtype=wp.bool),
+            cutoff: wp_dtype,
+            cells_per_dimension_single: wp.array(dtype=wp.int32),
+            cells_per_dimension_batch: wp.array(dtype=wp.vec3i),
+            neighbor_search_radius_single: wp.array(dtype=wp.int32),
+            neighbor_search_radius_batch: wp.array(dtype=wp.vec3i),
+            atoms_per_cell_count: wp.array(dtype=wp.int32),
+            cell_atom_start_indices: wp.array(dtype=wp.int32),
+            cell_atom_list: wp.array(dtype=wp.int32),
+            cell_offsets: wp.array(dtype=wp.int32),
+            cell_to_system: wp.array(dtype=wp.int32),
+            target_row_lookup: wp.array(dtype=wp.int32),
+            neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+            neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+            num_neighbors: wp.array(dtype=wp.int32),
+            neighbor_vectors: wp.array(dtype=vec_dtype, ndim=2),
+            neighbor_distances: wp.array(dtype=wp_dtype, ndim=2),
+            pair_params: wp.array(dtype=wp_dtype, ndim=2),
+            pair_energies: wp.array(dtype=wp_dtype, ndim=2),
+            pair_forces: wp.array(dtype=vec_dtype, ndim=2),
+            block_dim_const: wp.int32,
+            total_cells: wp.int32,
+            n_offsets: wp.int32,
+            total_logical_blocks: wp.int64,
+            work_per_cuda_block: wp.int32,
+            max_radius: wp.vec3i,
+            rebuild_flags: wp.array(dtype=wp.bool),
+        ) -> None:
+            """Build cell-list neighbor-matrix rows with pair-centric search.
+
+            Parameters
+            ----------
+            sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
+                Cell-contiguous positions.
+            sorted_atom_periodic_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i
+                Cell-contiguous periodic shifts.
+            cell : wp.array, shape (num_systems,), dtype=wp.mat33*
+                Cell matrices defining lattice vectors.
+            pbc_single : wp.array, shape (3,), dtype=wp.bool
+                Single-system PBC flags. Sentinel in batched mode.
+            pbc_batch : wp.array, shape (num_systems, 3), dtype=wp.bool
+                Batched PBC flags. Sentinel in single-system mode.
+            cutoff : float
+                Neighbor cutoff distance.
+            cells_per_dimension_single : wp.array, shape (3,), dtype=wp.int32
+                Single-system cell counts per dimension.
+            cells_per_dimension_batch : wp.array, shape (num_systems,), dtype=wp.vec3i
+                Batched cell counts per dimension.
+            neighbor_search_radius_single : wp.array, shape (3,), dtype=wp.int32
+                Single-system neighbor-search radius.
+            neighbor_search_radius_batch : wp.array, shape (num_systems,), dtype=wp.vec3i
+                Batched neighbor-search radius.
+            atoms_per_cell_count : wp.array, shape (total_cells,), dtype=wp.int32
+                Atom counts per cell.
+            cell_atom_start_indices : wp.array, shape (total_cells,), dtype=wp.int32
+                Cell start offsets into ``cell_atom_list``.
+            cell_atom_list : wp.array, shape (total_atoms,), dtype=wp.int32
+                Atom indices in cell-contiguous order.
+            cell_offsets : wp.array, shape (num_systems,), dtype=wp.int32
+                Global cell offset per system. Sentinel in single-system mode.
+            cell_to_system : wp.array, shape (total_cells,), dtype=wp.int32
+                System index for each global cell. Sentinel in single-system mode.
+            target_row_lookup : wp.array, shape (total_atoms,), dtype=wp.int32
+                Atom-id to compact target-row lookup for partial mode.
+            neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
+                OUTPUT: Neighbor atom indices.
+            neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors), dtype=wp.vec3i
+                OUTPUT: Periodic shift vectors.
+            num_neighbors : wp.array, shape (rows,), dtype=wp.int32
+                OUTPUT: Neighbor counts per row, updated atomically.
+            neighbor_vectors : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*
+                OUTPUT: Optional displacement vectors. Sentinel when disabled.
+            neighbor_distances : wp.array, shape (rows, max_neighbors), dtype=wp.float*
+                OUTPUT: Optional pair distances. Sentinel when disabled.
+            pair_params : wp.array, shape (total_atoms, K), dtype=wp.float*
+                Pair-function parameters. Sentinel when no pair function is active.
+            pair_energies : wp.array, shape (rows, max_neighbors), dtype=wp.float*
+                OUTPUT: Optional pair-function energies. Sentinel when disabled.
+            pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*
+                OUTPUT: Optional pair-function forces. Sentinel when disabled.
+            block_dim_const : wp.int32
+                Runtime copy of the CUDA block dimension.
+            total_cells : wp.int32
+                Number of global cells to traverse.
+            n_offsets : wp.int32
+                Number of neighbor-cell offsets encoded in the launch grid.
+            total_logical_blocks : wp.int64
+                Total number of logical (source cell, offset) blocks.
+            work_per_cuda_block : wp.int32
+                Number of logical blocks processed per CUDA block.
+            max_radius : wp.vec3i
+                Maximum search radius used to decode batched offsets.
+            rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+                Selective rebuild flags. Sentinel for non-selective specializations.
+
+            Returns
+            -------
+            None
+                This function modifies the input arrays in-place.
+
+            Notes
+            -----
+            - Thread launch: One CUDA block per source-cell/offset pair for the fast path;
+              multiple logical blocks per CUDA block for the coarsened path.
+            - Modifies: ``neighbor_matrix``, ``neighbor_matrix_shifts``, ``num_neighbors`` atomically, and enabled pair-output buffers.
+
+            See Also
+            --------
+            get_query_cell_list_kernel : Return the specialized pair-centric neighbor-search kernel.
+            """
+            tid = wp.tid()
+            cuda_bid = tid / block_dim_const
+            lane = tid - cuda_bid * block_dim_const
+            for local_work_idx in range(work_per_cuda_block):
+                logical_bid = wp.int64(cuda_bid) * wp.int64(
+                    work_per_cuda_block
+                ) + wp.int64(local_work_idx)
+                _process_logical_block(
+                    logical_bid,
+                    lane,
+                    sorted_positions,
+                    sorted_atom_periodic_shifts,
+                    cell,
+                    pbc_single,
+                    pbc_batch,
+                    cutoff,
+                    cells_per_dimension_single,
+                    cells_per_dimension_batch,
+                    neighbor_search_radius_single,
+                    neighbor_search_radius_batch,
+                    atoms_per_cell_count,
+                    cell_atom_start_indices,
+                    cell_atom_list,
+                    cell_offsets,
+                    cell_to_system,
+                    target_row_lookup,
+                    neighbor_matrix,
+                    neighbor_matrix_shifts,
+                    num_neighbors,
+                    neighbor_vectors,
+                    neighbor_distances,
+                    pair_params,
+                    pair_energies,
+                    pair_forces,
+                    block_dim_const,
+                    total_cells,
+                    n_offsets,
+                    total_logical_blocks,
+                    max_radius,
+                    rebuild_flags,
+                )
+
+    else:
+
+        @wp.kernel(enable_backward=False, module="unique")
+        def _kernel(
+            sorted_positions: wp.array(dtype=vec_dtype),
+            sorted_atom_periodic_shifts: wp.array(dtype=wp.vec3i),
+            cell: wp.array(dtype=mat_dtype),
+            pbc_single: wp.array(dtype=wp.bool),
+            pbc_batch: wp.array2d(dtype=wp.bool),
+            cutoff: wp_dtype,
+            cells_per_dimension_single: wp.array(dtype=wp.int32),
+            cells_per_dimension_batch: wp.array(dtype=wp.vec3i),
+            neighbor_search_radius_single: wp.array(dtype=wp.int32),
+            neighbor_search_radius_batch: wp.array(dtype=wp.vec3i),
+            atoms_per_cell_count: wp.array(dtype=wp.int32),
+            cell_atom_start_indices: wp.array(dtype=wp.int32),
+            cell_atom_list: wp.array(dtype=wp.int32),
+            cell_offsets: wp.array(dtype=wp.int32),
+            cell_to_system: wp.array(dtype=wp.int32),
+            target_row_lookup: wp.array(dtype=wp.int32),
+            neighbor_matrix: wp.array(dtype=wp.int32, ndim=2),
+            neighbor_matrix_shifts: wp.array(dtype=wp.vec3i, ndim=2),
+            num_neighbors: wp.array(dtype=wp.int32),
+            neighbor_vectors: wp.array(dtype=vec_dtype, ndim=2),
+            neighbor_distances: wp.array(dtype=wp_dtype, ndim=2),
+            pair_params: wp.array(dtype=wp_dtype, ndim=2),
+            pair_energies: wp.array(dtype=wp_dtype, ndim=2),
+            pair_forces: wp.array(dtype=vec_dtype, ndim=2),
+            block_dim_const: wp.int32,
+            total_cells: wp.int32,
+            n_offsets: wp.int32,
+            total_logical_blocks: wp.int64,
+            work_per_cuda_block: wp.int32,
+            max_radius: wp.vec3i,
+            rebuild_flags: wp.array(dtype=wp.bool),
+        ) -> None:
+            """Build cell-list neighbor-matrix rows with pair-centric search.
+
+            Parameters
+            ----------
+            sorted_positions : wp.array, shape (total_atoms,), dtype=wp.vec3*
+                Cell-contiguous positions.
+            sorted_atom_periodic_shifts : wp.array, shape (total_atoms,), dtype=wp.vec3i
+                Cell-contiguous periodic shifts.
+            cell : wp.array, shape (num_systems,), dtype=wp.mat33*
+                Cell matrices defining lattice vectors.
+            pbc_single : wp.array, shape (3,), dtype=wp.bool
+                Single-system PBC flags. Sentinel in batched mode.
+            pbc_batch : wp.array, shape (num_systems, 3), dtype=wp.bool
+                Batched PBC flags. Sentinel in single-system mode.
+            cutoff : float
+                Neighbor cutoff distance.
+            cells_per_dimension_single : wp.array, shape (3,), dtype=wp.int32
+                Single-system cell counts per dimension.
+            cells_per_dimension_batch : wp.array, shape (num_systems,), dtype=wp.vec3i
+                Batched cell counts per dimension.
+            neighbor_search_radius_single : wp.array, shape (3,), dtype=wp.int32
+                Single-system neighbor-search radius.
+            neighbor_search_radius_batch : wp.array, shape (num_systems,), dtype=wp.vec3i
+                Batched neighbor-search radius.
+            atoms_per_cell_count : wp.array, shape (total_cells,), dtype=wp.int32
+                Atom counts per cell.
+            cell_atom_start_indices : wp.array, shape (total_cells,), dtype=wp.int32
+                Cell start offsets into ``cell_atom_list``.
+            cell_atom_list : wp.array, shape (total_atoms,), dtype=wp.int32
+                Atom indices in cell-contiguous order.
+            cell_offsets : wp.array, shape (num_systems,), dtype=wp.int32
+                Global cell offset per system. Sentinel in single-system mode.
+            cell_to_system : wp.array, shape (total_cells,), dtype=wp.int32
+                System index for each global cell. Sentinel in single-system mode.
+            target_row_lookup : wp.array, shape (total_atoms,), dtype=wp.int32
+                Atom-id to compact target-row lookup for partial mode.
+            neighbor_matrix : wp.array, shape (rows, max_neighbors), dtype=wp.int32
+                OUTPUT: Neighbor atom indices.
+            neighbor_matrix_shifts : wp.array, shape (rows, max_neighbors), dtype=wp.vec3i
+                OUTPUT: Periodic shift vectors.
+            num_neighbors : wp.array, shape (rows,), dtype=wp.int32
+                OUTPUT: Neighbor counts per row, updated atomically.
+            neighbor_vectors : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*
+                OUTPUT: Optional displacement vectors. Sentinel when disabled.
+            neighbor_distances : wp.array, shape (rows, max_neighbors), dtype=wp.float*
+                OUTPUT: Optional pair distances. Sentinel when disabled.
+            pair_params : wp.array, shape (total_atoms, K), dtype=wp.float*
+                Pair-function parameters. Sentinel when no pair function is active.
+            pair_energies : wp.array, shape (rows, max_neighbors), dtype=wp.float*
+                OUTPUT: Optional pair-function energies. Sentinel when disabled.
+            pair_forces : wp.array, shape (rows, max_neighbors), dtype=wp.vec3*
+                OUTPUT: Optional pair-function forces. Sentinel when disabled.
+            block_dim_const : wp.int32
+                Runtime copy of the CUDA block dimension.
+            total_cells : wp.int32
+                Number of global cells to traverse.
+            n_offsets : wp.int32
+                Number of neighbor-cell offsets encoded in the launch grid.
+            total_logical_blocks : wp.int64
+                Total number of logical (source cell, offset) blocks.
+            work_per_cuda_block : wp.int32
+                Number of logical blocks processed per CUDA block. Unused by the uncoarsened fast path.
+            max_radius : wp.vec3i
+                Maximum search radius used to decode batched offsets.
+            rebuild_flags : wp.array, shape (num_systems,), dtype=wp.bool
+                Selective rebuild flags. Sentinel for non-selective specializations.
+
+            Returns
+            -------
+            None
+                This function modifies the input arrays in-place.
+
+            Notes
+            -----
+            - Thread launch: One CUDA block per source-cell/offset pair for the fast path;
+              multiple logical blocks per CUDA block for the coarsened path.
+            - Modifies: ``neighbor_matrix``, ``neighbor_matrix_shifts``, ``num_neighbors`` atomically, and enabled pair-output buffers.
+
+            See Also
+            --------
+            get_query_cell_list_kernel : Return the specialized pair-centric neighbor-search kernel.
+            """
+
+            tid = wp.tid()
+            bid = tid / block_dim_const
+            lane = tid - bid * block_dim_const
+            _process_logical_block(
+                wp.int64(bid),
+                lane,
+                sorted_positions,
+                sorted_atom_periodic_shifts,
+                cell,
+                pbc_single,
+                pbc_batch,
+                cutoff,
+                cells_per_dimension_single,
+                cells_per_dimension_batch,
+                neighbor_search_radius_single,
+                neighbor_search_radius_batch,
+                atoms_per_cell_count,
+                cell_atom_start_indices,
+                cell_atom_list,
+                cell_offsets,
+                cell_to_system,
+                target_row_lookup,
+                neighbor_matrix,
+                neighbor_matrix_shifts,
+                num_neighbors,
+                neighbor_vectors,
+                neighbor_distances,
+                pair_params,
+                pair_energies,
+                pair_forces,
+                block_dim_const,
+                total_cells,
+                n_offsets,
+                total_logical_blocks,
+                max_radius,
+                rebuild_flags,
+            )
+
     name = kernel_specialization_name(
         _cell_list_neighbor_base_name(
             batched=bool(batched),
@@ -1634,6 +1949,7 @@ def _make_pair_centric_kernel(
         wp_dtype=wp_dtype,
         features=(
             "pair_centric",
+            "coarsened" if coarsened else "",
             "half" if bool(half_fill) else "",
             "partial" if partial else "",
             *_pair_output_features(
@@ -1654,6 +1970,7 @@ def _make_pair_centric_kernel(
                 ("selective", bool(selective)),
                 ("partial", bool(partial)),
                 ("half_fill", bool(half_fill)),
+                ("coarsened", bool(coarsened)),
                 ("return_vectors", bool(return_vectors)),
                 ("return_distances", bool(return_distances)),
                 ("pair_fn", pair_fn is not None),
@@ -1673,6 +1990,7 @@ def get_query_cell_list_kernel(
     return_vectors: bool = False,
     return_distances: bool = False,
     pair_fn: wp.Function | None = None,
+    coarsened: bool = False,
     atom_centric_path: str = "sorted",
 ) -> wp.Kernel:
     """Return a cached cell-list neighbor-matrix kernel."""
@@ -1704,6 +2022,7 @@ def get_query_cell_list_kernel(
             return_vectors=bool(return_vectors),
             return_distances=bool(return_distances),
             pair_fn=pair_fn,
+            coarsened=bool(coarsened),
         )
     raise ValueError(
         f"strategy must be 'atom_centric' | 'pair_centric', got {strategy!r}"

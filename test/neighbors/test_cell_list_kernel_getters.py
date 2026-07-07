@@ -30,6 +30,12 @@ from nvalchemiops.neighbors.cell_list import (
     pair_centric_launch_size,
     query_cell_list,
 )
+from nvalchemiops.neighbors.cell_list.dispatch import (
+    _pair_centric_coarsened_launch_size,
+    _pair_centric_logical_block_count,
+    _pair_centric_max_cuda_blocks,
+    _pair_centric_work_per_cuda_block,
+)
 
 
 @wp.func
@@ -134,14 +140,86 @@ def test_cell_list_query_kernel_uses_pair_fn_object_cache_key():
     assert kernel1 is not kernel3
 
 
-def test_pair_centric_launch_guard_rejects_large_batched_shape():
-    """The guard rejects an oversized batched pair-centric launch shape."""
+def test_pair_centric_uncoarsened_launch_overflow_is_not_overall_infeasible():
+    """Uncoarsened overflow is handled by coarsening, not rejection."""
     n_outer = compute_batch_pair_centric_n_outer((23, 25, 23), half_fill=False)
     launch_size = pair_centric_launch_size(3840, n_outer, 64)
+    logical_blocks = _pair_centric_logical_block_count(3840, n_outer)
+    work_per_cuda_block = _pair_centric_work_per_cuda_block(3840, n_outer, 64)
+    coarsened_launch = _pair_centric_coarsened_launch_size(3840, n_outer, 64)
 
     assert launch_size == 27_687_075_840
     assert launch_size > PAIR_CENTRIC_MAX_LINEAR_LAUNCH
     assert not is_pair_centric_launch_safe(3840, n_outer, 64)
+    assert work_per_cuda_block > 1
+    assert coarsened_launch <= PAIR_CENTRIC_MAX_LINEAR_LAUNCH
+    cuda_blocks = (logical_blocks + work_per_cuda_block - 1) // work_per_cuda_block
+    assert cuda_blocks * work_per_cuda_block >= logical_blocks
+
+
+def test_pair_centric_coarsening_helpers_fast_path_unchanged():
+    """Launch-safe shapes keep ``work_per_cuda_block == 1``."""
+    n_outer = compute_batch_pair_centric_n_outer((1, 1, 1), half_fill=False)
+
+    assert pair_centric_launch_size(64, n_outer, 64) == 110_592
+    assert is_pair_centric_launch_safe(64, n_outer, 64)
+    assert _pair_centric_work_per_cuda_block(64, n_outer, 64) == 1
+    assert _pair_centric_coarsened_launch_size(64, n_outer, 64) == 110_592
+
+
+def test_pair_centric_coarsening_helper_validation():
+    """Invalid block or launch limits raise before planning coarsening."""
+    with pytest.raises(ValueError, match="block_dim must be positive"):
+        _pair_centric_max_cuda_blocks(0)
+    with pytest.raises(ValueError, match="max_launch_size"):
+        _pair_centric_max_cuda_blocks(64, max_launch_size=32)
+    with pytest.raises(ValueError, match="block_dim must be positive"):
+        _pair_centric_work_per_cuda_block(64, 26, block_dim=0)
+    with pytest.raises(ValueError, match="max_launch_size"):
+        _pair_centric_coarsened_launch_size(64, 26, block_dim=64, max_launch_size=32)
+
+
+def test_pair_centric_coarsening_helpers_are_not_public_exports():
+    """Coarsening sizing helpers stay internal to ``cell_list.dispatch``."""
+    import nvalchemiops.neighbors.cell_list as cell_list
+
+    public = set(cell_list.__all__)
+    for name in (
+        "pair_centric_logical_block_count",
+        "pair_centric_max_cuda_blocks",
+        "pair_centric_work_per_cuda_block",
+        "pair_centric_coarsened_launch_size",
+    ):
+        assert name not in public
+        assert not hasattr(cell_list, name)
+
+
+def test_pair_centric_kernel_getter_coarsened_cache():
+    """Coarsened and uncoarsened pair-centric kernels are distinct cached objects."""
+    kernel_fast = get_query_cell_list_kernel(
+        wp.float32,
+        strategy="pair_centric",
+        batched=True,
+        return_vectors=True,
+        coarsened=False,
+    )
+    kernel_coarsened = get_query_cell_list_kernel(
+        wp.float32,
+        strategy="pair_centric",
+        batched=True,
+        return_vectors=True,
+        coarsened=True,
+    )
+    kernel_fast_again = get_query_cell_list_kernel(
+        wp.float32,
+        strategy="pair_centric",
+        batched=True,
+        return_vectors=True,
+    )
+
+    assert kernel_fast is kernel_fast_again
+    assert kernel_fast is not kernel_coarsened
+    assert "coarsened" in kernel_coarsened.key
 
 
 def test_pair_centric_launch_guard_accepts_small_batched_shape():
@@ -577,6 +655,210 @@ def test_pair_centric_partial_outputs_are_compact(device):
     assert pair_energies[0, :nn].abs().min().item() > 0.0
     assert neighbor_vectors[0, :nn].abs().max().item() > 0.0
     assert neighbor_distances[0, :nn].cpu().tolist() == pytest.approx([0.5, 0.5])
+
+
+def _neighbor_matrix_row_set_wp(
+    neighbor_matrix: torch.Tensor,
+    num_neighbors: torch.Tensor,
+) -> set[tuple[int, frozenset[int]]]:
+    """Order-independent row set for warp-launched neighbor matrices."""
+    out: set[tuple[int, frozenset[int]]] = set()
+    for i in range(neighbor_matrix.shape[0]):
+        n = int(num_neighbors[i].item())
+        if n > 0:
+            out.add((i, frozenset(int(x) for x in neighbor_matrix[i, :n].tolist())))
+    return out
+
+
+@pytest.mark.parametrize("device", ["cuda:0"])
+def test_pair_centric_coarsened_matches_atom_centric(device):
+    """Coarsened pair-centric output matches atom-centric as an unordered pair set."""
+    _skip_missing_cuda(device)
+
+    positions_np = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.0, 0.5, 0.0],
+            [3.0, 3.0, 3.0],
+        ],
+        dtype=np.float32,
+    )
+    box = 4.0
+    cutoff = 0.6
+    max_neighbors = 4
+    max_launch_size = 256
+
+    state = _build_single_smoke_state(device, positions_np, box, cutoff, max_neighbors)
+    n_outer = compute_batch_pair_centric_n_outer(
+        tuple(state["neighbor_search_radius"].cpu().tolist()),
+        half_fill=False,
+    )
+    total_cells = int(state["atoms_per_cell_count"].shape[0])
+    assert (
+        _pair_centric_work_per_cuda_block(
+            total_cells,
+            n_outer,
+            64,
+            max_launch_size=max_launch_size,
+        )
+        > 1
+    )
+
+    common_kwargs = dict(
+        positions=wp.from_torch(state["positions_t"], dtype=wp.vec3f),
+        cell=wp.from_torch(state["cell_t"], dtype=wp.mat33f),
+        pbc=wp.from_torch(state["pbc_t"], dtype=wp.bool),
+        cutoff=cutoff,
+        cells_per_dimension=wp.from_torch(state["cells_per_dimension"], dtype=wp.int32),
+        neighbor_search_radius=wp.from_torch(
+            state["neighbor_search_radius"], dtype=wp.int32
+        ),
+        atom_periodic_shifts=wp.from_torch(
+            state["atom_periodic_shifts"], dtype=wp.vec3i
+        ),
+        atom_to_cell_mapping=wp.from_torch(
+            state["atom_to_cell_mapping"], dtype=wp.vec3i
+        ),
+        atoms_per_cell_count=wp.from_torch(
+            state["atoms_per_cell_count"], dtype=wp.int32
+        ),
+        cell_atom_start_indices=wp.from_torch(
+            state["cell_atom_start_indices"], dtype=wp.int32
+        ),
+        cell_atom_list=wp.from_torch(state["cell_atom_list"], dtype=wp.int32),
+        sorted_positions=wp.from_torch(state["sorted_positions"], dtype=wp.vec3f),
+        sorted_atom_periodic_shifts=wp.from_torch(
+            state["sorted_shifts"], dtype=wp.vec3i
+        ),
+        rebuild_flags=wp.from_torch(state["rebuild_flags"], dtype=wp.bool),
+        wp_dtype=wp.float32,
+        device=device,
+        half_fill=False,
+        max_launch_size=max_launch_size,
+    )
+
+    nm_atom = state["neighbor_matrix"].clone()
+    nn_atom = state["num_neighbors"].clone()
+    query_cell_list(
+        **common_kwargs,
+        neighbor_matrix=wp.from_torch(nm_atom, dtype=wp.int32),
+        neighbor_matrix_shifts=wp.from_torch(
+            state["neighbor_matrix_shifts"], dtype=wp.vec3i
+        ),
+        num_neighbors=wp.from_torch(nn_atom, dtype=wp.int32),
+        strategy="atom_centric",
+    )
+
+    nm_pair = state["neighbor_matrix"].clone()
+    nn_pair = state["num_neighbors"].clone()
+    query_cell_list(
+        **common_kwargs,
+        neighbor_matrix=wp.from_torch(nm_pair, dtype=wp.int32),
+        neighbor_matrix_shifts=wp.from_torch(
+            state["neighbor_matrix_shifts"], dtype=wp.vec3i
+        ),
+        num_neighbors=wp.from_torch(nn_pair, dtype=wp.int32),
+        strategy="pair_centric",
+        n_outer=n_outer,
+    )
+
+    assert torch.equal(nn_atom, nn_pair)
+    assert _neighbor_matrix_row_set_wp(nm_atom, nn_atom) == _neighbor_matrix_row_set_wp(
+        nm_pair, nn_pair
+    )
+
+
+@pytest.mark.parametrize("device", ["cuda:0"])
+def test_pair_centric_coarsened_partial_target_indices(device):
+    """Coarsened pair-centric partial rows match atom-centric compact outputs."""
+    _skip_missing_cuda(device)
+
+    positions_np = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.0, 0.5, 0.0],
+            [3.0, 3.0, 3.0],
+        ],
+        dtype=np.float32,
+    )
+    box = 4.0
+    cutoff = 0.6
+    max_neighbors = 4
+    max_launch_size = 256
+
+    state = _build_single_smoke_state(device, positions_np, box, cutoff, max_neighbors)
+    n_outer = compute_batch_pair_centric_n_outer(
+        tuple(state["neighbor_search_radius"].cpu().tolist()),
+        half_fill=False,
+    )
+    target_indices = torch.tensor([0], dtype=torch.int32, device=device)
+    neighbor_matrix_atom = torch.full(
+        (1, max_neighbors), -1, dtype=torch.int32, device=device
+    )
+    neighbor_matrix_pair = neighbor_matrix_atom.clone()
+    neighbor_matrix_shifts = torch.zeros(
+        (1, max_neighbors, 3), dtype=torch.int32, device=device
+    )
+    num_neighbors_atom = torch.zeros(1, dtype=torch.int32, device=device)
+    num_neighbors_pair = torch.zeros(1, dtype=torch.int32, device=device)
+
+    common_kwargs = dict(
+        positions=wp.from_torch(state["positions_t"], dtype=wp.vec3f),
+        cell=wp.from_torch(state["cell_t"], dtype=wp.mat33f),
+        pbc=wp.from_torch(state["pbc_t"], dtype=wp.bool),
+        cutoff=cutoff,
+        cells_per_dimension=wp.from_torch(state["cells_per_dimension"], dtype=wp.int32),
+        neighbor_search_radius=wp.from_torch(
+            state["neighbor_search_radius"], dtype=wp.int32
+        ),
+        atom_periodic_shifts=wp.from_torch(
+            state["atom_periodic_shifts"], dtype=wp.vec3i
+        ),
+        atom_to_cell_mapping=wp.from_torch(
+            state["atom_to_cell_mapping"], dtype=wp.vec3i
+        ),
+        atoms_per_cell_count=wp.from_torch(
+            state["atoms_per_cell_count"], dtype=wp.int32
+        ),
+        cell_atom_start_indices=wp.from_torch(
+            state["cell_atom_start_indices"], dtype=wp.int32
+        ),
+        cell_atom_list=wp.from_torch(state["cell_atom_list"], dtype=wp.int32),
+        sorted_positions=wp.from_torch(state["sorted_positions"], dtype=wp.vec3f),
+        sorted_atom_periodic_shifts=wp.from_torch(
+            state["sorted_shifts"], dtype=wp.vec3i
+        ),
+        rebuild_flags=wp.from_torch(state["rebuild_flags"], dtype=wp.bool),
+        target_indices=wp.from_torch(target_indices, dtype=wp.int32),
+        wp_dtype=wp.float32,
+        device=device,
+        half_fill=False,
+        max_launch_size=max_launch_size,
+    )
+
+    query_cell_list(
+        **common_kwargs,
+        neighbor_matrix=wp.from_torch(neighbor_matrix_atom, dtype=wp.int32),
+        neighbor_matrix_shifts=wp.from_torch(neighbor_matrix_shifts, dtype=wp.vec3i),
+        num_neighbors=wp.from_torch(num_neighbors_atom, dtype=wp.int32),
+        strategy="atom_centric",
+    )
+    query_cell_list(
+        **common_kwargs,
+        neighbor_matrix=wp.from_torch(neighbor_matrix_pair, dtype=wp.int32),
+        neighbor_matrix_shifts=wp.from_torch(neighbor_matrix_shifts, dtype=wp.vec3i),
+        num_neighbors=wp.from_torch(num_neighbors_pair, dtype=wp.int32),
+        strategy="pair_centric",
+        n_outer=n_outer,
+    )
+
+    assert torch.equal(num_neighbors_atom, num_neighbors_pair)
+    nn = int(num_neighbors_atom.cpu().item())
+    assert nn == 2
+    assert set(neighbor_matrix_atom[0, :nn].cpu().tolist()) == {1, 2}
+    assert set(neighbor_matrix_pair[0, :nn].cpu().tolist()) == {1, 2}
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])

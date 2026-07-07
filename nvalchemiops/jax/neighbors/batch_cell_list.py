@@ -51,11 +51,7 @@ from nvalchemiops.neighbors.cell_list import (
     get_cell_list_cells_per_system_kernel,
     get_cell_list_gather_kernel,
     get_query_cell_list_kernel,
-    is_pair_centric_launch_safe,
     is_pair_centric_parallelism_sufficient,
-)
-from nvalchemiops.neighbors.cell_list.launchers import (
-    _raise_unsafe_pair_centric_launch,
 )
 from nvalchemiops.neighbors.neighbor_utils import estimate_max_neighbors
 from nvalchemiops.neighbors.output_args import (
@@ -1563,11 +1559,7 @@ def batch_query_cell_list(
         else:
             # JAX batch cell_list is full-fill (half_fill+pair_centric raised above).
             n_outer = compute_batch_pair_centric_n_outer(R_max, False)
-            if not is_pair_centric_launch_safe(total_cells, n_outer):
-                if strategy == "pair_centric":
-                    _raise_unsafe_pair_centric_launch(total_cells, n_outer, 64)
-                chosen = "atom_centric"
-            elif strategy == "auto" and not is_pair_centric_parallelism_sufficient(
+            if strategy == "auto" and not is_pair_centric_parallelism_sufficient(
                 total_atoms, total_cells, n_outer
             ):
                 chosen = "atom_centric"
@@ -2302,8 +2294,6 @@ def batch_cell_list(
                 ) from exc
             # JAX batch cell_list is full-fill (half_fill+pair_centric raised).
             pc_n_outer = compute_batch_pair_centric_n_outer(pc_r_max, False)
-            if not is_pair_centric_launch_safe(pc_total_cells, pc_n_outer):
-                _raise_unsafe_pair_centric_launch(pc_total_cells, pc_n_outer, 64)
             pc_strategy = "pair_centric"
 
         forward_kwargs = {
