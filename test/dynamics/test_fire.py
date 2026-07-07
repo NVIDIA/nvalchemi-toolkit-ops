@@ -4346,7 +4346,6 @@ class TestFireComputeReductions:
             vf=vf,
             vv=vv,
             ff=ff,
-            uphill_flag=wp.zeros(1, dtype=wp.int32, device=device),
             compute_reductions=False,
         )
         wp.synchronize_device(device)
@@ -4363,7 +4362,6 @@ class TestFireComputeReductions:
         forces = wp.zeros(num_atoms, dtype=wp.vec3d, device=device)
         masses = wp.ones(num_atoms, dtype=wp.float64, device=device)
         params = make_fire_params(1, wp.float64, device, np.float64)
-        del params["uphill_flag"]
         atom_ptr = wp.array([0, num_atoms], dtype=wp.int32, device=device)
         with pytest.raises(ValueError, match="compute_reductions=False"):
             fire_step(
