@@ -1766,6 +1766,12 @@ def fire_step(
         )
 
     if num_atoms == 0:
+        # No atoms contribute; zero the reductions we own (skip when the caller
+        # supplies them via compute_reductions=False).
+        if compute_reductions and vf is not None:
+            vf.zero_()
+            vv.zero_()
+            ff.zero_()
         return
 
     # Dispatch to appropriate kernel
@@ -2091,6 +2097,12 @@ def fire_update(
         )
 
     if num_atoms == 0:
+        # No atoms contribute; zero the reductions we own (skip when the caller
+        # supplies them via compute_reductions=False).
+        if compute_reductions and vf is not None:
+            vf.zero_()
+            vv.zero_()
+            ff.zero_()
         return
 
     vec_dtype = velocities.dtype
